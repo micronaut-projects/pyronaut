@@ -12,13 +12,25 @@ dependencies {
     implementation(libs.micronaut.projectgen.http.server)
     implementation(projects.micronautPyronautProjectgen)
     testImplementation(libs.micronaut.projectgen.test)
+
+    // Views
     implementation(mnViews.micronaut.views.thymeleaf)
+
+    // Serialization
     annotationProcessor(mnSerde.micronaut.serde.processor)
     implementation(mnSerde.micronaut.serde.jackson)
-    annotationProcessor(mn.micronaut.http.validation)
+
+    // Validation
     annotationProcessor(mnValidation.micronaut.validation.processor)
     implementation(mnValidation.micronaut.validation)
+
+    // Route Validation
+    annotationProcessor(mn.micronaut.http.validation)
+
+    // Management
     implementation(mn.micronaut.management)
+
+    // Logging
     runtimeOnly(mnLogging.logback.classic)
 
     testImplementation(mn.micronaut.http.client)
@@ -27,8 +39,8 @@ application {
     mainClass = "io.micronaut.pyronaut.starter.Application"
 }
 java {
-    sourceCompatibility = JavaVersion.toVersion("21")
-    targetCompatibility = JavaVersion.toVersion("21")
+    sourceCompatibility = JavaVersion.toVersion("25")
+    targetCompatibility = JavaVersion.toVersion("25")
 }
 micronaut {
     version(libs.versions.micronaut.platform.get())
