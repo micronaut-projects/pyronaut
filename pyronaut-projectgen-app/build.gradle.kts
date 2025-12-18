@@ -1,0 +1,53 @@
+plugins {
+    id("io.micronaut.minimal.application") version "4.6.1"
+    id("com.gradleup.shadow") version "8.3.9"
+}
+version = "0.1"
+group = "io.micronaut.pyronaut.starter"
+repositories {
+    mavenCentral()
+}
+dependencies {
+    implementation(platform(libs.micronaut.projectgen))
+    implementation(libs.micronaut.projectgen.http.server)
+    implementation(projects.micronautPyronautProjectgen)
+    testImplementation(libs.micronaut.projectgen.test)
+
+    // Views
+    implementation(mnViews.micronaut.views.thymeleaf)
+
+    // Serialization
+    annotationProcessor(mnSerde.micronaut.serde.processor)
+    implementation(mnSerde.micronaut.serde.jackson)
+
+    // Validation
+    annotationProcessor(mnValidation.micronaut.validation.processor)
+    implementation(mnValidation.micronaut.validation)
+
+    // Route Validation
+    annotationProcessor(mn.micronaut.http.validation)
+
+    // Management
+    implementation(mn.micronaut.management)
+
+    // Logging
+    runtimeOnly(mnLogging.logback.classic)
+
+    testImplementation(mn.micronaut.http.client)
+}
+application {
+    mainClass = "io.micronaut.pyronaut.starter.Application"
+}
+java {
+    sourceCompatibility = JavaVersion.toVersion("25")
+    targetCompatibility = JavaVersion.toVersion("25")
+}
+micronaut {
+    version(libs.versions.micronaut.platform.get())
+    runtime("netty")
+    testRuntime("junit5")
+    processing {
+        incremental(true)
+        annotations("io.micronaut.pyronaut.starter")
+    }
+}

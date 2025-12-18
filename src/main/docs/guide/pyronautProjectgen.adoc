@@ -1,0 +1,3 @@
+The following dependency eases project generation for Pyronaut.
+
+dependency:micronaut-pyronaut-projectgen[groupId=io.micronaut.pyronaut]
