@@ -27,8 +27,8 @@ application {
     mainClass = "io.micronaut.pyronaut.starter.Application"
 }
 java {
-    sourceCompatibility = JavaVersion.toVersion("25")
-    targetCompatibility = JavaVersion.toVersion("25")
+    sourceCompatibility = JavaVersion.toVersion("21")
+    targetCompatibility = JavaVersion.toVersion("21")
 }
 micronaut {
     version(libs.versions.micronaut.platform.get())
