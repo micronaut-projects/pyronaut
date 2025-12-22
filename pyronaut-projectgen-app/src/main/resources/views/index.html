@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link th:href="@{/assets/bootstrap/5.3.7-dist/css/bootstrap.min.css}" rel="stylesheet"/>
+    <link th:href="@{/assets/treeview/treeview.css}" rel="stylesheet"/>
+    <link th:href="@{/assets/prism/1.30.0/prism.css}" rel="stylesheet"/>
+    <script th:src="@{/assets/treeview/treeview.js}"></script>
+    <script th:src="@{/assets/prism/1.30.0/prism.js}"></script>
+    <script th:src="@{/assets/htmx/2.0.8/htmx.min.js}"></script>
+    <title th:text="#{page.title}"></title>
+    <style>
+
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8 col-lg-6">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <form th:action="@{/api/v1/download/zip}" method="post" id="projectGenForm">
+                            <div class="container d-flex justify-content-center align-items-center">
+                                <img th:src="@{/assets/images/logo.svg}" alt="Pyronaut"/>
+                            </div>
+                            <input type="hidden" name="name" value="pyronaut-demo"/>
+                            <input type="hidden" name="version" value="1.0.0"/>
+                            <input type="hidden" name="lang" value="PYTHON"/>
+                            <div class="text-center">
+                                <button type="submit" class="btn btn-primary btn-lg px-5" th:text="#{button.download}">
+                                    <i class="bi bi-download me-2"></i>
+                                </button>
+
+                                <button
+                                        id="previewBtn"
+                                        name="action"
+                                        value="preview"
+                                        hx-post="/modal/preview"
+                                        hx-include="#projectGenForm"
+                                        hx-target="#preview-modal"
+                                        hx-trigger="click"
+                                        data-bs-toggle="modal"
+                                        data-bs-target="#preview-modal"
+                                        class="btn btn-secondary btn-lg px-5" th:text="#{button.preview}"></button>
+                            </div>
+                        </form>
+                        <div id="preview-modal"
+                             class="modal modal-blur fade"
+                             style="display: none"
+                             aria-hidden="false"
+                             tabindex="-1">
+                            <div class="modal-dialog modal-fullscreen" role="document">
+                                <div class="modal-content"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script th:src="@{/assets/bootstrap/5.3.7-dist/js/bootstrap.bundle.min.js}"></script>
+    <script th:src="@{/assets/javascripts/utils.js}"></script>
+
+</body>
+</html>
