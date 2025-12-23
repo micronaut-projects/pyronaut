@@ -20,9 +20,12 @@ import io.micronaut.python.cli.util.PythonMavenRepository;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
+import java.util.List;
+
 @Command(name = "run", description = "Runs a Pyronaut application", mixinStandardHelpOptions = true)
 public class PyronautRunCommand extends BaseSourceCommand {
     private static final String ANNOTATION_PROCESSOR_SCOPE = "annotationProcessor";
+    private static final List<String> SOURCE_DIRECTORIES = List.of("src");
 
     @Parameters(index = "0..*", description = "Application parameters")
     private String[] parameters;
@@ -31,16 +34,22 @@ public class PyronautRunCommand extends BaseSourceCommand {
         return "compile";
     }
 
+    protected List<String> getSourceDirectories() {
+        return SOURCE_DIRECTORIES;
+    }
+
     @Override
     public Integer call() throws Exception {
-        var sourceDirectory = resolveRootDir();
         var compileDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(scope()));
         if (compileDependencies.isEmpty()) {
             System.err.println("Pyronaut dependencies not found. Did you run `pyronaut install`?");
             return -1;
         }
         var annotationProcDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(ANNOTATION_PROCESSOR_SCOPE));
-        var watcher = new PyronautFileWatcher(sourceDirectory,
+        var rootDirectory = resolveRootDir();
+        var watcher = new PyronautFileWatcher(
+                rootDirectory,
+                SOURCE_DIRECTORIES.stream().map(rootDirectory::resolve).toList(),
                 annotationProcDependencies,
                 compileDependencies,
                 parameters,

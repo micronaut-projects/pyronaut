@@ -17,11 +17,20 @@ package io.micronaut.python.cli.commands;
 
 import picocli.CommandLine.Command;
 
+import java.util.List;
+
 @Command(name = "test", description = "Executes tests", mixinStandardHelpOptions = true)
 public class PyronautTestCommand extends PyronautRunCommand {
+    private static final List<String> SOURCE_DIRECTORIES = List.of("src", "tests");
+
     @Override
     protected String scope() {
         return "test";
+    }
+
+    @Override
+    protected List<String> getSourceDirectories() {
+        return SOURCE_DIRECTORIES;
     }
 
     @Override

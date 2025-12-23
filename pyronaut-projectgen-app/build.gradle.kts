@@ -6,6 +6,7 @@ version = "0.1"
 group = "io.micronaut.pyronaut.starter"
 repositories {
     mavenCentral()
+    mavenLocal()
 }
 dependencies {
     implementation(platform(libs.micronaut.projectgen))

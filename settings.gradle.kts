@@ -25,5 +25,11 @@ micronautBuild {
     importMicronautCatalog("micronaut-serde")
     importMicronautCatalog("micronaut-views")
     importMicronautCatalog("micronaut-validation")
-    requiresDevelopmentVersion("micronaut-core", "cc/pyronaut-spike-pyproject")
+}
+
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+        mavenLocal()
+    }
 }

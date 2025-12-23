@@ -24,13 +24,11 @@ import io.micronaut.python.cli.util.PythonMavenRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.io.IOException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.net.MalformedURLException;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.*;
@@ -54,7 +52,8 @@ public class PyronautFileWatcher implements Runnable {
     public static final int SUCCESS = 0;
     public static final int ERROR = -1;
 
-    private final Path sourceDirectory;
+    private final Path rootDirectory;
+    private final List<Path> sourceDirectories;
     private final PythonMavenRepository annotationProcessorRepo;
     private final PythonMavenRepository compileClassPathRepo;
     private final Path outputDirectory;
@@ -64,13 +63,16 @@ public class PyronautFileWatcher implements Runnable {
     private final static List<String> WATCHED_DIRECTORIES = List.of("src", "config", "tests");
     private final String applicationManagerClassName;
 
-    public PyronautFileWatcher(Path sourceDirectory,
-                               PythonMavenRepository annotationProcessorRepo,
-                               PythonMavenRepository compileClassPathRepo,
-                               String[] parameters,
-                               String applicationManagerClassName) {
-        this.sourceDirectory = sourceDirectory.toAbsolutePath();
-        this.outputDirectory = FileUtils.resolveOutputDirectory(sourceDirectory);
+    public PyronautFileWatcher(
+            Path rootDirectory,
+            List<Path> sourceDirectories,
+            PythonMavenRepository annotationProcessorRepo,
+            PythonMavenRepository compileClassPathRepo,
+            String[] parameters,
+            String applicationManagerClassName) {
+        this.rootDirectory = rootDirectory;
+        this.sourceDirectories = sourceDirectories.stream().map(Path::toAbsolutePath).toList();
+        this.outputDirectory = FileUtils.resolveOutputDirectory(rootDirectory);
         this.annotationProcessorRepo = annotationProcessorRepo;
         this.compileClassPathRepo = compileClassPathRepo;
         this.parameters = parameters;
@@ -87,7 +89,7 @@ public class PyronautFileWatcher implements Runnable {
                 System.err.println("Initial compilation failed");
                 return;
             }
-            var classpath = buildUrls(classesDirectory(), sourceDirectory.resolve("config"));
+            var classpath = buildUrls(classesDirectory(), rootDirectory.resolve("config"));
             var classLoader = new URLClassLoader(classpath, truffleClassloader);
             Thread.currentThread().setContextClassLoader(classLoader);
             appManager = new ApplicationManagerInvoker(classLoader, applicationManagerClassName);
@@ -95,7 +97,7 @@ public class PyronautFileWatcher implements Runnable {
             // Set up file watching
             var watchService = FileSystems.getDefault().newWatchService();
             for (var watchedDirectory : WATCHED_DIRECTORIES) {
-                var dir = sourceDirectory.resolve(watchedDirectory);
+                var dir = rootDirectory.resolve(watchedDirectory);
                 if (Files.isDirectory(dir)) {
                     registerAll(dir, watchService);
                     System.out.println("Watching for changes in " + dir);
@@ -121,11 +123,11 @@ public class PyronautFileWatcher implements Runnable {
 
                     var changed = ((Path) key.watchable()).resolve((Path) event.context());
                     if (Files.isHidden(changed) ||
-                        changed.toAbsolutePath().startsWith(outputPath)) {
+                            changed.toAbsolutePath().startsWith(outputPath)) {
                         continue;
                     }
                     System.out.println(
-                        "File changed: " + changed.toAbsolutePath() + " (" + kind + ")");
+                            "File changed: " + changed.toAbsolutePath() + " (" + kind + ")");
 
                     hasChanges = true;
                 }
@@ -165,17 +167,17 @@ public class PyronautFileWatcher implements Runnable {
 
     private URLClassLoader createTruffleClassLoader(PythonMavenRepository repo) {
         var urls = repo.visitRepo(PyronautFileWatcher::isTruffleJar)
-            .stream()
-            .map(f -> {
-                try {
-                    return f.toURI().toURL();
-                } catch (MalformedURLException e) {
-                    return null;
-                }
-            })
-            .filter(Objects::nonNull)
-            .toList()
-            .toArray(new URL[0]);
+                .stream()
+                .map(f -> {
+                    try {
+                        return f.toURI().toURL();
+                    } catch (MalformedURLException e) {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .toList()
+                .toArray(new URL[0]);
         var parent = this.getClass().getClassLoader().getParent();
         return new URLClassLoader(urls, parent);
     }
@@ -202,11 +204,11 @@ public class PyronautFileWatcher implements Runnable {
         Files.walkFileTree(start, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs)
-                throws IOException {
+                    throws IOException {
                 dir.register(watchService,
-                    StandardWatchEventKinds.ENTRY_CREATE,
-                    StandardWatchEventKinds.ENTRY_DELETE,
-                    StandardWatchEventKinds.ENTRY_MODIFY);
+                        StandardWatchEventKinds.ENTRY_CREATE,
+                        StandardWatchEventKinds.ENTRY_DELETE,
+                        StandardWatchEventKinds.ENTRY_MODIFY);
                 return FileVisitResult.CONTINUE;
             }
         });
@@ -215,7 +217,7 @@ public class PyronautFileWatcher implements Runnable {
     private int compile(ClassLoader truffleClassloader) {
         var compiler = new PyronautCliCompiler();
         compiler.classLoader = truffleClassloader;
-        compiler.sourceDirectory = sourceDirectory.toFile();
+        compiler.sourceDirectory = sourceDirectories.stream().map(Path::toFile).toList();
         compiler.outputDirectory = classesDirectory().toFile();
         compiler.annotationProcessorPath = annotationProcessorRepo.asClasspath();
         compiler.classpath = compileClassPathRepo.asClasspath();
@@ -250,13 +252,6 @@ public class PyronautFileWatcher implements Runnable {
         }
         // This is a hack, so that the launcher is on classpath of the user app
         // and it won't work in a native image
-        for (var url : result) {
-            try {
-                System.out.println("url = " + new File(url.toURI()).getName());
-            } catch (URISyntaxException e) {
-                throw new RuntimeException(e);
-            }
-        }
         result.add(PyronautFileWatcher.class.getProtectionDomain().getCodeSource().getLocation());
         return result.toArray(new URL[0]);
     }
@@ -277,12 +272,12 @@ public class PyronautFileWatcher implements Runnable {
         private ApplicationManagerInvoker(ClassLoader classLoader, String className) {
             try {
                 var clazz =
-                    classLoader.loadClass(className);
+                        classLoader.loadClass(className);
                 var lookup = MethodHandles.privateLookupIn(clazz, MethodHandles.lookup());
                 var voidType = MethodType.methodType(void.class);
                 constructor = lookup.findConstructor(clazz, voidType);
                 startMethod = lookup.findVirtual(clazz, "startApplication",
-                    MethodType.methodType(void.class, String[].class));
+                        MethodType.methodType(void.class, String[].class));
                 stoptMethod = lookup.findVirtual(clazz, "stopApplication", voidType);
             } catch (Throwable e) {
                 throw new RuntimeException(e);

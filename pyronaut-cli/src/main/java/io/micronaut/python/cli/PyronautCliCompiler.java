@@ -39,7 +39,7 @@ public class PyronautCliCompiler implements Callable<Integer> {
     @Option(names = {"-s",
         "--source-directory"}, description = "Directory where to look for Python sources",
         required = true)
-    public File sourceDirectory;
+    public List<File> sourceDirectory;
 
     @Option(names = {"-o",
         "--output-directory"}, description = "Directory where to write generated classes",
@@ -126,7 +126,7 @@ public class PyronautCliCompiler implements Callable<Integer> {
             diagnosticCollector,
             options,
             List.of(),
-            List.of(new GeneratedEntryPoint(sourceDirectory.toPath()))
+            List.of(new GeneratedEntryPoint(sourceDirectory.stream().map(File::toPath).toList()))
         );
 
         boolean success = task.call();

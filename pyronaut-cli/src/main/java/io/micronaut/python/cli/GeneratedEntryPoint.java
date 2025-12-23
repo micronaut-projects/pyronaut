@@ -19,18 +19,20 @@ import javax.tools.SimpleJavaFileObject;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.stream.Collectors;
 
 class GeneratedEntryPoint extends SimpleJavaFileObject {
 
-    private final Path sourceDir;
+    private final List<Path> sourceDirs;
 
-    public GeneratedEntryPoint(Path sourceDir) {
-        this(sourceDir.toUri(), Kind.SOURCE);
+    public GeneratedEntryPoint(List<Path> sourceDirs) {
+        this(sourceDirs.stream().map(Path::toUri).toList(), Kind.SOURCE);
     }
 
-    protected GeneratedEntryPoint(URI uri, Kind kind) {
-        super(uri, kind);
-        this.sourceDir = Path.of(uri);
+    protected GeneratedEntryPoint(List<URI> uris, Kind kind) {
+        super(uris.getFirst(), kind);
+        this.sourceDirs = uris.stream().map(Path::of).toList();
     }
 
     @Override
@@ -44,8 +46,10 @@ class GeneratedEntryPoint extends SimpleJavaFileObject {
         sb.append("import io.micronaut.runtime.Micronaut;\n");
         sb.append("import io.micronaut.python.processing.annotation.PythonApplication;\n\n");
         sb.append("@PythonApplication(\n");
-
-        sb.append("    src = \"").append(sourceDir.toAbsolutePath()).append("\"");
+        var srcDirs = sourceDirs.stream()
+                        .map(dir -> "\"" + dir.toAbsolutePath() + "\"")
+                                .collect(Collectors.joining(", "));
+        sb.append("    src = {").append(srcDirs).append("}");
 
         sb.append("\n)\n");
         sb.append("class PyronautMain {\n");

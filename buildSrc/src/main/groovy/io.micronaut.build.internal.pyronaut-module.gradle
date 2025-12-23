@@ -7,3 +7,7 @@ micronautBuild {
         parentModuleId = "io.micronaut.pyronaut:micronaut-pyronaut"
     }
 }
+
+repositories {
+    mavenLocal()
+}
