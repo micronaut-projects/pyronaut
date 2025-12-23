@@ -49,7 +49,7 @@ public class PyronautRunCommand extends BaseSourceCommand {
         var rootDirectory = resolveRootDir();
         var watcher = new PyronautFileWatcher(
                 rootDirectory,
-                SOURCE_DIRECTORIES.stream().map(rootDirectory::resolve).toList(),
+                getSourceDirectories().stream().map(rootDirectory::resolve).toList(),
                 annotationProcDependencies,
                 compileDependencies,
                 parameters,
