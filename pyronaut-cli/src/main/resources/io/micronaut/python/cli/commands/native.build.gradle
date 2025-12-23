@@ -33,7 +33,7 @@ graalvmNative {
         buildArgs.addAll([
                 "-Dpolyglot.image-build-time.PreinitializeContexts=python",
                 "--enable-native-access=org.graalvm.truffle",
-                "--gc=G1",
+//                "--gc=G1",
                 "-march=native"
         ])
     }
