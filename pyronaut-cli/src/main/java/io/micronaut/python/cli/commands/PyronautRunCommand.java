@@ -41,9 +41,9 @@ public class PyronautRunCommand extends BaseSourceCommand {
         }
         var annotationProcDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(ANNOTATION_PROCESSOR_SCOPE));
         var watcher = new PyronautFileWatcher(sourceDirectory,
-            annotationProcDependencies,
-            compileDependencies,
-            parameters,
+                annotationProcDependencies,
+                compileDependencies,
+                parameters,
                 getApplicationManagerClassName());
         var watcherThread = new Thread(watcher);
         watcherThread.start();
@@ -64,6 +64,7 @@ public class PyronautRunCommand extends BaseSourceCommand {
     /**
      * Returns the name of the application manager that is responsible
      * for starting the application and/or tests.
+     *
      * @return the class name
      */
     protected String getApplicationManagerClassName() {

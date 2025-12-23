@@ -24,11 +24,13 @@ import io.micronaut.python.cli.util.PythonMavenRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.*;
@@ -87,6 +89,7 @@ public class PyronautFileWatcher implements Runnable {
             }
             var classpath = buildUrls(classesDirectory(), sourceDirectory.resolve("config"));
             var classLoader = new URLClassLoader(classpath, truffleClassloader);
+            Thread.currentThread().setContextClassLoader(classLoader);
             appManager = new ApplicationManagerInvoker(classLoader, applicationManagerClassName);
             appManager.startApplication(parameters);
             // Set up file watching
@@ -247,6 +250,13 @@ public class PyronautFileWatcher implements Runnable {
         }
         // This is a hack, so that the launcher is on classpath of the user app
         // and it won't work in a native image
+        for (var url : result) {
+            try {
+                System.out.println("url = " + new File(url.toURI()).getName());
+            } catch (URISyntaxException e) {
+                throw new RuntimeException(e);
+            }
+        }
         result.add(PyronautFileWatcher.class.getProtectionDomain().getCodeSource().getLocation());
         return result.toArray(new URL[0]);
     }
