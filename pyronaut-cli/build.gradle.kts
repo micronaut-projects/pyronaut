@@ -14,6 +14,7 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
     implementation(mnPicocli.picocli)
     compileOnly(mn.micronaut.context)
+    compileOnly(mnTest.junit.platform.launcher)
     implementation(libs.tomlj)
     implementation(libs.gradle.tapi)
     runtimeOnly(mnLogging.logback.classic)

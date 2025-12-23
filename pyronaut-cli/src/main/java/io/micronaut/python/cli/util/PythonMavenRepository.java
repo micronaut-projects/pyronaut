@@ -86,6 +86,9 @@ public class PythonMavenRepository {
      */
     public static PythonMavenRepository inspect(Path repoPath) {
         var groups = repoPath.toFile().listFiles(File::isDirectory);
+        if (groups == null) {
+            throw new RuntimeException("Invalid repository path: " + repoPath);
+        }
         var mavenArtifacts=  Arrays.stream(groups)
             .flatMap(group -> {
                var artifacts = group.listFiles(File::isDirectory);

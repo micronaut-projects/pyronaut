@@ -73,7 +73,7 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
                 System.out.println("Resolving " + scope + " dependencies into " + destination);
                 var buildScript = template.replace("%DESTINATION_DIR%", destination.toString())
                     .replace("// %DEPENDENCIES%",
-                        buildDependenciesList(pyProject, extraDependencies, scope));
+                        buildFullDependenciesList(pyProject, extraDependencies, scope));
                 var tmpDir = Files.createTempDirectory("pyronaut");
                 Files.write(tmpDir.resolve("settings.gradle"),
                     List.of("rootProject.name = \"pyronaut-resolution\""));

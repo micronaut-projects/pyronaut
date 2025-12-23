@@ -15,10 +15,7 @@
  */
 package io.micronaut.python.cli;
 
-import io.micronaut.python.cli.commands.PyronautCleanCommand;
-import io.micronaut.python.cli.commands.PyronautInstallCommand;
-import io.micronaut.python.cli.commands.PyronautNativeCompileCommand;
-import io.micronaut.python.cli.commands.PyronautRunCommand;
+import io.micronaut.python.cli.commands.*;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
@@ -27,10 +24,11 @@ import picocli.CommandLine.Spec;
 import java.util.concurrent.Callable;
 
 @Command(name = "pyronaut", description = "The Pyronaut CLI", subcommands = {
-    PyronautCleanCommand.class,
-    PyronautRunCommand.class,
-    PyronautInstallCommand.class,
-    PyronautNativeCompileCommand.class
+        PyronautCleanCommand.class,
+        PyronautRunCommand.class,
+        PyronautInstallCommand.class,
+        PyronautNativeCompileCommand.class,
+        PyronautTestCommand.class
 }, mixinStandardHelpOptions = true)
 public class PyronautMainCommand implements Callable<Void> {
     @Spec
@@ -44,7 +42,7 @@ public class PyronautMainCommand implements Callable<Void> {
 
     public static void main(String[] args) {
         var exitCode = new CommandLine(new PyronautMainCommand())
-            .execute(args);
+                .execute(args);
         System.exit(exitCode);
     }
 }

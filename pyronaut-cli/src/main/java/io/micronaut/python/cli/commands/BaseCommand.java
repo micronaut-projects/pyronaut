@@ -31,12 +31,8 @@ abstract class BaseCommand implements Callable<Integer> {
         throw new IllegalStateException("Virtual env not found.");
     }
 
-    protected Path annotationProcessorDependenciesDir() {
-        return pyronautVenvCacheDir().resolve("dependencies/annotationProcessor");
-    }
-
-    protected Path compileDependenciesDir() {
-        return pyronautVenvCacheDir().resolve("dependencies/compile");
+    protected final Path dependenciesDirForScope(String scope) {
+        return pyronautVenvCacheDir().resolve("dependencies/" + scope);
     }
 
     protected void withTemporaryDir(TempDirSink tempDirConsumer) {

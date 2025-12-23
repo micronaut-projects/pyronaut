@@ -22,22 +22,29 @@ import picocli.CommandLine.Parameters;
 
 @Command(name = "run", description = "Runs a Pyronaut application", mixinStandardHelpOptions = true)
 public class PyronautRunCommand extends BaseSourceCommand {
+    private static final String ANNOTATION_PROCESSOR_SCOPE = "annotationProcessor";
+
     @Parameters(index = "0..*", description = "Application parameters")
     private String[] parameters;
+
+    protected String scope() {
+        return "compile";
+    }
 
     @Override
     public Integer call() throws Exception {
         var sourceDirectory = resolveRootDir();
-        var compileDependencies = PythonMavenRepository.inspect(compileDependenciesDir());
+        var compileDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(scope()));
         if (compileDependencies.isEmpty()) {
             System.err.println("Pyronaut dependencies not found. Did you run `pyronaut install`?");
             return -1;
         }
-        var annotationProcDependencies = PythonMavenRepository.inspect(annotationProcessorDependenciesDir());
+        var annotationProcDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(ANNOTATION_PROCESSOR_SCOPE));
         var watcher = new PyronautFileWatcher(sourceDirectory,
             annotationProcDependencies,
             compileDependencies,
-            parameters);
+            parameters,
+                getApplicationManagerClassName());
         var watcherThread = new Thread(watcher);
         watcherThread.start();
 
@@ -52,5 +59,14 @@ public class PyronautRunCommand extends BaseSourceCommand {
         }
 
         return 0;
+    }
+
+    /**
+     * Returns the name of the application manager that is responsible
+     * for starting the application and/or tests.
+     * @return the class name
+     */
+    protected String getApplicationManagerClassName() {
+        return "io.micronaut.python.cli.DefaultApplicationManager";
     }
 }

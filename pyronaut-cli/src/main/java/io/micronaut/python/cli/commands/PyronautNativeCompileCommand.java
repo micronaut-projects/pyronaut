@@ -54,7 +54,7 @@ public class PyronautNativeCompileCommand extends AbstractPyronautDependencyReso
             var rootDirectory = tomlFile.getParent();
             var pyronautDir = rootDirectory.resolve(FileUtils.PYRONAUT_DIR);
             var classesDir = pyronautDir.resolve(FileUtils.CLASSES_DIR);
-            var buildScript = template.replace("// %DEPENDENCIES%", buildDependenciesList(pyProject, List.of(), "compile"))
+            var buildScript = template.replace("// %DEPENDENCIES%", buildFullDependenciesList(pyProject, List.of(), "compile"))
                     .replace("%MAIN_CLASS%", "pyronaut_application.PyronautMain")
                     .replace("%PYRONAUT_PATH%", classesDir.toAbsolutePath().toString())
                     .replace("%PYRONAUT_CONFIG%", rootDirectory.resolve("config").toAbsolutePath().toString())

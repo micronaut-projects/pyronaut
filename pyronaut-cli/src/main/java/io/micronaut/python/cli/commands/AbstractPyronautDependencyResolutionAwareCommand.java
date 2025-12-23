@@ -44,7 +44,19 @@ public abstract class AbstractPyronautDependencyResolutionAwareCommand extends B
         return sb.toString();
     }
 
-    protected String buildDependenciesList(TomlParseResult pyProject,
+    protected final String buildFullDependenciesList(TomlParseResult pyProject,
+                                             List<String> extraDependencies,
+                                             String scope) throws IOException {
+        var scopeDependencies = buildDependenciesList(pyProject, extraDependencies, scope);
+        if ("test".equals(scope)) {
+            // poor man's inheritance
+            var runtime = buildDependenciesList(pyProject, List.of(), "compile");
+            return runtime + "\n" + scopeDependencies;
+        }
+        return scopeDependencies;
+    }
+
+    private String buildDependenciesList(TomlParseResult pyProject,
                                            List<String> extraDependencies,
                                            String scope) throws IOException {
         var depsArray = pyProject.getArray("tool.pyronaut.dependencies." + scope);

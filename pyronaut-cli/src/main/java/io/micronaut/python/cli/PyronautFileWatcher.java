@@ -59,17 +59,20 @@ public class PyronautFileWatcher implements Runnable {
     private final String[] parameters;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final AtomicBoolean starting = new AtomicBoolean(false);
-    private final static List<String> WATCHED_DIRECTORIES = List.of("src", "config");
+    private final static List<String> WATCHED_DIRECTORIES = List.of("src", "config", "tests");
+    private final String applicationManagerClassName;
 
     public PyronautFileWatcher(Path sourceDirectory,
                                PythonMavenRepository annotationProcessorRepo,
                                PythonMavenRepository compileClassPathRepo,
-                               String[] parameters) {
+                               String[] parameters,
+                               String applicationManagerClassName) {
         this.sourceDirectory = sourceDirectory.toAbsolutePath();
         this.outputDirectory = FileUtils.resolveOutputDirectory(sourceDirectory);
         this.annotationProcessorRepo = annotationProcessorRepo;
         this.compileClassPathRepo = compileClassPathRepo;
         this.parameters = parameters;
+        this.applicationManagerClassName = applicationManagerClassName;
     }
 
     @Override
@@ -84,7 +87,7 @@ public class PyronautFileWatcher implements Runnable {
             }
             var classpath = buildUrls(classesDirectory(), sourceDirectory.resolve("config"));
             var classLoader = new URLClassLoader(classpath, truffleClassloader);
-            appManager = new ApplicationManagerInvoker(classLoader);
+            appManager = new ApplicationManagerInvoker(classLoader, applicationManagerClassName);
             appManager.startApplication(parameters);
             // Set up file watching
             var watchService = FileSystems.getDefault().newWatchService();
@@ -261,10 +264,10 @@ public class PyronautFileWatcher implements Runnable {
         private final MethodHandle stoptMethod;
         private final Object applicationManager;
 
-        private ApplicationManagerInvoker(ClassLoader classLoader) {
+        private ApplicationManagerInvoker(ClassLoader classLoader, String className) {
             try {
                 var clazz =
-                    classLoader.loadClass("io.micronaut.python.cli.DefaultApplicationManager");
+                    classLoader.loadClass(className);
                 var lookup = MethodHandles.privateLookupIn(clazz, MethodHandles.lookup());
                 var voidType = MethodType.methodType(void.class);
                 constructor = lookup.findConstructor(clazz, voidType);
