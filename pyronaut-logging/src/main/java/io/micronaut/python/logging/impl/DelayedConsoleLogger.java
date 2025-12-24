@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.pyton.logging.impl;
+package io.micronaut.python.logging.impl;
 
 import io.micronaut.context.python.ContextHolder;
 import org.slf4j.Marker;
@@ -26,7 +26,7 @@ import java.io.StringWriter;
  * This logger is used when Python logging is not available.
  *
  * @author Micronaut Team
- * @since 5.0.0
+ * @since 1.0.0
  */
 final class DelayedConsoleLogger implements org.slf4j.Logger {
 

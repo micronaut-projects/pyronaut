@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.pyton.logging.impl;
+package io.micronaut.python.logging.impl;
 
 import org.slf4j.ILoggerFactory;
 import org.slf4j.IMarkerFactory;
@@ -27,9 +27,9 @@ import org.slf4j.spi.SLF4JServiceProvider;
  * This class is loaded by SLF4J via service loader mechanism.
  *
  * @author Micronaut Team
- * @since 5.0.0
+ * @since 1.0.0
  */
-public class PythonLoggingServiceProvider implements SLF4JServiceProvider {
+public final class PythonLoggingServiceProvider implements SLF4JServiceProvider {
 
     private PythonLoggerFactory loggerFactory;
     private BasicMarkerFactory markerFactory;

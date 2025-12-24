@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.pyton.logging.impl;
+package io.micronaut.python.logging.impl;
 
 import io.micronaut.context.python.ContextHolder;
 import org.graalvm.polyglot.Context;

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.pyton.logging.impl;
+package io.micronaut.python.logging.impl;
 
 import io.micronaut.context.python.ContextHolder;
 import org.graalvm.polyglot.Value;
@@ -29,7 +29,7 @@ import static io.micronaut.context.python.GraalPyRuntimeUtil.PYTHON;
  * This logger is only used when a GraalPy context is available.
  *
  * @author Micronaut Team
- * @since 5.0.0
+ * @since 1.0.0
  */
 final class PythonLogger implements org.slf4j.Logger {
 

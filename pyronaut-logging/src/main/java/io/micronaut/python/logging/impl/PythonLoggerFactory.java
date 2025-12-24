@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.pyton.logging.impl;
+package io.micronaut.python.logging.impl;
 
 import io.micronaut.context.python.ContextHolder;
 import org.slf4j.ILoggerFactory;
@@ -28,9 +28,9 @@ import java.util.concurrent.ConcurrentMap;
  * when a GraalPy context is available, otherwise falls back to System.out/err.
  *
  * @author Micronaut Team
- * @since 5.0.0
+ * @since 1.0.0
  */
-public class PythonLoggerFactory implements ILoggerFactory {
+public final class PythonLoggerFactory implements ILoggerFactory {
 
     private final ConcurrentMap<String, Logger> loggerMap = new ConcurrentHashMap<>();
     private final LoggerFactoryDelegate delegateFactory = new PythonLoggerFactory.PythonLoggerFactoryDelegate();

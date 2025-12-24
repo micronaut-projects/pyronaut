@@ -1,1 +1,1 @@
-io.micronaut.pyton.logging.impl.PythonLoggingServiceProvider
+io.micronaut.python.logging.impl.PythonLoggingServiceProvider
