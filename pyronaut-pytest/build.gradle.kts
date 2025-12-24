@@ -1,5 +1,6 @@
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
+    id("io.micronaut.build.internal.python")
 }
 
 dependencies {

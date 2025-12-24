@@ -21,6 +21,8 @@ import io.micronaut.core.annotation.Nullable;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.extensions.AbstractMicronautExtension;
 import org.graalvm.polyglot.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.AnnotatedElement;
 import java.util.List;
@@ -32,6 +34,7 @@ import java.util.Map;
 public class PytestMicronautExtension extends AbstractMicronautExtension<Value> {
 
     public static final String ID = "_micronaut_test_extension";
+    private static final Logger LOG = LoggerFactory.getLogger(PytestMicronautExtension.class);
 
     public PytestMicronautExtension(Map<String, Object> pytestProperties, Value node) {
         if (pytestProperties != null) {
@@ -52,12 +55,22 @@ public class PytestMicronautExtension extends AbstractMicronautExtension<Value> 
 
     @Override
     public void beforeClass(Value context, Class<?> testClass, @Nullable MicronautTestValue testAnnotationValue) {
-        super.beforeClass(context, testClass, testAnnotationValue);
+        try {
+            super.beforeClass(context, testClass, testAnnotationValue);
+        } catch (RuntimeException e) {
+            LOG.error("Error PytestMicronautExtension beforeClass: " + e.getMessage(), e);
+            throw e;
+        }
     }
 
     @Override
     public void afterClass(Value context) {
-        super.afterClass(context);
+        try {
+            super.afterClass(context);
+        } catch (RuntimeException e) {
+            LOG.error("Error PytestMicronautExtension afterClass: " + e.getMessage(), e);
+            throw e;
+        }
     }
 
     @Override

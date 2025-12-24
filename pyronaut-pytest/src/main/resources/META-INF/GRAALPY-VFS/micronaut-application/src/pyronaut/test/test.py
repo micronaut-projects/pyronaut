@@ -62,7 +62,7 @@ def micronaut_test_fixture(request,
         None, # application
         to_java_array(micronaut_test.environments),
         to_java_array(micronaut_test.packages),
-        None, # propertySources
+        to_java_array([]), # propertySources
         micronaut_test.rollback,
         micronaut_test.transactional,
         micronaut_test.rebuild_context,
