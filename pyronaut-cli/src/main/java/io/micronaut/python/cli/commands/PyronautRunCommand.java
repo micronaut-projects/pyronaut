@@ -57,6 +57,19 @@ public class PyronautRunCommand extends BaseSourceCommand {
         var watcherThread = new Thread(watcher);
         watcherThread.start();
 
+        // UI using TamboUI Toolkit
+        var uiThread = new Thread(() -> {
+            try (var uiRunner = dev.tamboui.toolkit.app.ToolkitRunner.create()) {
+                uiRunner.run(() ->
+                    dev.tamboui.toolkit.Toolkit.panel("Pyronaut Run",
+                        dev.tamboui.toolkit.Toolkit.text("Application is running..."))
+                );
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        });
+        uiThread.start();
+
         // Handle shutdown gracefully
         Runtime.getRuntime().addShutdownHook(new Thread(watcher::stop));
 
@@ -66,6 +79,9 @@ public class PyronautRunCommand extends BaseSourceCommand {
             watcher.stop();
             Thread.currentThread().interrupt();
         }
+
+        // Ensure UI thread stops after the application finishes
+        uiThread.interrupt();
 
         return 0;
     }

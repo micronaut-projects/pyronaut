@@ -8,6 +8,7 @@ micronaut-views = "5.9.0"
 micronaut-validation = "5.0.0-M1"
 tomlj="1.1.1"
 gradle-tapi = "9.2.1"
+tamboui = "1.0.0-SNAPSHOT"
 
 [libraries]
 micronaut-core = { module = 'io.micronaut:micronaut-core-bom', version.ref = 'micronaut' }
@@ -22,6 +23,8 @@ micronaut-projectgen-test = { module = 'io.micronaut.projectgen:micronaut-projec
 
 tomlj = { module = "org.tomlj:tomlj", version.ref="tomlj"}
 gradle-tapi = { module = "org.gradle:gradle-tooling-api", version.ref = "gradle-tapi" }
+tamboui = { module = "dev.tamboui:tamboui-toolkit", version.ref = "tamboui"}
+tamboui-jline = { module = "dev.tamboui:tamboui-jline", version.ref = "tamboui"}
 
 [bundles]
 
