@@ -24,6 +24,7 @@ import io.micronaut.python.cli.util.PythonMavenRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -38,6 +39,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import static io.micronaut.python.cli.util.FileUtils.recurseDelete;
 import static java.nio.file.Files.createDirectories;
@@ -47,6 +49,7 @@ import static java.nio.file.Files.createDirectories;
  * the application when source files change.
  */
 public class PyronautFileWatcher implements Runnable {
+    private final io.micronaut.python.cli.ui.UiController controller;
     private static final Logger LOGGER = LoggerFactory.getLogger(PyronautFileWatcher.class);
 
     public static final int SUCCESS = 0;
@@ -62,6 +65,7 @@ public class PyronautFileWatcher implements Runnable {
     private final AtomicBoolean starting = new AtomicBoolean(false);
     private final static List<String> WATCHED_DIRECTORIES = List.of("src", "config", "tests");
     private final String applicationManagerClassName;
+    private final DataOutputStream eventOut;
 
     public PyronautFileWatcher(
             Path rootDirectory,
@@ -69,14 +73,18 @@ public class PyronautFileWatcher implements Runnable {
             PythonMavenRepository annotationProcessorRepo,
             PythonMavenRepository compileClassPathRepo,
             String[] parameters,
-            String applicationManagerClassName) {
+            String applicationManagerClassName,
+            io.micronaut.python.cli.ui.UiController controller,
+            DataOutputStream eventOut) {
         this.rootDirectory = rootDirectory;
-        this.sourceDirectories = sourceDirectories.stream().map(Path::toAbsolutePath).toList();
+        this.sourceDirectories = sourceDirectories.stream().map(Path::toAbsolutePath).collect(Collectors.toList());
         this.outputDirectory = FileUtils.resolveOutputDirectory(rootDirectory);
         this.annotationProcessorRepo = annotationProcessorRepo;
         this.compileClassPathRepo = compileClassPathRepo;
         this.parameters = parameters;
         this.applicationManagerClassName = applicationManagerClassName;
+        this.controller = controller;
+        this.eventOut = eventOut;
     }
 
     @Override
@@ -85,14 +93,25 @@ public class PyronautFileWatcher implements Runnable {
         try {
             var truffleClassloader = createTruffleClassLoader(compileClassPathRepo);
             // Initial compilation and start
+            if (controller != null) controller.startCompiling();
             if (compile(truffleClassloader) != SUCCESS) {
-                System.err.println("Initial compilation failed");
+                if (controller != null) controller.stopCompiling();
+                // UI context may not exist yet -- just abort here and don't print
                 return;
             }
+            if (controller != null) controller.stopCompiling();
             var classpath = buildUrls(classesDirectory(), rootDirectory.resolve("config"));
             var classLoader = new URLClassLoader(classpath, truffleClassloader);
             Thread.currentThread().setContextClassLoader(classLoader);
             appManager = new ApplicationManagerInvoker(classLoader, applicationManagerClassName);
+            // Set event protocol output if present
+            if (eventOut != null) {
+                try {
+                    appManager.setEventOutputStream(eventOut);
+                } catch (Exception e) {
+                    // If this fails, proceed without protocol events
+                }
+            }
             appManager.startApplication(parameters);
             // Set up file watching
             var watchService = FileSystems.getDefault().newWatchService();
@@ -100,7 +119,8 @@ public class PyronautFileWatcher implements Runnable {
                 var dir = rootDirectory.resolve(watchedDirectory);
                 if (Files.isDirectory(dir)) {
                     registerAll(dir, watchService);
-                    System.out.println("Watching for changes in " + dir);
+                    //controller.dispatch(new UiAction.AddNotification("Watching for changes in " + dir, UiModel.Severity.INFO));
+                    // Optionally write to logger instead, but not to System.out
                 }
             }
 
@@ -113,8 +133,8 @@ public class PyronautFileWatcher implements Runnable {
                     break;
                 }
 
-                var hasChanges = false;
-                for (var event : key.pollEvents()) {
+                List<String> changedFiles = new ArrayList<>();
+                for (WatchEvent<?> event : key.pollEvents()) {
                     var kind = event.kind();
 
                     if (kind == StandardWatchEventKinds.OVERFLOW) {
@@ -126,29 +146,37 @@ public class PyronautFileWatcher implements Runnable {
                             changed.toAbsolutePath().startsWith(outputPath)) {
                         continue;
                     }
-                    System.out.println(
-                            "File changed: " + changed.toAbsolutePath() + " (" + kind + ")");
 
-                    hasChanges = true;
+                    String label;
+                    if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
+                        label = "[ADDED]   ";
+                    } else if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
+                        label = "[UPDATED] ";
+                    } else if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
+                        label = "[REMOVED] ";
+                    } else {
+                        label = "[CHANGED] ";
+                    }
+                    changedFiles.add(label + changed.toAbsolutePath());
                 }
 
-                if (hasChanges) {
+                if (!changedFiles.isEmpty()) {
                     if (starting.compareAndSet(false, true)) {
                         long sd = System.nanoTime();
-                        // TODO: ideally we should keep the existing app alive until
-                        // we know that all files are compiled properly. This is difficult
-                        // to implement because the generated classes contain an absolute
-                        // path to where the files are generated, which makes it impossible
-                        // to use a different directory for compilation and runtime.
+                        if (controller != null) {
+                            controller.updateFiles(changedFiles);
+                            controller.startCompiling();
+                        }
                         appManager.stopApplication();
-                        System.out.println("Changes detected, recompiling and restarting...");
                         if (compile(truffleClassloader) == SUCCESS) {
+                            if (controller != null) controller.stopCompiling();
                             appManager.startApplication(parameters);
                             long ed = System.nanoTime();
                             var dur = Duration.ofNanos(ed - sd).toMillis();
-                            System.out.println("Restart done in " + dur + "ms");
+                            if (controller != null) controller.notify("Restart done in " + dur + "ms", io.micronaut.python.cli.ui.UiModel.Severity.SUCCESS);
                         } else {
-                            System.err.println("Compilation failed, application not restarted");
+                            if (controller != null) controller.stopCompiling();
+                            if (controller != null) controller.notify("Compilation failed, application not restarted", io.micronaut.python.cli.ui.UiModel.Severity.ERROR);
                         }
                     }
                     starting.set(false);
@@ -162,6 +190,7 @@ public class PyronautFileWatcher implements Runnable {
             if (appManager != null) {
                 appManager.stopApplication();
             }
+            // No more socket to close
         }
     }
 
@@ -215,19 +244,24 @@ public class PyronautFileWatcher implements Runnable {
     }
 
     private int compile(ClassLoader truffleClassloader) {
+        // During compilation, show Compiling state/status in the UI, stream output to UI
+        // (No StreamsCapture static context available here - move trigger up to caller if needed)
         var compiler = new PyronautCliCompiler();
         compiler.classLoader = truffleClassloader;
-        compiler.sourceDirectory = sourceDirectories.stream().map(Path::toFile).toList();
+        compiler.sourceDirectory = sourceDirectories.stream().map(Path::toFile).collect(Collectors.toList());
         compiler.outputDirectory = classesDirectory().toFile();
         compiler.annotationProcessorPath = annotationProcessorRepo.asClasspath();
         compiler.classpath = compileClassPathRepo.asClasspath();
-        System.out.println("Compiling...");
+
         try {
             recurseDelete(classesDirectory());
             createDirectories(classesDirectory());
-            return compiler.call();
+            int result = compiler.call();
+            // No StreamsCapture static context available here
+            return result;
         } catch (Exception ex) {
             ex.printStackTrace(System.err);
+            // No StreamsCapture static context available here
             return ERROR;
         }
     }
@@ -267,18 +301,19 @@ public class PyronautFileWatcher implements Runnable {
         private final MethodHandle constructor;
         private final MethodHandle startMethod;
         private final MethodHandle stoptMethod;
+        private final MethodHandle setEventOutputStreamMethod;
         private final Object applicationManager;
 
         private ApplicationManagerInvoker(ClassLoader classLoader, String className) {
             try {
-                var clazz =
-                        classLoader.loadClass(className);
+                var clazz = classLoader.loadClass(className);
                 var lookup = MethodHandles.privateLookupIn(clazz, MethodHandles.lookup());
                 var voidType = MethodType.methodType(void.class);
                 constructor = lookup.findConstructor(clazz, voidType);
                 startMethod = lookup.findVirtual(clazz, "startApplication",
                         MethodType.methodType(void.class, String[].class));
                 stoptMethod = lookup.findVirtual(clazz, "stopApplication", voidType);
+                setEventOutputStreamMethod = lookup.findVirtual(clazz, "setEventOutputStream", MethodType.methodType(void.class, DataOutputStream.class));
             } catch (Throwable e) {
                 throw new RuntimeException(e);
             }
@@ -310,5 +345,16 @@ public class PyronautFileWatcher implements Runnable {
                 throw new RuntimeException(e);
             }
         }
+
+        public void setEventOutputStream(DataOutputStream out) {
+            if (setEventOutputStreamMethod != null) {
+                try {
+                    setEventOutputStreamMethod.invoke(applicationManager, out);
+                } catch (Throwable e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
+
     }
 }

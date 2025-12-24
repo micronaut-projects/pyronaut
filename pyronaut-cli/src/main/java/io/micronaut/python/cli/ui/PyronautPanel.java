@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 original authors
+ * Copyright 2017-2025 original authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,20 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.python.cli;
+package io.micronaut.python.cli.ui;
 
-import java.io.DataOutputStream;
+/**
+ * A floating panel in the Pyronaut control panel.
+ * Follows the pattern from TamboUI FloatingPanel.
+ */
+final class PyronautPanel {
+    final int id;
+    final PanelContent content;
+    int x;
+    int y;
 
-public interface ApplicationManager {
-    void startApplication(String[] args);
+    PyronautPanel(int id, PanelContent content, int x, int y) {
+        this.id = id;
+        this.content = content;
+        this.x = x;
+        this.y = y;
+    }
 
-    void stopApplication();
-
-    /**
-     * Called with the DataOutputStream (protocol pipe) for event communication.
-     * Default implementation is a no-op for backward compatibility.
-     */
-    default void setEventOutputStream(DataOutputStream out) {
-        // Default no-op for backward compatibility
+    String panelId() {
+        return "panel-" + id;
     }
 }

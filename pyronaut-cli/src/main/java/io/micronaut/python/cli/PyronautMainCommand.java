@@ -16,6 +16,7 @@
 package io.micronaut.python.cli;
 
 import io.micronaut.python.cli.commands.*;
+import io.micronaut.python.cli.ui.StreamsCapture;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
@@ -31,6 +32,10 @@ import java.util.concurrent.Callable;
         PyronautTestCommand.class
 }, mixinStandardHelpOptions = true)
 public class PyronautMainCommand implements Callable<Void> {
+    static {
+        StreamsCapture.installGlobal();
+    }
+
     @Spec
     CommandSpec spec;
 

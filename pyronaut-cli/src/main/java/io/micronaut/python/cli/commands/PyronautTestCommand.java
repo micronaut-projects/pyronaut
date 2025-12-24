@@ -16,11 +16,17 @@
 package io.micronaut.python.cli.commands;
 
 import io.micronaut.python.cli.PyronautFileWatcher;
+import io.micronaut.python.cli.ui.PyronautTui;
 import io.micronaut.python.cli.util.PythonMavenRepository;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Command(name = "test", description = "Executes tests", mixinStandardHelpOptions = true)
 public class PyronautTestCommand extends BaseSourceCommand {
@@ -54,42 +60,49 @@ public class PyronautTestCommand extends BaseSourceCommand {
         }
         var annotationProcDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(ANNOTATION_PROCESSOR_SCOPE));
         var rootDirectory = resolveRootDir();
+
+        // Create in-process event bridge using Piped streams
+        PipedInputStream eventPipeIn = new PipedInputStream(65536);
+        PipedOutputStream eventPipeOut = new PipedOutputStream(eventPipeIn);
+        DataInputStream eventIn = new DataInputStream(eventPipeIn);
+        DataOutputStream eventOut = new DataOutputStream(eventPipeOut);
+
+        var tui = new PyronautTui();
+        tui.setEventInputStream(eventIn);
+        var controller = tui.getController();
         var watcher = new PyronautFileWatcher(
                 rootDirectory,
-                getSourceDirectories().stream().map(rootDirectory::resolve).toList(),
+                getSourceDirectories().stream().map(rootDirectory::resolve).collect(Collectors.toList()),
                 annotationProcDependencies,
                 compileDependencies,
                 parameters,
-                getApplicationManagerClassName());
-        var watcherThread = new Thread(watcher);
-        watcherThread.start();
+                getApplicationManagerClassName(),
+                controller,
+                eventOut); // Use DataOutputStream for event protocol
 
-        // UI using TamboUI Toolkit for test execution
-        var uiThread = new Thread(() -> {
-            try (var uiRunner = dev.tamboui.toolkit.app.ToolkitRunner.create()) {
-                uiRunner.run(() ->
-                    dev.tamboui.toolkit.Toolkit.panel("Pyronaut Tests",
-                        dev.tamboui.toolkit.Toolkit.text("Running tests..."))
-                );
+
+        var watcherThread = new Thread(watcher::run, "PyronautWatcher");
+        var tuiThread = new Thread(() -> {
+            try {
+                tui.run();
             } catch (Exception ex) {
                 ex.printStackTrace();
             }
-        });
-        uiThread.start();
+        }, "PyronautTUI");
+        watcherThread.start();
+        tuiThread.start();
 
-        // Handle shutdown gracefully
-        Runtime.getRuntime().addShutdownHook(new Thread(watcher::stop));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            tui.stop();
+        }));
 
         try {
             watcherThread.join();
+            tuiThread.join();
         } catch (InterruptedException e) {
-            watcher.stop();
             Thread.currentThread().interrupt();
         }
-
-        // Ensure UI thread stops after tests complete
-        uiThread.interrupt();
-
+        tui.stop();
         return 0;
     }
 }
