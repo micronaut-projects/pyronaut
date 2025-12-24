@@ -9,5 +9,8 @@ dependencies {
     api(mn.micronaut.core)
     api(mn.micronaut.context)
     api(mn.micronaut.context.python)
-    api(mnLogging.slf4j.api)        
+    api(mnLogging.slf4j.api)
+
+    testImplementation(mnTest.junit.jupiter.api)
+    testImplementation(mnTest.junit.jupiter.engine)
 }

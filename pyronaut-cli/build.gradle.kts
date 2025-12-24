@@ -18,6 +18,8 @@ dependencies {
     implementation(libs.tomlj)
     implementation(libs.gradle.tapi)
     runtimeOnly(mnLogging.logback.classic)
+    testImplementation(mnTest.junit.jupiter.api)
+    testImplementation(mnTest.junit.jupiter.engine)
 }
 
 application {
