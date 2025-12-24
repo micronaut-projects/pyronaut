@@ -1,3 +1,5 @@
+import static io.micronaut.build.TestFramework.JUNIT6
+
 plugins {
     id 'io.micronaut.build.internal.pyronaut-base'
     id "io.micronaut.build.internal.module"
@@ -6,6 +8,7 @@ micronautBuild {
     descriptor {
         parentModuleId = "io.micronaut.pyronaut:micronaut-pyronaut"
     }
+    testFramework = JUNIT6
 }
 
 repositories {

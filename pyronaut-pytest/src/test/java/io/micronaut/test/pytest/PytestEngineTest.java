@@ -33,7 +33,7 @@ class PytestEngineTest {
     @Test
     void engineCanDiscoverPythonTests() {
         EngineTestKit
-            .engine("pytest-engine")
+            .engine(PytestTestEngine.ENGINE_ID)
             .selectors(DiscoverySelectors.selectDirectory("src/test/python"))
             .execute()
             .testEvents()
@@ -49,7 +49,7 @@ class PytestEngineTest {
     @Test
     void engineCanDiscoverPythonTestsSystemProperty() {
         EngineTestKit
-            .engine("pytest-engine")
+            .engine(PytestTestEngine.ENGINE_ID)
             .configurationParameter(PytestTestEngine.TEST_SOURCE_DIR, "src/test/python")
             .execute()
             .testEvents()

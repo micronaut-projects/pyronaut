@@ -53,7 +53,7 @@ public class PytestTestEngine implements TestEngine {
 
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
 
-    private static final String ENGINE_ID = "pyronaut-pytest";
+    public static final String ENGINE_ID = "pyronaut-pytest";
     public static final String TEST_SOURCE_DIR = "pytest.src.dir";
     private Context context;
 
