@@ -53,7 +53,7 @@ public class PytestTestEngine implements TestEngine {
 
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
 
-    private static final String ENGINE_ID = "pytest-engine";
+    private static final String ENGINE_ID = "pyronaut-pytest";
     public static final String TEST_SOURCE_DIR = "pytest.src.dir";
     private Context context;
 
@@ -157,11 +157,11 @@ public class PytestTestEngine implements TestEngine {
 
     @Override
     public Optional<String> getGroupId() {
-        return Optional.of("pyronaut.test");
+        return Optional.of("io.micronaut.pyronaut");
     }
 
     @Override
     public Optional<String> getArtifactId() {
-        return Optional.of("micronaut-pytest-engine");
+        return Optional.of("micronaut-pyronaut-pytest");
     }
 }
