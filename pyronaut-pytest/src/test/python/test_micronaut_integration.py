@@ -10,9 +10,10 @@ from pyronaut.test import *
 import java
 from micronaut.context.env import Environment
 from micronaut.context import ApplicationContext
-from typing import List, Dict
-from test import Foo
+from typing import List, Dict, Annotated
+from test import Foo, Baz
 from Bar import Bar
+from jakarta.inject import Named
 
 @pytest.fixture
 def my_context(request):
@@ -33,6 +34,11 @@ def foo(my_context : ApplicationContext) -> Foo:
 def bar(my_context : ApplicationContext) -> Bar:
     return my_context[Bar]
 
+# TODO: support named injection
+# @pytest.fixture
+# def baz(my_context : ApplicationContext) -> Baz:
+#     return my_context[Annotated[Baz, Named("test")]]
+
 def test_micronaut_context_creation(
         my_context: ApplicationContext,
         env: Environment,
@@ -51,6 +57,8 @@ def test_micronaut_context_creation(
     assert env is not None
     assert foo is not None
     assert bar is not None
+    # TODO: support named injection
+    # assert baz is not None
     assert ctx.isRunning() is True
 
     # Verify environments are set
