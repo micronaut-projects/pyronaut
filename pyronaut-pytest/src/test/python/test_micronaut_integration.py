@@ -12,6 +12,7 @@ from micronaut.context.env import Environment
 from micronaut.context import ApplicationContext
 from typing import List, Dict
 from test import Foo
+from Bar import Bar
 
 @pytest.fixture
 def my_context(request):
@@ -28,7 +29,15 @@ def env(my_context) -> ApplicationContext:
 def foo(my_context : ApplicationContext) -> Foo:
     return my_context[Foo]
 
-def test_micronaut_context_creation(my_context: ApplicationContext, env: Environment, foo: Foo):
+@pytest.fixture
+def bar(my_context : ApplicationContext) -> Bar:
+    return my_context[Bar]
+
+def test_micronaut_context_creation(
+        my_context: ApplicationContext,
+        env: Environment,
+        foo: Foo,
+        bar: Bar):
     """
     Test that the Micronaut ApplicationContext is created and accessible.
 
@@ -41,6 +50,7 @@ def test_micronaut_context_creation(my_context: ApplicationContext, env: Environ
     assert ctx is not None
     assert env is not None
     assert foo is not None
+    assert bar is not None
     assert ctx.isRunning() is True
 
     # Verify environments are set

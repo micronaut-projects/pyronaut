@@ -127,7 +127,12 @@ class ApplicationContextWrapper:
                 fqn = f"{stripped_module}.{qualname}" if stripped_module else qualname
 
             lookup_key = fqn
-            result = self.java_ctx.getBean(java.type(lookup_key))
+            try:
+                result = self.java_ctx.getBean(java.type(lookup_key))
+            except KeyError:
+                if lookup_key == f"{class_name}.{class_name}":
+                    result = self.java_ctx.getBean(java.type(f"python.{class_name}"))
+
             if result is None:
                 raise KeyError(f"Key '{key}' not found in context")
 
