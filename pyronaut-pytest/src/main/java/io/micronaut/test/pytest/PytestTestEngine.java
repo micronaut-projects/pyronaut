@@ -90,6 +90,7 @@ public class PytestTestEngine implements TestEngine {
             });
             this.context = builder.build();
             ContextHolder.setContext(context);
+            ContextHolder.setReuseContext(true);
         }
 
         EngineDescriptor engineDescriptor = new EngineDescriptor(uniqueId, "Micronaut Pytest Engine");
