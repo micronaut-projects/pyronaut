@@ -15,6 +15,9 @@
  */
 package io.micronaut.python.cli;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.tools.SimpleJavaFileObject;
 import java.io.IOException;
 import java.net.URI;
@@ -23,6 +26,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 class GeneratedEntryPoint extends SimpleJavaFileObject {
+    private static final Logger LOGGER = LoggerFactory.getLogger(GeneratedEntryPoint.class);
 
     private final List<Path> sourceDirs;
 
@@ -57,6 +61,9 @@ class GeneratedEntryPoint extends SimpleJavaFileObject {
         sb.append("        Micronaut.run(args);\n");
         sb.append("    }\n");
         sb.append("}\n");
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("Generated soures: {}", sb);
+        }
         return sb.toString();
     }
 }

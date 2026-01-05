@@ -16,6 +16,7 @@ include("pyronaut-projectgen")
 include("pyronaut-projectgen-app")
 include("pyronaut-pytest")
 include("pyronaut-bom")
+include("pyronaut-logging")
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
@@ -24,6 +25,7 @@ micronautBuild {
     importMicronautCatalog()
     importMicronautCatalog("micronaut-picocli")
     importMicronautCatalog("micronaut-serde")
+    importMicronautCatalog("micronaut-logging")
     importMicronautCatalog("micronaut-views")
     importMicronautCatalog("micronaut-validation")
 }
