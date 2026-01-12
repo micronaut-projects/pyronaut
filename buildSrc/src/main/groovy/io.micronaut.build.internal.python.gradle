@@ -1,0 +1,9 @@
+import io.micronaut.build.internal.python.PyronautCompilerPlugin
+
+pluginManager.apply(PyronautCompilerPlugin)
+def libs = project.extensions.getByType(VersionCatalogsExtension).named("libs")
+dependencies {
+    pyronautCompiler(platform(libs.findLibrary("micronaut-core").get()))
+    pyronautCompiler("io.micronaut:micronaut-inject-python")
+    pyronautCompiler("io.micronaut:micronaut-context-python")
+}

@@ -14,6 +14,7 @@ rootProject.name = "pyronaut-parent"
 include("pyronaut-cli")
 include("pyronaut-projectgen")
 include("pyronaut-projectgen-app")
+include("pyronaut-pytest")
 include("pyronaut-bom")
 include("pyronaut-logging")
 
