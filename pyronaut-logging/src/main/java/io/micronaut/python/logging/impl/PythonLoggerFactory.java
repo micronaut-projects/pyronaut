@@ -59,12 +59,7 @@ public final class PythonLoggerFactory implements ILoggerFactory {
     private static class PythonLoggerFactoryDelegate implements LoggerFactoryDelegate {
         @Override
         public Logger getLogger(String name) {
-            // Use Python logging if available, otherwise fall back to console
-            if (ContextHolder.isInitialized()) {
-                return new PythonLogger(name);
-            } else {
-                return new DelayedConsoleLogger(name);
-            }
+            return new DelayedConsoleLogger(name);
         }
     }
 }

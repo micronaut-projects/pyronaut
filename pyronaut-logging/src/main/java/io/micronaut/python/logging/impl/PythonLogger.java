@@ -18,6 +18,8 @@ package io.micronaut.python.logging.impl;
 import io.micronaut.context.python.ContextHolder;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Marker;
+import org.slf4j.helpers.FormattingTuple;
+import org.slf4j.helpers.MessageFormatter;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -69,17 +71,23 @@ final class PythonLogger implements org.slf4j.Logger {
 
     @Override
     public void trace(String format, Object arg) {
-        debugMember.execute(String.format(format, arg));
+        FormattingTuple t = MessageFormatter.format(format, arg);
+        String message = formatTuple(t);
+        debugMember.execute(message);
     }
 
     @Override
     public void trace(String format, Object arg1, Object arg2) {
-        debugMember.execute(String.format(format, arg1, arg2));
+        FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+        String message = formatTuple(t);
+        debugMember.execute(message);
     }
 
     @Override
     public void trace(String format, Object... arguments) {
-        debugMember.execute(String.format(format, arguments));
+        FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+        String message = formatTuple(t);
+        debugMember.execute(message);
     }
 
     @Override
@@ -130,17 +138,23 @@ final class PythonLogger implements org.slf4j.Logger {
 
     @Override
     public void debug(String format, Object arg) {
-        debugMember.execute(String.format(format, arg));
+        FormattingTuple t = MessageFormatter.format(format, arg);
+        String message = formatTuple(t);
+        debugMember.execute(message);
     }
 
     @Override
     public void debug(String format, Object arg1, Object arg2) {
-        debugMember.execute(String.format(format, arg1, arg2));
+        FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+        String message = formatTuple(t);
+        debugMember.execute(message);
     }
 
     @Override
     public void debug(String format, Object... arguments) {
-        debugMember.execute(String.format(format, arguments));
+        FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+        String message = formatTuple(t);
+        debugMember.execute(message);
     }
 
     @Override
@@ -191,17 +205,23 @@ final class PythonLogger implements org.slf4j.Logger {
 
     @Override
     public void info(String format, Object arg) {
-        infoMember.execute(String.format(format, arg));
+        FormattingTuple t = MessageFormatter.format(format, arg);
+        String message = formatTuple(t);
+        infoMember.execute(message);
     }
 
     @Override
     public void info(String format, Object arg1, Object arg2) {
-        infoMember.execute(String.format(format, arg1, arg2));
+        FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+        String message = formatTuple(t);
+        infoMember.execute(message);
     }
 
     @Override
     public void info(String format, Object... arguments) {
-        infoMember.execute(String.format(format, arguments));
+        FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+        String message = formatTuple(t);
+        infoMember.execute(message);
     }
 
     @Override
@@ -252,17 +272,23 @@ final class PythonLogger implements org.slf4j.Logger {
 
     @Override
     public void warn(String format, Object arg) {
-        warningMember.execute(String.format(format, arg));
+        FormattingTuple t = MessageFormatter.format(format, arg);
+        String message = formatTuple(t);
+        warningMember.execute(message);
     }
 
     @Override
     public void warn(String format, Object arg1, Object arg2) {
-        warningMember.execute(String.format(format, arg1, arg2));
+        FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+        String message = formatTuple(t);
+        warningMember.execute(message);
     }
 
     @Override
     public void warn(String format, Object... arguments) {
-        warningMember.execute(String.format(format, arguments));
+        FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+        String message = formatTuple(t);
+        warningMember.execute(message);
     }
 
     @Override
@@ -313,17 +339,23 @@ final class PythonLogger implements org.slf4j.Logger {
 
     @Override
     public void error(String format, Object arg) {
-        errorMember.execute(String.format(format, arg));
+        FormattingTuple t = MessageFormatter.format(format, arg);
+        String message = formatTuple(t);
+        errorMember.execute(message);
     }
 
     @Override
     public void error(String format, Object arg1, Object arg2) {
-        errorMember.execute(String.format(format, arg1, arg2));
+        FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+        String message = formatTuple(t);
+        errorMember.execute(message);
     }
 
     @Override
     public void error(String format, Object... arguments) {
-        errorMember.execute(String.format(format, arguments));
+        FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+        String message = formatTuple(t);
+        errorMember.execute(message);
     }
 
     @Override
@@ -367,5 +399,12 @@ final class PythonLogger implements org.slf4j.Logger {
         PrintWriter pw = new PrintWriter(sw);
         t.printStackTrace(pw);
         return sw.toString();
+    }
+
+    private String formatTuple(FormattingTuple t) {
+        if (t.getThrowable() != null) {
+            return t.getMessage() + "\n" + getStackTraceAsString(t.getThrowable());
+        }
+        return t.getMessage();
     }
 }

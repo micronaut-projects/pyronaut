@@ -17,6 +17,8 @@ package io.micronaut.python.logging.impl;
 
 import io.micronaut.context.python.ContextHolder;
 import org.slf4j.Marker;
+import org.slf4j.helpers.FormattingTuple;
+import org.slf4j.helpers.MessageFormatter;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -85,21 +87,24 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
     @Override
     public void trace(String format, Object arg) {
         if (traceEnabled) {
-            trace(String.format(format, arg));
+            FormattingTuple t = MessageFormatter.format(format, arg);
+            trace(formatTuple(t));
         }
     }
 
     @Override
     public void trace(String format, Object arg1, Object arg2) {
         if (traceEnabled) {
-            trace(String.format(format, arg1, arg2));
+            FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+            trace(formatTuple(t));
         }
     }
 
     @Override
     public void trace(String format, Object... arguments) {
         if (traceEnabled) {
-            trace(String.format(format, arguments));
+            FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+            trace(formatTuple(t));
         }
     }
 
@@ -170,7 +175,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (debugEnabled) {
-                debug(String.format(format, arg));
+                FormattingTuple t = MessageFormatter.format(format, arg);
+                debug(formatTuple(t));
             }
         } else {
             d.debug(format, arg);
@@ -182,7 +188,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (debugEnabled) {
-                debug(String.format(format, arg1, arg2));
+                FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+                debug(formatTuple(t));
             }
         } else {
             d.debug(format, arg1, arg2);
@@ -194,7 +201,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (debugEnabled) {
-                debug(String.format(format, arguments));
+                FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+                debug(formatTuple(t));
             }
         } else {
             d.debug(format, arguments);
@@ -265,7 +273,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (infoEnabled) {
-                info(String.format(format, arg));
+                FormattingTuple t = MessageFormatter.format(format, arg);
+                info(formatTuple(t));
             }
         } else {
             d.info(format, arg);
@@ -277,7 +286,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (infoEnabled) {
-                info(String.format(format, arg1, arg2));
+                FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+                info(formatTuple(t));
             }
         } else {
             d.info(format, arg1, arg2);
@@ -289,7 +299,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (infoEnabled) {
-                info(String.format(format, arguments));
+                FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+                info(formatTuple(t));
             }
         } else {
             d.info(format, arguments);
@@ -360,7 +371,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (warnEnabled) {
-                warn(String.format(format, arg));
+                FormattingTuple t = MessageFormatter.format(format, arg);
+                warn(formatTuple(t));
             }
         } else {
             d.warn(format, arg);
@@ -372,7 +384,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (warnEnabled) {
-                warn(String.format(format, arg1, arg2));
+                FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+                warn(formatTuple(t));
             }
         } else {
             d.warn(format, arg1, arg2);
@@ -384,7 +397,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (warnEnabled) {
-                warn(String.format(format, arguments));
+                FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+                warn(formatTuple(t));
             }
         } else {
             d.warn(format, arguments);
@@ -455,7 +469,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (errorEnabled) {
-                error(String.format(format, arg));
+                FormattingTuple t = MessageFormatter.format(format, arg);
+                error(formatTuple(t));
             }
         } else {
             d.error(format, arg);
@@ -467,7 +482,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (errorEnabled) {
-                error(String.format(format, arg1, arg2));
+                FormattingTuple t = MessageFormatter.format(format, arg1, arg2);
+                error(formatTuple(t));
             }
         } else {
             d.error(format, arg1, arg2);
@@ -479,7 +495,8 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (errorEnabled) {
-                error(String.format(format, arguments));
+                FormattingTuple t = MessageFormatter.arrayFormat(format, arguments);
+                error(formatTuple(t));
             }
         } else {
             d.error(format, arguments);
@@ -536,5 +553,19 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
             throwable.printStackTrace(pw);
             stream.println(sw);
         }
+    }
+
+    private String formatTuple(FormattingTuple t) {
+        if (t.getThrowable() != null) {
+            return t.getMessage() + "\n" + getStackTraceAsString(t.getThrowable());
+        }
+        return t.getMessage();
+    }
+
+    private String getStackTraceAsString(Throwable t) {
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+        t.printStackTrace(pw);
+        return sw.toString();
     }
 }
