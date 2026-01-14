@@ -1,5 +1,7 @@
 pluginManagement {
     repositories {
+        // Allow resolving development plugins from the local Maven cache (for j2pyi plugin).
+        mavenLocal()
         gradlePluginPortal()
         mavenCentral()
     }
@@ -14,6 +16,8 @@ rootProject.name = 'pyronaut-parent'
 include 'pyronaut-projectgen'
 include 'pyronaut-projectgen-app'
 include 'pyronaut-bom'
+// New module that generates Python .pyi stubs for the Micronaut API surface
+include 'pyronaut-api'
 
 enableFeaturePreview 'TYPESAFE_PROJECT_ACCESSORS'
 

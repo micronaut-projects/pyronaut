@@ -47,3 +47,17 @@ Versions and catalogs are managed via `gradle/libs.versions.toml`, and Micronaut
 ## License
 
 Licensed under the Apache License, Version 2.0. See `LICENSE` for details.
+
+### Developing with the j2pyi plugin from Maven Local
+
+The pyronaut-api module applies the com.oracle.graal.python.bindings.j2pyi Gradle plugin. For local development, this plugin can be resolved from Maven Local (no need to publish to Maven Central).
+
+Steps:
+1. In the j2pyi repository, publish the doclet and plugin:
+   - ./gradlew :doclet:publishToMavenLocal :gradle-plugin:publishToMavenLocal
+2. In this repository, verify Gradle can resolve the plugin and list tasks:
+   - ./gradlew :pyronaut-api:tasks
+3. To generate stubs:
+   - ./gradlew :pyronaut-api:pyi
+
+Note: settings.gradle is configured with pluginManagement { mavenLocal() } so Gradle will look in your local Maven cache for the plugin.
