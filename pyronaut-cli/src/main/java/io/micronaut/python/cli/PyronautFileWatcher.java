@@ -15,9 +15,6 @@
  */
 package io.micronaut.python.cli;
 
-//import io.micronaut.context.ApplicationContext;
-//import io.micronaut.core.naming.Described;
-
 import io.micronaut.python.cli.util.FileUtils;
 import io.micronaut.python.cli.util.MavenArtifact;
 import io.micronaut.python.cli.util.PythonMavenRepository;
@@ -47,8 +44,6 @@ import static java.nio.file.Files.createDirectories;
  * the application when source files change.
  */
 public class PyronautFileWatcher implements Runnable {
-    private static final Logger LOGGER = LoggerFactory.getLogger(PyronautFileWatcher.class);
-
     public static final int SUCCESS = 0;
     public static final int ERROR = -1;
 

@@ -15,6 +15,8 @@
  */
 package io.micronaut.python.cli;
 
+import io.micronaut.core.reflect.ClassUtils;
+import io.micronaut.core.util.StringUtils;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -104,6 +106,7 @@ public class PyronautCliCompiler implements Callable<Integer> {
                              List<String> compilerOptions,
                              JavaFileManager fileManager,
                              DiagnosticCollector<JavaFileObject> diagnosticCollector) {
+        System.setProperty(ClassUtils.PROPERTY_MICRONAUT_CLASSLOADER_LOGGING, StringUtils.FALSE);
         var options = buildCompilerOptions(classpath, bootclasspath, annotationProcessorPath, compilerOptions);
         if (verbose) {
             System.out.println("Compiler options:");

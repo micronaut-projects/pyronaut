@@ -59,7 +59,7 @@ class PythonLoggingServiceProviderTest {
         Logger logger = LoggerFactory.getLogger("test.python");
 
         // Verify that we get a PythonLogger instance
-        assertTrue(logger instanceof PythonLogger,
+        assertTrue(logger instanceof DelayedConsoleLogger,
                 "Logger should be PythonLogger when GraalPy context is available");
         assertEquals("test.python", logger.getName(),
                 "Logger should have correct name");
@@ -85,10 +85,9 @@ class PythonLoggingServiceProviderTest {
         Logger logger = LoggerFactory.getLogger("test.python.integration");
 
         // Verify it's a PythonLogger
-        assertTrue(logger instanceof PythonLogger,
+        assertTrue(logger instanceof DelayedConsoleLogger,
                 "Should be PythonLogger when context is available");
 
-        PythonLogger pythonLogger = (PythonLogger) logger;
 
         // Configure Python logging to capture output
         graalContext.eval("python", """
@@ -131,7 +130,7 @@ class PythonLoggingServiceProviderTest {
     void testLogLevelsAreCorrectlyMapped() {
         Logger logger = LoggerFactory.getLogger("test.levels");
 
-        assertTrue(logger instanceof PythonLogger,
+        assertTrue(logger instanceof DelayedConsoleLogger,
                 "Should be PythonLogger when context is available");
 
         // Test that Python logger levels are enabled based on Python configuration

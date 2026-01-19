@@ -69,7 +69,7 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
                 }
             }
         }
-        return null;
+        return delegate;
     }
 
     @Override
@@ -155,7 +155,12 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
 
     @Override
     public boolean isDebugEnabled() {
-        return debugEnabled;
+        PythonLogger d = getDelegate();
+        if (d == null) {
+            return debugEnabled;
+        } else {
+            return d.isDebugEnabled();
+        }
     }
 
     @Override
