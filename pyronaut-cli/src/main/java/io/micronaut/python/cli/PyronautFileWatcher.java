@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.lang.reflect.InvocationTargetException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -86,6 +87,10 @@ public class PyronautFileWatcher implements Runnable {
             }
             var classpath = buildUrls(classesDirectory(), rootDirectory.resolve("config"));
             var classLoader = new URLClassLoader(classpath, truffleClassloader);
+
+            // try initialize logging system
+            initializeLoggingSystem(classLoader);
+
             Thread.currentThread().setContextClassLoader(classLoader);
             appManager = new ApplicationManagerInvoker(classLoader, applicationManagerClassName);
             appManager.startApplication(parameters);
@@ -157,6 +162,16 @@ public class PyronautFileWatcher implements Runnable {
             if (appManager != null) {
                 appManager.stopApplication();
             }
+        }
+    }
+
+    private static void initializeLoggingSystem(URLClassLoader classLoader) {
+        try {
+            System.out.println("Initializing logging system");
+            Class<?> logbackConfig = classLoader.loadClass("io.micronaut.pyronaut.logback.LogbackConfigurer");
+            logbackConfig.getDeclaredMethod("initialize").invoke(logbackConfig);
+        } catch (Exception e) {
+            System.out.println("No logging system found on classpath, using defaults.");
         }
     }
 

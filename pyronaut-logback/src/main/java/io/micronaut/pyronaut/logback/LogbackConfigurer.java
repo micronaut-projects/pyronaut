@@ -26,6 +26,7 @@ import ch.qos.logback.core.FileAppender;
 import ch.qos.logback.core.rolling.RollingFileAppender;
 import ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy;
 import io.micronaut.core.annotation.Internal;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Constructor;
@@ -33,6 +34,7 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Handler;
 
 /**
  * Utility class for programmatic configuration of logback.
@@ -58,10 +60,11 @@ public final class LogbackConfigurer {
      */
     @SuppressWarnings("unchecked")
     public static synchronized void configure(Map<String, Object> config) {
-        LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
-        lc.reset(); // Reset existing configuration
+        LoggerContext lc = initialize();
+
         APPENDERS.clear();
         FORMATTERS.clear();
+
 
         // Configure formatters first
         Map<String, Object> formatterConfigs = (Map<String, Object>) config.get("formatters");
@@ -115,6 +118,18 @@ public final class LogbackConfigurer {
                 configureLogger(logger, loggerConfig);
             }
         }
+    }
+
+    /**
+     * Initialize the logback context.
+     *
+     * @return The logback context.
+     */
+    public static @NonNull LoggerContext initialize() {
+        LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
+        lc.reset(); // Reset existing configuration
+        installJulBridge();
+        return lc;
     }
 
     /**
@@ -511,4 +526,46 @@ public final class LogbackConfigurer {
         return (Logger) LoggerFactory.getLogger(name != null ? name : "");
     }
 
+    private static void installJulBridge() {
+        try {
+            ClassLoader cl = LogbackConfigurer.class.getClassLoader();
+            resetGraalpyLogger(cl);
+            Class<?> bridge = Class.forName("org.slf4j.bridge.SLF4JBridgeHandler", false, cl);
+            Method removeHandlers = bridge.getMethod("removeHandlersForRootLogger");
+            removeHandlers.invoke(null);
+            Method isInstalled = bridge.getMethod("isInstalled");
+            boolean installed = (Boolean) isInstalled.invoke(null);
+            if (!installed) {
+                Method install = bridge.getMethod("install");
+                install.invoke(null);
+            }
+
+            java.util.logging.Logger logger = java.util.logging.Logger.getLogger("org.graalvm.python.embedding.VirtualFileSystem");
+            java.util.logging.Logger rootLogger = java.util.logging.Logger.getLogger("");
+            Handler[] handlers = rootLogger.getHandlers();
+            for (Handler handler : handlers) {
+                logger.addHandler(handler);
+            }
+
+        } catch (ClassNotFoundException e) {
+            // classpath missing
+        } catch (Throwable t) {
+            System.err.println("Warning: Failed to install JUL-to-SLF4J bridge: " + t.getMessage());
+        }
+    }
+
+    private static void resetGraalpyLogger(ClassLoader cl) {
+        try {
+            Class.forName("org.graalvm.python.embedding.VirtualFileSystemImpl", true, cl);
+        } catch (ClassNotFoundException e) {
+            // ignore
+        }
+        java.util.logging.Logger logger = java.util.logging.Logger.getLogger("org.graalvm.python.embedding.VirtualFileSystem");
+        Handler[] handlers = logger.getHandlers();
+        for (Handler handler : handlers) {
+            logger.removeHandler(handler);
+        }
+        logger.setUseParentHandlers(true);
+    }
 }
+

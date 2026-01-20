@@ -9,6 +9,9 @@ dependencies {
     api(mn.micronaut.context)
     api(mnLogging.logback.classic)
 
+    // Bridge java.util.logging (JUL) to SLF4J/logback
+    runtimeOnly("org.slf4j:jul-to-slf4j:2.0.17")
+
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation("org.awaitility:awaitility:4.2.0")
     testImplementation(mn.micronaut.context.python)
