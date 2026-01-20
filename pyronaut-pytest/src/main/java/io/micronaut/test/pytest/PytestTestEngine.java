@@ -70,6 +70,8 @@ public class PytestTestEngine implements TestEngine {
 
         if (this.context == null) {
             System.setProperty("org.graalvm.python.vfs.allow_multiple", StringUtils.TRUE);
+            System.setProperty("org.graalvm.python.vfs.multiple_vfs_checks_as_warning", StringUtils.TRUE);
+
             var pyEnv = System.getenv("PYENV_VERSION");
             var venv = System.getenv("VIRTUAL_ENV");
             Context.Builder builder = GraalPyResources.contextBuilder(VirtualFileSystem.newBuilder()
