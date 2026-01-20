@@ -17,6 +17,7 @@ include("pyronaut-projectgen-app")
 include("pyronaut-pytest")
 include("pyronaut-bom")
 include("pyronaut-logging")
+include("pyronaut-logback")
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
