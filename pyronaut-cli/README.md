@@ -144,6 +144,119 @@ It doesn't matter whether you are using `pyronaut run` or `pyronaut native`, in 
 
 ### Prerequsites
 
+#### GraalVM JDK
+
+Technically, GraalPy and Pyronaut should work with any JDK. However, we recommend using the Oracle GraalVM JDK.
+
+1. Use SDKMan to install Oracle GraalVM:
+
+    ```zsh
+    sdk install java 25-graal
+    ```
+
+#### Pyronaut (Private Repo)
+
+Source: PR: https://github.com/graemerocher/micronaut-core/pull/1 
+
+1. Clone the branch:
+
+    ```
+    git clone -b python-ast-experiments https://github.com/graemerocher/micronaut-core.git
+    ```
+
+2. Change directory:
+
+    ```
+    cd micronaut-core
+    ```
+
+3. From the root of the project, run:
+
+    ```
+    ./gradlew pTML
+    ```
+
+    Output:
+
+    ```
+    ...
+    BUILD SUCCESSFUL in 201s
+    424 actionable tasks: 324 executed, 100 from cache
+    Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.2.1/userguide/configuration_cache_enabling.html
+    ```
+
+    This will build and install the pyronaut modules like io/micronaut/micronaut-context-python, micronaut-inject-python, micronaut-inject-python-test, etc. in your local ~/.m2/repository.
+
+#### Pyronaut CLI (Private Repo)
+
+Source: For the CLI, you need this branch https://github.com/micronaut-projects/pyronaut/pull/11
+
+1. Clone the branch:
+
+    ```zsh
+    git clone -b cc/pyronaut-cli https://github.com/micronaut-projects/pyronaut.git
+    ```
+
+2. Change directory:
+
+    ```zsh
+    cd pyronaut
+    ```
+
+3. To build the pyronaut CLI, run:
+
+    ```zsh
+    ./gradlew assemble
+    ```
+    
+    Output may look like this:
+
+    ```
+    ...
+    BUILD SUCCESSFUL in 8s
+    63 actionable tasks: 39 executed, 24 from cache
+    ```
+
+    The CLI is built into the `pyronaut-cli/build/distributions` directory as a zip file. 
+
+    ```
+    ${HOME}/pyronaut/pyronaut-cli/build/distributions/micronaut-pyronaut-cli-0.0.1-SNAPSHOT.zip
+    ```
+
+4. Extract the zip file somewhere on your machine. Update your environment variable `PATH` to include `PYRONAUT_HOME/bin`.
+
+    **Note:** Update the directory in the following command with the directory where you extracted the zip file.
+
+    ```zsh
+    export PYRONAUT_HOME="/Users/$(whoami)/pyronaut/cli/micronaut-pyronaut-cli-0.0.1-SNAPSHOT"
+    export PATH="${PYRONAUT_HOME}/bin:${PATH}"
+    ```
+
+    To verify the installation, run:
+
+    ```zsh
+    pyronaut --help
+    ```
+
+    Output:
+
+    ```
+    Usage: pyronaut [-hV] [COMMAND]
+    The Pyronaut CLI
+    ...
+    ```
+
+5. Add the Pyronaut CLI to your shell startup file. The steps below are if you’re using Zsh (on MacOS), edit `~/.zshrc` and append the lines the installer suggested:
+
+    **Note:** Update the directory in the following command with the directory where you extracted the zip file.
+
+    ```zsh
+    ### Pyronaut CLI
+    export PYRONAUT_HOME="/Users/$(whoami)/pyronaut/cli/micronaut-pyronaut-cli-0.0.1-SNAPSHOT"
+    export PATH="${PYRONAUT_HOME}/bin:${PATH}"
+    ```
+
+
 #### Pyenv
 
 We recommend using [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#simple-python-version-management-pyenv) to easily switch between multiple versions of Python/GraalPy. 
@@ -210,17 +323,6 @@ The following steps are for MacOS. If you are on Linux or Windows, check the pye
     ```
 
     This will install graalpy-25.0.2 to ${HOME}/.pyenv/versions/graalpy-25.0.2
-
-
-#### GraalVM JDK
-
-Technically, GraalPy and Pyronaut should work with any JDK. However, we recommend using the Oracle GraalVM JDK.
-
-1. Use SDKMan to install Oracle GraalVM:
-
-    ```zsh
-    sdk install java 25-graal
-    ```
 
 
 ### Your First Pyronaut Project
