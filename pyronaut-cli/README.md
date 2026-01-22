@@ -134,132 +134,301 @@ Gradle’s Tooling API is capable of downloading a Gradle distribution (works in
 
 It’s worth noting that even with Crema, the execution may not be optimal, because the dynamically loaded classes would not be compiled to native code: they would run in interpreted mode.
 
-### Project setup
-
-A Pyronaut project should be created in a virtual environment.
-Currently, it requires **both the GraalPy distribution (Python first) and the GraalVM distribution (Java first)**.
-
-Therefore, you need at least: `pyenv install graalpy-25.0.1` and `sdk install java 25-graal`.
-
-1. Select `graalpy` as your python interpreter
-
-```bash
-pyenv shell graalpy-25.0.1
-```
-
-2. Create project directory
-
-```bash
-mkdir pyronaut-demo && cd pyronaut-demo
-```
-
-3. Create a virtual environment
-
-```bash
-python -m venv venv
-```
-
-4. Activate the virtual environment
-
-```bash
-source venv/bin/activate
-```
-
-5. Create the application directory
-
-```bash
-mkdir app && cd app
-```
-
-6. Create a `pyproject.toml`
-
-```bash
-cat > pyproject.toml << EOL
-[project]
-name="pyronaut-demo"
-
-[tool.pyronaut]
-version="5.0.0-SNAPSHOT"
-repositories = [
-    "mavenCentral",
-    "mavenLocal",
-    "https://repo.gradle.org/gradle/libs-releases"
-]
-
-[tool.pyronaut.dependencies]
-compile = [ "io.micronaut:micronaut-inject-python",
-    "io.micronaut:micronaut-context-python",
-    "io.micronaut:micronaut-http-server-netty", "io.micronaut:micronaut-json-core",
-    "io.micronaut:micronaut-jackson-databind",
-    "ch.qos.logback:logback-classic",
-    "org.bouncycastle:bcprov-jdk18on",
-    "org.apache.commons:commons-lang3:3.20.0",
-]
-
-annotationProcessor = [
-    "io.micronaut:micronaut-inject-python",
-    "io.micronaut:micronaut-context-python",
-]
-EOL
-```
-
-7. create the sources directories
-
-```
-mkdir src
-mkdir config
-```
-
-8. create a sample controller and a configuration file
-
-```bash
-cat > src/controller.py << EOL
-from micronaut.http.annotation import Controller, Get
-
-@Controller
-class MyController:
-    @Get(value="/", produces="text/plain")
-    def index(self) -> str:
-        return "Hello, world 2!"
-
-    @Get(value="/hello")
-    def hello(self) -> dict:
-        return { "Hello": "Pyronaut!" }
-EOL
-cat > config/logback.xml << EOL
-<configuration>
-
-    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-        <!-- encoders are assigned the type
-             ch.qos.logback.classic.encoder.PatternLayoutEncoder by default -->
-        <encoder>
-            <pattern>%msg%n</pattern>
-        </encoder>
-    </appender>
-
-    <root level="info">
-        <appender-ref ref="STDOUT" />
-    </root>
-</configuration>
-EOL
-at << 'EOL' > config/micronaut-banner.txt
-(                                             
- )\ )                                       )  
-(()/( (     (                   )    (   ( /(  
- /(_)))\ )  )(    (    (     ( /(   ))\  )\()) 
-(_)) (()/( (()\   )\   )\ )  )(_)) /((_)(_))/  
-| _ \ )(_)) ((_) ((_) _(_/( ((_)_ (_))( | |_   
-|  _/| || || '_|/ _ \| ' \))/ _` || || ||  _|  
-|_|   \_, ||_|  \___/|_||_| \__,_| \_,_| \__|  
-      |__/                                      
-EOL
-```
-
-### Running the application
-
-You can now start the application using `pyronaut run`.
-
 ### Add a native Python library
 
 Native Python libraries **MUST** be installed using `pip`.
 It doesn't matter whether you are using `pyronaut run` or `pyronaut native`, in both cases, the native libraries **MUST** be found in the virtual environment.
+
+
+## Getting Started
+
+### Prerequsites
+
+#### Pyenv
+
+We recommend using [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#simple-python-version-management-pyenv) to easily switch between multiple versions of Python/GraalPy. 
+
+The following steps are for MacOS. If you are on Linux or Windows, check the pyenv readme file for instructions.
+
+1. (Recommended) Install without homebrew:
+
+    ```
+    curl https://pyenv.run | bash
+    ```
+
+    This will install `pyenv` in to the `~/.pyenv` directory.
+
+2. Add `pyenv` to your shell startup file. The steps below are if you’re using Zsh (on MacOS), edit `~/.zshrc` and append the lines the installer suggested:
+
+    ```zsh
+    # Added to load pyenv automatically
+    # pyenv configuration
+    export PYENV_ROOT="$HOME/.pyenv"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    if command -v pyenv 1>/dev/null 2>&1; then
+    eval "$(pyenv init --path)"
+    eval "$(pyenv init -)"
+    fi
+    ```
+
+3. The installer also installed `pyenv-virtualenv`, so add the following:
+
+    ```zsh
+    # Added to load pyenv-virtualenv automatically
+    eval "$(pyenv virtualenv-init -)"
+    ```
+
+4. Reload the configuration:
+
+    Start a new terminal or run the following in the same terminal:
+
+    ```zsh
+    source ~/.zshrc
+    ```
+
+5. Verify the installation
+
+    ```zsh
+    pyenv --version
+    ```
+    Expected output, e.g., pyenv 2.6.20 or later
+
+6. Check if you have any Python installations on your machine
+
+    ```zsh
+    pyenv versions 
+    ```
+
+    Once we install GraalPy, this command will show you `graalpy-25.0.2` as one of the installations.
+
+#### GraalPy
+
+1. To install GraalPy with pyenv, run the following command:
+
+    ```
+    pyenv install graalpy-25.0.2
+    ```
+
+    This will install graalpy-25.0.2 to ${HOME}/.pyenv/versions/graalpy-25.0.2
+
+
+#### GraalVM JDK
+
+Technically, GraalPy and Pyronaut should work with any JDK. However, we recommend using the Oracle GraalVM JDK.
+
+1. Use SDKMan to install Oracle GraalVM:
+
+    ```zsh
+    sdk install java 25-graal
+    ```
+
+
+### Your First Pyronaut Project
+
+A Pyronaut project should be created in a virtual environment. Currently, it requires **both the GraalPy distribution (Python first) and the GraalVM distribution (Java first)**.
+
+You can create the Pyronaut project anywhere on your machine (e.g., `${HOME}/pyronaut-projects/`), don't need to create it in this repo.
+
+Run the following steps from your Pyronaut projects directory (e.g., `${HOME}/pyronaut-projects/`).
+
+1. In a terminal window, run the following command to select `graalpy` as your python interpreter for this shell. 
+
+    ```bash
+    pyenv shell graalpy-25.0.2
+    ```
+
+    Run `pyenv versions` to confirm that `graalpy` is now the default python for this shell. 
+
+2. Create project directory
+
+    ```bash
+    mkdir pyronaut-demo && cd pyronaut-demo
+    ```
+
+    This will create a `pyronaut-demo` directory in your Pyronaut projects directory (e.g., `${HOME}/pyronaut-projects/`).
+
+
+3. Create a virtual environment
+
+    ```bash
+    python -m venv venv
+    ```
+
+    This will create a `venv` directory in the `pyronaut-demo` directory.
+
+4. Activate the virtual environment
+
+    ```bash
+    source venv/bin/activate
+    ```
+
+5. Create the application directory
+
+    ```bash
+    mkdir app && cd app
+    ```
+
+    This will create an `app` directory in the `pyronaut-demo` directory.
+
+6. Create a `pyproject.toml` in the app directory:
+
+    ```bash
+    cat > pyproject.toml << EOL
+    [project]
+    name="pyronaut-demo"
+
+    [tool.pyronaut]
+    version="5.0.0-SNAPSHOT"
+    repositories = [
+        "mavenCentral",
+        "mavenLocal",
+        "https://repo.gradle.org/gradle/libs-releases"
+    ]
+
+    [tool.pyronaut.dependencies]
+    compile = [ "io.micronaut:micronaut-inject-python",
+        "io.micronaut:micronaut-context-python",
+        "io.micronaut:micronaut-http-server-netty", "io.micronaut:micronaut-json-core",
+        "io.micronaut:micronaut-jackson-databind",
+        "ch.qos.logback:logback-classic",
+        "org.bouncycastle:bcprov-jdk18on",
+        "org.apache.commons:commons-lang3:3.20.0",
+    ]
+
+    annotationProcessor = [
+        "io.micronaut:micronaut-inject-python",
+        "io.micronaut:micronaut-context-python",
+    ]
+    EOL
+    ```
+
+7. Create the sources directories in the app directory:
+
+    ```zsh
+    mkdir src
+    mkdir config
+    ```
+
+8. create a sample controller in `/src`, and a configuration file in `/config`:
+
+    ```bash
+    cat > src/controller.py << EOL
+    from micronaut.http.annotation import Controller, Get
+
+    @Controller
+    class MyController:
+        @Get(value="/", produces="text/plain")
+        def index(self) -> str:
+            return "Hello, world 2!"
+
+        @Get(value="/hello")
+        def hello(self) -> dict:
+            return { "Hello": "Pyronaut!" }
+    EOL
+    cat > config/logback.xml << EOL
+    <configuration>
+
+        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            <!-- encoders are assigned the type
+                ch.qos.logback.classic.encoder.PatternLayoutEncoder by default -->
+            <encoder>
+                <pattern>%msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <root level="info">
+            <appender-ref ref="STDOUT" />
+        </root>
+    </configuration>
+    EOL
+    cat << 'EOL' > config/micronaut-banner.txt
+    (                                             
+    )\ )                                       )  
+    (()/( (     (                   )    (   ( /(  
+    /(_)))\ )  )(    (    (     ( /(   ))\  )\()) 
+    (_)) (()/( (()\   )\   )\ )  )(_)) /((_)(_))/  
+    | _ \ )(_)) ((_) ((_) _(_/( ((_)_ (_))( | |_   
+    |  _/| || || '_|/ _ \| ' \))/ _` || || ||  _|  
+    |_|   \_, ||_|  \___/|_||_| \__,_| \_,_| \__|  
+        |__/                                      
+    EOL
+    ```
+
+9. Install the dependencies
+
+    Run the following command to install the Pyronaut dependencies.
+
+    ```
+    pyronaut install
+    ```
+    
+    This will create the `pyronaut-demo/venv/lib/pyronaut/dependencies/compile` folder with the compile-time dependencies in it.
+
+10. Run the application
+
+    You can now start the application using `pyronaut run`.
+
+    ```
+    % pyronaut run
+    ```
+
+    The output should look like this:
+
+    ```
+    Compiling...
+    Initializing logging system
+    No logging system found on classpath, using defaults.
+    Startup completed in 814ms. Server Running: http://localhost:8080
+    Application started
+    Watching for changes in ..../pyronaut-demo/app/src
+    Watching for changes in ..../pyronaut-demo/app/config
+    ```
+
+11. Test the application in a browser: 
+
+    - `http://localhost:8080` returns `Hello, world 2!`
+    - `http://localhost:8080/hello` returns a JSON `{"Hello":"Pyronaut!"}`
+
+
+### Troubleshooting
+
+1. In case you face issues like `pyenv not picking up GraalPy` while running the demo app.
+
+    1.1 Check the default python in pyenv:
+
+    ```zsh
+    pyenv versions     
+    ```
+
+    The output may look like, GraalPy may not be the default in the shell.
+
+    ```
+    * system (set by /Users/spikle/.pyenv/version)
+    graalpy-25.0.2
+    ```
+
+    2.2 In case GraalPy is not the default version in the shell, you may have missed this step in the **Get Started** section above:
+
+    ```zsh
+    pyenv shell graalpy-25.0.2
+    ```
+    
+    2.3 If 2.2 doesn't help, make graalpy the global default by running the following command:
+
+    **Note:** This will change the global default so might affect other applications.
+        
+    ```zsh
+    pyenv global graalpy-25.0.2 
+    ```
+
+    This updates the file `${HOME}/.pyenv/version` so that the python shim points to the GraalVM Python distribution.
+
+    2.4 Refresh the shims (optional but recommended). This rebuilds the shim scripts to ensure they reflect the newly selected version.
+
+    ```zsh
+    pyenv rehash
+    ```
+
+    2.5 Confirm by running `pyenv versions`.
+
+    2.6 Once you are done testing Pyronaut, don't forget to revert the global default.
