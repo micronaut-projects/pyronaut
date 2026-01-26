@@ -27,6 +27,14 @@ import org.junit.platform.engine.TestExecutionResult;
 public interface PytestTestListener {
 
     /**
+     * Forward per-test output captured by the pytest plugin.
+     * @param testId pytest nodeid (e.g. path/to/test.py::test_name)
+     * @param stream one of "stdout", "stderr" or "log"
+     * @param text full text captured for this test phase
+     */
+    void onOutput(String testId, String stream, String text);
+
+    /**
      * Called before pytest starts processing a test file.
      *
      * @param file the path to the Python test file

@@ -15,7 +15,6 @@
  */
 package io.micronaut.test.pytest.execution;
 
-import io.micronaut.test.pytest.PytestFileDescriptor;
 import io.micronaut.test.pytest.PytestTestDescriptor;
 import io.micronaut.test.pytest.extension.PytestMicronautExtension;
 import io.micronaut.test.pytest.listener.PytestTestListener;
@@ -23,9 +22,14 @@ import org.graalvm.polyglot.Value;
 import org.junit.platform.engine.EngineExecutionListener;
 import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.reporting.ReportEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -38,12 +42,24 @@ public class JUnitPytestTestListener implements PytestTestListener {
     private static final Logger LOG = LoggerFactory.getLogger(JUnitPytestTestListener.class);
     private final EngineExecutionListener junitListener;
     private final Set<? extends TestDescriptor> children;
+    private final List<TestDescriptor> allDescriptors;
 
     public JUnitPytestTestListener(
         EngineExecutionListener junitListener,
         Set<? extends TestDescriptor> testDescriptors) {
         this.junitListener = junitListener;
         this.children = testDescriptors;
+        this.allDescriptors = new ArrayList<>();
+        for (TestDescriptor td : testDescriptors) {
+            flatten(td);
+        }
+    }
+
+    private void flatten(TestDescriptor d) {
+        allDescriptors.add(d);
+        for (TestDescriptor c : d.getChildren()) {
+            flatten(c);
+        }
     }
 
     @Override
@@ -62,27 +78,25 @@ public class JUnitPytestTestListener implements PytestTestListener {
     public void beforeTest(String testId, Value item) {
         LOG.debug("Pytest starting test: {}", testId);
 
-        children
+        allDescriptors
             .stream()
-            .filter(child -> child instanceof PytestTestDescriptor ptd &&
-                ptd.matchesId(testId))
+            .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
             .findAny().ifPresent(testDescriptor -> {
-                    junitListener.executionStarted(testDescriptor);
-                    Value extValue = item.getMember(PytestMicronautExtension.ID);
-                    if (extValue != null) {
-                        PytestMicronautExtension extension = extValue.as(PytestMicronautExtension.class);
-                        extension.beforeEach(item, null, null, List.of());
-                    }
-                });
+                junitListener.executionStarted(testDescriptor);
+                Value extValue = item.getMember(PytestMicronautExtension.ID);
+                if (extValue != null) {
+                    PytestMicronautExtension extension = extValue.as(PytestMicronautExtension.class);
+                    extension.beforeEach(item, null, null, List.of());
+                }
+            });
     }
 
     @Override
     public void afterTest(String testId, Value item, TestExecutionResult result) {
         LOG.debug("Pytest finished test: {} with result: {}", testId, result);
-        children
+        allDescriptors
             .stream()
-            .filter(child -> child instanceof PytestTestDescriptor ptd &&
-                ptd.matchesId(testId))
+            .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
             .findAny().ifPresent(td -> {
                 junitListener.executionFinished(td, result);
                 Value extValue = item.getMember(PytestMicronautExtension.ID);
@@ -104,5 +118,22 @@ public class JUnitPytestTestListener implements PytestTestListener {
     @Override
     public void onResult(TestExecutionResult result) {
         LOG.debug("Pytest session completed");
+    }
+
+    @Override
+    public void onOutput(String testId, String stream, String text) {
+        // Write nodeid to a debug file for troubleshooting mapping issues
+        try {
+            Files.writeString(
+                Paths.get(".pyronaut-last-nodeid.txt"),
+                testId + "\n",
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND
+            );
+        } catch (Exception ignored) {}
+        allDescriptors
+            .stream()
+            .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
+            .findAny().ifPresent(td -> junitListener.reportingEntryPublished(td, ReportEntry.from(stream, text)));
     }
 }

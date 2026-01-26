@@ -19,6 +19,8 @@ import io.micronaut.python.cli.commands.*;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
+import picocli.CommandLine.Option;
+import picocli.CommandLine.ParseResult;
 import picocli.CommandLine.Spec;
 
 import java.util.concurrent.Callable;
@@ -31,18 +33,29 @@ import java.util.concurrent.Callable;
         PyronautTestCommand.class
 }, mixinStandardHelpOptions = true)
 public class PyronautMainCommand implements Callable<Void> {
+
     @Spec
     CommandSpec spec;
 
+    @Option(names = {"--plain"}, description = "Disable TUI and use plain console output")
+    boolean plain;
+
     @Override
-    public Void call() {
-        spec.commandLine().usage(System.out);
+    public Void call() throws Exception {
+        // Default behavior: `pyronaut` == `pyronaut run`
+        new PyronautRunCommand().call();
         return null;
     }
 
     public static void main(String[] args) {
-        var exitCode = new CommandLine(new PyronautMainCommand())
-                .execute(args);
+        var cmd = new CommandLine(new PyronautMainCommand());
+        cmd.setExecutionStrategy((ParseResult parseResult) -> {
+            if (parseResult.hasMatchedOption("--plain")) {
+                CliMode.setPlain(true);
+            }
+            return new CommandLine.RunLast().execute(parseResult);
+        });
+        var exitCode = cmd.execute(args);
         System.exit(exitCode);
     }
 }

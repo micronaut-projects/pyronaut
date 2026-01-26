@@ -17,6 +17,7 @@ package io.micronaut.python.logging.impl;
 
 import io.micronaut.context.python.ContextHolder;
 import org.graalvm.polyglot.Value;
+import org.slf4j.Logger;
 import org.slf4j.Marker;
 import org.slf4j.helpers.FormattingTuple;
 import org.slf4j.helpers.MessageFormatter;
@@ -33,7 +34,7 @@ import static io.micronaut.context.python.GraalPyRuntimeUtil.PYTHON;
  * @author Micronaut Team
  * @since 1.0.0
  */
-final class PythonLogger implements org.slf4j.Logger {
+final class PythonLogger implements Logger {
 
     private final String name;
     private final Value pythonLogger;

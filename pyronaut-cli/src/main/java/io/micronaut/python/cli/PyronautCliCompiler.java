@@ -21,6 +21,7 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
 import javax.tools.ForwardingJavaFileManager;
 import javax.tools.JavaCompiler;
@@ -29,6 +30,7 @@ import javax.tools.JavaFileObject;
 import javax.tools.StandardLocation;
 import javax.tools.ToolProvider;
 import java.io.File;
+import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
@@ -115,7 +117,7 @@ public class PyronautCliCompiler implements Callable<Integer> {
             }
         }
         var task = compiler.getTask(
-            new PrintWriter(System.out),
+            new PrintWriter(OutputStream.nullOutputStream(), true),
             new ForwardingJavaFileManager<>(fileManager) {
                 @Override
                 public ClassLoader getClassLoader(Location location) {
@@ -133,10 +135,20 @@ public class PyronautCliCompiler implements Callable<Integer> {
         );
 
         boolean success = task.call();
-        if (!success) {
-            throw new RuntimeException(
-                "Compilation failed: " + diagnosticCollector.getDiagnostics());
+        // Emit diagnostics to standard streams so TUI activity captures them
+        for (var d : diagnosticCollector.getDiagnostics()) {
+            var where = d.getSource() != null ? (" " + d.getSource().getName() + ":" + d.getLineNumber()) : "";
+            var msg = d.getKind() + ":" + where + " - " + d.getMessage(null);
+            if (d.getKind() == Diagnostic.Kind.ERROR) {
+                System.err.println(msg);
+            } else {
+                System.out.println(msg);
+            }
         }
+        if (!success) {
+            throw new RuntimeException("Compilation failed");
+        }
+        System.out.println("Compilation completed successfully");
     }
 
     private List<String> buildCompilerOptions(List<File> classpath,

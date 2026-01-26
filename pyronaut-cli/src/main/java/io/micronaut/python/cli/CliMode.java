@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 original authors
+ * Copyright 2017-2025 original authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,18 @@
  */
 package io.micronaut.python.cli;
 
-import java.io.DataOutputStream;
+public final class CliMode {
 
-public interface ApplicationManager {
-    void startApplication(String[] args);
+    private static volatile boolean plain;
 
-    void stopApplication();
+    private CliMode() {
+    }
 
-    default void setEventOutputStream(DataOutputStream out) {
+    public static void setPlain(boolean value) {
+        plain = value;
+    }
+
+    public static boolean isPlain() {
+        return plain;
     }
 }

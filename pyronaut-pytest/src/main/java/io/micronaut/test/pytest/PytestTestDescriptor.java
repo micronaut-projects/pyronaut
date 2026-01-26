@@ -74,9 +74,20 @@ public class PytestTestDescriptor extends AbstractTestDescriptor {
     public boolean matchesId(String testId) {
         UniqueId uniqueId = getUniqueId();
         List<UniqueId.Segment> segments = uniqueId.getSegments();
-        UniqueId.Segment source = segments.get(1);
-        UniqueId.Segment test = segments.get(2);
-        String nameToMatch =  "/" + source.getValue() + "::" + test.getValue();
-        return testId.endsWith(nameToMatch);
+        String source = segments.get(1).getValue();
+        String testName = segments.get(2).getValue();
+        // Normalize separators to forward slashes for comparison
+        String normalizedTestId = testId.replace('\\', '/');
+        String absPath = filePath.toString().replace('\\', '/');
+        String fileName = filePath.getFileName().toString();
+
+        // Pytest nodeid may be absolute or relative; try multiple suffix patterns
+        String suffixSource = source + "::" + testName;
+        String suffixAbs = absPath + "::" + testName;
+        String suffixFileOnly = "/" + fileName + "::" + testName;
+
+        return normalizedTestId.endsWith(suffixSource)
+            || normalizedTestId.endsWith(suffixAbs)
+            || normalizedTestId.endsWith(suffixFileOnly);
     }
 }

@@ -16,11 +16,20 @@
 package io.micronaut.python.cli.commands;
 
 import io.micronaut.python.cli.PyronautFileWatcher;
+import io.micronaut.python.cli.ui.UiController;
+import io.micronaut.python.cli.ui.Mode;
+import io.micronaut.python.cli.ui.UiModel;
 import io.micronaut.python.cli.util.PythonMavenRepository;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.function.BiFunction;
 
 @Command(name = "run", description = "Runs a Pyronaut application", mixinStandardHelpOptions = true)
 public class PyronautRunCommand extends BaseSourceCommand {
@@ -47,35 +56,45 @@ public class PyronautRunCommand extends BaseSourceCommand {
         }
         var annotationProcDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(ANNOTATION_PROCESSOR_SCOPE));
         var rootDirectory = resolveRootDir();
-        var watcher = new PyronautFileWatcher(
-                rootDirectory,
-                getSourceDirectories().stream().map(rootDirectory::resolve).toList(),
-                annotationProcDependencies,
-                compileDependencies,
-                parameters,
-                getApplicationManagerClassName());
-        var watcherThread = new Thread(watcher);
-        watcherThread.start();
 
-        // Handle shutdown gracefully
-        Runtime.getRuntime().addShutdownHook(new Thread(watcher::stop));
+        PipedInputStream eventPipeIn = new PipedInputStream(65536);
+        PipedOutputStream eventPipeOut = new PipedOutputStream(eventPipeIn);
+        DataInputStream eventIn = new DataInputStream(eventPipeIn);
+        DataOutputStream eventOut = new DataOutputStream(eventPipeOut);
 
-        try {
-            watcherThread.join();
-        } catch (InterruptedException e) {
-            watcher.stop();
-            Thread.currentThread().interrupt();
-        }
+        BiFunction<UiController, DataOutputStream, PyronautFileWatcher> runFactory = (controller, out) -> new PyronautFileWatcher(
+            rootDirectory,
+            getSourceDirectories().stream().map(rootDirectory::resolve).collect(Collectors.toList()),
+            annotationProcDependencies,
+            compileDependencies,
+            parameters,
+            getApplicationManagerClassName(),
+            controller,
+            out
+        );
 
-        return 0;
+        BiFunction<UiController, DataOutputStream, PyronautFileWatcher> testFactory = (controller, out) -> {
+            var testDeps = PythonMavenRepository.inspect(dependenciesDirForScope("test"));
+            if (testDeps.isEmpty()) {
+                controller.notify("Pyronaut test dependencies not found. Did you run `pyronaut install --scope test`?", UiModel.Severity.WARNING);
+                return null;
+            }
+            var testSources = List.of("src", "tests").stream().map(rootDirectory::resolve).toList();
+            return new PyronautFileWatcher(
+                    rootDirectory,
+                    testSources,
+                    annotationProcDependencies,
+                    testDeps,
+                    parameters,
+                    "io.micronaut.python.cli.TestApplicationManager",
+                    controller,
+                    out
+            );
+        };
+
+        return runUnified(runFactory, testFactory, Mode.RUN, eventIn, eventOut);
     }
 
-    /**
-     * Returns the name of the application manager that is responsible
-     * for starting the application and/or tests.
-     *
-     * @return the class name
-     */
     protected String getApplicationManagerClassName() {
         return "io.micronaut.python.cli.DefaultApplicationManager";
     }

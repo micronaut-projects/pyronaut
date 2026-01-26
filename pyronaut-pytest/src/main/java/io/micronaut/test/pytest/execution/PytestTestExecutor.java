@@ -17,19 +17,18 @@ package io.micronaut.test.pytest.execution;
 
 import io.micronaut.test.pytest.PytestFileDescriptor;
 import io.micronaut.test.pytest.PytestTestDescriptor;
+import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Value;
 import org.junit.platform.engine.EngineExecutionListener;
 import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestExecutionResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.graalvm.polyglot.Context;
-import org.graalvm.polyglot.Value;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 
 /**
@@ -158,16 +157,24 @@ run_pytest
     private void executeTest(PytestTestDescriptor testDescriptor) {
         LOG.debug("Executing Python test: {}", testDescriptor.getDisplayName());
 
-        listener.executionStarted(testDescriptor);
-
         try {
-            // Individual test execution is handled by pytest plugin
-            // Just mark as successful since pytest will handle the actual execution
-            LOG.debug("Test {} execution delegated to pytest", testDescriptor.getDisplayName());
-            listener.executionFinished(testDescriptor, TestExecutionResult.successful());
+            // Execute only the file containing this test via pytest; the plugin will map events back
+            Path filePath = testDescriptor.getFilePath();
+            JUnitPytestTestListener testListener = new JUnitPytestTestListener(listener, Set.copyOf(List.of(testDescriptor)));
+            context.eval("python", """
+from pyronaut.test import run_pytest
+
+run_pytest
+            """).execute(
+                new String[]{filePath.toString()},
+                testListener
+            );
+            LOG.debug("Test {} executed via pytest for file {}", testDescriptor.getDisplayName(), filePath);
 
         } catch (Exception e) {
             LOG.error("Test {} failed", testDescriptor.getDisplayName(), e);
+            // If pytest invocation fails at the process level, still notify JUnit about the failure
+            listener.executionStarted(testDescriptor);
             listener.executionFinished(testDescriptor, TestExecutionResult.failed(e));
         }
     }
