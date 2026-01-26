@@ -1,21 +1,29 @@
 [versions]
-micronaut = "5.0.0-M5"
+micronaut = "5.0.0-SNAPSHOT"
 micronaut-serde = "3.0.0-M1"
+micronaut-picocli = "6.0.0-M1"
 micronaut-platform = "4.10.5"
+micronaut-logging = "1.7.1"
 micronaut-projectgen = "0.0.9"
 micronaut-views = "5.9.0"
 micronaut-validation = "5.0.0-M1"
+tomlj="1.1.1"
+gradle-tapi = "9.2.1"
 
 [libraries]
 micronaut-core = { module = 'io.micronaut:micronaut-core-bom', version.ref = 'micronaut' }
 micronaut-serde = { module = "io.micronaut.serde:micronaut-serde-bom", version.ref = "micronaut-serde" }
+micronaut-logging = { module = "io.micronaut.logging:micronaut-logging-bom", version.ref = "micronaut-logging" }
 micronaut-views = { module = "io.micronaut.views:micronaut-views-bom", version.ref = "micronaut-views" }
 micronaut-validation = { module = "io.micronaut.validation:micronaut-validation-bom", version.ref = "micronaut-validation" }
-
+micronaut-picocli = { module = 'io.micronaut.picocli:micronaut-picocli-bom', version.ref = 'micronaut-picocli' }
 micronaut-projectgen = { module = 'io.micronaut.projectgen:micronaut-projectgen-bom', version.ref = 'micronaut-projectgen' }
 micronaut-projectgen-core = { module = 'io.micronaut.projectgen:micronaut-projectgen-core' }
 micronaut-projectgen-http-server = { module = 'io.micronaut.projectgen:micronaut-projectgen-http-server' }
 micronaut-projectgen-test = { module = 'io.micronaut.projectgen:micronaut-projectgen-test' }
+
+tomlj = { module = "org.tomlj:tomlj", version.ref="tomlj"}
+gradle-tapi = { module = "org.gradle:gradle-tooling-api", version.ref = "gradle-tapi" }
 
 [bundles]
 

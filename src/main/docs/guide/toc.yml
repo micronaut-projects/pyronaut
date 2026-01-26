@@ -1,5 +1,7 @@
 introduction:
   title: Introduction
+logging:
+  title: Python Logging with Logback
 releaseHistory: Release History
 pyronautProjectgen:
   title: Pyronaut Project Generator
