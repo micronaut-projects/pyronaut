@@ -22,7 +22,9 @@ class ContextUtil {
         try {
             var holderClazz = Class.forName("io.micronaut.context.python.ContextHolder");
             var setReuseContext = holderClazz.getDeclaredMethod("setReuseContext", boolean.class);
-            setReuseContext.invoke(null, true);
+            if (false) {
+                setReuseContext.invoke(null, true);
+            }
         } catch (ClassNotFoundException | IllegalAccessException | NoSuchMethodException | InvocationTargetException e) {
             throw new RuntimeException(e);
         }

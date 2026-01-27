@@ -66,24 +66,24 @@ abstract class BaseSourceCommand extends BaseCommand {
         Runnable quit = () -> controlExecutor.submit(coordinator::interruptCurrentWatcher);
         tui.setOnQuit(quit);
 
-        // Ctrl+R switches or restarts Run; stage UI immediately for feedback
+        // Ctrl+R switches to Run mode without restarting the watcher
         tui.setOnRunRequested(() -> controlExecutor.submit(() -> {
-            coordinator.interruptCurrentWatcher();
             controller.resetState();
             controller.setRunning();
             desiredMode.set(Mode.RUN);
             tui.setMode(Mode.RUN);
-            coordinator.registerFileWatcher(WatcherThreads.start(controller, eventOut, runFactory));
+            coordinator.requestMode(Mode.RUN);
         }));
-
+ 
+        // Ctrl+T switches to Test mode without restarting the watcher
         tui.setOnTestRequested(() -> controlExecutor.submit(() -> {
-            coordinator.interruptCurrentWatcher();
             controller.resetState();
             controller.startTesting();
             desiredMode.set(Mode.TEST);
             tui.setMode(Mode.TEST);
-            coordinator.registerFileWatcher(WatcherThreads.start(controller, eventOut, testFactory));
+            coordinator.requestMode(Mode.TEST);
         }));
+
 
         var tuiThread = Thread.ofVirtual().name("PyronautTUI").unstarted(() -> {
             try {

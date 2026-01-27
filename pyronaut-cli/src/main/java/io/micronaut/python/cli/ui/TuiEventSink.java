@@ -38,9 +38,6 @@ public final class TuiEventSink implements ProtocolEventSink {
 
     @Override
     public void onAppStopped() {
-        if (coordinator != null) {
-            coordinator.interruptCurrentWatcher();
-        }
         if (!isDesired(Mode.RUN)) {
             return;
         }

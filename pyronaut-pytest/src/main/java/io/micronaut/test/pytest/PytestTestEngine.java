@@ -67,7 +67,6 @@ public class PytestTestEngine implements TestEngine {
     public TestDescriptor discover(EngineDiscoveryRequest discoveryRequest, UniqueId uniqueId) {
         LOG.debug("Starting test discovery with uniqueId: {}", uniqueId);
         ConfigurationParameters configurationParameters = discoveryRequest.getConfigurationParameters();
-
         if (this.context == null) {
             System.setProperty("org.graalvm.python.vfs.allow_multiple", StringUtils.TRUE);
             System.setProperty("org.graalvm.python.vfs.multiple_vfs_checks_as_warning", StringUtils.TRUE);

@@ -15,6 +15,7 @@
  */
 package io.micronaut.python.cli;
 
+import io.micronaut.python.cli.ui.Mode;
 import io.micronaut.python.cli.ui.UiController;
 import io.micronaut.python.cli.ui.UiModel;
 import io.micronaut.python.cli.util.FileUtils;
@@ -29,6 +30,7 @@ import java.lang.invoke.MethodType;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.channels.CancelledKeyException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
@@ -49,6 +51,9 @@ import static java.nio.file.Files.createDirectories;
  * the application when source files change.
  */
 public class PyronautFileWatcher implements Runnable {
+    private static final String RUN_APP_CLASS_NAME = "io.micronaut.python.cli.DefaultApplicationManager";
+    private static final String TEST_APP_CLASS_NAME = "io.micronaut.python.cli.TestApplicationManager";
+
     private final UiController controller;
 
     public static final int SUCCESS = 0;
@@ -58,48 +63,78 @@ public class PyronautFileWatcher implements Runnable {
     private final AtomicReference<Thread> watcherThread = new AtomicReference<>();
 
     private final Path rootDirectory;
-    private final List<Path> sourceDirectories;
-    private final PythonMavenRepository annotationProcessorRepo;
-    private final PythonMavenRepository compileClassPathRepo;
     private final Path outputDirectory;
     private final String[] parameters;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final static List<String> WATCHED_DIRECTORIES = List.of("src", "config", "tests");
     private final AtomicInteger runCount = new AtomicInteger(0);
-    private final String applicationManagerClassName;
     private final DataOutputStream eventOut;
     // In theory, this should always contain a single application thread. The use of a list is
     // a safety net in case our concurrency is wrong
     private final List<Thread> applicationThreads = Collections.synchronizedList(new ArrayList<>());
+    private final AtomicReference<BlockingQueue<List<UiModel.FileUpdate>>> compileQueueRef = new AtomicReference<>();
+    private final AtomicReference<URLClassLoader> appClassLoaderRef = new AtomicReference<>();
+
+    // Repos and sources per mode
+    private final PythonMavenRepository annotationProcessorRepo;
+    private final PythonMavenRepository runCompileRepo;
+    private final PythonMavenRepository testCompileRepo;
+    private final List<Path> runSources;
+    private final List<Path> testSources;
+
+    // Active mode state
+    private final AtomicReference<Mode> activeMode = new AtomicReference<>(Mode.RUN);
+    private final AtomicReference<List<Path>> activeSources = new AtomicReference<>();
+    private final AtomicReference<PythonMavenRepository> activeRepo = new AtomicReference<>();
+    private final AtomicReference<String> activeAppManagerClassName = new AtomicReference<>();
+    private final AtomicBoolean modeChanged = new AtomicBoolean(false);
 
     public PyronautFileWatcher(
             Path rootDirectory,
-            List<Path> sourceDirectories,
+            List<Path> runSources,
+            List<Path> testSources,
             PythonMavenRepository annotationProcessorRepo,
-            PythonMavenRepository compileClassPathRepo,
+            PythonMavenRepository runCompileRepo,
+            PythonMavenRepository testCompileRepo,
             String[] parameters,
-            String applicationManagerClassName,
+            Mode initialMode,
             UiController controller,
             DataOutputStream eventOut) {
         this.rootDirectory = rootDirectory;
-        this.sourceDirectories = sourceDirectories.stream().map(Path::toAbsolutePath).collect(Collectors.toList());
+        this.runSources = runSources.stream().map(Path::toAbsolutePath).collect(Collectors.toList());
+        this.testSources = testSources.stream().map(Path::toAbsolutePath).collect(Collectors.toList());
         this.outputDirectory = FileUtils.resolveOutputDirectory(rootDirectory);
         this.annotationProcessorRepo = annotationProcessorRepo;
-        this.compileClassPathRepo = compileClassPathRepo;
+        this.runCompileRepo = runCompileRepo;
+        this.testCompileRepo = testCompileRepo;
         this.parameters = parameters;
-        this.applicationManagerClassName = applicationManagerClassName;
         this.controller = controller;
         this.eventOut = eventOut;
+        setActiveMode(initialMode == null ? Mode.RUN : initialMode);
+    }
+
+    private void setActiveMode(Mode mode) {
+        activeMode.set(mode);
+        if (mode == Mode.TEST) {
+            activeSources.set(testSources);
+            activeRepo.set(testCompileRepo);
+            activeAppManagerClassName.set(TEST_APP_CLASS_NAME);
+        } else {
+            activeSources.set(runSources);
+            activeRepo.set(runCompileRepo);
+            activeAppManagerClassName.set(RUN_APP_CLASS_NAME);
+        }
     }
 
     @Override
     public void run() {
         this.watcherThread.set(Thread.currentThread());
         try {
-            var truffleClassloader = createTruffleClassLoader(compileClassPathRepo);
+            var truffleClassloader = createTruffleClassLoaderFromRepos(runCompileRepo, testCompileRepo);
 
             // Dedicated compile/restart queue and worker
             BlockingQueue<List<UiModel.FileUpdate>> queue = new LinkedBlockingQueue<>();
+            this.compileQueueRef.set(queue);
             var worker = new Thread(() -> this.compileAndRunLoop(truffleClassloader, queue), "Pyronaut-Compiler");
             worker.setDaemon(true);
             worker.start();
@@ -107,23 +142,25 @@ public class PyronautFileWatcher implements Runnable {
             // Prime initial compile with a synthetic change list
             queue.offer(List.of());
 
-            // Set up file watching
-            var watchService = FileSystems.getDefault().newWatchService();
-            watchServiceRef.set(watchService);
-            for (var watchedDirectory : WATCHED_DIRECTORIES) {
-                var dir = rootDirectory.resolve(watchedDirectory);
-                if (Files.isDirectory(dir)) {
-                    registerAll(dir, watchService);
-                    //controller.dispatch(new UiAction.AddNotification("Watching for changes in " + dir, UiModel.Severity.INFO));
-                    // Optionally write to logger instead, but not to System.out
-                }
-            }
+            // Set up file watching for current mode
+            var initialWatchService = FileSystems.getDefault().newWatchService();
+            watchServiceRef.set(initialWatchService);
+            registerWatchRootsForActiveMode(initialWatchService);
 
             var outputPath = outputDirectory.toAbsolutePath();
             while (running.get() && !Thread.currentThread().isInterrupted()) {
                 WatchKey key;
+                WatchService ws = watchServiceRef.get();
+                if (ws == null) {
+                    break;
+                }
                 try {
-                    key = watchService.take();
+                    key = ws.take();
+                } catch (ClosedWatchServiceException cwse) {
+                    if (running.get()) {
+                        continue; // pick up the new WatchService from watchServiceRef on next iteration
+                    }
+                    break;
                 } catch (InterruptedException e) {
                     break;
                 }
@@ -166,10 +203,11 @@ public class PyronautFileWatcher implements Runnable {
                     queue.offer(changedFiles);
                 }
 
-                key.reset();
+                try {
+                    key.reset();
+                } catch (CancelledKeyException ignored) {
+                }
             }
-        } catch (ClosedWatchServiceException ex) {
-            // ignore
         } catch (Exception e) {
             e.printStackTrace(System.err);
         }
@@ -185,22 +223,6 @@ public class PyronautFileWatcher implements Runnable {
         }
     }
 
-    private URLClassLoader createTruffleClassLoader(PythonMavenRepository repo) {
-        var urls = repo.visitRepo(PyronautFileWatcher::isTruffleJar)
-                .stream()
-                .map(f -> {
-                    try {
-                        return f.toURI().toURL();
-                    } catch (MalformedURLException e) {
-                        return null;
-                    }
-                })
-                .filter(Objects::nonNull)
-                .toList()
-                .toArray(new URL[0]);
-        var parent = this.getClass().getClassLoader().getParent();
-        return new URLClassLoader(urls, parent);
-    }
 
     /**
      * Determines if a Maven artifact is supposed to belong to the
@@ -234,25 +256,49 @@ public class PyronautFileWatcher implements Runnable {
         });
     }
 
+    private void registerWatchRootsForActiveMode(WatchService watchService) throws IOException {
+        List<String> roots = activeMode.get() == Mode.TEST
+                ? List.of("src", "config", "tests")
+                : List.of("src", "config");
+        for (var watchedDirectory : roots) {
+            var dir = rootDirectory.resolve(watchedDirectory);
+            if (Files.isDirectory(dir)) {
+                registerAll(dir, watchService);
+            }
+        }
+    }
+
+    private URLClassLoader createTruffleClassLoaderFromRepos(PythonMavenRepository runRepo, PythonMavenRepository testRepo) {
+        var runUrls = runRepo.visitRepo(PyronautFileWatcher::isTruffleJar);
+        var testUrls = testRepo.visitRepo(PyronautFileWatcher::isTruffleJar);
+        var all = new LinkedHashSet<>(runUrls);
+        all.addAll(testUrls);
+        URL[] urls = all.stream().map(f -> {
+            try {
+                return f.toURI().toURL();
+            } catch (MalformedURLException e) {
+                return null;
+            }
+        }).filter(Objects::nonNull).toArray(URL[]::new);
+        var parent = this.getClass().getClassLoader().getParent();
+        return new URLClassLoader(urls, parent);
+    }
+
     private int compile(ClassLoader truffleClassloader) {
-        // During compilation, show Compiling state/status in the UI, stream output to UI
-        // (No StreamsCapture static context available here - move trigger up to caller if needed)
         var compiler = new PyronautCliCompiler();
         compiler.classLoader = truffleClassloader;
-        compiler.sourceDirectory = sourceDirectories.stream().map(Path::toFile).collect(Collectors.toList());
+        compiler.sourceDirectory = activeSources.get().stream().map(Path::toFile).collect(Collectors.toList());
         compiler.outputDirectory = classesDirectory().toFile();
         compiler.annotationProcessorPath = annotationProcessorRepo.asClasspath();
-        compiler.classpath = compileClassPathRepo.asClasspath();
+        compiler.classpath = activeRepo.get().asClasspath();
 
         try {
             recurseDelete(classesDirectory());
             createDirectories(classesDirectory());
             int result = compiler.call();
-            // No StreamsCapture static context available here
             return result;
         } catch (Exception ex) {
             ex.printStackTrace(System.err);
-            // No StreamsCapture static context available here
             return ERROR;
         }
     }
@@ -269,51 +315,59 @@ public class PyronautFileWatcher implements Runnable {
                 if (updates == null) {
                     continue;
                 }
+                boolean hasChanges = !updates.isEmpty();
                 long sd = System.nanoTime();
-                controller.startCompiling();
                 if (appManager != null) {
                     appManager.stopApplication();
                 }
-                if (compile(truffleClassloader) == SUCCESS) {
+                if (hasChanges || appManager == null || modeChanged.get()) {
+                    controller.startCompiling();
+                    int result = compile(truffleClassloader);
                     controller.stopCompiling();
+                    if (result != SUCCESS) {
+                        controller.notify("Compilation failed, application not restarted", UiModel.Severity.ERROR);
+                        continue;
+                    }
+                }
+                URLClassLoader classLoader = appClassLoaderRef.get();
+                if (classLoader == null || modeChanged.get()) {
                     var classpath = buildUrls(classesDirectory(), rootDirectory.resolve("config"));
-                    var classLoader = new URLClassLoader(classpath, truffleClassloader);
-                    var status = appManager == null ? "Application start " : "Restart ";
-                    if (appManager == null) {
-                        initializeLoggingSystem(classLoader);
-                        appManager = new ApplicationManagerInvoker(classLoader, applicationManagerClassName);
-                        if (eventOut != null) {
-                            try {
-                                appManager.setEventOutputStream(eventOut);
-                            } catch (Exception ignored) {
-                            }
+                    classLoader = new URLClassLoader(classpath, truffleClassloader);
+                    appClassLoaderRef.set(classLoader);
+                }
+                var status = appManager == null ? "Application start " : "Restart ";
+                if (appManager == null || modeChanged.getAndSet(false)) {
+                    initializeLoggingSystem(classLoader);
+                    appManager = new ApplicationManagerInvoker(classLoader, activeAppManagerClassName.get());
+                    if (eventOut != null) {
+                        try {
+                            appManager.setEventOutputStream(eventOut);
+                        } catch (Exception ignored) {
                         }
                     }
-                    ApplicationManager newApp = appManager;
-                    var appThread = new Thread(() -> {
-                        newApp.startApplication(parameters);
-                        long ed = System.nanoTime();
-                        var dur = Duration.ofNanos(ed - sd).toMillis();
-                        controller.notify(status + "done in " + dur + "ms", UiModel.Severity.SUCCESS);
-                    }) {
-                        @Override
-                        public void interrupt() {
-                            try {
-                                super.interrupt();
-                                newApp.stopApplication();
-                            } finally {
-                                applicationThreads.remove(this);
-                            }
-                        }
-                    };
-                    applicationThreads.add(appThread);
-                    appThread.setContextClassLoader(classLoader);
-                    appThread.setName("Pyronaut Application Thread - " + runCount.incrementAndGet());
-                    appThread.start();
-                } else {
-                    controller.stopCompiling();
-                    controller.notify("Compilation failed, application not restarted", UiModel.Severity.ERROR);
                 }
+                ApplicationManager newApp = appManager;
+                URLClassLoader loaderForThread = classLoader;
+                var appThread = new Thread(() -> {
+                    newApp.startApplication(parameters);
+                    long ed = System.nanoTime();
+                    var dur = Duration.ofNanos(ed - sd).toMillis();
+                    controller.notify(status + "done in " + dur + "ms", UiModel.Severity.SUCCESS);
+                }) {
+                    @Override
+                    public void interrupt() {
+                        try {
+                            super.interrupt();
+                            newApp.stopApplication();
+                        } finally {
+                            applicationThreads.remove(this);
+                        }
+                    }
+                };
+                applicationThreads.add(appThread);
+                appThread.setContextClassLoader(loaderForThread);
+                appThread.setName("Pyronaut Application Thread - " + runCount.incrementAndGet());
+                appThread.start();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -362,18 +416,55 @@ public class PyronautFileWatcher implements Runnable {
         }
     }
 
+    public void switchMode(Mode mode) {
+        controller.clearLogs();
+        // If mode unchanged, avoid watch service churn and do not force recreation of app manager/classloader
+        if (activeMode.get() == mode) {
+            requestRestart();
+            return;
+        }
+        setActiveMode(mode);
+        modeChanged.set(true);
+        try {
+            var newService = FileSystems.getDefault().newWatchService();
+            registerWatchRootsForActiveMode(newService);
+            var old = watchServiceRef.getAndSet(newService);
+            if (old != null) {
+                old.close();
+            }
+            requestRestart();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void requestRestart() {
+        var q = compileQueueRef.get();
+        if (q != null) {
+            q.offer(List.of());
+        }
+    }
+
     private URL[] buildUrls(Path... paths) throws MalformedURLException {
-        var compileClassPath = compileClassPathRepo.visitRepo(a -> !isTruffleJar(a));
-        var result = new ArrayList<URL>(1 + paths.length + compileClassPath.size());
+        List<java.io.File> classpathFiles;
+        if (activeMode.get() == Mode.TEST) {
+            var runFiles = runCompileRepo.visitRepo(a -> !isTruffleJar(a));
+            var testFiles = testCompileRepo.visitRepo(a -> !isTruffleJar(a));
+            var set = new LinkedHashSet<java.io.File>(runFiles.size() + testFiles.size());
+            set.addAll(runFiles);
+            set.addAll(testFiles);
+            classpathFiles = new ArrayList<>(set);
+        } else {
+            classpathFiles = runCompileRepo.visitRepo(a -> !isTruffleJar(a));
+        }
+        var result = new ArrayList<URL>(1 + paths.length + classpathFiles.size());
         for (var path : paths) {
             result.add(path.toUri().toURL());
         }
-        for (var file : compileClassPath) {
+        for (var file : classpathFiles) {
             var url = file.toURI().toURL();
             result.add(url);
         }
-        // This is a hack, so that the launcher is on classpath of the user app
-        // and it won't work in a native image
         result.add(PyronautFileWatcher.class.getProtectionDomain().getCodeSource().getLocation());
         return result.toArray(new URL[0]);
     }

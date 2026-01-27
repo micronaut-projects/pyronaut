@@ -1,23 +1,25 @@
 package io.micronaut.python.cli.ui;
-
+ 
 import io.micronaut.python.cli.PyronautFileWatcher;
-
+ 
 import java.util.concurrent.locks.ReentrantLock;
-
+ 
 public final class ModeCoordinator {
     private final ReentrantLock lock = new ReentrantLock();
     private PyronautFileWatcher fileWatcher;
-
+ 
     public void interruptCurrentWatcher() {
         lock.lock();
         try {
-            fileWatcher.stop();
+            if (fileWatcher != null) {
+                fileWatcher.stop();
+                fileWatcher = null;
+            }
         } finally {
-            fileWatcher = null;
             lock.unlock();
         }
     }
-
+ 
     public void registerFileWatcher(PyronautFileWatcher watcher) {
         lock.lock();
         try {
@@ -29,4 +31,27 @@ public final class ModeCoordinator {
             lock.unlock();
         }
     }
+ 
+    public void requestMode(Mode mode) {
+        lock.lock();
+        try {
+            if (fileWatcher != null) {
+                fileWatcher.switchMode(mode);
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void requestRestart() {
+        lock.lock();
+        try {
+            if (fileWatcher != null) {
+                fileWatcher.requestRestart();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
 }
+
