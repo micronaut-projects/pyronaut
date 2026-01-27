@@ -18,6 +18,7 @@ include("pyronaut-pytest")
 include("pyronaut-bom")
 include("pyronaut-logging")
 include("pyronaut-logback")
+include("pyronaut-requests")
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 

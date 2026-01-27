@@ -33,6 +33,44 @@ class MicronautPytestPlugin:
         """Called when pytest session starts."""
         pass
 
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_fixture_setup(self, fixturedef, request):
+        outcome = yield
+        excinfo = getattr(outcome, 'excinfo', None)
+        if excinfo is not None:
+            exc = None
+            if isinstance(excinfo, tuple):
+                if len(excinfo) >= 2:
+                    exc = excinfo[1]
+                elif len(excinfo) == 1:
+                    exc = excinfo[0]
+            else:
+                exc = getattr(excinfo, 'value', excinfo)
+            if exc is not None:
+                name = getattr(exc, '__class__', type(exc)).__name__
+                if name == 'ForeignException' or 'Foreign' in name:
+                    outcome.force_result(None)
+                    pytest.fail(f"{exc}", pytrace=True)
+
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_runtest_call(self, item):
+        outcome = yield
+        excinfo = getattr(outcome, 'excinfo', None)
+        if excinfo is not None:
+            exc = None
+            if isinstance(excinfo, tuple):
+                if len(excinfo) >= 2:
+                    exc = excinfo[1]
+                elif len(excinfo) == 1:
+                    exc = excinfo[0]
+            else:
+                exc = getattr(excinfo, 'value', excinfo)
+            if exc is not None:
+                name = getattr(exc, '__class__', type(exc)).__name__
+                if name == 'ForeignException' or 'Foreign' in name:
+                    outcome.force_result(None)
+                    pytest.fail(f"{exc}", pytrace=True)
+
     def pytest_sessionfinish(self, session, exitstatus):
         """Called when pytest session finishes."""
         TestExecutionResult = java.type("org.junit.platform.engine.TestExecutionResult")
