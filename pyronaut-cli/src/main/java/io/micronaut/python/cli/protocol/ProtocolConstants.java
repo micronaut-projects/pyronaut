@@ -23,6 +23,7 @@ public final class ProtocolConstants {
     public static final byte TEST_NODE_STARTED = 0x0B;
     public static final byte TEST_NODE_FINISHED = 0x0C;
     public static final byte TEST_LOG = 0x0D;
+    public static final byte APP_START_FAILED = 0x0E;
 
     /** Log level mappings. */
     public static final byte LOG_TRACE = 0;

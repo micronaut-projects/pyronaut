@@ -15,7 +15,6 @@
  */
 package io.micronaut.python.cli;
 
-import io.micronaut.python.cli.ui.StreamsCapture;
 import io.micronaut.python.cli.ui.UiController;
 import io.micronaut.python.cli.ui.UiModel;
 import io.micronaut.python.cli.util.FileUtils;
@@ -39,6 +38,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static io.micronaut.python.cli.util.FileUtils.recurseDelete;
@@ -54,8 +54,8 @@ public class PyronautFileWatcher implements Runnable {
     public static final int SUCCESS = 0;
     public static final int ERROR = -1;
 
-    private volatile WatchService watchServiceRef;
-    private volatile Thread watcherThread;
+    private final AtomicReference<WatchService> watchServiceRef = new AtomicReference<>();
+    private final AtomicReference<Thread> watcherThread = new AtomicReference<>();
 
     private final Path rootDirectory;
     private final List<Path> sourceDirectories;
@@ -94,7 +94,7 @@ public class PyronautFileWatcher implements Runnable {
 
     @Override
     public void run() {
-        this.watcherThread = Thread.currentThread();
+        this.watcherThread.set(Thread.currentThread());
         try {
             var truffleClassloader = createTruffleClassLoader(compileClassPathRepo);
 
@@ -109,7 +109,7 @@ public class PyronautFileWatcher implements Runnable {
 
             // Set up file watching
             var watchService = FileSystems.getDefault().newWatchService();
-            this.watchServiceRef = watchService;
+            watchServiceRef.set(watchService);
             for (var watchedDirectory : WATCHED_DIRECTORIES) {
                 var dir = rootDirectory.resolve(watchedDirectory);
                 if (Files.isDirectory(dir)) {
@@ -340,11 +340,15 @@ public class PyronautFileWatcher implements Runnable {
         }
     }
 
+    public Thread thread() {
+        return watcherThread.get();
+    }
+
     public void stop() {
         running.set(false);
-        interruptSilently(watcherThread);
+        interruptSilently(watcherThread.get());
         try {
-            var ws = watchServiceRef;
+            var ws = watchServiceRef.get();
             if (ws != null) {
                 ws.close();
             }

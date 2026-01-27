@@ -44,6 +44,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @SuppressWarnings("unused")
 public class TestApplicationManager implements ApplicationManager {
+    static {
+        ContextUtil.setReuseContext();
+    }
+
     private EventEncoder eventEncoder;
     private final Map<String, Integer> idByUid = new HashMap<>();
     private final AtomicInteger nextId = new AtomicInteger(1);

@@ -16,7 +16,7 @@
 package io.micronaut.python.cli.commands;
 
 import io.micronaut.python.cli.PyronautFileWatcher;
-import io.micronaut.python.cli.ui.UiController;
+import io.micronaut.python.cli.PyronautWatcherFactory;
 import io.micronaut.python.cli.ui.Mode;
 import io.micronaut.python.cli.ui.UiModel;
 import io.micronaut.python.cli.util.PythonMavenRepository;
@@ -29,7 +29,6 @@ import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.util.List;
 import java.util.stream.Collectors;
-import java.util.function.BiFunction;
 
 @Command(name = "run", description = "Runs a Pyronaut application", mixinStandardHelpOptions = true)
 public class PyronautRunCommand extends BaseSourceCommand {
@@ -62,7 +61,7 @@ public class PyronautRunCommand extends BaseSourceCommand {
         DataInputStream eventIn = new DataInputStream(eventPipeIn);
         DataOutputStream eventOut = new DataOutputStream(eventPipeOut);
 
-        BiFunction<UiController, DataOutputStream, PyronautFileWatcher> runFactory = (controller, out) -> new PyronautFileWatcher(
+        PyronautWatcherFactory runFactory = (controller, out) -> new PyronautFileWatcher(
             rootDirectory,
             getSourceDirectories().stream().map(rootDirectory::resolve).collect(Collectors.toList()),
             annotationProcDependencies,
@@ -73,7 +72,7 @@ public class PyronautRunCommand extends BaseSourceCommand {
             out
         );
 
-        BiFunction<UiController, DataOutputStream, PyronautFileWatcher> testFactory = (controller, out) -> {
+        PyronautWatcherFactory testFactory = (controller, out) -> {
             var testDeps = PythonMavenRepository.inspect(dependenciesDirForScope("test"));
             if (testDeps.isEmpty()) {
                 controller.notify("Pyronaut test dependencies not found. Did you run `pyronaut install --scope test`?", UiModel.Severity.WARNING);

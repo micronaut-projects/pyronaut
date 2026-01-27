@@ -149,4 +149,12 @@ public final class EventEncoder {
      public void flush() throws IOException {
          out.flush();
      }
- }
+
+    public void sendAppStartFailed() throws IOException {
+        out.writeByte(ProtocolConstants.APP_START_FAILED);
+        out.writeByte(ProtocolConstants.PROTOCOL_VERSION);
+        out.writeShort(0);
+        out.flush();
+    }
+
+}

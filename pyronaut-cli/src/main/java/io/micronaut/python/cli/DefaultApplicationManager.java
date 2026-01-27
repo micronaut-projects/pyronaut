@@ -29,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.DataOutputStream;
+import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.net.Socket;
 import java.net.URI;
@@ -54,6 +55,10 @@ public class DefaultApplicationManager implements ApplicationManager {
     private final Lock lock = new ReentrantLock();
     private final AtomicReference<ApplicationContext> applicationContextRef = new AtomicReference<>();
     private EventEncoder eventEncoder;
+
+    static {
+        ContextUtil.setReuseContext();
+    }
 
     // Not an override; just a method on the interface
     public void setEventOutputStream(DataOutputStream out) {
@@ -103,7 +108,16 @@ public class DefaultApplicationManager implements ApplicationManager {
 
                 currentContext.findBean(EmbeddedApplication.class)
                         .ifPresent(embeddedApplication -> {
-                            embeddedApplication.start();
+                            try {
+                                embeddedApplication.start();
+                            } catch (Exception e) {
+                                try {
+                                    eventEncoder.sendAppStartFailed();
+                                } catch (IOException ex) {
+                                    throw new RuntimeException(ex);
+                                }
+                                throw new RuntimeException(e);
+                            }
                             if (embeddedApplication instanceof Described described) {
                                 if (LOGGER.isInfoEnabled()) {
                                     long took = elapsedMillis(start);

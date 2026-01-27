@@ -16,205 +16,73 @@
 package io.micronaut.python.cli.commands;
 
 import io.micronaut.python.cli.CliMode;
-import io.micronaut.python.cli.PyronautFileWatcher;
+import io.micronaut.python.cli.PyronautWatcherFactory;
 import io.micronaut.python.cli.ui.*;
+import io.micronaut.python.cli.util.WatcherThreads;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.time.Duration;
-import java.util.Objects;
-import java.util.concurrent.ExecutorService;
+import java.nio.file.Path;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiFunction;
-import java.util.function.Supplier;
-import java.nio.file.Path;
-import java.util.function.Function;
 
 abstract class BaseSourceCommand extends BaseCommand {
 
     protected int runUnified(
-            BiFunction<UiController, DataOutputStream, PyronautFileWatcher> runFactory,
-            BiFunction<UiController, DataOutputStream, PyronautFileWatcher> testFactory,
+            PyronautWatcherFactory runFactory,
+            PyronautWatcherFactory testFactory,
             Mode initial,
             DataInputStream eventIn,
             DataOutputStream eventOut
     ) {
         if (CliMode.isPlain()) {
-            var controller = new UiController();
-            var factory = initial == Mode.RUN ? runFactory : testFactory;
-            var watcher = factory.apply(controller, eventOut);
-            var watcherThread = Thread.ofVirtual().name("PyronautWatcher").unstarted(watcher);
-            watcherThread.start();
-            var loop = new ProtocolEventLoop(eventIn, new ConsoleEventSink(System.out, System.err));
-            var loopThread = Thread.ofVirtual().name("Pyronaut-PlainEvents").unstarted(loop);
-            loopThread.start();
-            try {
-                watcherThread.join();
-                loopThread.join();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            return 0;
+            return runInCLIMode(runFactory, testFactory, initial, eventIn, eventOut);
         }
 
+        return runInTuiMode(runFactory, testFactory, initial, eventIn, eventOut);
+    }
+
+    private int runInTuiMode(PyronautWatcherFactory runFactory,
+                             PyronautWatcherFactory testFactory,
+                             Mode initial,
+                             DataInputStream eventIn,
+                             DataOutputStream eventOut) {
         StreamsCapture.installGlobal();
         var tui = new PyronautTui();
         tui.setEventInputStream(eventIn);
-        long ringStart = StreamsCapture.getInstance().tailIndex();
+        var ringStart = StreamsCapture.getInstance().tailIndex();
         tui.setInitialLogStart(ringStart);
         tui.setMode(initial);
 
-        ExecutorService controlExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
+        var controlExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
 
-        class WatcherHandle {
-            final PyronautFileWatcher watcher;
-            final Thread thread;
-            WatcherHandle(PyronautFileWatcher watcher, Thread thread) {
-                this.watcher = watcher;
-                this.thread = thread;
-            }
-            void stop(Duration timeout) {
-                try {
-                    watcher.stop();
-                    thread.join(timeout.toMillis());
-                } catch (Exception ignored) {
-                }
-            }
-        }
-
-        final UiController controller = tui.getController();
-        final ModeCoordinator coordinator = new ModeCoordinator();
-        final AtomicReference<Mode> desiredMode = new AtomicReference<>(initial);
+        var controller = tui.getController();
+        var coordinator = new ModeCoordinator();
+        var desiredMode = new AtomicReference<>(initial);
         tui.setCoordinator(coordinator);
         tui.setDesiredModeSupplier(desiredMode::get);
-        final class State {
-            Mode currentMode = initial;
-            WatcherHandle handle;
-        }
-        final State state = new State();
 
-        Runnable quit = () -> controlExecutor.submit(() -> {
-            if (state.handle != null) {
-                state.handle.stop(Duration.ofSeconds(2));
-            }
-        });
+        Runnable quit = () -> controlExecutor.submit(coordinator::interruptCurrentWatcher);
         tui.setOnQuit(quit);
 
-        Runnable startRun = () -> controlExecutor.submit(() -> {
-            state.currentMode = Mode.RUN;
-            tui.setMode(Mode.RUN);
-            if (state.handle != null) {
-                state.handle.stop(Duration.ofSeconds(2));
-            }
-            var w = runFactory.apply(controller, eventOut);
-            if (w == null) {
-                return;
-            }
-            var t = new Thread(w, "PyronautWatcher");
-            t.setDaemon(true);
-            t.start();
-            state.handle = new WatcherHandle(w, t);
-        });
-
-        Runnable startTest = () -> controlExecutor.submit(() -> {
-            state.currentMode = Mode.TEST;
-            tui.setMode(Mode.TEST);
-            if (state.handle != null) {
-                state.handle.stop(Duration.ofSeconds(2));
-            }
-            var w = testFactory.apply(controller, eventOut);
-            if (w == null) {
-                return;
-            }
-            var t = new Thread(w, "PyronautWatcher");
-            t.setDaemon(true);
-            t.start();
-            state.handle = new WatcherHandle(w, t);
-        });
-
         // Ctrl+R switches or restarts Run; stage UI immediately for feedback
-        tui.setOnCtrlR(() -> controlExecutor.submit(() -> {
-            if (state.currentMode == Mode.RUN) {
-                coordinator.expectRunStopped();
-                controller.resetState();
-                controller.setRunning();
-                desiredMode.set(Mode.RUN);
-                tui.setMode(Mode.RUN);
-                if (state.handle != null) {
-                    state.handle.stop(Duration.ofSeconds(2));
-                }
-                coordinator.awaitRunStopped(Duration.ofSeconds(3));
-                var w = runFactory.apply(controller, eventOut);
-                if (w == null) {
-                    return;
-                }
-                var t = new Thread(w, "PyronautWatcher");
-                t.setDaemon(true);
-                t.start();
-                state.handle = new WatcherHandle(w, t);
-            } else {
-                coordinator.expectTestFinished();
-                controller.resetState();
-                controller.setRunning();
-                desiredMode.set(Mode.RUN);
-                tui.setMode(Mode.RUN);
-                if (state.handle != null) {
-                    state.handle.stop(Duration.ofSeconds(2));
-                }
-                coordinator.awaitTestFinished(Duration.ofSeconds(3));
-                var w = runFactory.apply(controller, eventOut);
-                if (w == null) {
-                    return;
-                }
-                var t = new Thread(w, "PyronautWatcher");
-                t.setDaemon(true);
-                t.start();
-                state.handle = new WatcherHandle(w, t);
-                state.currentMode = Mode.RUN;
-            }
+        tui.setOnRunRequested(() -> controlExecutor.submit(() -> {
+            coordinator.interruptCurrentWatcher();
+            controller.resetState();
+            controller.setRunning();
+            desiredMode.set(Mode.RUN);
+            tui.setMode(Mode.RUN);
+            coordinator.registerFileWatcher(WatcherThreads.start(controller, eventOut, runFactory));
         }));
 
-        tui.setOnCtrlT(() -> controlExecutor.submit(() -> {
-            if (state.currentMode == Mode.TEST) {
-                coordinator.expectTestFinished();
-                controller.resetState();
-                controller.startTesting();
-                desiredMode.set(Mode.TEST);
-                tui.setMode(Mode.TEST);
-                if (state.handle != null) {
-                    state.handle.stop(Duration.ofSeconds(2));
-                }
-                coordinator.awaitTestFinished(Duration.ofSeconds(3));
-                var w = testFactory.apply(controller, eventOut);
-                if (w == null) {
-                    return;
-                }
-                var t = new Thread(w, "PyronautWatcher");
-                t.setDaemon(true);
-                t.start();
-                state.handle = new WatcherHandle(w, t);
-            } else {
-                coordinator.expectRunStopped();
-                controller.resetState();
-                controller.startTesting();
-                desiredMode.set(Mode.TEST);
-                tui.setMode(Mode.TEST);
-                if (state.handle != null) {
-                    state.handle.stop(Duration.ofSeconds(2));
-                }
-                coordinator.awaitRunStopped(Duration.ofSeconds(3));
-                var w = testFactory.apply(controller, eventOut);
-                if (w == null) {
-                    return;
-                }
-                var t = new Thread(w, "PyronautWatcher");
-                t.setDaemon(true);
-                t.start();
-                state.handle = new WatcherHandle(w, t);
-                state.currentMode = Mode.TEST;
-            }
+        tui.setOnTestRequested(() -> controlExecutor.submit(() -> {
+            coordinator.interruptCurrentWatcher();
+            controller.resetState();
+            controller.startTesting();
+            desiredMode.set(Mode.TEST);
+            tui.setMode(Mode.TEST);
+            coordinator.registerFileWatcher(WatcherThreads.start(controller, eventOut, testFactory));
         }));
 
         var tuiThread = Thread.ofVirtual().name("PyronautTUI").unstarted(() -> {
@@ -226,14 +94,7 @@ abstract class BaseSourceCommand extends BaseCommand {
         });
 
         controlExecutor.submit(() -> {
-            var w = (initial == Mode.RUN ? runFactory : testFactory).apply(controller, eventOut);
-            if (w == null) {
-                return;
-            }
-                var t = new Thread(w, "PyronautWatcher");
-                t.setDaemon(true);
-                t.start();
-                state.handle = new WatcherHandle(w, t);
+            coordinator.registerFileWatcher(WatcherThreads.start(controller, eventOut, (initial == Mode.RUN ? runFactory : testFactory)));
         });
 
         tuiThread.start();
@@ -248,6 +109,23 @@ abstract class BaseSourceCommand extends BaseCommand {
 
         return 0;
     }
+
+    private static int runInCLIMode(PyronautWatcherFactory runFactory, PyronautWatcherFactory testFactory, Mode initial, DataInputStream eventIn, DataOutputStream eventOut) {
+        var controller = new UiController();
+        var factory = initial == Mode.RUN ? runFactory : testFactory;
+        var pyronautFileWatcher = WatcherThreads.start(controller, eventOut, factory);
+        var loop = new ProtocolEventLoop(eventIn, new ConsoleEventSink(System.out, System.err));
+        var loopThread = Thread.ofVirtual().name("Pyronaut-PlainEvents").unstarted(loop);
+        loopThread.start();
+        try {
+            pyronautFileWatcher.thread().join();
+            loopThread.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return 0;
+    }
+
     protected Path resolveRootDir() {
         try {
             return Path.of(".").toFile().getCanonicalFile().toPath();
@@ -256,53 +134,4 @@ abstract class BaseSourceCommand extends BaseCommand {
         }
     }
 
-    protected int runWatcherWithMode(Function<UiController, PyronautFileWatcher> watcherFactory, DataInputStream eventIn) {
-        boolean usePlain = CliMode.isPlain();
-        if (usePlain) {
-            var controller = new UiController();
-            var watcher = watcherFactory.apply(controller);
-            var watcherThread = new Thread(watcher, "PyronautWatcher");
-            watcherThread.setDaemon(true);
-            watcherThread.start();
-            var loop = new ProtocolEventLoop(eventIn, new ConsoleEventSink(System.out, System.err));
-            var loopThread = new Thread(loop, "Pyronaut-PlainEvents");
-            loopThread.setDaemon(true);
-            loopThread.start();
-            try {
-                watcherThread.join();
-                loopThread.join();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            return 0;
-        } else {
-            StreamsCapture.installGlobal();
-            var tui = new PyronautTui();
-            tui.setEventInputStream(eventIn);
-            // pass initial ring index so TUI can backfill early logs once consumers attach
-            long ringStart = StreamsCapture.getInstance().tailIndex();
-            tui.setInitialLogStart(ringStart);
-            var watcher = watcherFactory.apply(tui.getController());
-            tui.setOnQuit(watcher::stop);
-            var watcherThread = new Thread(watcher, "PyronautWatcher");
-            var tuiThread = new Thread(() -> {
-                try {
-                    tui.run();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-            }, "PyronautTUI");
-            watcherThread.setDaemon(true);
-            tuiThread.setDaemon(true);
-            watcherThread.start();
-            tuiThread.start();
-            try {
-                watcherThread.join();
-                tuiThread.join();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            return 0;
-        }
-    }
 }

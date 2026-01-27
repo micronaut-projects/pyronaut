@@ -39,7 +39,7 @@ public final class TuiEventSink implements ProtocolEventSink {
     @Override
     public void onAppStopped() {
         if (coordinator != null) {
-            coordinator.signalRunStopped();
+            coordinator.interruptCurrentWatcher();
         }
         if (!isDesired(Mode.RUN)) {
             return;
@@ -90,9 +90,6 @@ public final class TuiEventSink implements ProtocolEventSink {
             return;
         }
         controller.updateTestSummary(passed, failed, skipped, running, pending);
-        if (coordinator != null) {
-            coordinator.signalTestFinished();
-        }
         controller.stopTesting();
         controller.notify(
             "Tests completed: " + passed + " passed, " + failed + " failed, " + skipped + " skipped",

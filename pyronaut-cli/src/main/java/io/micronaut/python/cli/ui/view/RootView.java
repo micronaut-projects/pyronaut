@@ -379,7 +379,7 @@ public final class RootView extends Component<RootView> {
             case COMPILING -> waveText("Compiling...").state(stateWave).addClass(stateClassFor(state));
             case TESTING -> waveText("Running tests...").state(stateWave).addClass(stateClassFor(state));
             case RUNNING -> waveText("Running...").state(stateWave).addClass(stateClassFor(state));
-            case IDLE -> waveText("Idle").state(stateWave).addClass(stateClassFor(state));
+            case IDLE -> waveText("Waiting for changes...").state(stateWave).addClass(stateClassFor(state));
         };
     }
 

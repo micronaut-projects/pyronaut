@@ -73,6 +73,9 @@ public final class ProtocolEventLoop implements Runnable {
                         var l = ev.readTestLog();
                         sink.onTestLog(l.id(), l.message());
                     }
+                    case ProtocolConstants.APP_START_FAILED -> {
+                        sink.onAppStopped();
+                    }
                     default -> ev.skip();
                 }
             } catch (EOFException eof) {
@@ -98,4 +101,3 @@ public final class ProtocolEventLoop implements Runnable {
         }
     }
 }
-

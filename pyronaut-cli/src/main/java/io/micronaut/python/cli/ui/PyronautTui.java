@@ -26,7 +26,6 @@ import dev.tamboui.tui.event.KeyCode;
 import io.micronaut.python.cli.protocol.EventDecoder;
 import io.micronaut.python.cli.protocol.ProtocolConstants;
 import io.micronaut.python.cli.ui.view.RootView;
-import io.micronaut.python.cli.ui.Mode;
 
 import java.io.DataInputStream;
 import java.io.IOException;
@@ -69,11 +68,11 @@ public final class PyronautTui {
         this.onQuit = onQuit;
     }
 
-    public void setOnCtrlR(Runnable r) {
+    public void setOnRunRequested(Runnable r) {
         this.onCtrlR = r;
     }
 
-    public void setOnCtrlT(Runnable r) {
+    public void setOnTestRequested(Runnable r) {
         this.onCtrlT = r;
     }
 
