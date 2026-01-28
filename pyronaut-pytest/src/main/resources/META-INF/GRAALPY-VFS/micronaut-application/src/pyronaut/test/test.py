@@ -101,8 +101,23 @@ class ApplicationContextWrapper:
         Delegates to the Java method (e.g., getBean(String)) and raises KeyError if not found.
         """
         if isinstance(key, str):
-            result = self.java_ctx.getBean(java.type(key))
-            if result is None:
+            # Resolve bean safely to avoid ForeignException crossing into pytest
+            try:
+                bean_class = java.type(key)
+            except BaseException:
+                raise KeyError(f"Key '{key}' not found in context")
+            try:
+                findBean = getattr(self.java_ctx, 'findBean', None)
+                if findBean is not None:
+                    opt = findBean(bean_class)
+                    present = opt is not None and (not hasattr(opt, 'isPresent') or opt.isPresent())
+                    if not present:
+                        raise KeyError(f"Key '{key}' not found in context")
+                    result = opt.get() if hasattr(opt, 'get') else opt
+                else:
+                    # Fallback to getBean; wrap any Java exceptions as KeyError
+                    result = self.java_ctx.getBean(bean_class)
+            except BaseException:
                 raise KeyError(f"Key '{key}' not found in context")
 
             if hasattr(result, 'asPolyglotValue'):

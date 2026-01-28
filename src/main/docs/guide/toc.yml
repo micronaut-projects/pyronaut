@@ -5,5 +5,8 @@ logging:
 releaseHistory: Release History
 pyronautProjectgen:
   title: Pyronaut Project Generator
+pyronautRequests:
+  title: Pyronaut Requests
 repository: Repository
+
 

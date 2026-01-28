@@ -16,6 +16,9 @@ dependencies {
     }
     implementation(mn.graalpy.embedding)
 
+    testImplementation(project(":micronaut-pyronaut-requests"))
+    testImplementation(mn.micronaut.http.server.netty)
+    testImplementation(mn.micronaut.management)
     testImplementation(mnTest.junit.platform.engine)
     testImplementation(mnTest.junit.platform.testkit)
     testImplementation(mn.micronaut.inject.python)

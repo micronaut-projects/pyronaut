@@ -1,0 +1,77 @@
+= Pyronaut Requests
+
+Pyronaut Requests is a drop-in compatible replacement for the Python `requests` library that runs on GraalPy and delegates HTTP operations to the Micronaut HTTP Client.
+
+- Import compatible: `import requests` (shim) or `import pyronaut.requests as requests`
+- Blocking semantics using Micronaut `HttpClient.toBlocking()`
+- JSON parsing with Micronaut `JsonMapper` (Micronaut Serialization)
+- Typed JSON: `r.json(Message)` deserializes using `JsonMapper.readValue(.., Message.class)`
+- Test-friendly: `with_context(ctx)` binds to a Micronaut `EmbeddedServer` base URL and uses the context `JsonMapper` if present
+
+== Quickstart
+
+[source,python]
+----
+import requests
+
+r = requests.get("https://httpbin.org/get", params={"q": "pyronaut"})
+print(r.status_code, r.json())
+----
+
+== Using with MicronautTest
+
+[source,python]
+----
+import pytest
+import requests
+from pyronaut.test import *
+from micronaut.runtime.server import EmbeddedServer
+
+@pytest.fixture
+def my_context(request):
+    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"], transactional=False,
+                                                            properties={"custom.property": "test_value"}))
+    yield fixture
+    fixture.stop()
+
+@pytest.fixture
+def client(my_context):
+    return requests.with_context(my_context)
+
+
+def test_hello_world(client):
+    r = client.get("/hello/John")
+    assert r.json()['message']
+    assert r.status_code == 200
+----
+
+== Typed JSON
+
+[source,python]
+----
+class Message:
+    def __init__(self, message: str):
+        self.message = message
+
+r = client.get("/hello/John")
+msg = r.json(Message)
+assert msg.message.startswith("Hello")
+----
+
+== Compatibility
+
+- Supported: request/get/post/put/delete/patch/head/options, params/data/json/headers/cookies/auth, allow_redirects, timeout
+- Response: status_code, headers (case-insensitive), ok, reason, url, content, text, json([type]), raise_for_status()
+- Timeouts: per-call overrides honored by constructing short‑lived Micronaut clients with the requested timeouts
+
+== Shutdown
+
+- The library registers created clients in a registry.
+- A Micronaut `ApplicationEventListener<ShutdownEvent>` closes clients on shutdown.
+- As a fallback, an `atexit` hook closes remaining clients.
+
+== Notes
+
+- Cookie jar, proxies, SSL verify toggles, streaming/chunked and file uploads are not implemented yet.
+- Untyped `Response.json()` returns Python-native dict/list; typed `json(T)` uses the Micronaut `JsonMapper`.
+
