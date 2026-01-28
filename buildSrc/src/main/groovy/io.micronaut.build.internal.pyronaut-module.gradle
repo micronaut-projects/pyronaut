@@ -9,8 +9,17 @@ micronautBuild {
         parentModuleId = "io.micronaut.pyronaut:micronaut-pyronaut"
     }
     testFramework = JUNIT6
+    binaryCompatibility {
+        enabledAfter "1.0.0"
+    }
 }
 
 repositories {
     mavenLocal()
+}
+
+tasks.withType(Checkstyle).configureEach {
+    exclude {
+        it.toString().contains('generated')
+    }
 }
