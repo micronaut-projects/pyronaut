@@ -21,10 +21,22 @@ import picocli.CommandLine;
 import java.nio.file.Files;
 import java.util.List;
 
+/**
+ * CLI command that deletes Pyronaut-generated temporary files and common build outputs.
+ *
+ * <p>Removes the Pyronaut temporary output directory and additional known directories
+ * such as {@code build} and {@code dist}.</p>
+ */
 @CommandLine.Command(name = "clean", description = "Deletes the temporary files", mixinStandardHelpOptions = true)
 public class PyronautCleanCommand extends BaseSourceCommand {
     private static final List<String> EXTRA_DIRS_TO_DELETE = List.of("build", "dist");
 
+    /**
+     * Execute the clean command.
+     *
+     * @return exit code (0 on success)
+     * @throws Exception if any IO or filesystem errors occur while deleting files
+     */
     @Override
     public Integer call() throws Exception {
         var rootDir = resolveRootDir();

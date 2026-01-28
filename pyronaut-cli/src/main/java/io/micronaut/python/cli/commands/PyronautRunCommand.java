@@ -21,8 +21,13 @@ import picocli.CommandLine.Parameters;
 
 import java.util.List;
 
+/**
+ * CLI command that runs a Pyronaut application.
+ *
+ * <p>Starts the application in run mode, with optional watch mode for automatic restarts on source changes.</p>
+ */
 @Command(name = "run", description = "Runs a Pyronaut application", mixinStandardHelpOptions = true)
-public class PyronautRunCommand extends WatchModeCommand {
+public final class PyronautRunCommand extends WatchModeCommand {
     private static final String ANNOTATION_PROCESSOR_SCOPE = "annotationProcessor";
     private static final List<String> SOURCE_DIRECTORIES = List.of("src");
 
@@ -42,5 +47,4 @@ public class PyronautRunCommand extends WatchModeCommand {
         return runShared(Mode.RUN, parameters);
     }
 
-
-}
+ }

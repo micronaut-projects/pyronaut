@@ -15,6 +15,9 @@
  */
 package io.micronaut.python.cli.ui;
 
+/**
+ * A progress display that outputs to the console.
+ */
 public final class ConsoleProgressDisplay implements ProgressDisplay {
     @Override
     public void println(String text) {

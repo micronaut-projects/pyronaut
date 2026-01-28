@@ -89,11 +89,11 @@ final class TestTreeView implements Element {
                 .autoScroll()
                 .fill()
                 .render(frame, area, context);
-
     }
 
     @Override
     public EventResult handleMouseEvent(MouseEvent event) {
+
         return list.handleMouseEvent(event);
     }
 
@@ -204,9 +204,9 @@ final class TestTreeView implements Element {
         return te;
     }
 
-
     @Override
     public Constraint constraint() {
+
         return Constraint.fill();
     }
 

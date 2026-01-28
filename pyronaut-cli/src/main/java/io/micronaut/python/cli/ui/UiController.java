@@ -22,103 +22,143 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * Controller that maintains the UI model state for the CLI tooling.
+ *
+ * <p>This controller stores run, compile and test state, activity logs, notifications and an
+ * incremental test tree and exposes methods to update and query that state.</p>
+ */
 public final class UiController {
 
-    private Mode currentMode = Mode.RUN;
+    // Static constants first (DeclarationOrder)
+    private static final int MAX_ACTIVITY_LINES = 10000;
+    private static final int MAX_NOTIFICATIONS = 500;
+
+    // Incremental test tree kinds
+    private static final byte KIND_CLASS = 1;
+    private static final byte KIND_METHOD = 2;
+
+    // Instance fields
     private String url = null;
     private List<String> endpoints = List.of();
     private UiModel.Notification lastNotification = null;
     private List<UiModel.FileUpdate> updatedFiles = List.of();
     // Unified activity log buffer (kept across state changes)
     private final List<String> activityLogLines = new ArrayList<>();
-    private static final int MAX_ACTIVITY_LINES = 10000;
     private final List<UiModel.Notification> notificationHistory = new ArrayList<>();
-    private static final int MAX_NOTIFICATIONS = 500;
     private boolean compiling = false;
     private boolean testing = false;
-    private boolean switchingToTest = false;
-    private boolean testSession = false;
     private UiModel.TestTree testTree = null;
     private TestSummary lastTestSummary = null;
-
-    // Incremental test tree state (built from protocol TEST_NODE/STARTED/FINISHED events)
-    private static final byte KIND_CLASS = 1;
-    private static final byte KIND_METHOD = 2;
-
-    public void clearLogs() {
-        activityLogLines.clear();
-    }
-
-    private static final class Node {
-        final int id;
-        final int parentId;
-        final byte kind;
-        final String name;
-        final String displayName;
-        UiModel.Status status = UiModel.Status.PENDING;
-        String failureMessage = null;
-        final List<Integer> children = new ArrayList<>();
-        final List<String> logs = new ArrayList<>();
-        Node(int id, int parentId, byte kind, String name, String displayName) {
-            this.id = id;
-            this.parentId = parentId;
-            this.kind = kind;
-            this.name = name;
-            this.displayName = displayName;
-        }
-    }
 
     private final Map<Integer, Node> testNodes = new HashMap<>();
     private final Map<Integer, List<String>> pendingLogs = new HashMap<>();
     private int currentMethodNodeId = 0;
-    public int getCurrentMethodNodeId() { return currentMethodNodeId; }
 
-    public record TestSummary(long passed, long failed, long skipped, long running, long pending) {}
+    /**
+     * Returns the node id of the currently running test method, or 0 if none.
+     * @return current method node id
+     */
+    public int getCurrentMethodNodeId() {
+        return currentMethodNodeId;
+    }
 
+    /**
+     * Returns the last generated test summary if present.
+     * @return optional last test summary
+     */
     public Optional<TestSummary> getLastTestSummary() {
         return Optional.ofNullable(lastTestSummary);
     }
 
+    /**
+     * Update the last test summary counters.
+     * @param passed passed count
+     * @param failed failed count
+     * @param skipped skipped count
+     * @param running running count
+     * @param pending pending count
+     */
     public void updateTestSummary(long passed, long failed, long skipped, long running, long pending) {
         this.lastTestSummary = new TestSummary(passed, failed, skipped, running, pending);
     }
 
+    /**
+     * Returns the current server URL exposed by the running application, or null if none.
+     * @return server URL or null
+     */
     public String getUrl() {
         return url;
     }
 
+    /**
+     * Returns the list of discovered endpoints.
+     * @return unmodifiable list of endpoints
+     */
     public List<String> getEndpoints() {
         return endpoints;
     }
 
+    /**
+     * Returns the last notification or null if none.
+     * @return last notification or null
+     */
     public UiModel.Notification getLastNotification() {
         return lastNotification;
     }
 
+    /**
+     * Returns the historic list of notifications.
+     * @return notification history
+     */
     public List<UiModel.Notification> getNotificationHistory() {
         return notificationHistory;
     }
 
+    /**
+     * Returns the most recent file updates.
+     * @return list of file updates
+     */
     public List<UiModel.FileUpdate> getUpdatedFiles() {
         return updatedFiles;
     }
 
+    /**
+     * Returns the activity log lines maintained by the controller.
+     * @return list of activity log lines
+     */
     public List<String> getActivityLogLines() {
         return activityLogLines;
     }
 
+    /**
+     * Returns whether compilation is in progress.
+     * @return true if compiling
+     */
     public boolean isCompiling() {
         return compiling;
     }
 
+    /**
+     * Returns whether testing is in progress.
+     * @return true if testing
+     */
     public boolean isTesting() {
         return testing;
     }
 
+    /**
+     * Returns the current test tree model, or null if none.
+     * @return current test tree or null
+     */
     public UiModel.TestTree getTestTree() {
         return testTree;
     }
 
+    /**
+     * Returns a snapshot model suitable for rendering the UI.
+         * @return the active UI model (Running, Compiling or Testing)
+     */
     public UiModel getModel() {
         Optional<UiModel.Notification> notif = lastNotification == null ? Optional.empty() : Optional.of(lastNotification);
         if (testing && testTree != null) {
@@ -129,32 +169,58 @@ public final class UiController {
         return new UiModel.Running(url, endpoints, notif);
     }
 
+    /**
+     * Clears the activity log maintained by the controller.
+     */
+    public void clearLogs() {
+        activityLogLines.clear();
+    }
+
     // Setters/mutators for explicit, clear API (no dispatch switch)
 
+    /**
+     * Set the server URL.
+     * @param url server URL
+     */
     public void setUrl(String url) {
         this.url = url;
     }
 
+    /**
+     * Clear the stored server URL.
+     */
     public void clearUrl() {
         this.url = null;
     }
 
+    /**
+     * Set controller to running mode (not compiling nor testing).
+     */
     public void setRunning() {
         compiling = false;
         testing = false;
-        currentMode = Mode.RUN;
     }
 
+    /**
+     * Returns true when controller is in running mode.
+     * @return true if running (not compiling or testing)
+     */
     public boolean isRunning() {
         return !compiling && !testing;
     }
 
+    /**
+     * Mark the application as stopped and clear transient state.
+     */
     public void setStopped() {
         this.url = null;
         this.compiling = false;
         this.testing = false;
     }
 
+    /**
+     * Reset all controller state including test tree and endpoints.
+     */
     public void resetState() {
         this.url = null;
         this.endpoints = List.of();
@@ -164,22 +230,44 @@ public final class UiController {
         resetTestTree();
     }
 
+    /**
+     * Replace the known endpoints list.
+     *
+     * @param eps endpoints to set; must not be {@code null}
+     * @throws NullPointerException if {@code eps} is {@code null}
+     */
     public void setEndpoints(List<String> eps) {
         this.endpoints = List.copyOf(eps);
     }
 
+    /**
+     * Clear the known endpoints.
+     */
     public void clearEndpoints() {
         this.endpoints = List.of();
     }
 
+    /**
+     * Mark compilation as started.
+     */
     public void startCompiling() {
         compiling = true;
     }
 
+    /**
+     * Mark compilation as finished.
+     */
     public void stopCompiling() {
         compiling = false;
     }
 
+    /**
+     * Append activity output lines to the unified activity log buffer.
+     * Newlines are split and empty lines ignored.
+     *
+     * @param line output text (may contain newlines); must not be {@code null}
+     * @throws NullPointerException if {@code line} is {@code null}
+     */
     public void addActivityOutput(String line) {
         for (String l : line.split("\\r?\\n")) {
             if (!l.isEmpty()) {
@@ -191,11 +279,26 @@ public final class UiController {
         }
     }
 
+    /**
+     * Replace the list of file updates.
+     *
+     * @param files list of file updates; may be {@code null} to indicate no updates
+     */
     public void updateFiles(List<UiModel.FileUpdate> files) {
         updatedFiles = files;
     }
 
+    /**
+     * Add a notification to the controller and append it to the history.
+     *
+     * @param message  notification message; may be {@code null}
+     * @param severity notification severity; must not be {@code null}
+     * @throws NullPointerException if {@code severity} is {@code null}
+     */
     public void notify(String message, UiModel.Severity severity) {
+        if (severity == null) {
+            throw new NullPointerException("severity");
+        }
         UiModel.Notification notif = new UiModel.Notification(message, severity, Instant.now());
         lastNotification = notif;
         notificationHistory.add(notif);
@@ -204,25 +307,42 @@ public final class UiController {
         }
     }
 
+    /**
+     * Prepare the controller for a testing session and clear previous test state.
+     */
     public void startTesting() {
         testing = true;
-        currentMode = Mode.TEST;
         this.lastTestSummary = null;
         testNodes.clear();
         this.testTree = new UiModel.TestSuite("Tests", List.of(), UiModel.Status.PENDING);
     }
 
+    /**
+     * Stop the testing session.
+     */
     public void stopTesting() {
         testing = false;
     }
 
     // ---- Test tree incremental API ----
 
+    /**
+     * Reset the incremental test tree state.
+     */
     public void resetTestTree() {
         testNodes.clear();
         testTree = null;
     }
 
+    /**
+     * Add a test node to the incremental test tree.
+     *
+     * @param id          node id
+     * @param parentId    parent node id (0 if root)
+     * @param kind        node kind (KIND_CLASS or KIND_METHOD)
+     * @param name        internal name for the node; may be {@code null}
+     * @param displayName display name for the UI; may be {@code null}
+     */
     public void addTestNode(int id, int parentId, byte kind, String name, String displayName) {
         Node node = new Node(id, parentId, kind, name, displayName);
         testNodes.put(id, node);
@@ -239,6 +359,10 @@ public final class UiController {
         rebuildUiTestTree();
     }
 
+    /**
+     * Mark a node as started (running).
+     * @param id node id
+     */
     public void nodeStarted(int id) {
         Node n = testNodes.get(id);
         if (n != null) {
@@ -253,6 +377,13 @@ public final class UiController {
         }
     }
 
+    /**
+     * Mark a node as finished with a given status and optional failure message.
+     *
+     * @param id node id
+     * @param status final status
+     * @param message optional failure message
+     */
     public void nodeFinished(int id, UiModel.Status status, String message) {
         Node n = testNodes.get(id);
         if (n != null) {
@@ -267,9 +398,19 @@ public final class UiController {
         }
     }
 
+    /**
+     * Append a log message to a test node; if the node is not yet known, buffer the log for later attachment.
+     *
+     * @param id      node id
+     * @param message log message; must not be {@code null} or empty
+     * @throws NullPointerException if {@code message} is {@code null}
+     */
     public void addTestLog(int id, String message) {
+        if (message == null) {
+            throw new NullPointerException("message");
+        }
         Node n = testNodes.get(id);
-        if (message == null || message.isEmpty()) {
+        if (message.isEmpty()) {
             return;
         }
         if (n != null) {
@@ -375,4 +516,42 @@ public final class UiController {
             case PASSED -> 1;
         };
     }
+
+    // Inner types last (InnerTypeLast)
+    /**
+     * Internal node representing a test suite/class/method in the incremental test tree.
+     *
+     * <p>This class is package-private to the controller and is used to build the UI test tree
+     * structure before converting to {@link UiModel} views.</p>
+     */
+    private static final class Node {
+        final int id;
+        final int parentId;
+        final byte kind;
+        final String name;
+        final String displayName;
+        UiModel.Status status = UiModel.Status.PENDING;
+        String failureMessage = null;
+        final List<Integer> children = new ArrayList<>();
+        final List<String> logs = new ArrayList<>();
+
+        Node(int id, int parentId, byte kind, String name, String displayName) {
+            this.id = id;
+            this.parentId = parentId;
+            this.kind = kind;
+            this.name = name;
+            this.displayName = displayName;
+        }
+    }
+
+    /**
+     * Summary of test counts.
+     *
+     * @param passed number passed
+     * @param failed number failed
+     * @param skipped number skipped
+     * @param running number running
+     * @param pending number pending
+     */
+    public record TestSummary(long passed, long failed, long skipped, long running, long pending) { }
 }

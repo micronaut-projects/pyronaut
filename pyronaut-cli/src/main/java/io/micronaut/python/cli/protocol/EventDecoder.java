@@ -15,7 +15,6 @@
  */
 package io.micronaut.python.cli.protocol;
 
-import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -34,6 +33,8 @@ public final class EventDecoder {
 
     /**
      * Reads the next event and returns an EventHandler that can be used to process it.
+     *
+     * @return a handler for reading the event payload
      */
     public EventHandler readEvent() throws IOException {
         int eventType = in.readUnsignedByte();
@@ -58,35 +59,67 @@ public final class EventDecoder {
             this.in = in;
         }
 
+        /**
+         * Get the event type.
+         *
+         * @return the event type
+         */
         public int getEventType() {
             return eventType;
         }
 
+        /**
+         * Get the protocol version.
+         *
+         * @return the protocol version
+         */
         public int getVersion() {
             return version;
         }
 
+        /**
+         * Read application started timestamp.
+         * @return the timestamp
+         */
         public long readAppStarted() throws IOException {
             return in.readLong();
         }
 
+        /**
+         * Read application stopped timestamp.
+         * @return the timestamp
+         */
         public long readAppStopped() throws IOException {
             return in.readLong();
         }
 
+        /**
+         * Read test run started timestamp.
+         * @return the timestamp
+         */
         public long readTestRunStarted() throws IOException {
             return in.readLong();
         }
 
+        /**
+         * Read test run finished summary.
+         *
+         * @return array of long: passed, failed, skipped, running, pending
+         */
         public long[] readTestRunFinished() throws IOException {
             long passed = in.readLong();
             long failed = in.readLong();
             long skipped = in.readLong();
             long running = in.readLong();
             long pending = in.readLong();
-            return new long[] { passed, failed, skipped, running, pending };
+            return new long[]{passed, failed, skipped, running, pending};
         }
 
+        /**
+         * Read test node definition.
+         *
+         * @return the test node
+         */
         public TestNode readTestNode() throws IOException {
             int id = in.readUnsignedShort();
             int parentId = in.readUnsignedShort();
@@ -102,10 +135,20 @@ public final class EventDecoder {
             return new TestNode(id, parentId, kind, name, display);
         }
 
+        /**
+         * Read test node started event.
+         *
+         * @return the test node ID
+         */
         public int readTestNodeStarted() throws IOException {
             return in.readUnsignedShort();
         }
 
+        /**
+         * Read test node finished event.
+         *
+         * @return the test node finished info
+         */
         public TestNodeFinished readTestNodeFinished() throws IOException {
             int id = in.readUnsignedShort();
             byte status = in.readByte();
@@ -119,6 +162,11 @@ public final class EventDecoder {
             return new TestNodeFinished(id, status, "");
         }
 
+        /**
+         * Read test log event.
+         *
+         * @return the test log
+         */
         public TestLog readTestLog() throws IOException {
             int id = in.readUnsignedShort();
             int len = in.readUnsignedShort();
@@ -127,12 +175,22 @@ public final class EventDecoder {
             return new TestLog(id, new String(buf, StandardCharsets.UTF_8));
         }
 
+        /**
+         * Read server URI.
+         *
+         * @return the server URI
+         */
         public String readServerUri() throws IOException {
             byte[] buf = new byte[payloadLen];
             in.readFully(buf);
             return new String(buf, StandardCharsets.UTF_8);
         }
 
+        /**
+         * Read application log event.
+         *
+         * @return the log event
+         */
         public LogEvent readAppLog() throws IOException {
             byte level = in.readByte();
             int msgLen = in.readUnsignedShort();
@@ -142,6 +200,11 @@ public final class EventDecoder {
             return new LogEvent(level, message);
         }
 
+        /**
+         * Read endpoint list.
+         *
+         * @return the list of endpoints
+         */
         public List<String> readEndpointList() throws IOException {
             int count = in.readUnsignedShort();
             List<String> eps = new ArrayList<>(count);
@@ -155,67 +218,72 @@ public final class EventDecoder {
         }
 
         /**
-         * Legacy full test result snapshot reader.
-         * Binary format:
-         * - u16 classCount
-         *   For each class:
-         *     - u16 classNameLen, bytes (UTF-8)
-         *     - u8 classStatus
-         *     - u16 methodCount
-         *       For each method:
-         *         - u16 methodNameLen, bytes (UTF-8)
-         *         - u16 displayNameLen, bytes (UTF-8)
-         *         - u8 status
-         *         - u16 messageLen, bytes (UTF-8, may be 0)
+         * Skip the event payload.
          */
-        public TestResult readTestResult() throws IOException {
-            byte[] buf = new byte[payloadLen];
-            in.readFully(buf);
-            var bin = new DataInputStream(new ByteArrayInputStream(buf));
-            int classCount = bin.readUnsignedShort();
-            var classes = new ArrayList<TestClassResult>(classCount);
-            for (int i = 0; i < classCount; i++) {
-                int cnLen = bin.readUnsignedShort();
-                byte[] cnBuf = new byte[cnLen];
-                bin.readFully(cnBuf);
-                String className = new String(cnBuf, StandardCharsets.UTF_8);
-                byte classStatus = bin.readByte();
-                int methodCount = bin.readUnsignedShort();
-                var methods = new ArrayList<TestMethodResult>(methodCount);
-                for (int j = 0; j < methodCount; j++) {
-                    int mnLen = bin.readUnsignedShort();
-                    byte[] mnBuf = new byte[mnLen];
-                    bin.readFully(mnBuf);
-                    String methodName = new String(mnBuf, StandardCharsets.UTF_8);
-                    int dnLen = bin.readUnsignedShort();
-                    byte[] dnBuf = new byte[dnLen];
-                    bin.readFully(dnBuf);
-                    String displayName = new String(dnBuf, StandardCharsets.UTF_8);
-                    byte status = bin.readByte();
-                    int msgLen = bin.readUnsignedShort();
-                    String message = "";
-                    if (msgLen > 0) {
-                        byte[] msgBuf = new byte[msgLen];
-                        bin.readFully(msgBuf);
-                        message = new String(msgBuf, StandardCharsets.UTF_8);
-                    }
-                    methods.add(new TestMethodResult(methodName, displayName, status, message));
-                }
-                classes.add(new TestClassResult(className, classStatus, methods));
-            }
-            return new TestResult(classes);
-        }
-
         public void skip() throws IOException {
             in.skipBytes(payloadLen);
         }
 
-        public record LogEvent(byte level, String message) {}
-        public record TestNode(int id, int parentId, byte kind, String name, String displayName) {}
-        public record TestNodeFinished(int id, byte status, String message) {}
-        public record TestLog(int id, String message) {}
-        public record TestResult(List<TestClassResult> classes) {}
-        public record TestClassResult(String name, byte status, List<TestMethodResult> methods) {}
-        public record TestMethodResult(String name, String displayName, byte status, String message) {}
+        /**
+         * Log event record.
+         * @param level   the log level
+         * @param message the log message
+         */
+        public record LogEvent(byte level, String message) {
+        }
+
+        /**
+         * Test node record.
+         * @param id          the node ID
+         * @param parentId    the parent node ID
+         * @param kind        the node kind
+         * @param name        the node name
+         * @param displayName the node display name
+         */
+        public record TestNode(int id, int parentId, byte kind, String name, String displayName) {
+        }
+
+        /**
+         * Test node finished record.
+         * @param id      the node ID
+         * @param status  the node status
+         * @param message the finish message
+         */
+        public record TestNodeFinished(int id, byte status, String message) {
+        }
+
+        /**
+         * Test log record.
+         * @param id      the test node ID
+         * @param message the log message
+         */
+        public record TestLog(int id, String message) {
+        }
+
+        /**
+         * Test result record.
+         * @param classes the list of test class results
+         */
+        public record TestResult(List<TestClassResult> classes) {
+        }
+
+        /**
+         * Test class result record.
+         * @param name    the class name
+         * @param status  the class status
+         * @param methods the list of test method results
+         */
+        public record TestClassResult(String name, byte status, List<TestMethodResult> methods) {
+        }
+
+        /**
+         * Test method result record.
+         * @param name        the method name
+         * @param displayName the method display name
+         * @param status      the method status
+         * @param message     the method message
+         */
+        public record TestMethodResult(String name, String displayName, byte status, String message) {
+        }
     }
 }

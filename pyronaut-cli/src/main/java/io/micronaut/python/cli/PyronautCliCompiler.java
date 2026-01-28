@@ -38,45 +38,70 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 
+/** Compiles a Pyronaut application. */
 @Command(name = "pyronautc", mixinStandardHelpOptions = true, description = "Compiles a Pyronaut application")
-public class PyronautCliCompiler implements Callable<Integer> {
+public final class PyronautCliCompiler implements Callable<Integer> {
     @Option(names = {"-s",
         "--source-directory"}, description = "Directory where to look for Python sources",
         required = true)
-    public List<File> sourceDirectory;
+    private List<File> sourceDirectory;
 
     @Option(names = {"-o",
         "--output-directory"}, description = "Directory where to write generated classes",
         required = true)
-    public File outputDirectory;
+    private File outputDirectory;
 
     @Option(names = {"-processorpath",
         "--processor-path"}, description = "Annotation processor classpath", split = "${sys:path.separator}")
-    public List<File> annotationProcessorPath;
+    private List<File> annotationProcessorPath;
 
     @Option(names = {"-cp",
         "--classpath"}, description = "Compilation classpath", split = "${sys:path.separator}")
-    public List<File> classpath;
+    private List<File> classpath;
 
     @Option(names = {"-bootclasspath",
         "--boot-class-path"}, description = "Boot classpath", split = "${sys:path.separator}")
-    public List<File> bootclasspath;
+    private List<File> bootclasspath;
 
     @Option(names = {"-option", "--option"}, description = "Additional compiler options")
-    public List<String> options;
+    private List<String> options;
 
     @Option(names = {"-v", "--verbose"}, description = "Verbose output")
-    public boolean verbose = false;
+    private boolean verbose = false;
 
-    public ClassLoader classLoader;
+    private ClassLoader classLoader;
+
+    public void setClassLoader(ClassLoader classLoader) {
+        this.classLoader = classLoader;
+    }
+
+    public void setSourceDirectory(List<File> sourceDirectory) {
+        this.sourceDirectory = sourceDirectory;
+    }
+
+    public void setOutputDirectory(File outputDirectory) {
+        this.outputDirectory = outputDirectory;
+    }
+
+    public void setAnnotationProcessorPath(List<File> annotationProcessorPath) {
+        this.annotationProcessorPath = annotationProcessorPath;
+    }
+
+    public void setClasspath(List<File> classpath) {
+        this.classpath = classpath;
+    }
+
+    public void setVerbose(boolean verbose) {
+        this.verbose = verbose;
+    }
 
     @Override
     public Integer call() throws Exception {
         Files.createDirectories(outputDirectory.toPath());
         try {
-            var compiler = ToolProvider.getSystemJavaCompiler();
-            var diagnosticCollector = new DiagnosticCollector<JavaFileObject>();
-            var fileManager = compiler.getStandardFileManager(diagnosticCollector, null, null);
+            final var compiler = ToolProvider.getSystemJavaCompiler();
+            final var diagnosticCollector = new DiagnosticCollector<JavaFileObject>();
+            final var fileManager = compiler.getStandardFileManager(diagnosticCollector, null, null);
             // Set the class output location
             try {
                 fileManager.setLocation(StandardLocation.CLASS_OUTPUT, List.of(outputDirectory));
@@ -122,7 +147,7 @@ public class PyronautCliCompiler implements Callable<Integer> {
                 @Override
                 public ClassLoader getClassLoader(Location location) {
                     var classLoader = super.getClassLoader(location);
-                    if (parentClassLoader!= null && classLoader instanceof URLClassLoader urlClassLoader) {
+                    if (parentClassLoader != null && classLoader instanceof URLClassLoader urlClassLoader) {
                         return new URLClassLoader(urlClassLoader.getURLs(), parentClassLoader);
                     }
                     return classLoader;

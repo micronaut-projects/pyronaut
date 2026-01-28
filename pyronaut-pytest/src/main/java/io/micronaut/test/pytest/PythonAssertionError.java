@@ -22,6 +22,7 @@ public class PythonAssertionError extends AssertionError {
     public PythonAssertionError(String message, Throwable cause) {
         super(message, cause);
     }
+
     public PythonAssertionError(String message) {
         super(message, null);
     }

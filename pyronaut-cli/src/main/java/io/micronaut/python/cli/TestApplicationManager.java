@@ -42,6 +42,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Application manager for running tests via JUnit Platform.
+ */
 @SuppressWarnings("unused")
 public class TestApplicationManager implements ApplicationManager {
     static {
@@ -208,10 +211,25 @@ public class TestApplicationManager implements ApplicationManager {
         eventEncoder.sendTestNode(nodeId, parentId, (byte) 2, name, display);
     }
 
+    @Override
+    public void stopApplication() {
+        cancelled.set(true);
+        var t = execThread;
+        if (t != null) {
+            try {
+                t.interrupt();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
     // ---- Live execution events -> node started/finished ----
 
-    private class EmittingListener implements TestExecutionListener {
+
+    private final class EmittingListener implements TestExecutionListener {
+
         private final Map<Integer, Long> testStartIndex = new ConcurrentHashMap<>();
+        private final Map<Integer, Map<String, String>> lastEmitted = new ConcurrentHashMap<>();
 
         @Override
         public void executionStarted(@NonNull TestIdentifier id) {
@@ -265,9 +283,6 @@ public class TestApplicationManager implements ApplicationManager {
             }
         }
 
-        // Dedup last-emitted content per node and stream, and preserve line breaks
-        private final Map<Integer, Map<String, String>> lastEmitted = new ConcurrentHashMap<>();
-
         @Override
         public void reportingEntryPublished(@NonNull TestIdentifier id, @NonNull ReportEntry entry) {
             try {
@@ -297,18 +312,6 @@ public class TestApplicationManager implements ApplicationManager {
             String[] lines = text.split("\r?\n", -1);
             for (String line : lines) {
                 eventEncoder.sendTestLog(nid, line.isEmpty() ? " " : line);
-            }
-        }
-    }
-
-    @Override
-    public void stopApplication() {
-        cancelled.set(true);
-        var t = execThread;
-        if (t != null) {
-            try {
-                t.interrupt();
-            } catch (Exception ignored) {
             }
         }
     }

@@ -26,15 +26,15 @@ import picocli.CommandLine.Spec;
 import java.util.Map;
 import java.util.concurrent.Callable;
 
+/** Entry point for the Pyronaut CLI. */
 @Command(name = "pyronaut", description = "The Pyronaut CLI", subcommands = {
         PyronautCleanCommand.class,
         PyronautRunCommand.class,
         PyronautInstallCommand.class,
         PyronautNativeCompileCommand.class,
         PyronautTestCommand.class
-}, mixinStandardHelpOptions = true)
-public class PyronautMainCommand implements Callable<Void> {
-
+ }, mixinStandardHelpOptions = true)
+public final class PyronautMainCommand implements Callable<Void> {
     @Spec
     CommandSpec spec;
 
@@ -43,11 +43,9 @@ public class PyronautMainCommand implements Callable<Void> {
         props.forEach((k, v) -> System.setProperty(k, v == null ? "" : v));
     }
 
-    @Option(names = {"--plain"}, description = "Disable TUI and use plain console output")
-    boolean plain;
-
     @Override
     public Void call() throws Exception {
+
         // Default behavior: `pyronaut` == `pyronaut run`
         new PyronautRunCommand().call();
         return null;

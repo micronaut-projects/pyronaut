@@ -19,12 +19,23 @@ import io.micronaut.python.cli.ui.Mode;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
+/**
+ * CLI command that runs the application in test/watch mode.
+ *
+ * <p>Starts the watch-mode test runner which monitors sources and re-runs tests on changes.</p>
+ */
 @Command(name = "test", description = "Executes tests", mixinStandardHelpOptions = true)
-public class PyronautTestCommand extends WatchModeCommand {
+public final class PyronautTestCommand extends WatchModeCommand {
 
     @Parameters(index = "0..*", description = "Application parameters")
     private String[] parameters;
 
+    /**
+     * Execute the test command in watch mode.
+     *
+     * @return exit code returned by the shared run routine
+     * @throws Exception on errors while preparing or running tests
+     */
     @Override
     public Integer call() throws Exception {
         return runShared(Mode.TEST, parameters);

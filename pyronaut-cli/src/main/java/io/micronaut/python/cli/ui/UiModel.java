@@ -25,35 +25,95 @@ import java.util.Optional;
  */
 public sealed interface UiModel permits UiModel.Running, UiModel.Compiling, UiModel.Testing, UiModel.Idle {
 
-    record Idle() implements UiModel {}
-
-    record Running(String uri, List<String> endpoints, Optional<Notification> notification) implements UiModel {}
-
-    record Compiling(List<FileUpdate> updatedFiles, List<String> activityLogLines, Optional<Notification> notification) implements UiModel {}
-
-    record Testing(TestTree testTree, Optional<Notification> notification) implements UiModel {}
-
+    /** UI idle state. */
+    record Idle() implements UiModel { }
+  
+    /**
+     * UI running state.
+     *
+     * @param uri The server URI
+     * @param endpoints The list of available endpoints
+     * @param notification Optional notification to display
+     */
+    record Running(String uri, List<String> endpoints, Optional<Notification> notification) implements UiModel { }
+  
+    /**
+     * UI compiling state.
+     *
+     * @param updatedFiles The list of files updated by the compiler
+     * @param activityLogLines The activity log output lines
+     * @param notification Optional notification to display
+     */
+    record Compiling(List<FileUpdate> updatedFiles, List<String> activityLogLines, Optional<Notification> notification) implements UiModel { }
+  
+    /**
+     * UI testing state.
+     *
+     * @param testTree The hierarchical test tree to display
+     * @param notification Optional notification to display
+     */
+    record Testing(TestTree testTree, Optional<Notification> notification) implements UiModel { }
+  
     /**
      * Represents a notification to display.
+     *
+     * @param message The notification message
+     * @param severity The severity level
+     * @param timestamp The time the notification was created
      */
-    record Notification(String message, Severity severity, Instant timestamp) {}
-
+    record Notification(String message, Severity severity, Instant timestamp) { }
+ 
+ 
+    /** Notification severity levels. */
     enum Severity { INFO, SUCCESS, WARNING, ERROR }
-
+ 
     /**
      * Hierarchical representation of test results.
      */
-    sealed interface TestTree permits TestSuite, TestClass, TestMethod {}
-
-    record TestSuite(String name, List<TestClass> classes, Status status) implements TestTree {}
-
-    record TestClass(String name, List<TestMethod> methods, Status status) implements TestTree {}
-
-    record TestMethod(String name, String displayName, Status status, Optional<String> failureMessage, List<String> logs) implements TestTree {}
-
+    sealed interface TestTree permits TestSuite, TestClass, TestMethod { }
+  
+    /**
+     * A suite of test classes.
+     *
+     * @param name The suite name
+     * @param classes The list of test classes
+     * @param status The aggregated suite status
+     */
+    record TestSuite(String name, List<TestClass> classes, Status status) implements TestTree { }
+  
+    /**
+     * A test class containing test methods.
+     *
+     * @param name The class name
+     * @param methods The list of test methods
+     * @param status The aggregated class status
+     */
+    record TestClass(String name, List<TestMethod> methods, Status status) implements TestTree { }
+  
+    /**
+     * A single test method result.
+     *
+     * @param name The method name
+     * @param displayName The human-friendly test display name
+     * @param status The method status
+     * @param failureMessage Optional failure message if any
+     * @param logs The list of log lines associated with the method
+     */
+    record TestMethod(String name, String displayName, Status status, Optional<String> failureMessage, List<String> logs) implements TestTree { }
+  
+    /** Status of a test or suite. */
     enum Status { PENDING, RUNNING, PASSED, FAILED, SKIPPED }
-
+  
+    /** File update types. */
     enum UpdateType { ADDED, MODIFIED, DELETED, CHANGED }
+  
+    /**
+     * A file update in the workspace.
+     *
+     * @param path The file path
+     * @param type The type of change
+     */
+    record FileUpdate(String path, UpdateType type) { }
 
-    record FileUpdate(String path, UpdateType type) {}
+
 }

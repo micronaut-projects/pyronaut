@@ -21,11 +21,26 @@ import io.micronaut.python.cli.ui.UiController;
 
 import java.io.DataOutputStream;
 
+/**
+ * Helper to start file watcher threads for the CLI tooling.
+ *
+ * <p>Creates and starts daemon watcher threads using a {@link PyronautWatcherFactory}
+ * and returns the created {@link PyronautFileWatcher} instance.</p>
+ */
 public final class WatcherThreads {
     private static final String NAME = "PyronautWatcher";
 
-    private WatcherThreads() {}
+    private WatcherThreads() { }
 
+    /**
+     * Create and start a daemon watcher thread using the provided factory.
+     *
+     * @param controller UI controller receiving watcher events
+     * @param eventOut stream where watcher events are written
+     * @param factory factory to create the watcher
+     * @return the started watcher instance
+     * @throws IllegalStateException if the factory failed to create a watcher
+     */
     public static PyronautFileWatcher start(UiController controller,
                                       DataOutputStream eventOut,
                                       PyronautWatcherFactory factory) {

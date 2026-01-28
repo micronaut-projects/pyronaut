@@ -43,20 +43,20 @@ public final class PyronautTui {
     private Runnable onCtrlT;
     private ModeCoordinator coordinator;
     private Supplier<Mode> desiredModeSupplier;
-
-    public UiController getController() {
-        return controller;
-    }
+    private DataInputStream eventInputStream;
+    private long initialLogStart = -1L;
 
     public PyronautTui() {
         this.controller = new UiController();
         this.view = new RootView(controller);
     }
 
-    private DataInputStream eventInputStream;
-    private long initialLogStart = -1L;
+    public UiController getController() {
+        return controller;
+    }
 
     public void setEventInputStream(DataInputStream in) {
+
         this.eventInputStream = in;
     }
 

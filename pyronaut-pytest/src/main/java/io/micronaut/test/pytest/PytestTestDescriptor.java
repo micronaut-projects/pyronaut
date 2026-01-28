@@ -25,7 +25,7 @@ import java.util.List;
 /**
  * Test descriptor for an individual Python test function or method.
  */
-public class PytestTestDescriptor extends AbstractTestDescriptor {
+public final class PytestTestDescriptor extends AbstractTestDescriptor {
 
     public static final String SEGMENT_SOURCE = "source";
     public static final String SEGMENT_TEST = "test";

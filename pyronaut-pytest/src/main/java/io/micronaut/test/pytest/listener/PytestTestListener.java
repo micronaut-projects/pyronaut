@@ -69,6 +69,8 @@ public interface PytestTestListener {
 
     /**
      * Called when test execution is complete.
+     *
+     * @param result The overall test execution result
      */
     void onResult(TestExecutionResult result);
 }

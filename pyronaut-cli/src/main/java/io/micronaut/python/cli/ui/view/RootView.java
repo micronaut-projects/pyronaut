@@ -72,6 +72,7 @@ public final class RootView extends Component<RootView> {
             .stickyScroll();
 
     private final TabsState tabsState = new TabsState(0);
+    private Mode mode = Mode.RUN;
 
     private enum UiState {
         RUNNING, COMPILING, TESTING, IDLE
@@ -107,23 +108,26 @@ public final class RootView extends Component<RootView> {
         // Footer (one-line hint bar)
         var footerPanel = footer();
 
+        // Render selected tab content robustly with default
         Element tabContent;
         Integer selected = tabsState.selected();
         int tabIndex = selected != null ? selected : 0;
-        if (tabIndex == 0) {
-            if (controller.isTesting() || controller.getLastTestSummary().isPresent() || mode == Mode.TEST) {
-                tabContent = testsPanel();
-            } else {
-                tabContent = row(column(endpointsPanel(), notificationsPanel())).addClass("main-row");
+        switch (tabIndex) {
+            case 0 -> {
+                if (controller.isTesting() || controller.getLastTestSummary().isPresent() || mode == Mode.TEST) {
+                    tabContent = testsPanel();
+                } else {
+                    tabContent = row(column(endpointsPanel(), notificationsPanel())).addClass("main-row");
+                }
             }
-        } else {
-            tabContent = panel("Activity", activityList).addClass("activity");
+            default -> tabContent = panel("Activity", activityList).addClass("activity");
         }
         return column(
                 headerPanel,
                 tabContent,
                 footerPanel
         );
+
     }
 
     // ============ Header / Footer ============
@@ -150,8 +154,6 @@ public final class RootView extends Component<RootView> {
                 ).addClass("header-row")
         ).addClass("header");
     }
-
-    private Mode mode = Mode.RUN;
 
     public void setMode(Mode mode) {
         this.mode = mode == null ? Mode.RUN : mode;
@@ -192,6 +194,7 @@ public final class RootView extends Component<RootView> {
                     case MODIFIED -> "[yellow][[~]][/] ";
                     case DELETED -> "[gray][[-]][/] ";
                     case CHANGED -> "[red][[?]][/] ";
+                    default -> "[red][[?]][/] ";
                 };
                 items.add(richText(MarkupParser.parse("  " + prefix + update.path())).addClass("updated-files"));
             }
@@ -272,6 +275,7 @@ public final class RootView extends Component<RootView> {
                     case SUCCESS -> text("✔ " + n.message()).addClass("success");
                     case WARNING -> text("⚠ " + n.message()).addClass("warning");
                     case ERROR -> text("✖ " + n.message()).addClass("error");
+                    default -> text(n.message());
                 };
                 items.add(se);
             }
@@ -283,10 +287,7 @@ public final class RootView extends Component<RootView> {
     }
 
     // ============ Right column (Activity) ============
-
-    private record ActivityItem(String content, Color color) {
-    }
-
+ 
     private Panel activityPanel() {
         List<ActivityItem> items = new ArrayList<>();
         for (String log : new ArrayList<>(controller.getActivityLogLines())) {
@@ -331,15 +332,6 @@ public final class RootView extends Component<RootView> {
         return text(item.content()).style(Style.EMPTY.fg(item.color())).addClass("log-item");
     }
 
-    // Test stats helpers
-    private static final class TestStats {
-        long passed;
-        long failed;
-        long skipped;
-        long running;
-        long pending;
-    }
-
     private static TestStats fromSummary(UiController.TestSummary s) {
         TestStats st = new TestStats();
         st.passed = s.passed();
@@ -381,6 +373,7 @@ public final class RootView extends Component<RootView> {
             case SKIPPED -> st.skipped++;
             case RUNNING -> st.running++;
             case PENDING -> st.pending++;
+            default -> { }
         }
     }
 
@@ -391,6 +384,7 @@ public final class RootView extends Component<RootView> {
             case TESTING -> waveText("Running tests...").state(stateWave).addClass(stateClassFor(state));
             case RUNNING -> waveText("Running...").state(stateWave).addClass(stateClassFor(state));
             case IDLE -> waveText("Waiting for changes...").state(stateWave).addClass(stateClassFor(state));
+            default -> waveText("Waiting...").state(stateWave).addClass(stateClassFor(state));
         };
     }
 
@@ -430,6 +424,7 @@ public final class RootView extends Component<RootView> {
             case COMPILING -> "state-compiling";
             case TESTING -> "state-testing";
             case IDLE -> "state-idle";
+            default -> "state-idle";
         };
     }
 
@@ -451,4 +446,15 @@ public final class RootView extends Component<RootView> {
         }
         return false;
     }
+
+    // ---- Inner types (kept last to satisfy InnerTypeLast) ----
+    private static final class TestStats {
+        long passed;
+        long failed;
+        long skipped;
+        long running;
+        long pending;
+    }
+
+    private record ActivityItem(String content, Color color) { }
 }

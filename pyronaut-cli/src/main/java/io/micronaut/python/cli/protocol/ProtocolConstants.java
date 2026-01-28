@@ -16,15 +16,19 @@
 package io.micronaut.python.cli.protocol;
 
 /**
- * Constants for the Pyronaut CLI protocol.
+ * Constants used by the Pyronaut wire protocol.
  */
 public final class ProtocolConstants {
-    private ProtocolConstants() {}
 
-    /** Current protocol version. */
+    /**
+     * Current protocol version.
+     *
+     */
     public static final byte PROTOCOL_VERSION = 1;
 
-    /** Event type codes. */
+    /**
+     * Event type codes.
+     */
     public static final byte APP_STARTED = 0x01;
     public static final byte APP_STOPPED = 0x02;
     public static final byte SERVER_URI = 0x03;
@@ -40,7 +44,9 @@ public final class ProtocolConstants {
     public static final byte TEST_LOG = 0x0D;
     public static final byte APP_START_FAILED = 0x0E;
 
-    /** Log level mappings. */
+    /**
+     * Log level mappings.
+     */
     public static final byte LOG_TRACE = 0;
     public static final byte LOG_DEBUG = 1;
     public static final byte LOG_INFO = 2;
@@ -48,14 +54,18 @@ public final class ProtocolConstants {
     public static final byte LOG_ERROR = 4;
     public static final byte LOG_FATAL = 5;
 
-    /** Test status mappings. */
+    /**
+     * Test status mappings.
+     */
     public static final byte TEST_PENDING = 0;
     public static final byte TEST_RUNNING = 1;
     public static final byte TEST_PASSED = 2;
     public static final byte TEST_FAILED = 3;
     public static final byte TEST_SKIPPED = 4;
 
-    /** Notification levels. */
+    /**
+     * Notification levels.
+     */
     public static final byte NOTIFY_INFO = 0;
     public static final byte NOTIFY_SUCCESS = 1;
     public static final byte NOTIFY_WARNING = 2;

@@ -34,25 +34,31 @@ import java.util.stream.Stream;
  * Resolves JUnit 5 discovery selectors into pytest test descriptors.
  */
 public class PytestDiscoverySelectorResolver {
-
+ 
     private static final Logger LOG = LoggerFactory.getLogger(PytestDiscoverySelectorResolver.class);
-
+ 
+    private final Context context;
+    private Path baseDirectory;
+ 
     public PytestDiscoverySelectorResolver(Context context) {
         this.context = context;
     }
-
-    private final Context context;
-    private Path baseDirectory;
-
+ 
     /**
      * Sets the base directory for computing relative test paths.
+     *
+     * @param baseDirectory the directory used to compute relative paths for tests
      */
     public void setBaseDirectory(Path baseDirectory) {
         this.baseDirectory = baseDirectory;
     }
 
+
     /**
      * Resolves discovery selectors and adds corresponding test descriptors.
+     *
+     * @param selector The discovery selector to resolve
+     * @param engineDescriptor The engine descriptor to add tests to
      */
     public void resolveSelectors(DiscoverySelector selector, EngineDescriptor engineDescriptor) {
         switch (selector) {
@@ -64,7 +70,12 @@ public class PytestDiscoverySelectorResolver {
         }
     }
 
-
+    /**
+     * Resolve a directory selector by scanning for Python files.
+     *
+     * @param selector The directory selector
+     * @param engineDescriptor The engine descriptor to populate
+     */
     private void resolveDirectorySelector(DirectorySelector selector, EngineDescriptor engineDescriptor) {
         Path directory = selector.getPath();
         LOG.debug("Resolving directory: {}", directory);
@@ -77,6 +88,12 @@ public class PytestDiscoverySelectorResolver {
         }
     }
 
+    /**
+     * Resolve an individual file selector.
+     *
+     * @param selector The file selector
+     * @param engineDescriptor The engine descriptor to populate
+     */
     private void resolveFileSelector(FileSelector selector, EngineDescriptor engineDescriptor) {
         Path file = selector.getPath();
         LOG.debug("Resolving file: {}", file);
@@ -86,6 +103,12 @@ public class PytestDiscoverySelectorResolver {
         }
     }
 
+    /**
+     * Scan a directory for Python files and add them to the engine descriptor.
+     *
+     * @param directory The directory to scan
+     * @param engineDescriptor The engine descriptor to populate
+     */
     private void scanPythonDirectory(Path directory, EngineDescriptor engineDescriptor) {
         LOG.debug("Scanning Python directory: {}", directory);
 
@@ -113,6 +136,12 @@ public class PytestDiscoverySelectorResolver {
         }
     }
 
+    /**
+     * Determine if a file is a test by its name.
+     *
+     * @param file The file path
+     * @return true if the file name starts with 'test_'
+     */
     private boolean isTestFile(Path file) {
         return file.getFileName().startsWith("test_");
     }

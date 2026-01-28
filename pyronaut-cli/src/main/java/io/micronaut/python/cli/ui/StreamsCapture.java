@@ -37,10 +37,9 @@ public final class StreamsCapture {
 
     private static final StreamsCapture INSTANCE = new StreamsCapture();
 
+    private static final int MAX_RING = 100_000;
     private final BlockingQueue<String> stdoutQueue = new LinkedBlockingQueue<>();
     private final BlockingQueue<String> stderrQueue = new LinkedBlockingQueue<>();
-    // Ring buffer for all lines with sequence numbers for windowing
-    private static final int MAX_RING = 100_000;
     private final Object ringLock = new Object();
     private final Deque<String> ring = new ArrayDeque<>();
     // baseSeq = sequence number immediately BEFORE the first element in ring
@@ -156,6 +155,14 @@ public final class StreamsCapture {
         }
     }
 
+    public OutputNotificationThread getStdOutThread() {
+        return stdOutThread;
+    }
+
+    public OutputNotificationThread getStdErrThread() {
+        return stdErrThread;
+    }
+
     private class TeeOutputStream extends OutputStream {
         private final OutputStream delegate;
         private final BlockingQueue<String> queue;
@@ -191,7 +198,6 @@ public final class StreamsCapture {
         @Override
         public void flush() throws IOException {
             delegate.flush();
-            // ensure partial line is pushed to queues and ring on flush
             flushBuffer();
         }
 
@@ -217,15 +223,7 @@ public final class StreamsCapture {
         }
     }
 
-    public OutputNotificationThread getStdOutThread() {
-        return stdOutThread;
-    }
-
-    public OutputNotificationThread getStdErrThread() {
-        return stdErrThread;
-    }
-
-    public static class OutputNotificationThread extends Thread {
+    public static final class OutputNotificationThread extends Thread {
         private final BlockingQueue<String> queue;
         private final List<Consumer<? super String>> consumers = new ArrayList<>();
 

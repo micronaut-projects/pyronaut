@@ -30,7 +30,6 @@ import java.lang.invoke.MethodType;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.channels.CancelledKeyException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
@@ -50,14 +49,14 @@ import static java.nio.file.Files.createDirectories;
  * File watcher for Pyronaut applications that recompiles and restarts
  * the application when source files change.
  */
-public class PyronautFileWatcher implements Runnable {
-    private static final String RUN_APP_CLASS_NAME = "io.micronaut.python.cli.DefaultApplicationManager";
-    private static final String TEST_APP_CLASS_NAME = "io.micronaut.python.cli.TestApplicationManager";
-
-    private final UiController controller;
-
+public final class PyronautFileWatcher implements Runnable {
     public static final int SUCCESS = 0;
     public static final int ERROR = -1;
+    private static final String RUN_APP_CLASS_NAME = "io.micronaut.python.cli.DefaultApplicationManager";
+    private static final String TEST_APP_CLASS_NAME = "io.micronaut.python.cli.TestApplicationManager";
+    private static final List<String> WATCHED_DIRECTORIES = List.of("src", "config", "tests");
+
+    private final UiController controller;
 
     private final AtomicReference<WatchService> watchServiceRef = new AtomicReference<>();
     private final AtomicReference<Thread> watcherThread = new AtomicReference<>();
@@ -66,7 +65,6 @@ public class PyronautFileWatcher implements Runnable {
     private final Path outputDirectory;
     private final String[] parameters;
     private final AtomicBoolean running = new AtomicBoolean(true);
-    private final static List<String> WATCHED_DIRECTORIES = List.of("src", "config", "tests");
     private final AtomicInteger runCount = new AtomicInteger(0);
     private final DataOutputStream eventOut;
     // In theory, this should always contain a single application thread. The use of a list is
@@ -203,10 +201,7 @@ public class PyronautFileWatcher implements Runnable {
                     queue.offer(changedFiles);
                 }
 
-                try {
-                    key.reset();
-                } catch (CancelledKeyException ignored) {
-                }
+                key.reset();
             }
         } catch (Exception e) {
             e.printStackTrace(System.err);
@@ -222,7 +217,6 @@ public class PyronautFileWatcher implements Runnable {
             System.out.println("No logging system found on classpath, using defaults.");
         }
     }
-
 
     /**
      * Determines if a Maven artifact is supposed to belong to the
@@ -286,11 +280,11 @@ public class PyronautFileWatcher implements Runnable {
 
     private int compile(ClassLoader truffleClassloader) {
         var compiler = new PyronautCliCompiler();
-        compiler.classLoader = truffleClassloader;
-        compiler.sourceDirectory = activeSources.get().stream().map(Path::toFile).collect(Collectors.toList());
-        compiler.outputDirectory = classesDirectory().toFile();
-        compiler.annotationProcessorPath = annotationProcessorRepo.asClasspath();
-        compiler.classpath = activeRepo.get().asClasspath();
+        compiler.setClassLoader(truffleClassloader);
+        compiler.setSourceDirectory(activeSources.get().stream().map(Path::toFile).collect(Collectors.toList()));
+        compiler.setOutputDirectory(classesDirectory().toFile());
+        compiler.setAnnotationProcessorPath(annotationProcessorRepo.asClasspath());
+        compiler.setClasspath(activeRepo.get().asClasspath());
 
         try {
             recurseDelete(classesDirectory());
@@ -476,7 +470,7 @@ public class PyronautFileWatcher implements Runnable {
      * types from Micronaut Context (e.g ApplicationContext) directly, because they
      * would be loaded from different classloaders.
      */
-    private static class ApplicationManagerInvoker implements ApplicationManager {
+    private static final class ApplicationManagerInvoker implements ApplicationManager {
         private final MethodHandle constructor;
         private final MethodHandle startMethod;
         private final MethodHandle stoptMethod;

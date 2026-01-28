@@ -47,6 +47,8 @@ public class PytestTestExecutor {
 
     /**
      * Executes the test descriptor and its children.
+     *
+     * @param descriptor The descriptor (engine, file, or test) to execute
      */
     public void execute(TestDescriptor descriptor) {
         LOG.debug("Executing test descriptor: {}", descriptor.getDisplayName());

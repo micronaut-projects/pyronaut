@@ -130,7 +130,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
                 StandardOpenOption.CREATE,
                 StandardOpenOption.APPEND
             );
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) { /* ignored */ }
         allDescriptors
             .stream()
             .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))

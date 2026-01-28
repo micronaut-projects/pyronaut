@@ -19,6 +19,7 @@ import io.micronaut.python.cli.ui.UiController;
 
 import java.io.DataOutputStream;
 
+/** Factory for creating file watchers. */
 @FunctionalInterface
 public interface PyronautWatcherFactory {
     PyronautFileWatcher create(UiController controller, DataOutputStream eventOut);

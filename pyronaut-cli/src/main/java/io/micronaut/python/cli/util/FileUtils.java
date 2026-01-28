@@ -24,15 +24,27 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 
+/**
+ * Utility methods for file operations used by the CLI tooling.
+ */
 @Internal
 public final class FileUtils {
 
+    /**
+     * Directory name used to store Pyronaut temporary files inside a project.
+     */
     public static final String PYRONAUT_DIR = "__pyronaut__";
+    /**
+     * Subdirectory name used for native exports.
+     */
     public static final String NATIVE_EXPORT_DIR = "native";
+    /**
+     * Subdirectory name used for compiled classes.
+     */
     public static final String CLASSES_DIR = "classes";
 
     /**
-     * Recursively deletes a directory and its content
+     * Recursively deletes a directory and its content.
      * @param directory the directory
      * @throws IOException thrown in case deletion fails
      */

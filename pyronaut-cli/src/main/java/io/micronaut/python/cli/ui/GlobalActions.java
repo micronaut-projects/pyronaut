@@ -24,24 +24,35 @@ import dev.tamboui.tui.event.Event;
  * Registered via ToolkitRunner.Builder.app(this).withAutoBindingRegistration().
  */
 public final class GlobalActions {
-
-    @FunctionalInterface
-    public interface Quitter {
-        void quit();
-    }
-
+ 
     private Quitter quitter;
     private Runnable switchToRun;
     private Runnable switchToTest;
 
+    /**
+     * Sets the quitter action.
+     *
+     * @param quitter the quitter action
+     */
     public void setQuitter(Quitter quitter) {
+
         this.quitter = quitter;
     }
 
+    /**
+     * Sets the action to switch to run mode.
+     *
+     * @param r the action to switch to run mode
+     */
     public void setSwitchToRun(Runnable r) {
         this.switchToRun = r;
     }
 
+    /**
+     * Sets the action to switch to test mode.
+     *
+     * @param r the action to switch to test mode
+     */
     public void setSwitchToTest(Runnable r) {
         this.switchToTest = r;
     }
@@ -68,5 +79,13 @@ public final class GlobalActions {
         if (r != null) {
             r.run();
         }
+    }
+
+    /**
+     * Functional interface for quitting action.
+     */
+    @FunctionalInterface
+    public interface Quitter {
+        void quit();
     }
 }

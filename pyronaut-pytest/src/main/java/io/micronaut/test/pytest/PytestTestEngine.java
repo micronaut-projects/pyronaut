@@ -43,14 +43,12 @@ import java.util.Optional;
  * This engine discovers and executes Python tests written with pytest framework.
  */
 public class PytestTestEngine implements TestEngine {
-
-    private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
-
+ 
     public static final String ENGINE_ID = "pyronaut-pytest";
     public static final String TEST_SOURCE_DIR = "pytest.src.dir";
+    private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
     private Context context = ContextHolder.isInitialized() && ContextHolder.isReuseContext() ? ContextHolder.getContext() : null;
-
-
+ 
     @Override
     public String getId() {
         return ENGINE_ID;
@@ -90,13 +88,12 @@ public class PytestTestEngine implements TestEngine {
         // Apply filters
         discoveryRequest.getFiltersByType(ClassNameFilter.class).forEach(filter -> {
             LOG.debug("Applying class name filter: {}", filter);
-            // TODO: Implement class name filtering
         });
-
+ 
         discoveryRequest.getFiltersByType(PackageNameFilter.class).forEach(filter -> {
             LOG.debug("Applying package name filter: {}", filter);
-            // TODO: Implement package name filtering
         });
+
 
         LOG.debug("Discovery completed. Found {} test descriptors", engineDescriptor.getChildren().size());
 

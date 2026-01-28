@@ -48,6 +48,12 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Default implementation of {@link ApplicationManager} that boots a Micronaut application context.
+ *
+ * <p>This implementation optionally wires a protocol event output stream and forwards lifecycle
+ * and runtime events through that stream when configured.</p>
+ */
 public class DefaultApplicationManager implements ApplicationManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(DefaultApplicationManager.class);
     private static final String BANNER_NAME = "micronaut-banner.txt";
@@ -60,12 +66,27 @@ public class DefaultApplicationManager implements ApplicationManager {
         ContextUtil.setReuseContext();
     }
 
+    /**
+     * Configure the stream where protocol events will be written.
+     *
+     * @param out a DataOutputStream used to publish events; may be null to disable event publishing
+     */
     // Not an override; just a method on the interface
-    public void setEventOutputStream(DataOutputStream out) {
+    public final void setEventOutputStream(DataOutputStream out) {
         // This will override the automatic lazy initialization
         this.eventEncoder = new EventEncoder(out);
     }
 
+    /**
+     * Start the application using the provided arguments.
+     *
+     * <p>This method will initialize the event encoder if needed and create/start a new
+     * ApplicationContext. It sends protocol events (app started, server URI, endpoints) when available.</p>
+     *
+     * @param args application arguments to pass to the context
+     * @throws IllegalStateException if an application context is already started
+     * @throws RuntimeException for other startup failures
+     */
     @Override
     public void startApplication(String[] args) {
         initializeEventEncoder();
@@ -164,6 +185,16 @@ public class DefaultApplicationManager implements ApplicationManager {
         }
     }
 
+    /**
+     * Discover HTTP endpoints exposed by an EmbeddedServer within the given application context.
+     *
+     * <p>Attempts a short HTTP request to the server's /routes endpoint and extracts "METHOD path"
+     * pairs from the response body. Fails silently and returns an empty list on error or if the
+     * server is not present.</p>
+     *
+     * @param ctx the application context to query for an {@link EmbeddedServer}
+     * @return list of endpoints formatted as "METHOD path"; empty when none discovered or on error
+     */
     private List<String> discoverEndpoints(ApplicationContext ctx) {
         List<String> result = new ArrayList<>();
         try {
@@ -204,15 +235,18 @@ public class DefaultApplicationManager implements ApplicationManager {
                     }
                 }
                 result = new ArrayList<>(ordered);
-
             }
         } catch (Exception ignored) {
         }
         return result;
     }
 
-
-    // Hook for bridging Logback logs to protocol events
+    /**
+     * Attach a Logback appender proxy that forwards structured log messages to the protocol {@link EventEncoder}.
+     * This method uses reflection and tolerates absence of Logback on the classpath (fails silently).
+     *
+     * @param encoder the event encoder used to send log lines
+     */
     private void attachLogbackToEventEncoder(EventEncoder encoder) {
         try {
             // Use reflection to support both Logback Classic 1.x and 0.x
@@ -252,6 +286,12 @@ public class DefaultApplicationManager implements ApplicationManager {
         }
     }
 
+    /**
+     * Stop the running application context.
+     *
+     * @throws IllegalStateException if the application was not started
+     * @throws RuntimeException if an error occurs while shutting down the context
+     */
     @Override
     public void stopApplication() {
         lock.lock();
@@ -277,6 +317,10 @@ public class DefaultApplicationManager implements ApplicationManager {
         }
     }
 
+    /**
+     * Initialize an EventEncoder from a configured socket system property when one has not been supplied.
+     * This method is best-effort and ignores connection failures.
+     */
     private void initializeEventEncoder() {
         // Only create if not already supplied by setEventOutputStream
         if (eventEncoder == null) {
@@ -293,6 +337,12 @@ public class DefaultApplicationManager implements ApplicationManager {
         }
     }
 
+    /**
+     * Resolve a {@link Banner} instance to print at startup using the application context's resource loader.
+     *
+     * @param applicationContext the application context used to find the banner resource
+     * @return a {@link Banner} (either {@link ResourceBanner} when banner resource found or {@link MicronautBanner} otherwise)
+     */
     private Banner resolveBanner(ApplicationContext applicationContext) {
         var out = System.out;
         var loader =  applicationContext.getBean(ResourceLoader.class);
@@ -301,6 +351,12 @@ public class DefaultApplicationManager implements ApplicationManager {
             .orElseGet(() -> new MicronautBanner(out));
     }
 
+    /**
+     * Compute elapsed milliseconds since the provided start time expressed in nanoseconds.
+     *
+     * @param startNanos start time in nanoseconds (as returned by System.nanoTime())
+     * @return elapsed time in milliseconds
+     */
     private static long elapsedMillis(long startNanos) {
         return TimeUnit.MILLISECONDS.convert(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
     }

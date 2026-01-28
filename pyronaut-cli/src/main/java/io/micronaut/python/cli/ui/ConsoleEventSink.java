@@ -20,6 +20,10 @@ import io.micronaut.python.cli.protocol.ProtocolConstants;
 import java.io.PrintStream;
 import java.util.List;
 
+/**
+ * An event sink that outputs events from the console to
+ * the provided print streams.
+ */
 public final class ConsoleEventSink implements ProtocolEventSink {
 
     private final PrintStream out;

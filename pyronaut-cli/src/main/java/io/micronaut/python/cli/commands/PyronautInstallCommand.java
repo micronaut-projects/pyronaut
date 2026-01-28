@@ -45,6 +45,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static dev.tamboui.toolkit.Toolkit.*;
 
 
+/** Installs Pyronaut dependencies. */
 @Command(name = "install", description = "Installs Pyronaut dependencies", mixinStandardHelpOptions = true)
 public class PyronautInstallCommand extends AbstractPyronautDependencyResolutionAwareCommand {
     @Option(names = {"--scope"}, required = false)
@@ -112,7 +113,6 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
         }
         return 0;
     }
-
 
     private static Text error(String message) {
         return Text.styled(message, Style.EMPTY.fg(Color.RED));

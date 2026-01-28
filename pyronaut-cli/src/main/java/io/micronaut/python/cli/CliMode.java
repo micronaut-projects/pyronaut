@@ -15,6 +15,11 @@
  */
 package io.micronaut.python.cli;
 
+/**
+ * Utility holder for CLI mode flags.
+ *
+ * <p>Provides a global flag to control plain (non-ANSI) output rendering.</p>
+ */
 public final class CliMode {
 
     private static volatile boolean plain;
@@ -22,10 +27,20 @@ public final class CliMode {
     private CliMode() {
     }
 
+    /**
+     * Set whether CLI should run in plain mode (no ANSI/interactive UI).
+     *
+     * @param value true to enable plain mode, false to disable
+     */
     public static void setPlain(boolean value) {
         plain = value;
     }
 
+    /**
+     * Query whether CLI is running in plain mode.
+     *
+     * @return true if plain mode is enabled, false otherwise
+     */
     public static boolean isPlain() {
         return plain;
     }
