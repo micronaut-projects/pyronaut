@@ -143,6 +143,7 @@ public class PytestTestEngine implements TestEngine {
                 throw e;
             } finally {
                 try {
+                    ContextHolder.resetContext();
                     if (!ContextHolder.isReuseContext()) {
                         context.close();
                         context = null;
