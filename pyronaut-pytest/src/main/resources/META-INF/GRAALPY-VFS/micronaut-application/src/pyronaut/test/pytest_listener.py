@@ -28,6 +28,7 @@ class MicronautPytestPlugin:
         self.listener = listener
         self.current_file = None
         self.test_results = {}  # Store test results by test id
+        self._failure_reported = set()  # Track tests for which failure block was forwarded
 
     def pytest_sessionstart(self, session):
         """Called when pytest session starts."""
@@ -92,10 +93,28 @@ class MicronautPytestPlugin:
             self.current_file = collector.fspath
             self.listener.beforeFile(f"{collector.fspath}")
 
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_runtest_call(self, item):
-        """Called when test is actually executed."""
+        """Wrap the test call to capture stdout/stderr reliably and forward to Java.
+        Avoid double emission with pytest capture by not forwarding here when pytest has already captured output.
+        """
         test_id = self._get_test_id(item)
+        # Notify Java before executing the test body so the engine can mark it started
         self.listener.beforeTest(test_id, item)
+        import io, contextlib
+        buf_out = io.StringIO()
+        buf_err = io.StringIO()
+        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            outcome = yield
+        # Heuristic: if pytest capture is active, capstdout/capstderr will be non-empty in logreport(call),
+        # so skip forwarding here to avoid duplicates. We only forward here if buffers are non-empty
+        # AND we detect that pytest capture is likely disabled (-s) by checking for empty capstdout later.
+        out = buf_out.getvalue()
+        err = buf_err.getvalue()
+        # Only forward here if capture is off (best-effort): if both out/err exist, they'll be forwarded later by logreport
+        # so we do nothing here to avoid duplicates.
+        # If user ran with -s (capture=no), logreport capstdout/capstderr will be empty → forward here.
+        self._pending_wrap = (test_id, out, err)
 
     def pytest_runtest_makereport(self, item, call):
         """Called when test report is created."""
@@ -108,6 +127,74 @@ class MicronautPytestPlugin:
         else:
             # Test passed
             self.test_results[test_id] = None
+
+    def pytest_runtest_logreport(self, report):
+        """Forward captured stdout/stderr and framework-formatted failure details per test phase.
+        Also handle -s (capture=no) by emitting wrap-captured buffers if pytest didn't capture.
+        """
+        test_id = getattr(report, "nodeid", None)
+        if not test_id:
+            return
+
+        phase = getattr(report, "when", None)
+        # Forward captured streams only for the call phase to avoid duplicates
+        if phase == "call":
+            out = getattr(report, "capstdout", "") or ""
+            err = getattr(report, "capstderr", "") or ""
+            if out:
+                try:
+                    self.listener.onOutput(test_id, "stdout", out)
+                except Exception:
+                    import traceback; traceback.print_exc()
+            if err:
+                try:
+                    self.listener.onOutput(test_id, "stderr", err)
+                except Exception:
+                    import traceback; traceback.print_exc()
+
+            # If capture is disabled (-s) capstdout/err are empty; emit from wrap buffers once at 'call'
+            if not out and not err:
+                pend = getattr(self, "_pending_wrap", None)
+                if pend and pend[0] == test_id:
+                    _, wout, werr = pend
+                    if wout:
+                        try:
+                            self.listener.onOutput(test_id, "stdout", wout)
+                        except Exception:
+                            import traceback; traceback.print_exc()
+                    if werr:
+                        try:
+                            self.listener.onOutput(test_id, "stderr", werr)
+                        except Exception:
+                            import traceback; traceback.print_exc()
+                    self._pending_wrap = None
+
+        # On failure, forward framework-formatted details similar to terminal output (once per test)
+        if getattr(report, "failed", False) and test_id not in self._failure_reported:
+            self._failure_reported.add(test_id)
+            failure_text = getattr(report, "longreprtext", None)
+            if not failure_text and getattr(report, "longrepr", None) is not None:
+                try:
+                    failure_text = str(report.longrepr)
+                except Exception:
+                    failure_text = None
+            if not failure_text:
+                failure_text = ""
+            sections = getattr(report, "sections", []) or []
+            parts = []
+            sep = "_" * 53
+            parts.append(f"{sep} {test_id} {sep}")
+            if failure_text:
+                parts.append(failure_text)
+            for (name, content) in sections:
+                # sections content often already includes trailing newlines; keep as-is
+                if content is not None:
+                    parts.append(f"{name}\n{content}")
+            text = "\n".join(parts)
+            try:
+                self.listener.onOutput(test_id, "log", text)
+            except Exception:
+                import traceback; traceback.print_exc()
 
     def pytest_runtest_teardown(self, item):
         """Called after test teardown."""

@@ -24,15 +24,8 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.HostAccess;
 import org.graalvm.python.embedding.GraalPyResources;
 import org.graalvm.python.embedding.VirtualFileSystem;
-import org.junit.platform.engine.ConfigurationParameters;
-import org.junit.platform.engine.DiscoverySelector;
-import org.junit.platform.engine.EngineDiscoveryRequest;
-import org.junit.platform.engine.ExecutionRequest;
-import org.junit.platform.engine.TestDescriptor;
-import org.junit.platform.engine.TestEngine;
-import org.junit.platform.engine.UniqueId;
+import org.junit.platform.engine.*;
 import org.junit.platform.engine.discovery.ClassNameFilter;
-import org.junit.platform.engine.discovery.DirectorySelector;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.engine.discovery.PackageNameFilter;
 import org.junit.platform.engine.support.descriptor.EngineDescriptor;
@@ -50,14 +43,12 @@ import java.util.Optional;
  * This engine discovers and executes Python tests written with pytest framework.
  */
 public class PytestTestEngine implements TestEngine {
-
-    private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
-
+ 
     public static final String ENGINE_ID = "pyronaut-pytest";
     public static final String TEST_SOURCE_DIR = "pytest.src.dir";
-    private Context context;
-
-
+    private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
+    private Context context = ContextHolder.isInitialized() && ContextHolder.isReuseContext() ? ContextHolder.getContext() : null;
+ 
     @Override
     public String getId() {
         return ENGINE_ID;
@@ -66,47 +57,24 @@ public class PytestTestEngine implements TestEngine {
     @Override
     public TestDescriptor discover(EngineDiscoveryRequest discoveryRequest, UniqueId uniqueId) {
         LOG.debug("Starting test discovery with uniqueId: {}", uniqueId);
-        ConfigurationParameters configurationParameters = discoveryRequest.getConfigurationParameters();
-
+        var configurationParameters = discoveryRequest.getConfigurationParameters();
         if (this.context == null) {
-            System.setProperty("org.graalvm.python.vfs.allow_multiple", StringUtils.TRUE);
-            System.setProperty("org.graalvm.python.vfs.multiple_vfs_checks_as_warning", StringUtils.TRUE);
-
-            var pyEnv = System.getenv("PYENV_VERSION");
-            var venv = System.getenv("VIRTUAL_ENV");
-            Context.Builder builder = GraalPyResources.contextBuilder(VirtualFileSystem.newBuilder()
-                    .resourceDirectory(GraalPyContextFactory.APPLICATION_PATH)
-                    .resourceLoadingClass(PytestTestEngine.class)
-                    .build())
-                .allowHostAccess(HostAccess.ALL)
-                .allowHostClassLookup(name -> true);
-            if (pyEnv != null && venv != null && pyEnv.startsWith("graalpy")) {
-                builder.option("python.Executable", Path.of(venv).resolve("bin/python").toString());
-            }
-            configurationParameters.keySet().forEach(key -> {
-                if (key.startsWith("python.")) {
-                    configurationParameters.get(key).ifPresent(value ->
-                        builder.option(key, value)
-                    );
-                }
-            });
-            this.context = builder.build();
-            ContextHolder.setContext(context);
-            ContextHolder.setReuseContext(true);
+            createGraalPyContext(configurationParameters);
+        } else {
+            LOG.debug("Using context: {}", this.context);
         }
 
-        EngineDescriptor engineDescriptor = new EngineDescriptor(uniqueId, "Micronaut Pytest Engine");
+        var engineDescriptor = new EngineDescriptor(uniqueId, "Micronaut Pytest Engine");
+        var selectorResolver = new PytestDiscoverySelectorResolver(context);
 
-        PytestDiscoverySelectorResolver selectorResolver = new PytestDiscoverySelectorResolver(context);
-
-        String testSrc = configurationParameters.get(TEST_SOURCE_DIR).orElse(null);
+        var testSrc = configurationParameters.get(TEST_SOURCE_DIR).orElse(null);
         Path baseDirectory = null;
         if (testSrc != null) {
-            Path srcPath = Paths.get(testSrc);
+            var srcPath = Paths.get(testSrc);
             if (Files.exists(srcPath)) {
                 baseDirectory = srcPath;
                 selectorResolver.setBaseDirectory(baseDirectory);
-                DirectorySelector directorySelector = DiscoverySelectors.selectDirectory(testSrc);
+                var directorySelector = DiscoverySelectors.selectDirectory(testSrc);
                 selectorResolver.resolveSelectors(directorySelector, engineDescriptor);
             }
         }
@@ -120,17 +88,43 @@ public class PytestTestEngine implements TestEngine {
         // Apply filters
         discoveryRequest.getFiltersByType(ClassNameFilter.class).forEach(filter -> {
             LOG.debug("Applying class name filter: {}", filter);
-            // TODO: Implement class name filtering
         });
-
+ 
         discoveryRequest.getFiltersByType(PackageNameFilter.class).forEach(filter -> {
             LOG.debug("Applying package name filter: {}", filter);
-            // TODO: Implement package name filtering
         });
+
 
         LOG.debug("Discovery completed. Found {} test descriptors", engineDescriptor.getChildren().size());
 
         return engineDescriptor;
+    }
+
+    private void createGraalPyContext(ConfigurationParameters configurationParameters) {
+        System.setProperty("org.graalvm.python.vfs.allow_multiple", StringUtils.TRUE);
+        System.setProperty("org.graalvm.python.vfs.multiple_vfs_checks_as_warning", StringUtils.TRUE);
+
+        var pyEnv = System.getenv("PYENV_VERSION");
+        var venv = System.getenv("VIRTUAL_ENV");
+        var builder = GraalPyResources.contextBuilder(VirtualFileSystem.newBuilder()
+                        .resourceDirectory(GraalPyContextFactory.APPLICATION_PATH)
+                        .resourceLoadingClass(PytestTestEngine.class)
+                        .build())
+                .allowHostAccess(HostAccess.ALL)
+                .allowHostClassLookup(name -> true);
+        if (pyEnv != null && venv != null && pyEnv.startsWith("graalpy")) {
+            builder.option("python.Executable", Path.of(venv).resolve("bin/python").toString());
+        }
+        configurationParameters.keySet().forEach(key -> {
+            if (key.startsWith("python.")) {
+                configurationParameters.get(key).ifPresent(value ->
+                        builder.option(key, value)
+                );
+            }
+        });
+        this.context = builder.build();
+        ContextHolder.setContext(context);
+        ContextHolder.setReuseContext(true);
     }
 
     @Override
@@ -138,8 +132,8 @@ public class PytestTestEngine implements TestEngine {
         if (context != null) {
             LOG.debug("Starting test execution");
 
-            TestDescriptor rootDescriptor = request.getRootTestDescriptor();
-            PytestTestExecutor executor = new PytestTestExecutor(this.context, request.getEngineExecutionListener());
+            var rootDescriptor = request.getRootTestDescriptor();
+            var executor = new PytestTestExecutor(this.context, request.getEngineExecutionListener());
 
             try {
                 executor.execute(rootDescriptor);
@@ -149,8 +143,11 @@ public class PytestTestEngine implements TestEngine {
                 throw e;
             } finally {
                 try {
-                    context.close();
-                    context = null;
+                    ContextHolder.resetContext();
+                    if (!ContextHolder.isReuseContext()) {
+                        context.close();
+                        context = null;
+                    }
                 } catch (Exception e) {
                     // ignore
                 }

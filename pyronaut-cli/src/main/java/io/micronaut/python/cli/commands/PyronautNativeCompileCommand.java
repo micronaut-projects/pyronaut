@@ -28,9 +28,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+/**
+ * CLI command that builds a native image of the Pyronaut application.
+ *
+ * <p>When a {@code pyproject.toml} is present, this command generates a temporary Gradle
+ * project and invokes the Gradle Tooling API to produce a native binary.</p>
+ */
 @Command(name = "native", description = "Builds a native image of the Pyronaut application", mixinStandardHelpOptions = true)
 public class PyronautNativeCompileCommand extends AbstractPyronautDependencyResolutionAwareCommand {
 
+    /**
+     * Entry point for the 'native' command.
+     *
+     * @return exit code (0 on success)
+     * @throws RuntimeException for failures while preparing or running the native build (wraps IO and tooling errors)
+     */
     @Override
     public Integer call() {
         var sourceDirectory = resolveRootDir();
@@ -43,6 +55,15 @@ public class PyronautNativeCompileCommand extends AbstractPyronautDependencyReso
         return 0;
     }
 
+    /**
+     * Build a native image using a temporary Gradle project assembled from the provided pyproject.toml.
+     *
+     * <p>This method creates a temporary build directory, writes the generated build script and invokes
+     * the Gradle tooling to run the export task.</p>
+     *
+     * @param tomlFile path to pyproject.toml used to derive project metadata and dependencies
+     * @throws RuntimeException if assembling the build files or invoking Gradle fails (wraps IO and tooling exceptions)
+     */
     private void buildNativeImage(Path tomlFile) {
         try (var templateSource = PyronautNativeCompileCommand.class.getResourceAsStream(
             "native.build.gradle")) {
@@ -80,6 +101,12 @@ public class PyronautNativeCompileCommand extends AbstractPyronautDependencyReso
         }
     }
 
+    /**
+     * Determine the native image name from the parsed pyproject.toml.
+     *
+     * @param pyProject parsed TOML result for the project's pyproject.toml
+     * @return the image name to use; defaults to "pyronaut-app" if not specified
+     */
     private String findImageName(TomlParseResult pyProject) {
         var projectName = pyProject.getString("project.name");
         if (projectName != null) {
@@ -88,6 +115,11 @@ public class PyronautNativeCompileCommand extends AbstractPyronautDependencyReso
         return "pyronaut-app";
     }
 
+    /**
+     * Simple progress event logger used during the Gradle invocation.
+     *
+     * @param event progress event emitted by Gradle tooling
+     */
     private static void logEvent(ProgressEvent event) {
         System.out.println(event.getDisplayName());
     }

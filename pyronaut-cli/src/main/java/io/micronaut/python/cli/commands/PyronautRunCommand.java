@@ -15,15 +15,19 @@
  */
 package io.micronaut.python.cli.commands;
 
-import io.micronaut.python.cli.PyronautFileWatcher;
-import io.micronaut.python.cli.util.PythonMavenRepository;
+import io.micronaut.python.cli.ui.Mode;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
 
 import java.util.List;
 
+/**
+ * CLI command that runs a Pyronaut application.
+ *
+ * <p>Starts the application in run mode, with optional watch mode for automatic restarts on source changes.</p>
+ */
 @Command(name = "run", description = "Runs a Pyronaut application", mixinStandardHelpOptions = true)
-public class PyronautRunCommand extends BaseSourceCommand {
+public final class PyronautRunCommand extends WatchModeCommand {
     private static final String ANNOTATION_PROCESSOR_SCOPE = "annotationProcessor";
     private static final List<String> SOURCE_DIRECTORIES = List.of("src");
 
@@ -40,43 +44,7 @@ public class PyronautRunCommand extends BaseSourceCommand {
 
     @Override
     public Integer call() throws Exception {
-        var compileDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(scope()));
-        if (compileDependencies.isEmpty()) {
-            System.err.println("Pyronaut dependencies not found. Did you run `pyronaut install`?");
-            return -1;
-        }
-        var annotationProcDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(ANNOTATION_PROCESSOR_SCOPE));
-        var rootDirectory = resolveRootDir();
-        var watcher = new PyronautFileWatcher(
-                rootDirectory,
-                getSourceDirectories().stream().map(rootDirectory::resolve).toList(),
-                annotationProcDependencies,
-                compileDependencies,
-                parameters,
-                getApplicationManagerClassName());
-        var watcherThread = new Thread(watcher);
-        watcherThread.start();
-
-        // Handle shutdown gracefully
-        Runtime.getRuntime().addShutdownHook(new Thread(watcher::stop));
-
-        try {
-            watcherThread.join();
-        } catch (InterruptedException e) {
-            watcher.stop();
-            Thread.currentThread().interrupt();
-        }
-
-        return 0;
+        return runShared(Mode.RUN, parameters);
     }
 
-    /**
-     * Returns the name of the application manager that is responsible
-     * for starting the application and/or tests.
-     *
-     * @return the class name
-     */
-    protected String getApplicationManagerClassName() {
-        return "io.micronaut.python.cli.DefaultApplicationManager";
-    }
-}
+ }

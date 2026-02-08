@@ -15,6 +15,15 @@
  */
 package io.micronaut.python.cli.commands;
 
+import dev.tamboui.style.Color;
+import dev.tamboui.style.Style;
+import dev.tamboui.text.Text;
+import dev.tamboui.toolkit.app.InlineToolkitRunner;
+import dev.tamboui.widgets.wavetext.WaveTextState;
+import io.micronaut.python.cli.CliMode;
+import io.micronaut.python.cli.ui.ConsoleProgressDisplay;
+import io.micronaut.python.cli.ui.ProgressDisplay;
+import io.micronaut.python.cli.ui.StreamsCapture;
 import org.gradle.tooling.GradleConnector;
 import org.gradle.tooling.events.OperationType;
 import org.gradle.tooling.events.ProgressEvent;
@@ -27,10 +36,16 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
+import static dev.tamboui.toolkit.Toolkit.*;
+
+
+/** Installs Pyronaut dependencies. */
 @Command(name = "install", description = "Installs Pyronaut dependencies", mixinStandardHelpOptions = true)
 public class PyronautInstallCommand extends AbstractPyronautDependencyResolutionAwareCommand {
     @Option(names = {"--scope"}, required = false)
@@ -40,56 +55,144 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
     List<String> extraDependencies = List.of();
 
     @Override
-    public Integer call() {
+    public Integer call() throws IOException {
         var sourceDirectory = resolveRootDir();
         var tomlFile = sourceDirectory.resolve("pyproject.toml");
-        if (Files.exists(tomlFile)) {
-            if (!extraDependencies.isEmpty()) {
-                try {
-                    mutateTomlWithDependencies(tomlFile, extraDependencies, scope);
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed to update pyproject.toml", e);
+        if (CliMode.isPlain()) {
+            if (Files.exists(tomlFile)) {
+                if (!extraDependencies.isEmpty()) {
+                    try {
+                        // plain path: no InlineDisplay
+                        mutateTomlWithDependencies(tomlFile, extraDependencies, scope);
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to update pyproject.toml", e);
+                    }
                 }
+                installDependenciesPlain(tomlFile);
+            } else {
+                System.err.println("No pyproject.toml file found.");
             }
-            installDependencies(tomlFile);
-        } else {
-            System.out.println("No pyproject.toml file found.");
+            return 0;
+        }
+        var waveTextState = new WaveTextState();
+        StreamsCapture.installGlobal();
+        try (var runner = InlineToolkitRunner.builder(3).clearOnClose(true).build()) {
+            var currentTask = new AtomicReference<>("");
+            var detailsLine = new AtomicReference<>("");
+            if (Files.exists(tomlFile)) {
+                runner.schedule(() -> {
+                    try {
+                        if (!extraDependencies.isEmpty()) {
+                            mutateTomlWithDependencies(tomlFile, extraDependencies, scope);
+                        }
+                        installDependenciesWithRunner(tomlFile, currentTask, detailsLine);
+                    } catch (IOException ioe) {
+                        runner.println(error("Failed to update pyproject.toml: " + ioe.getMessage()));
+                    } catch (Exception ex) {
+                        runner.println(error("Installation failed: " + ex.getMessage()));
+                    } finally {
+                        runner.quit();
+                    }
+                }, Duration.ZERO);
+            } else {
+                runner.schedule(() -> {
+                    runner.println(error("No pyproject.toml file found."));
+                    runner.quit();
+                }, Duration.ZERO);
+            }
+            runner.run(() -> column(
+                            waveText("Installing...").state(waveTextState),
+                            markupText("   " + currentTask.get()),
+                            markupText("   " + detailsLine.get()).dim()
+                    )
+            );
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            StreamsCapture.getInstance().restore();
         }
         return 0;
     }
 
-    private void installDependencies(Path tomlFile) {
+    private static Text error(String message) {
+        return Text.styled(message, Style.EMPTY.fg(Color.RED));
+    }
+
+    private void installDependenciesWithRunner(Path tomlFile,
+                                               AtomicReference<String> currentTask,
+                                               AtomicReference<String> detailsLine) {
         var outputDir = pyronautVenvCacheDir().resolve("dependencies").toAbsolutePath();
         try (var templateSource = PyronautInstallCommand.class.getResourceAsStream(
-            "template.build.gradle")) {
+                "template.build.gradle")) {
             var pyProject = Toml.parse(tomlFile);
             var repositories = buildRepositoriesBlock(pyProject);
             var scopes = this.scope != null ? List.of(scope) :
-                List.copyOf(pyProject.getTableOrEmpty("tool.pyronaut.dependencies").keySet());
+                    List.copyOf(pyProject.getTableOrEmpty("tool.pyronaut.dependencies").keySet());
             var template = new String(templateSource.readAllBytes(), StandardCharsets.UTF_8)
-                .replace("// %REPOSITORIES%", repositories);
+                    .replace("// %REPOSITORIES%", repositories);
             for (var scope : scopes) {
                 var destination = outputDir.resolve(scope);
-                System.out.println("Resolving " + scope + " dependencies into " + destination);
+                currentTask.set("Resolving [cyan]" + scope + "[/] dependencies into [dim]" + destination + "[/]");
                 var buildScript = template.replace("%DESTINATION_DIR%", destination.toString())
-                    .replace("// %DEPENDENCIES%",
-                        buildFullDependenciesList(pyProject, extraDependencies, scope));
+                        .replace("// %DEPENDENCIES%",
+                                buildFullDependenciesList(pyProject, extraDependencies, scope));
                 var tmpDir = Files.createTempDirectory("pyronaut");
                 Files.write(tmpDir.resolve("settings.gradle"),
-                    List.of("rootProject.name = \"pyronaut-resolution\""));
+                        List.of("rootProject.name = \"pyronaut-resolution\""));
                 Files.writeString(tmpDir.resolve("build.gradle"), buildScript);
                 try (var connector = GradleConnector.newConnector()
-                    .useGradleVersion("9.2.1")
-                    .forProjectDirectory(tmpDir.toFile())
-                    .connect()) {
+                        .useGradleVersion("9.2.1")
+                        .forProjectDirectory(tmpDir.toFile())
+                        .connect()) {
                     connector.newBuild()
-                        .forTasks("resolvePyronautDependencies")
-                        .addProgressListener(PyronautInstallCommand::logEvent,
-                            Set.of(OperationType.FILE_DOWNLOAD, OperationType.TASK))
-                        .run();
+                            .forTasks("resolvePyronautDependencies")
+                            .addProgressListener(event -> logEvent(event, detailsLine),
+                                    Set.of(OperationType.FILE_DOWNLOAD, OperationType.TASK))
+                            .run();
                 }
             }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
+    private static void logEvent(ProgressEvent event, AtomicReference<String> line) {
+        line.set(event.getDisplayName());
+    }
+
+    private void installDependenciesPlain(Path tomlFile) {
+        var outputDir = pyronautVenvCacheDir().resolve("dependencies").toAbsolutePath();
+        try (var templateSource = PyronautInstallCommand.class.getResourceAsStream(
+                "template.build.gradle")) {
+            var pyProject = Toml.parse(tomlFile);
+            var repositories = buildRepositoriesBlock(pyProject);
+            var scopes = this.scope != null ? List.of(scope) :
+                    List.copyOf(pyProject.getTableOrEmpty("tool.pyronaut.dependencies").keySet());
+            var template = new String(templateSource.readAllBytes(), StandardCharsets.UTF_8)
+                    .replace("// %REPOSITORIES%", repositories);
+            try (var pd = (ProgressDisplay) new ConsoleProgressDisplay()) {
+                for (var scope : scopes) {
+                    var destination = outputDir.resolve(scope);
+                    pd.println("Resolving " + scope + " dependencies into " + destination);
+                    var buildScript = template.replace("%DESTINATION_DIR%", destination.toString())
+                            .replace("// %DEPENDENCIES%",
+                                    buildFullDependenciesList(pyProject, extraDependencies, scope));
+                    var tmpDir = Files.createTempDirectory("pyronaut");
+                    Files.write(tmpDir.resolve("settings.gradle"),
+                            List.of("rootProject.name = \"pyronaut-resolution\""));
+                    Files.writeString(tmpDir.resolve("build.gradle"), buildScript);
+                    try (var connector = GradleConnector.newConnector()
+                            .useGradleVersion("9.2.1")
+                            .forProjectDirectory(tmpDir.toFile())
+                            .connect()) {
+                        connector.newBuild()
+                                .forTasks("resolvePyronautDependencies")
+                                .setStandardOutput(System.out)
+                                .setStandardError(System.err)
+                                .run();
+                    }
+                }
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -121,7 +224,7 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
             for (var i = pyronautSection.contentStartLine; i < pyronautSection.contentEndLine; i++) {
                 var line = lines.get(i).trim();
                 if (line.startsWith("dependencies." + scope + " = [") ||
-                    line.startsWith("dependencies." + scope + "=[")) {
+                        line.startsWith("dependencies." + scope + "=[")) {
                     hasDottedKeyDeps = true;
                     break;
                 }
@@ -136,7 +239,6 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
             // Use separate section format: [tool.pyronaut.dependencies] with compile = [...]
             var depsSection = findTomlSection(lines, "[tool.pyronaut.dependencies]");
             if (depsSection.found()) {
-                // Section exists - modify it while preserving formatting
                 resultLines = modifyExistingSection(lines, depsSection, newDeps, scope);
                 added = !resultLines.equals(lines);
             } else {
@@ -148,9 +250,6 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
 
         if (added) {
             Files.write(tomlFile, resultLines, StandardCharsets.UTF_8);
-            System.out.println("Added dependencies to " + tomlFile + " under scope [" + scope + "]");
-        } else {
-            System.out.println("Dependencies already present in " + tomlFile + " under scope [" + scope + "]");
         }
     }
 
@@ -184,7 +283,7 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
      * Looks for dependencies.<scope> = [...] and modifies it.
      */
     private List<String> modifyDottedKeySection(List<String> lines, TomlSectionInfo sectionInfo,
-                                              List<String> newDeps, String scope) {
+                                                List<String> newDeps, String scope) {
         List<String> result = new ArrayList<>();
 
         // Copy everything before the section
@@ -246,7 +345,7 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
      * Looks for the specified scope array and adds new dependencies to it.
      */
     private List<String> modifyExistingSection(List<String> lines, TomlSectionInfo sectionInfo,
-                                             List<String> newDeps, String scope) {
+                                               List<String> newDeps, String scope) {
         List<String> result = new ArrayList<>();
 
         // Copy everything before the section
@@ -306,7 +405,7 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
      * Modifies an array starting at the given line, adding new dependencies.
      */
     private List<String> modifyArray(List<String> lines, int arrayStartLine, int sectionEndLine,
-                                   List<String> newDeps) {
+                                     List<String> newDeps) {
         List<String> result = new ArrayList<>();
         List<String> existingDeps = new ArrayList<>();
 
@@ -380,10 +479,14 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
         var bracketCount = 0;
         for (var i = startLine; i < maxLine && i < lines.size(); i++) {
             var line = lines.get(i);
-            if (line.contains("[")) bracketCount++;
+            if (line.contains("[")) {
+                bracketCount++;
+            }
             if (line.contains("]")) {
                 bracketCount--;
-                if (bracketCount == 0) return i;
+                if (bracketCount == 0) {
+                    return i;
+                }
             }
         }
         return maxLine;
@@ -439,9 +542,6 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
         return parts.length > 0 ? parts[0] : "";
     }
 
-    private static void logEvent(ProgressEvent event) {
-        System.out.println(event.getDisplayName());
-    }
 
     /**
      * Information about a TOML section's location in the file.

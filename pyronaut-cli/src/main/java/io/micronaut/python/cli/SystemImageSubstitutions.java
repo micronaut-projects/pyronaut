@@ -19,13 +19,17 @@ import com.oracle.svm.core.annotate.KeepOriginal;
 import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
 
+/**
+ * Substitutions for JDK internal jrtfs.SystemImage class to find Java home correctly
+ * when running in native image.
+ */
 @TargetClass(className = "jdk.internal.jrtfs.SystemImage")
 @KeepOriginal
 public final class SystemImageSubstitutions {
     /**
      * When running the compiler, javac expects the path from JRTFS
      * to end with "/lib" but when compiled in native image, the
-     * path we get is the binary name
+     * path we get is the binary name.
      * @return the path to Java
      */
     @Substitute

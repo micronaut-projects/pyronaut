@@ -15,7 +15,6 @@
  */
 package io.micronaut.python.logging.impl;
 
-import io.micronaut.context.python.ContextHolder;
 import org.slf4j.ILoggerFactory;
 import org.slf4j.Logger;
 
@@ -56,7 +55,7 @@ public final class PythonLoggerFactory implements ILoggerFactory {
     /**
      * Factory that creates Python-backed loggers.
      */
-    private static class PythonLoggerFactoryDelegate implements LoggerFactoryDelegate {
+    private static final class PythonLoggerFactoryDelegate implements LoggerFactoryDelegate {
         @Override
         public Logger getLogger(String name) {
             return new DelayedConsoleLogger(name);

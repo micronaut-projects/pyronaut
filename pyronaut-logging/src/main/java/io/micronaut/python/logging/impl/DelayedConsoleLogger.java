@@ -16,10 +16,12 @@
 package io.micronaut.python.logging.impl;
 
 import io.micronaut.context.python.ContextHolder;
+import org.slf4j.Logger;
 import org.slf4j.Marker;
 import org.slf4j.helpers.FormattingTuple;
 import org.slf4j.helpers.MessageFormatter;
 
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
@@ -30,7 +32,7 @@ import java.io.StringWriter;
  * @author Micronaut Team
  * @since 1.0.0
  */
-final class DelayedConsoleLogger implements org.slf4j.Logger {
+final class DelayedConsoleLogger implements Logger {
 
     private final String name;
     private volatile boolean traceEnabled = false;
@@ -550,7 +552,7 @@ final class DelayedConsoleLogger implements org.slf4j.Logger {
         error(msg, t);
     }
 
-    private void log(java.io.PrintStream stream, String level, String loggerName, String message, Throwable throwable) {
+    private void log(PrintStream stream, String level, String loggerName, String message, Throwable throwable) {
         stream.println("[" + level + "] " + loggerName + " - " + message);
         if (throwable != null) {
             StringWriter sw = new StringWriter();

@@ -22,8 +22,11 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+/**
+ * Common utilities to resolve dependencies from pyproject.toml.
+ */
 public abstract class AbstractPyronautDependencyResolutionAwareCommand extends BaseSourceCommand {
-    protected String buildRepositoriesBlock(TomlParseResult pyProject) {
+    protected final String buildRepositoriesBlock(TomlParseResult pyProject) {
         var sb = new StringBuilder();
         var repos = pyProject.getArray("tool.pyronaut.repositories");
         if (repos == null || repos.isEmpty()) {
@@ -66,7 +69,7 @@ public abstract class AbstractPyronautDependencyResolutionAwareCommand extends B
         var bomVersion = pyProject.getString("tool.pyronaut.version");
         String platform = null;
         if (bomVersion != null) {
-            // TODO: Should be replaced with platform BOM, not core BOM, when we have a milestone
+
             platform =
                 "    implementation(platform(\"io.micronaut:micronaut-core-bom:" + bomVersion + "\"))\n" +
                     "    implementation(platform(\"io.micronaut.platform:micronaut-platform:4.10.2\"))\n";

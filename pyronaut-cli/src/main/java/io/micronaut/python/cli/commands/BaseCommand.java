@@ -23,9 +23,14 @@ import java.nio.file.Path;
 import java.util.concurrent.Callable;
 
 abstract class BaseCommand implements Callable<Integer> {
+
     protected Path pyronautVenvCacheDir() {
         var virtualEnv = System.getenv("VIRTUAL_ENV");
         if (virtualEnv != null) {
+            var pyEnv = System.getenv("PYENV_VERSION");
+            if (pyEnv == null) {
+                throw new IllegalStateException("PYENV_VERSION not found. Did you run `pyenv shell graalpy-xxxx` ?");
+            }
             return Path.of(virtualEnv).resolve("lib/pyronaut");
         }
         throw new IllegalStateException("Virtual env not found.");

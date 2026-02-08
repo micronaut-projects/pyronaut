@@ -26,7 +26,6 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -241,14 +240,10 @@ final class PytestAstParser {
 
         String relativePath;
         if (baseDirectory == null) {
-            String fs = filePath.toString();
-            int i = fs.lastIndexOf(File.separatorChar);
-            if (i > 0) {
-                relativePath = fs.substring(0, i);
-            } else {
-                relativePath = fs;
-            }
+            // No base directory: use the full file path including file name
+            relativePath = filePath.toString().replace('\\', '/');
         } else {
+            // Compute path relative to the base directory, including file name
             relativePath = baseDirectory.relativize(filePath).toString().replace('\\', '/');
         }
         String testId = relativePath + "::" + testName;

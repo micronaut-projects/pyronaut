@@ -27,12 +27,13 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-/**
- * An in-memory representation of the content
- * of a Maven repository on disk. The expected
- * layout is groupid/artifactid/version/[files]
- */
-public class PythonMavenRepository {
+    /**
+     * An in-memory representation of the content.
+     * of a Maven repository on disk. The expected
+     * layout is groupid/artifactid/version/[files].
+      */
+    public final class PythonMavenRepository {
+
     private final Path repositoryPath;
     private final List<MavenArtifact> artifacts;
     private final Map<String, Map<String, List<MavenArtifact>>> index;
@@ -53,7 +54,7 @@ public class PythonMavenRepository {
             .map(artifact -> {
                 var dir = repositoryPath.resolve(artifact.groupId() + "/" + artifact.artifactId() + "/" + artifact.version()).toFile();
                 var jars = dir.listFiles(f -> f.getName().endsWith(".jar"));
-                if (jars != null && jars.length>0) {
+                 if (jars != null && jars.length > 0) {
                     return jars[0];
                 }
                 return null;
@@ -63,7 +64,7 @@ public class PythonMavenRepository {
     }
 
     /**
-     * The path to the repository
+     * The path to the repository.
      * @return the path to the repository
      */
     public Path getRepositoryPath() {
@@ -71,7 +72,7 @@ public class PythonMavenRepository {
     }
 
     /**
-     * The list of artifacts in that repository
+     * The list of artifacts in that repository.
      * @return the artifact list
      */
     public List<MavenArtifact> getArtifacts() {
@@ -89,7 +90,7 @@ public class PythonMavenRepository {
         if (groups == null) {
             throw new RuntimeException("Invalid repository path: " + repoPath);
         }
-        var mavenArtifacts=  Arrays.stream(groups)
+        var mavenArtifacts = Arrays.stream(groups)
             .flatMap(group -> {
                var artifacts = group.listFiles(File::isDirectory);
                return Arrays.stream(artifacts)

@@ -15,8 +15,41 @@
  */
 package io.micronaut.python.cli;
 
+import java.io.DataOutputStream;
+
+/**
+ * Abstraction for managing the lifecycle of the application used by the CLI tooling.
+ *
+ * <p>Implementations start and stop the application and may optionally accept an output
+ * stream for publishing protocol events.</p>
+ */
 public interface ApplicationManager {
+
+    /**
+     * Start the application with the given arguments.
+     *
+     * @param args the application arguments
+     * @throws IllegalStateException if the application is already started
+     * @throws RuntimeException for other startup failures
+     */
     void startApplication(String[] args);
 
+    /**
+     * Stop the application previously started by {@link #startApplication(String[])}.
+     *
+     * @throws IllegalStateException if the application was not started
+     * @throws RuntimeException for errors during shutdown
+     */
     void stopApplication();
+
+    /**
+     * Optionally configure a stream where protocol events should be written.
+     *
+     * <p>The default implementation does nothing. Implementations may call this before
+     * starting the application to forward events to the given stream.</p>
+     *
+     * @param out a DataOutputStream to send events to; may be null
+     */
+    default void setEventOutputStream(DataOutputStream out) {
+    }
 }

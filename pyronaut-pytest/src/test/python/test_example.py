@@ -4,11 +4,13 @@ Sample pytest test file to demonstrate the pytest-engine functionality.
 
 
 def test_simple_assertion():
+    print("hello from stdout")
     """A simple test that should pass."""
     assert 1 + 1 == 2
 
 
 def test_string_operations():
+    import sys; print("oops on stderr", file=sys.stderr)
     """Test basic string operations."""
     text = "hello world"
     assert text.startswith("hello")
@@ -17,6 +19,7 @@ def test_string_operations():
 
 
 def test_list_operations():
+    import logging; logging.getLogger().warning("log line via logging")
     """Test list operations."""
     numbers = [1, 2, 3, 4, 5]
     assert len(numbers) == 5

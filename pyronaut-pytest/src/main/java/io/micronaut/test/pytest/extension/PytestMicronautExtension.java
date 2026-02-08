@@ -31,7 +31,7 @@ import java.util.Map;
 /**
  * Micronaut Test extension for Pytest.
  */
-public class PytestMicronautExtension extends AbstractMicronautExtension<Value> {
+public final class PytestMicronautExtension extends AbstractMicronautExtension<Value> {
 
     public static final String ID = "_micronaut_test_extension";
     private static final Logger LOG = LoggerFactory.getLogger(PytestMicronautExtension.class);

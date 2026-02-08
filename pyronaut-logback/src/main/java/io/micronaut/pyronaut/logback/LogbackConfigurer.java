@@ -486,6 +486,9 @@ public final class LogbackConfigurer {
     /**
      * Log a message directly to logback, bypassing SLF4J.
      * This is used by Python loggers to ensure logging works in GraalPy environments.
+     * @param name logger name
+     * @param level logging level
+     * @param message the message to log
      */
     @Internal
     public static void log(String name, String level, String message) {
@@ -568,4 +571,3 @@ public final class LogbackConfigurer {
         logger.setUseParentHandlers(true);
     }
 }
-
