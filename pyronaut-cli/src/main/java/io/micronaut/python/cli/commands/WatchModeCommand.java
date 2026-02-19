@@ -55,13 +55,13 @@ abstract class WatchModeCommand extends BaseSourceCommand {
     }
  
     protected Integer runShared(Mode initial, String[] parameters) throws Exception {
-        var runDependencies = PythonMavenRepository.inspect(dependenciesDirForScope("compile"));
-        var testDependencies = PythonMavenRepository.inspect(dependenciesDirForScope("test"));
+        var runDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(DependencyScopes.COMPILE));
+        var testDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(DependencyScopes.TEST));
         if (runDependencies.isEmpty() || testDependencies.isEmpty()) {
             System.err.println("Pyronaut dependencies not found. Did you run `pyronaut install`?");
             return -1;
         }
-        var annotationProcDependencies = PythonMavenRepository.inspect(dependenciesDirForScope("annotationProcessor"));
+        var annotationProcDependencies = PythonMavenRepository.inspect(dependenciesDirForScope(DependencyScopes.ANNOTATION_PROCESSOR));
         var rootDirectory = resolveRootDir();
 
         var eventPipeIn = new PipedInputStream(65536);

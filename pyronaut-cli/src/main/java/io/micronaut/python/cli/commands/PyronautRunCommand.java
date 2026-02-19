@@ -28,15 +28,10 @@ import java.util.List;
  */
 @Command(name = "run", description = "Runs a Pyronaut application", mixinStandardHelpOptions = true)
 public final class PyronautRunCommand extends WatchModeCommand {
-    private static final String ANNOTATION_PROCESSOR_SCOPE = "annotationProcessor";
     private static final List<String> SOURCE_DIRECTORIES = List.of("src");
 
     @Parameters(index = "0..*", description = "Application parameters")
     private String[] parameters;
-
-    protected String scope() {
-        return "compile";
-    }
 
     protected List<String> getSourceDirectories() {
         return SOURCE_DIRECTORIES;
