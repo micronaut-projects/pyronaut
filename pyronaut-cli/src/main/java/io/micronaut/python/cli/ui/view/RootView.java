@@ -27,9 +27,9 @@ import dev.tamboui.toolkit.elements.Panel;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.widgets.tabs.TabsState;
 import dev.tamboui.widgets.wavetext.WaveTextState;
+import io.micronaut.python.cli.ui.Mode;
 import io.micronaut.python.cli.ui.UiController;
 import io.micronaut.python.cli.ui.UiModel;
-import io.micronaut.python.cli.ui.Mode;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -74,6 +74,8 @@ public final class RootView extends Component<RootView> {
     private final TabsState tabsState = new TabsState(0);
     private Mode mode = Mode.RUN;
 
+    private UiModel.TestTree lastTreeRef;
+
     private enum UiState {
         RUNNING, COMPILING, TESTING, IDLE
     }
@@ -117,7 +119,10 @@ public final class RootView extends Component<RootView> {
                 if (controller.isTesting() || controller.getLastTestSummary().isPresent() || mode == Mode.TEST) {
                     tabContent = testsPanel();
                 } else {
-                    tabContent = row(column(endpointsPanel(), notificationsPanel())).addClass("main-row");
+                    tabContent = grid().gridAreas("endpoints", "notifications")
+                            .area("endpoints", endpointsPanel())
+                            .area("notifications", notificationsPanel())
+                            .addClass("main-row");
                 }
             }
             default -> tabContent = panel("Activity", activityList).addClass("activity");
@@ -221,8 +226,11 @@ public final class RootView extends Component<RootView> {
     }
 
     private Panel testsPanel() {
-        // Update tree data before rendering to preserve scroll state
-        testTreeView.update(controller.getTestTree());
+        var currentTree = controller.getTestTree();
+        if (currentTree != lastTreeRef) {
+            testTreeView.update(currentTree);
+            lastTreeRef = currentTree;
+        }
 
         // Populate Test Output list on each render based on current selection (persist after run)
         var sel = testTreeView.selectedNode();
@@ -243,19 +251,17 @@ public final class RootView extends Component<RootView> {
 
         var summary = controller.getLastTestSummary();
         var stats = summary.map(RootView::fromSummary).orElseGet(() -> computeTestStats(controller.getTestTree()));
-        var content = column(
-                row(
+        var content = dock()
+                .top(row(
                         text("✔ " + stats.passed).addClass("success"), text("passed"),
                         text("✖ " + stats.failed).addClass("error"), text("failed"),
                         text("⏭ " + stats.skipped).addClass("warning"), text("skipped"),
                         text("⟳ " + stats.running).addClass("info"), text("running"),
                         text("⏳ " + stats.pending).addClass("dim"), text("pending")
-                ).addClass("stats-row"),
-                row(
-                        panel("Test Tree", testTreeView),
-                        panel("Test Output", testOutputList)
-                )
-        );
+                ).addClass("stats-row"))
+                .left(panel("Test Tree", testTreeView))
+                .right(panel("Test Output", testOutputList)
+        ).fill();
 
         return panel("Tests", content)
                 .id("tests")
@@ -287,7 +293,7 @@ public final class RootView extends Component<RootView> {
     }
 
     // ============ Right column (Activity) ============
- 
+
     private Panel activityPanel() {
         List<ActivityItem> items = new ArrayList<>();
         for (String log : new ArrayList<>(controller.getActivityLogLines())) {
@@ -373,7 +379,8 @@ public final class RootView extends Component<RootView> {
             case SKIPPED -> st.skipped++;
             case RUNNING -> st.running++;
             case PENDING -> st.pending++;
-            default -> { }
+            default -> {
+            }
         }
     }
 
@@ -456,5 +463,6 @@ public final class RootView extends Component<RootView> {
         long pending;
     }
 
-    private record ActivityItem(String content, Color color) { }
+    private record ActivityItem(String content, Color color) {
+    }
 }

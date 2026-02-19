@@ -71,7 +71,7 @@ Text {
 }
 
 .stats-row {
-    flex: start;
+    flex: space-between;
     height: fit;
     text-overflow: ellipsis;
 }
@@ -82,6 +82,7 @@ Text {
 
 .main-row {
     height: fill;
+    width: fill;
     flex: start;
 }
 
@@ -116,10 +117,6 @@ Text {
     height: 1;
 }
 
-.stats-row {
-    height: 1;
-}
-
 /* Two-panel tests row */
 #tests {
     height: fill;
@@ -135,14 +132,6 @@ Text {
 
 .test-header-row {
     height: 1;
-}
-
-.stats-row {
-    height: 1;
-}
-
-.main-row {
-    width: fill;
 }
 
 .updated-files {
@@ -225,5 +214,9 @@ Text {
 }
 
 .endpoints * {
+    text-overflow: wrap-word;
+}
+
+.notifications * {
     text-overflow: wrap-word;
 }

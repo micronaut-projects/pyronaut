@@ -21,23 +21,27 @@ import dev.tamboui.style.Color;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.toolkit.element.RenderContext;
+import dev.tamboui.toolkit.element.Size;
 import dev.tamboui.toolkit.element.StyledElement;
-import dev.tamboui.toolkit.elements.ListElement;
+import dev.tamboui.toolkit.elements.TreeElement;
 import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.widgets.tree.TreeNode;
 import io.micronaut.python.cli.ui.UiModel;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-import static dev.tamboui.toolkit.Toolkit.list;
 import static dev.tamboui.toolkit.Toolkit.text;
-import static dev.tamboui.toolkit.elements.ListElement.ScrollBarPolicy.ALWAYS;
 
 /**
- * Renders UiModel.TestTree as an indented, styled tree inside a List widget.
- * - Methods show displayName and status icon/color.
- * - Suites and classes are bold and colored for readability.
+ * Test tree view backed by the native TamboUI TreeElement.
+ * - Uses TreeElement for scrolling, selection and expand/collapse.
+ * - Preserves previous visual styling (icons, colors, bold for suite/class).
+ * - Adds failure message as a child leaf mapped to the method node data.
  */
 final class TestTreeView implements Element {
 
@@ -46,11 +50,12 @@ final class TestTreeView implements Element {
     private static final Color RED = Color.rgb(231, 76, 60);
     private static final Color CYAN = Color.rgb(0, 180, 216);
     private static final Color DIM = Color.rgb(127, 140, 141);
-    private static final Color BRIGHT = Color.rgb(236, 240, 241);
 
     private UiModel.TestTree root;
-    private final ListElement<?> list = list();
-    private final List<UiModel.TestTree> indexToNode = new ArrayList<>();
+    private final TreeElement<UiModel.TestTree> tree = new TreeElement<>();
+    private TreeNode<UiModel.TestTree> rootNode;
+    private final Set<String> expandedKeys = new HashSet<>();
+    private String selectedKey;
 
     TestTreeView(UiModel.TestTree root) {
         this.root = root;
@@ -67,123 +72,174 @@ final class TestTreeView implements Element {
     }
 
     void update(UiModel.TestTree root) {
+        // snapshot current expansion + selection
+        snapshotState();
         this.root = root;
-    }
-
-    private void flatten(UiModel.TestTree node) {
-        // no-op; we now build rows on render to keep mapping aligned
+        // rebuild model
+        this.rootNode = root == null ? null : toTree(root);
+        // reapply expansion
+        if (this.rootNode != null) {
+            reapplyExpansion(this.rootNode);
+            tree.roots(this.rootNode);
+            reapplySelection();
+        } else {
+            tree.roots();
+        }
     }
 
     @Override
     public void render(Frame frame, Rect area, RenderContext context) {
-        List<StyledElement<?>> itemList = new ArrayList<>();
-        indexToNode.clear();
-        if (root != null) {
-            renderTree(root, 0, itemList);
-        } else {
-            itemList.add(lineItem("No tests to display", DIM, false));
-            indexToNode.add(null);
+        if (rootNode == null && root != null) {
+            rootNode = toTree(root);
+            tree.roots(rootNode);
         }
-        list.elements(itemList.toArray(new StyledElement<?>[0]))
-                .scrollbar(ALWAYS)
-                .autoScroll()
+        if (rootNode == null) {
+            TreeNode<UiModel.TestTree> none = TreeNode.<UiModel.TestTree>of("No tests to display").leaf();
+            tree.roots(none)
+                .nodeRenderer(node -> text(node.label()).fg(DIM))
+                .scrollbar(TreeElement.ScrollBarPolicy.AS_NEEDED)
                 .fill()
                 .render(frame, area, context);
+            return;
+        }
+
+        tree
+            .nodeRenderer(this::renderNode)
+            .scrollbar(TreeElement.ScrollBarPolicy.AS_NEEDED)
+            .fill()
+            .render(frame, area, context);
+    }
+
+    @Override
+    public Size preferredSize(int availableWidth, int availableHeight, RenderContext renderContext) {
+        return tree.preferredSize(availableWidth, availableHeight, renderContext);
     }
 
     @Override
     public EventResult handleMouseEvent(MouseEvent event) {
+        return tree.handleMouseEvent(event);
+    }
 
-        return list.handleMouseEvent(event);
+    @Override
+    public EventResult handleKeyEvent(KeyEvent event, boolean focused) {
+        return tree.handleKeyEvent(event, focused);
     }
 
     Integer selectedNodeIndex() {
-        return list.selected();
+        return tree.selected();
     }
 
     UiModel.TestTree selectedNode() {
-        Integer idx = list.selected();
-        if (idx == null || idx < 0 || idx >= indexToNode.size()) {
-            return null;
+        var selected = tree.selectedNode();
+        if (selected != null) {
+            selectedKey = keyFor(selected.data());
+            return selected.data();
         }
-        return indexToNode.get(idx);
+        return null;
     }
 
-    private void renderTree(UiModel.TestTree node, int depth, List<StyledElement<?>> out) {
+    private TreeNode<UiModel.TestTree> toTree(UiModel.TestTree node) {
         if (node instanceof UiModel.TestSuite suite) {
-            // Flatten a single class with the same name as the suite to avoid duplicate 'Tests'/'All tests'
             var classes = suite.classes();
+            TreeNode<UiModel.TestTree> suiteNode = TreeNode.<UiModel.TestTree>of(labelForSuite(suite), suite);
+            // default expanded for visibility; persisted expansion reapplied later
+            suiteNode.expanded(true);
             if (classes.size() == 1) {
-                out.add(suiteItem(suite, depth));
-                indexToNode.add(suite);
-                var only = classes.get(0);
+                var only = classes.getFirst();
                 for (UiModel.TestMethod m : only.methods()) {
-                    renderTree(m, depth + 1, out);
+                    suiteNode.add(toTree(m));
                 }
-                return;
+                return suiteNode;
             }
-            out.add(suiteItem(suite, depth));
-            indexToNode.add(suite);
             for (UiModel.TestClass c : classes) {
-                renderTree(c, depth + 1, out);
+                suiteNode.add(toTree(c));
             }
-        } else if (node instanceof UiModel.TestClass clazz) {
-            out.add(classItem(clazz, depth));
-            indexToNode.add(clazz);
-            for (UiModel.TestMethod m : clazz.methods()) {
-                renderTree(m, depth + 1, out);
-            }
-        } else if (node instanceof UiModel.TestMethod method) {
-            out.add(methodItem(method, depth));
-            indexToNode.add(method);
-            method.failureMessage().ifPresent(msg -> {
-                String indent = " ".repeat((depth + 1) * 2);
-                out.add(lineItem(indent + "↳ " + msg, DIM, false));
-                indexToNode.add(method);
-            });
+            return suiteNode;
         }
+        if (node instanceof UiModel.TestClass clazz) {
+            TreeNode<UiModel.TestTree> classNode = TreeNode.<UiModel.TestTree>of(labelForClass(clazz), clazz);
+            classNode.expanded(true);
+            for (UiModel.TestMethod m : clazz.methods()) {
+                classNode.add(toTree(m));
+            }
+            return classNode;
+        }
+        if (node instanceof UiModel.TestMethod method) {
+            String label = labelForMethod(method);
+            // If there's a failure message, do NOT mark leaf so child can render
+            boolean hasFailure = method.failureMessage().isPresent();
+            TreeNode<UiModel.TestTree> methodNode = hasFailure
+                    ? TreeNode.<UiModel.TestTree>of(label, method)
+                    : TreeNode.<UiModel.TestTree>of(label, method).leaf();
+            if (hasFailure) {
+                method.failureMessage().ifPresent(msg ->
+                        methodNode.add(TreeNode.<UiModel.TestTree>of("\u21B3 " + msg, method).leaf())
+                );
+            }
+            return methodNode;
+        }
+        // Fallback
+        return TreeNode.<UiModel.TestTree>of("?", node).leaf();
     }
 
-    private StyledElement<?> suiteItem(UiModel.TestSuite suite, int depth) {
-        String indent = " ".repeat(depth * 2);
-        String icon = statusIcon(suite.status());
-        Color color = switch (suite.status()) {
-            case PASSED -> GREEN;
-            case FAILED -> RED;
-            case SKIPPED -> YELLOW;
-            case RUNNING -> CYAN;
-            case PENDING -> DIM;
-        };
-        return lineItem(indent + icon + " " + suite.name(), color, true);
+    private StyledElement<?> renderNode(TreeNode<UiModel.TestTree> node) {
+        UiModel.TestTree data = node.data();
+        if (data == null) {
+            return text(node.label()).fg(DIM);
+        }
+        if (data instanceof UiModel.TestSuite suite) {
+            return text(node.label()).fg(colorFor(suite.status())).bold();
+        }
+        if (data instanceof UiModel.TestClass clazz) {
+            return text(node.label()).fg(colorFor(clazz.status())).bold();
+        }
+        if (data instanceof UiModel.TestMethod method) {
+            Color color = colorFor(method.status());
+            // If this is the failure message child (label starts with ↳), render dimmer
+            if (node.label() != null && node.label().startsWith("\u21B3 ")) {
+                return text(node.label()).fg(DIM);
+            }
+            return text(node.label()).fg(color);
+        }
+        return text(node.label());
     }
 
-    private StyledElement<?> classItem(UiModel.TestClass clazz, int depth) {
-        String indent = " ".repeat(depth * 2);
-        String icon = statusIcon(clazz.status());
-        Color color = switch (clazz.status()) {
-            case PASSED -> GREEN;
-            case FAILED -> RED;
-            case SKIPPED -> YELLOW;
-            case RUNNING -> CYAN;
-            case PENDING -> DIM;
-        };
-        return lineItem(indent + icon + " " + clazz.name(), color, true);
+    private static String labelForSuite(UiModel.TestSuite suite) {
+        return statusIcon(suite.status()) + " " + suite.name();
     }
 
-    private StyledElement<?> methodItem(UiModel.TestMethod method, int depth) {
-        String indent = " ".repeat(depth * 2);
-        String icon = statusIcon(method.status());
-        Color color = switch (method.status()) {
-            case PASSED -> GREEN;
-            case FAILED -> RED;
-            case SKIPPED -> YELLOW;
-            case RUNNING -> CYAN;
-            case PENDING -> DIM;
-        };
+    private static String labelForClass(UiModel.TestClass clazz) {
+        return statusIcon(clazz.status()) + " " + clazz.name();
+    }
+
+    private static String keyFor(UiModel.TestTree node) {
+        if (node instanceof UiModel.TestSuite s) {
+            return s.name();
+        }
+        if (node instanceof UiModel.TestClass c) {
+            return c.name();
+        }
+        if (node instanceof UiModel.TestMethod m) {
+            return m.name();
+        }
+        return "";
+    }
+
+    private static String labelForMethod(UiModel.TestMethod method) {
         String label = method.displayName() != null && !method.displayName().isEmpty()
                 ? method.displayName()
                 : method.name();
-        return lineItem(indent + icon + " " + label, color, false);
+        return statusIcon(method.status()) + " " + label;
+    }
+
+    private static Color colorFor(UiModel.Status s) {
+        return switch (s) {
+            case PASSED -> GREEN;
+            case FAILED -> RED;
+            case SKIPPED -> YELLOW;
+            case RUNNING -> CYAN;
+            case PENDING -> DIM;
+        };
     }
 
     private static String statusIcon(UiModel.Status s) {
@@ -196,18 +252,62 @@ final class TestTreeView implements Element {
         };
     }
 
-    private static StyledElement<?> lineItem(String text, Color color, boolean bold) {
-        var te = text(text).fg(color);
-        if (bold) {
-            te = te.bold();
-        }
-        return te;
-    }
-
     @Override
     public Constraint constraint() {
-
         return Constraint.fill();
     }
 
+    private void snapshotState() {
+        expandedKeys.clear();
+        selectedKey = null;
+        var selected = tree.selectedNode();
+        if (selected != null) {
+            selectedKey = keyFor(selected.data());
+        }
+        if (rootNode != null) {
+            var stack = new ArrayList<TreeNode<UiModel.TestTree>>();
+            stack.add(rootNode);
+            while (!stack.isEmpty()) {
+                var n = stack.remove(stack.size() - 1);
+                if (n.isExpanded()) {
+                    expandedKeys.add(keyFor(n.data()));
+                }
+                for (var ch : n.children()) {
+                    stack.add(ch);
+                }
+            }
+        }
+    }
+
+    private void reapplyExpansion(TreeNode<UiModel.TestTree> node) {
+        if (node.data() != null && expandedKeys.contains(keyFor(node.data()))) {
+            node.expanded(true);
+        }
+        for (var ch : node.children()) {
+            reapplyExpansion(ch);
+        }
+    }
+
+    private void reapplySelection() {
+        if (selectedKey == null || rootNode == null) return;
+        // linearize visible nodes by expansion
+        var flat = new ArrayList<TreeNode<UiModel.TestTree>>();
+        flattenVisible(rootNode, flat);
+        for (int i = 0; i < flat.size(); i++) {
+            var n = flat.get(i);
+            if (n.data() != null && selectedKey.equals(keyFor(n.data()))) {
+                tree.selected(i);
+                break;
+            }
+        }
+    }
+
+    private void flattenVisible(TreeNode<UiModel.TestTree> node, List<TreeNode<UiModel.TestTree>> out) {
+        out.add(node);
+        if (node.isExpanded()) {
+            for (var ch : node.children()) {
+                flattenVisible(ch, out);
+            }
+        }
+    }
 }
