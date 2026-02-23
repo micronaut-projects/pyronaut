@@ -1,0 +1,16 @@
+plugins {
+    id("io.micronaut.build.internal.pyronaut-module")
+    id("application")
+}
+
+configurations {
+    distributionElements {
+        attributes {
+            attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category, "distribution"))
+
+        }
+        outgoing {
+            artifact(tasks.named("distZip"))
+        }
+    }
+}

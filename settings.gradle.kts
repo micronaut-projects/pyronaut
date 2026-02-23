@@ -19,6 +19,9 @@ include("pyronaut-bom")
 include("pyronaut-logging")
 include("pyronaut-logback")
 include("pyronaut-requests")
+include("micronaut-pyronaut-wheel")
+
+project(":micronaut-pyronaut-wheel").projectDir = file("pyronaut-wheel")
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 

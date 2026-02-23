@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyronaut"
+version = "0.0.0"
+description = "Pyronaut CLI (wheel skeleton)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+authors = [
+  {name = "Micronaut Foundation"},
+]
+dependencies = []
+
+[project.scripts]
+pyronaut = "pyronaut.cli:main"
+
+[tool.hatch.build.targets.wheel]
+force-include = { "pyronaut-cli.zip" = "pyronaut/_assets/pyronaut-cli.zip" }
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

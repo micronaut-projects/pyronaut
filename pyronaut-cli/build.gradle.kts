@@ -1,6 +1,5 @@
 plugins {
-    id("io.micronaut.build.internal.pyronaut-module")
-    id("application")
+    id("io.micronaut.build.internal.pyronaut-cli")
 }
 
 micronautBuild {
