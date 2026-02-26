@@ -9,7 +9,7 @@ micronaut-views = "5.9.0"
 micronaut-validation = "5.0.0-M1"
 tomlj="1.1.1"
 gradle-tapi = "9.2.1"
-tamboui = "1.0.0-SNAPSHOT"
+tamboui = "0.1.0"
 
 [libraries]
 micronaut-core = { module = 'io.micronaut:micronaut-core-bom', version.ref = 'micronaut' }
