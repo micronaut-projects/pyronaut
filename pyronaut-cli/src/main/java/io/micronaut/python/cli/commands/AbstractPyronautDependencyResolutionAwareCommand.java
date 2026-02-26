@@ -51,9 +51,9 @@ public abstract class AbstractPyronautDependencyResolutionAwareCommand extends B
                                              List<String> extraDependencies,
                                              String scope) throws IOException {
         var scopeDependencies = buildDependenciesList(pyProject, extraDependencies, scope);
-        if ("test".equals(scope)) {
+        if (DependencyScopes.TEST.equals(scope)) {
             // poor man's inheritance
-            var runtime = buildDependenciesList(pyProject, List.of(), "compile");
+            var runtime = buildDependenciesList(pyProject, List.of(), DependencyScopes.COMPILE);
             return runtime + "\n" + scopeDependencies;
         }
         return scopeDependencies;

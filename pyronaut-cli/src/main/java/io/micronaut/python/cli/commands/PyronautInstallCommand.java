@@ -209,7 +209,7 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
         // Read original TOML lines
         var lines = Files.readAllLines(tomlFile);
         if (scope == null) {
-            scope = "compile"; // Default scope for installation
+            scope = DependencyScopes.COMPILE; // Default scope for installation
         }
 
         List<String> resultLines;

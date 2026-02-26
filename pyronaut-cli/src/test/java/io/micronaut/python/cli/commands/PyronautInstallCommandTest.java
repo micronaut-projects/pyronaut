@@ -65,7 +65,7 @@ class PyronautInstallCommandTest {
         var newDeps = List.of("micronaut-core", "micronaut-http");
 
         // When
-        command.mutateTomlWithDependencies(tomlFile, newDeps, "compile");
+        command.mutateTomlWithDependencies(tomlFile, newDeps, DependencyScopes.COMPILE);
 
         // Then
         var result = readTomlContent(tomlFile);
@@ -89,7 +89,7 @@ class PyronautInstallCommandTest {
         var newDeps = List.of("micronaut-core");
 
         // When
-        command.mutateTomlWithDependencies(tomlFile, newDeps, "compile");
+        command.mutateTomlWithDependencies(tomlFile, newDeps, DependencyScopes.COMPILE);
 
         // Then
         var result = readTomlContent(tomlFile);
@@ -122,7 +122,7 @@ class PyronautInstallCommandTest {
         var newDeps = List.of("new-dep");
 
         // When
-        command.mutateTomlWithDependencies(tomlFile, newDeps, "compile");
+        command.mutateTomlWithDependencies(tomlFile, newDeps, DependencyScopes.COMPILE);
 
         // Then
         var result = readTomlContent(tomlFile);
@@ -150,7 +150,7 @@ class PyronautInstallCommandTest {
         var newDeps = List.of("existing-dep", "new-dep");
 
         // When
-        command.mutateTomlWithDependencies(tomlFile, newDeps, "compile");
+        command.mutateTomlWithDependencies(tomlFile, newDeps, DependencyScopes.COMPILE);
 
         // Then
         var result = readTomlContent(tomlFile);
@@ -179,7 +179,7 @@ class PyronautInstallCommandTest {
         var newDeps = List.of("dep3");
 
         // When
-        command.mutateTomlWithDependencies(tomlFile, newDeps, "compile");
+        command.mutateTomlWithDependencies(tomlFile, newDeps, DependencyScopes.COMPILE);
 
         // Then
         var result = readTomlContent(tomlFile);
@@ -228,7 +228,7 @@ class PyronautInstallCommandTest {
         var command = createCommand();
         var newDeps = List.of("micronaut-core");
 
-        // When - no scope specified (should default to "compile")
+        // When - no scope specified (should default to DependencyScopes.COMPILE)
         command.mutateTomlWithDependencies(tomlFile, newDeps, null);
 
         // Then
@@ -282,7 +282,7 @@ class PyronautInstallCommandTest {
         var newDeps = List.of("com.foo:bar");
 
         // When
-        command.mutateTomlWithDependencies(tomlFile, newDeps, "compile");
+        command.mutateTomlWithDependencies(tomlFile, newDeps, DependencyScopes.COMPILE);
 
         // Then
         var result = readTomlContent(tomlFile);
