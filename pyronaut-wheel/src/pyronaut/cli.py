@@ -80,6 +80,32 @@ def bundled_cli_zip_path() -> Path:
     return Path(str(traversable))
 
 
+def _bundled_exploded_cli_home() -> Path | None:
+    try:
+        runtime_root = importlib.resources.files("pyronaut") / "_runtime" / "cli"
+    except Exception:
+        return None
+
+    try:
+        runtime_root_path = Path(str(runtime_root))
+    except Exception:
+        return None
+
+    if not runtime_root_path.exists() or not runtime_root_path.is_dir():
+        return None
+
+    extracted_home = runtime_root_path
+    children = [p for p in runtime_root_path.iterdir() if p.is_dir()]
+    if len(children) == 1:
+        extracted_home = children[0]
+
+    bin_name = "pyronaut.bat" if os.name == "nt" else "pyronaut"
+    if not (extracted_home / "bin" / bin_name).exists():
+        return None
+
+    return extracted_home
+
+
 def _read_wheel_version() -> str:
     try:
         from . import __version__
@@ -105,8 +131,6 @@ def ensure_cli_home(
     marker_path = install_root / ".installed.json"
     lock_path = cache_root / "cli" / ".lock"
 
-    effective_zip_path = bundled_cli_zip_path() if zip_path is None else zip_path
-
     with acquire_cache_lock(lock_path, timeout_s=lock_timeout_s):
         marker = read_install_marker(marker_path)
         bin_name = "pyronaut.bat" if os.name == "nt" else "pyronaut"
@@ -119,21 +143,29 @@ def ensure_cli_home(
             shutil.rmtree(install_root)
         _ = install_root.mkdir(parents=True, exist_ok=True)
 
-        with tempfile.TemporaryDirectory() as td:
-            tmp_dir = Path(td)
-            extract_root = tmp_dir / "extract"
-            extract_root.mkdir(parents=True, exist_ok=True)
+        exploded_home = _bundled_exploded_cli_home()
+        if exploded_home is not None:
+            _ = shutil.copytree(exploded_home, home_dir, dirs_exist_ok=False)
+            effective_zip_path = None
+        else:
+            effective_zip_path = (
+                bundled_cli_zip_path() if zip_path is None else zip_path
+            )
+            with tempfile.TemporaryDirectory() as td:
+                tmp_dir = Path(td)
+                extract_root = tmp_dir / "extract"
+                extract_root.mkdir(parents=True, exist_ok=True)
 
-            _progress("pyronaut: extracting CLI", cached_hit=False)
-            with zipfile.ZipFile(effective_zip_path) as zf:
-                zf.extractall(extract_root)
+                _progress("pyronaut: extracting CLI", cached_hit=False)
+                with zipfile.ZipFile(effective_zip_path) as zf:
+                    zf.extractall(extract_root)
 
-            extracted_home = extract_root
-            children = [p for p in extract_root.iterdir() if p.is_dir()]
-            if len(children) == 1 and not (extract_root / "bin").exists():
-                extracted_home = children[0]
+                extracted_home = extract_root
+                children = [p for p in extract_root.iterdir() if p.is_dir()]
+                if len(children) == 1 and not (extract_root / "bin").exists():
+                    extracted_home = children[0]
 
-            _ = shutil.move(str(extracted_home), str(home_dir))
+                _ = shutil.move(str(extracted_home), str(home_dir))
 
         if os.name != "nt":
             posix_launcher = home_dir / "bin" / "pyronaut"
@@ -145,9 +177,11 @@ def ensure_cli_home(
         try:
             marker_extra = {
                 "cliKey": cli_key,
-                "zip": str(effective_zip_path),
+                "zip": str(effective_zip_path)
+                if effective_zip_path is not None
+                else None,
             }
-            (install_root / ".installed.extra.json").write_text(
+            _ = (install_root / ".installed.extra.json").write_text(
                 json.dumps(marker_extra, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
@@ -174,12 +208,13 @@ def bootstrap_and_exec(argv: list[str]) -> int:
 
     args = [str(launcher), *argv]
     if os.name == "nt":
-        return int(subprocess.call(args, env=env))
+        result = int(subprocess.call(args, env=env))
+        return result
 
     launcher_path = str(launcher.resolve())
     execve = getattr(os, "execve", None)
     if callable(execve):
-        execve(launcher_path, args, env)
+        _ = execve(launcher_path, args, env)
         raise AssertionError("unreachable")
 
     return int(subprocess.call(args, env=env))

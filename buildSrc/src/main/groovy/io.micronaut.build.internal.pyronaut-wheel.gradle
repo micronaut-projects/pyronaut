@@ -14,13 +14,12 @@ configurations {
     }
 }
 
-def pythonExecutableProvider = providers.gradleProperty("pythonExecutable")
-
 tasks.register("buildWheel", BuildWheelTask) {
     group = "build"
     description = "Builds the pyronaut wheel in an isolated sandbox and collects the resulting .whl files."
 
-    pythonExecutable = pythonExecutableProvider
+    pythonExecutable = providers.gradleProperty("pythonExecutable")
+            .flatMap(path -> objects.fileProperty().fileValue(file(path)))
 
     // Build from pyronaut-wheel/ sources, but stage into a sandbox under this project's build directory.
     sourcesDir = layout.projectDirectory
@@ -29,5 +28,28 @@ tasks.register("buildWheel", BuildWheelTask) {
     // Collect final artifacts under pyronaut-wheel/build/wheels
     wheelsDir = layout.buildDirectory.dir("wheels")
 
-    cliZipFile = configurations.wheel.incoming.files.singleFile
+    excludes.addAll(
+            ".venv",
+            "build",
+            "dist",
+            "*.egg-info",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            ".tox",
+            ".git",
+            ".gradle"
+    )
+
+    version = provider {
+        // Use the version from the project, but strip off any -SNAPSHOT suffix for the wheel version.
+        def v = project.version.toString()
+        if (v.endsWith("-SNAPSHOT")) {
+            v = v.substring(0, v.length() - "-SNAPSHOT".length())
+        }
+        return v
+    }
+
+    cliZipFile.fileProvider(configurations.wheel.incoming.files.elements.map { it[0].asFile })
 }

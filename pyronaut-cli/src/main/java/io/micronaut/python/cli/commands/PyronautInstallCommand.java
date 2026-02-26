@@ -80,7 +80,7 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
             var currentTask = new AtomicReference<>("");
             var detailsLine = new AtomicReference<>("");
             if (Files.exists(tomlFile)) {
-                runner.schedule(() -> {
+                Thread.ofVirtual().start(() -> {
                     try {
                         if (!extraDependencies.isEmpty()) {
                             mutateTomlWithDependencies(tomlFile, extraDependencies, scope);
@@ -93,7 +93,7 @@ public class PyronautInstallCommand extends AbstractPyronautDependencyResolution
                     } finally {
                         runner.quit();
                     }
-                }, Duration.ZERO);
+                });
             } else {
                 runner.schedule(() -> {
                     runner.println(error("No pyproject.toml file found."));
