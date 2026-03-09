@@ -1,0 +1,19 @@
+{
+  "protocolVersion": "1.0",
+  "commandName": "pyronaut-install",
+  "commandVersion": "0.1.0-SNAPSHOT",
+  "supportedCommands": [
+    "install"
+  ],
+  "features": {
+    "jsonOutput": true,
+    "offlineMode": true,
+    "dryRun": false,
+    "platforms": [
+      "darwin-amd64",
+      "darwin-aarch64",
+      "linux-amd64",
+      "linux-aarch64"
+    ]
+  }
+}

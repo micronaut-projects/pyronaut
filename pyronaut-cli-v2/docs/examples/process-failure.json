@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "1.0",
+  "command": "process",
+  "status": "error",
+  "exitCode": 8,
+  "durationMs": 31,
+  "artifacts": {},
+  "error": {
+    "code": "CACHE_MISSING",
+    "category": "PRECONDITION_FAILED",
+    "message": "Missing .pytest_cache/resolved-build-dependencies. Run pyronaut install first.",
+    "details": {
+      "requiredFile": ".pytest_cache/resolved-build-dependencies"
+    }
+  }
+}

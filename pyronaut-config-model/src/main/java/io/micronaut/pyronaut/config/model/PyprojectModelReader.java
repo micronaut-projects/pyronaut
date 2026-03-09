@@ -1,0 +1,140 @@
+/*
+ * Copyright 2017-2026 original authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.micronaut.pyronaut.config.model;
+
+import org.tomlj.Toml;
+import org.tomlj.TomlArray;
+import org.tomlj.TomlInvalidTypeException;
+import org.tomlj.TomlParseError;
+import org.tomlj.TomlParseResult;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Reader that validates and maps {@code pyproject.toml} into {@link PyprojectModel}.
+ */
+public final class PyprojectModelReader {
+    public static final String FILE_NAME = "pyproject.toml";
+
+    public PyprojectModel readProjectDirectory(Path projectDirectory) {
+        return readFile(projectDirectory.resolve(FILE_NAME));
+    }
+
+    public PyprojectModel readFile(Path file) {
+        validateFileName(file);
+        if (!Files.exists(file)) {
+            throw new PyprojectModelException("Missing required file 'pyproject.toml' at: " + file);
+        }
+        TomlParseResult parsed;
+        try {
+            parsed = Toml.parse(file);
+        } catch (IOException e) {
+            throw new PyprojectModelException("Failed reading pyproject.toml: " + file, e);
+        }
+        failOnParseErrors(file, parsed.errors());
+        return map(parsed);
+    }
+
+    private static void validateFileName(Path file) {
+        if (!FILE_NAME.equals(file.getFileName().toString())) {
+            throw new PyprojectModelException("Invalid config filename '" + file.getFileName() + "'. Expected 'pyproject.toml'");
+        }
+    }
+
+    private static void failOnParseErrors(Path file, List<TomlParseError> errors) {
+        if (!errors.isEmpty()) {
+            TomlParseError first = errors.get(0);
+            String message = "Invalid TOML in " + file + " at line " + first.position().line() + ", column "
+                + first.position().column() + ": " + first.getMessage();
+            throw new PyprojectModelException(message);
+        }
+    }
+
+    private static PyprojectModel map(TomlParseResult parsed) {
+        PyprojectModel.Project project = new PyprojectModel.Project(
+            readString(parsed, "project.name"),
+            readString(parsed, "project.version"),
+            readStringList(parsed, "project.dynamic")
+        );
+
+        PyprojectModel.BuildSystem buildSystem = new PyprojectModel.BuildSystem(
+            readStringList(parsed, "build-system.requires"),
+            readString(parsed, "build-system.build-backend")
+        );
+
+        List<String> runtime = readStringList(parsed, "tool.pyronaut.dependencies.runtime");
+        if (runtime.isEmpty()) {
+            runtime = readStringList(parsed, "tool.pyronaut.dependencies.compile");
+        }
+
+        List<String> build = readStringList(parsed, "tool.pyronaut.dependencies.build");
+        if (build.isEmpty()) {
+            build = readStringList(parsed, "tool.pyronaut.dependencies.annotationProcessor");
+        }
+        if (build.isEmpty()) {
+            build = readStringList(parsed, "tool.pyronaut.annotationProcessor");
+        }
+
+        PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
+            readString(parsed, "tool.pyronaut.version"),
+            readStringList(parsed, "tool.pyronaut.repositories"),
+            new PyprojectModel.Dependencies(
+                runtime,
+                build,
+                readStringList(parsed, "tool.pyronaut.dependencies.test")
+            )
+        );
+
+        return new PyprojectModel(project, buildSystem, pyronaut);
+    }
+
+    private static String readString(TomlParseResult parsed, String key) {
+        try {
+            return parsed.getString(key);
+        } catch (TomlInvalidTypeException e) {
+            throw invalidType(key, "string", e);
+        }
+    }
+
+    private static List<String> readStringList(TomlParseResult parsed, String key) {
+        TomlArray array;
+        try {
+            array = parsed.getArray(key);
+        } catch (TomlInvalidTypeException e) {
+            throw invalidType(key, "array", e);
+        }
+        if (array == null) {
+            return List.of();
+        }
+        List<String> values = new ArrayList<>(array.size());
+        for (int i = 0; i < array.size(); i++) {
+            Object value = array.get(i);
+            if (!(value instanceof String stringValue)) {
+                throw new PyprojectModelException("Invalid type for '" + key + "[" + i + "]': expected string");
+            }
+            values.add(stringValue);
+        }
+        return List.copyOf(values);
+    }
+
+    private static PyprojectModelException invalidType(String key, String expected, TomlInvalidTypeException e) {
+        return new PyprojectModelException("Invalid type for '" + key + "': expected " + expected, e);
+    }
+}

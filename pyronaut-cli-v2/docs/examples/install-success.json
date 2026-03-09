@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "1.0",
+  "command": "install",
+  "status": "ok",
+  "exitCode": 0,
+  "durationMs": 932,
+  "artifacts": {
+    "resolvedBuildDependencies": ".pytest_cache/resolved-build-dependencies",
+    "resolvedRuntimeDependencies": ".pytest_cache/resolved-runtime-dependencies",
+    "resolvedTestDependencies": ".pytest_cache/resolved-test-dependencies"
+  },
+  "warnings": []
+}
