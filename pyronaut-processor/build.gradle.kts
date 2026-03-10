@@ -7,6 +7,11 @@ plugins {
     id("org.graalvm.buildtools.native") version "0.11.1"
 }
 
+val nativeProcessorEnabled = providers
+    .gradleProperty("pyronautProcessorNative")
+    .map(String::toBoolean)
+    .orElse(false)
+
 dependencies {
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)
@@ -32,10 +37,15 @@ tasks {
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")
     val testSourceSet = the<SourceSetContainer>()["test"]
 
+    nativeCompileTask.configure {
+        onlyIf { nativeProcessorEnabled.get() }
+    }
+
     register<Test>("nativeSmokeTest") {
         group = "verification"
-        description = "Runs smoke tests against pyronaut-processor native binary"
+        description = "Runs smoke tests against pyronaut-processor native binary (experimental; enable with -PpyronautProcessorNative=true)"
         dependsOn(nativeCompileTask)
+        onlyIf { nativeProcessorEnabled.get() }
         useJUnitPlatform()
         testClassesDirs = testSourceSet.output.classesDirs
         classpath = testSourceSet.runtimeClasspath
@@ -50,6 +60,7 @@ tasks {
 
     named("nativeTest") {
         dependsOn(named("nativeSmokeTest"))
+        onlyIf { nativeProcessorEnabled.get() }
     }
 }
 
