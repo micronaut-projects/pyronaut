@@ -1,0 +1,25 @@
+plugins {
+    id("io.micronaut.build.internal.pyronaut-module")
+    id("application")
+}
+
+dependencies {
+    annotationProcessor(mn.micronaut.inject.java)
+    annotationProcessor(mnPicocli.picocli.codegen)
+
+    implementation(mnPicocli.picocli)
+    implementation(mnTest.junit.platform.launcher)
+
+    testImplementation(mnTest.junit.jupiter.api)
+    testImplementation(mnTest.junit.jupiter.engine)
+}
+
+application {
+    mainClass = "io.micronaut.pyronaut.test.PyronautTestMain"
+}
+
+tasks {
+    startScripts {
+        applicationName = "pyronaut-test"
+    }
+}
