@@ -29,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.Callable;
 
@@ -37,8 +38,17 @@ import java.util.concurrent.Callable;
  */
 @CommandLine.Command(name = "pyronaut-test", mixinStandardHelpOptions = true, description = "Run tests for a processed Pyronaut application")
 public final class PyronautTestMain implements Callable<Integer> {
+    static {
+        if (System.getProperty("org.slf4j.simpleLogger.defaultLogLevel") == null) {
+            System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn");
+        }
+    }
+
+    private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
+    private static final String DEFAULT_TESTS_DIR = "tests";
+    private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -48,6 +58,9 @@ public final class PyronautTestMain implements Callable<Integer> {
 
     @CommandLine.Option(names = "--config-dir", defaultValue = DEFAULT_CONFIG_DIR, description = "Configuration directory")
     Path configDir = Path.of(DEFAULT_CONFIG_DIR);
+
+    @CommandLine.Option(names = "--tests-dir", defaultValue = DEFAULT_TESTS_DIR, description = "Python tests directory")
+    Path testsDir = Path.of(DEFAULT_TESTS_DIR);
 
     @CommandLine.Option(names = "--classpath", split = "${sys:path.separator}", description = "Override test classpath")
     List<Path> classpath;
@@ -60,8 +73,16 @@ public final class PyronautTestMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             List<Path> testClasspath = classpath == null || classpath.isEmpty()
-                ? readManifest(root.resolve(".pytest_cache").resolve("resolved-test-dependencies"))
+                ? readManifest(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-dependencies"))
                 : classpath;
+            List<Path> runtimeClasspath = readManifestIfPresent(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"));
+            List<Path> buildClasspath = readManifestIfPresent(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-build-dependencies"));
+            if (!runtimeClasspath.isEmpty() || !buildClasspath.isEmpty()) {
+                LinkedHashSet<Path> mergedClasspath = new LinkedHashSet<>(testClasspath);
+                mergedClasspath.addAll(runtimeClasspath);
+                mergedClasspath.addAll(buildClasspath);
+                testClasspath = List.copyOf(mergedClasspath);
+            }
 
             Path resolvedClassesDir = root.resolve(classesDir).normalize();
             if (!Files.isDirectory(resolvedClassesDir)) {
@@ -85,6 +106,11 @@ public final class PyronautTestMain implements Callable<Integer> {
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
                 if (selectClasses == null || selectClasses.isEmpty()) {
                     requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(resolvedClassesDir)));
+                    Path resolvedTestsDir = root.resolve(testsDir).normalize();
+                    if (Files.isDirectory(resolvedTestsDir)) {
+                        requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedTestsDir.toString()));
+                        requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedTestsDir.toString());
+                    }
                 } else {
                     for (String className : selectClasses) {
                         requestBuilder.selectors(DiscoverySelectors.selectClass(className));
@@ -120,6 +146,13 @@ public final class PyronautTestMain implements Callable<Integer> {
         } catch (Exception e) {
             throw new IllegalStateException("Failed reading test classpath manifest: " + file, e);
         }
+    }
+
+    private static List<Path> readManifestIfPresent(Path file) {
+        if (!Files.exists(file)) {
+            return List.of();
+        }
+        return readManifest(file);
     }
 
     public static void main(String[] args) {

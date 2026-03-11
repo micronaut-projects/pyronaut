@@ -38,7 +38,7 @@ class PyronautInstallNativeSmokeTest {
         int exitCode = process.waitFor();
 
         assertEquals(InstallExitCode.SUCCESS.code(), exitCode, output);
-        Path cacheDir = project.resolve(".pytest_cache");
+        Path cacheDir = project.resolve("__pyronaut__");
         Path buildManifest = cacheDir.resolve("resolved-build-dependencies");
         Path runtimeManifest = cacheDir.resolve("resolved-runtime-dependencies");
         Path testManifest = cacheDir.resolve("resolved-test-dependencies");

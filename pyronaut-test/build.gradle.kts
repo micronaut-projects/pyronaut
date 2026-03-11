@@ -9,6 +9,7 @@ dependencies {
 
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
+    runtimeOnly(libs.slf4j.simple)
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

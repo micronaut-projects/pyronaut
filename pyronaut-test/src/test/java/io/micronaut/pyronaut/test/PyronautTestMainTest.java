@@ -49,7 +49,7 @@ class PyronautTestMainTest {
     private Path setupProject() throws Exception {
         Path project = tempDir.resolve("project");
         Path classes = project.resolve("__pyronaut__/classes");
-        Path cache = project.resolve(".pytest_cache");
+        Path cache = project.resolve("__pyronaut__");
         Files.createDirectories(classes);
         Files.createDirectories(cache);
         String classpath = System.getProperty("java.class.path", "");

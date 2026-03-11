@@ -8,9 +8,9 @@
   "error": {
     "code": "CACHE_MISSING",
     "category": "PRECONDITION_FAILED",
-    "message": "Missing .pytest_cache/resolved-build-dependencies. Run pyronaut install first.",
+    "message": "Missing __pyronaut__/resolved-build-dependencies. Run pyronaut install first.",
     "details": {
-      "requiredFile": ".pytest_cache/resolved-build-dependencies"
+      "requiredFile": "__pyronaut__/resolved-build-dependencies"
     }
   }
 }

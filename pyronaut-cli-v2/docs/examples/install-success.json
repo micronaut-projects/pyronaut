@@ -5,9 +5,9 @@
   "exitCode": 0,
   "durationMs": 932,
   "artifacts": {
-    "resolvedBuildDependencies": ".pytest_cache/resolved-build-dependencies",
-    "resolvedRuntimeDependencies": ".pytest_cache/resolved-runtime-dependencies",
-    "resolvedTestDependencies": ".pytest_cache/resolved-test-dependencies"
+    "resolvedBuildDependencies": "__pyronaut__/resolved-build-dependencies",
+    "resolvedRuntimeDependencies": "__pyronaut__/resolved-runtime-dependencies",
+    "resolvedTestDependencies": "__pyronaut__/resolved-test-dependencies"
   },
   "warnings": []
 }

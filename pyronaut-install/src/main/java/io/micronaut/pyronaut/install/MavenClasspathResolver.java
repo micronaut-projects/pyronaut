@@ -24,7 +24,11 @@ import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.graph.Dependency;
+import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.resolution.ArtifactDescriptorException;
+import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
+import org.eclipse.aether.resolution.ArtifactDescriptorResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.resolution.DependencyResult;
@@ -34,7 +38,6 @@ import org.eclipse.aether.util.artifact.JavaScopes;
 import org.eclipse.aether.util.filter.DependencyFilterUtils;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -47,8 +50,6 @@ import java.util.Objects;
  * Resolves classpaths using Apache Maven Resolver.
  */
 final class MavenClasspathResolver {
-    private static final String MICRONAUT_PLATFORM_VERSION = "4.10.2";
-
     private final RepositorySystem repositorySystem;
 
     MavenClasspathResolver() {
@@ -59,19 +60,35 @@ final class MavenClasspathResolver {
                             InstallScope scope,
                             Path localRepositoryPath,
                             boolean offline) {
+        return resolveScopeDetails(model, scope, localRepositoryPath, offline).classpath();
+    }
+
+    ResolvedScopeDetails resolveScopeDetails(PyprojectModel model,
+                                             InstallScope scope,
+                                             Path localRepositoryPath,
+                                             boolean offline) {
         List<String> coordinates = coordinatesForScope(model, scope);
         if (coordinates.isEmpty()) {
-            return List.of();
+            return new ResolvedScopeDetails(List.of(), null);
         }
 
         List<RemoteRepository> repositories = toRepositories(model.pyronaut() == null ? List.of() : model.pyronaut().repositories());
         try (CloseableSession session = newSession(localRepositoryPath, offline)) {
             CollectRequest collectRequest = new CollectRequest();
             collectRequest.setRepositories(repositories);
-            managedDependencies(model).forEach(collectRequest::addManagedDependency);
+            List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
+            managedDependencies.forEach(collectRequest::addManagedDependency);
+            Map<String, String> managedVersions = new LinkedHashMap<>();
+            for (Dependency dependency : managedDependencies) {
+                Artifact artifact = dependency.getArtifact();
+                if (artifact == null || artifact.getVersion() == null || artifact.getVersion().isBlank()) {
+                    continue;
+                }
+                managedVersions.putIfAbsent(artifact.getGroupId() + ":" + artifact.getArtifactId(), artifact.getVersion());
+            }
 
             for (String coordinate : coordinates) {
-                collectRequest.addDependency(toDependency(coordinate));
+                collectRequest.addDependency(toDependency(coordinate, managedVersions));
             }
 
             DependencyRequest dependencyRequest = new DependencyRequest(
@@ -80,7 +97,7 @@ final class MavenClasspathResolver {
             );
 
             DependencyResult result = repositorySystem.resolveDependencies(session, dependencyRequest);
-            return result.getArtifactResults().stream()
+            List<Path> classpath = result.getArtifactResults().stream()
                 .map(artifactResult -> artifactResult.getArtifact())
                 .filter(Objects::nonNull)
                 .map(Artifact::getPath)
@@ -89,9 +106,13 @@ final class MavenClasspathResolver {
                 .distinct()
                 .sorted(Comparator.naturalOrder())
                 .toList();
+            return new ResolvedScopeDetails(classpath, result.getRoot());
         } catch (DependencyResolutionException e) {
             throw new PyprojectModelException("Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage(), e);
         }
+    }
+
+    record ResolvedScopeDetails(List<Path> classpath, DependencyNode root) {
     }
 
     private static List<String> coordinatesForScope(PyprojectModel model, InstallScope scope) {
@@ -115,24 +136,78 @@ final class MavenClasspathResolver {
         return List.copyOf(merged);
     }
 
-    private static List<Dependency> managedDependencies(PyprojectModel model) {
+    private List<Dependency> managedDependencies(PyprojectModel model,
+                                                 List<RemoteRepository> repositories,
+                                                 CloseableSession session) {
         if (model.pyronaut() == null || model.pyronaut().version() == null || model.pyronaut().version().isBlank()) {
             return List.of();
         }
         String pyronautVersion = model.pyronaut().version();
-        List<Dependency> managed = new ArrayList<>();
-        managed.add(new Dependency(new DefaultArtifact("io.micronaut", "micronaut-core-bom", "", "pom", pyronautVersion), "import"));
-        managed.add(new Dependency(new DefaultArtifact("io.micronaut.platform", "micronaut-platform", "", "pom", MICRONAUT_PLATFORM_VERSION), "import"));
-        return managed;
+        Map<String, Dependency> managed = new LinkedHashMap<>();
+        LinkedHashSet<String> visitedBoms = new LinkedHashSet<>();
+        addManagedDependenciesFromBom(
+            new DefaultArtifact("io.micronaut", "micronaut-core-bom", "", "pom", pyronautVersion),
+            repositories,
+            session,
+            visitedBoms,
+            managed
+        );
+        addManagedDependenciesFromBom(
+            new DefaultArtifact("io.micronaut.platform", "micronaut-platform", "", "pom", pyronautVersion),
+            repositories,
+            session,
+            visitedBoms,
+            managed
+        );
+        return List.copyOf(managed.values());
     }
 
-    private static Dependency toDependency(String coordinate) {
+    private void addManagedDependenciesFromBom(Artifact bomArtifact,
+                                               List<RemoteRepository> repositories,
+                                               CloseableSession session,
+                                               LinkedHashSet<String> visitedBoms,
+                                               Map<String, Dependency> managedDependencies) {
+        String bomKey = bomArtifact.getGroupId() + ":" + bomArtifact.getArtifactId() + ":" + bomArtifact.getVersion();
+        if (!visitedBoms.add(bomKey)) {
+            return;
+        }
+
+        ArtifactDescriptorRequest request = new ArtifactDescriptorRequest();
+        request.setArtifact(bomArtifact);
+        request.setRepositories(repositories);
+        ArtifactDescriptorResult result;
+        try {
+            result = repositorySystem.readArtifactDescriptor(session, request);
+        } catch (ArtifactDescriptorException e) {
+            throw new PyprojectModelException("Failed to read managed dependency BOM: " + bomArtifact, e);
+        }
+
+        for (Dependency dependency : result.getManagedDependencies()) {
+            Artifact artifact = dependency.getArtifact();
+            if (artifact == null) {
+                continue;
+            }
+            if ("pom".equals(artifact.getExtension()) && "import".equals(dependency.getScope())) {
+                addManagedDependenciesFromBom(artifact, repositories, session, visitedBoms, managedDependencies);
+                continue;
+            }
+            managedDependencies.putIfAbsent(managedDependencyKey(artifact), dependency);
+        }
+    }
+
+    private static String managedDependencyKey(Artifact artifact) {
+        String classifier = artifact.getClassifier() == null ? "" : artifact.getClassifier();
+        return artifact.getGroupId() + ":" + artifact.getArtifactId() + ":" + artifact.getExtension() + ":" + classifier;
+    }
+
+    private static Dependency toDependency(String coordinate, Map<String, String> managedVersions) {
         String[] parts = coordinate.split(":");
         if (parts.length == 3) {
             return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", parts[2]), JavaScopes.RUNTIME);
         }
         if (parts.length == 2) {
-            return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", null), JavaScopes.RUNTIME);
+            String managedVersion = managedVersions.get(parts[0] + ":" + parts[1]);
+            return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", managedVersion), JavaScopes.RUNTIME);
         }
         throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate + "'. Expected group:artifact[:version]");
     }

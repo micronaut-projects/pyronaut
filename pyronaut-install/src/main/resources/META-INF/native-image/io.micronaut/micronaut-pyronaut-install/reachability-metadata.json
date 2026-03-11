@@ -7,7 +7,16 @@
       "type": "io.micronaut.pyronaut.install.PyronautInstallMain",
       "fields": [
         {
+          "name": "color"
+        },
+        {
+          "name": "dependencies"
+        },
+        {
           "name": "offline"
+        },
+        {
+          "name": "progress"
         },
         {
           "name": "projectDir"

@@ -25,7 +25,7 @@ class PyronautProcessorNativeSmokeTest {
         String binaryPath = System.getProperty("pyronaut.processor.native.binary");
         Path project = tempDir.resolve("project");
         Path src = project.resolve("src");
-        Path cache = project.resolve(".pytest_cache");
+        Path cache = project.resolve("__pyronaut__");
         Files.createDirectories(src);
         Files.createDirectories(cache);
         Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());

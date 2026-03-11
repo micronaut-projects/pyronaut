@@ -43,7 +43,7 @@ class GeneratedEntryPoint extends SimpleJavaFileObject {
         var sb = new StringBuilder();
         sb.append("package pyronaut_application;\n\n");
         sb.append("import io.micronaut.runtime.Micronaut;\n");
-        sb.append("import io.micronaut.python.processing.annotation.PythonApplication;\n\n");
+        sb.append("import io.micronaut.context.python.annotation.PythonApplication;\n\n");
         sb.append("@PythonApplication(\n");
         var srcDirs = sourceDirs.stream()
                         .map(dir -> "\"" + dir.toAbsolutePath() + "\"")

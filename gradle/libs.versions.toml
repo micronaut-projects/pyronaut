@@ -12,6 +12,7 @@ gradle-tapi = "9.2.1"
 tamboui = "0.1.0"
 maven-resolver = "2.0.16"
 maven = "3.9.9"
+slf4j = "2.0.17"
 
 [libraries]
 micronaut-core = { module = 'io.micronaut:micronaut-core-bom', version.ref = 'micronaut' }
@@ -41,6 +42,7 @@ maven-resolver-transport-file = { module = "org.apache.maven.resolver:maven-reso
 maven-resolver-transport-jdk = { module = "org.apache.maven.resolver:maven-resolver-transport-jdk", version.ref = "maven-resolver" }
 maven-resolver-supplier-mvn3 = { module = "org.apache.maven.resolver:maven-resolver-supplier-mvn3", version.ref = "maven-resolver" }
 maven-resolver-provider = { module = "org.apache.maven:maven-resolver-provider", version.ref = "maven" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
 [bundles]
 

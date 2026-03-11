@@ -22,6 +22,8 @@ dependencies {
     implementation(libs.maven.resolver.transport.jdk)
     implementation(libs.maven.resolver.supplier.mvn3)
 
+    runtimeOnly(libs.slf4j.simple)
+
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
 }

@@ -20,10 +20,10 @@ class PyronautProcessorMainTest {
     @Test
     void usesCachedDefaultPaths() throws Exception {
         Path project = tempDir.resolve("project");
-        Files.createDirectories(project.resolve(".pytest_cache"));
+        Files.createDirectories(project.resolve("__pyronaut__"));
         Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
-        Files.write(project.resolve(".pytest_cache").resolve("resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
-        Files.write(project.resolve(".pytest_cache").resolve("resolved-runtime-dependencies"), List.of("/tmp/runtime-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"), List.of("/tmp/runtime-a.jar"), StandardCharsets.UTF_8);
 
         CapturingExecutor executor = new CapturingExecutor();
         PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
@@ -41,7 +41,7 @@ class PyronautProcessorMainTest {
     @Test
     void failsWhenBuildCacheMissing() throws Exception {
         Path project = tempDir.resolve("project-missing-cache");
-        Files.createDirectories(project.resolve(".pytest_cache"));
+        Files.createDirectories(project.resolve("__pyronaut__"));
         Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
 
         PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), new CapturingExecutor());

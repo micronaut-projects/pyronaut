@@ -17,6 +17,8 @@ package io.micronaut.pyronaut.run;
 
 import picocli.CommandLine;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +26,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.stream.Stream;
 import java.util.concurrent.Callable;
 
 /**
@@ -31,9 +35,11 @@ import java.util.concurrent.Callable;
  */
 @CommandLine.Command(name = "pyronaut-run", mixinStandardHelpOptions = true, description = "Run a processed Pyronaut application")
 public final class PyronautRunMain implements Callable<Integer> {
+    private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
+    private static final List<URLClassLoader> ACTIVE_CLASSLOADERS = new ArrayList<>();
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -58,7 +64,7 @@ public final class PyronautRunMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             List<Path> runtimeClasspath = classpath == null || classpath.isEmpty()
-                ? readManifest(root.resolve(".pytest_cache").resolve("resolved-runtime-dependencies"))
+                ? readManifest(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"))
                 : classpath;
 
             Path resolvedClassesDir = root.resolve(classesDir).normalize();
@@ -78,19 +84,86 @@ public final class PyronautRunMain implements Callable<Integer> {
                 urls.add(resolvedConfigDir.toUri().toURL());
             }
 
-            try (URLClassLoader classLoader = new URLClassLoader(urls.toArray(URL[]::new), Thread.currentThread().getContextClassLoader())) {
-                Thread.currentThread().setContextClassLoader(classLoader);
-                Class<?> loadedClass = classLoader.loadClass(mainClass);
-                var method = loadedClass.getMethod("main", String[].class);
-                method.invoke(null, (Object) appArgs.toArray(String[]::new));
+            URLClassLoader classLoader = new URLClassLoader(urls.toArray(URL[]::new), ClassLoader.getPlatformClassLoader());
+            ACTIVE_CLASSLOADERS.add(classLoader);
+            Thread.currentThread().setContextClassLoader(classLoader);
+            Class<?> loadedClass = classLoader.loadClass(mainClass);
+            if (DEFAULT_MAIN_CLASS.equals(mainClass) && tryStartMicronautApplication(classLoader, loadedClass, resolvedClassesDir)) {
+                blockUntilInterrupted();
+                return 0;
             }
+            var method = loadedClass.getDeclaredMethod("main", String[].class);
+            method.setAccessible(true);
+            method.invoke(null, (Object) appArgs.toArray(String[]::new));
             return 0;
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            System.err.println("Run failed: " + cause.getMessage());
+            return 6;
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
         } catch (Exception e) {
             System.err.println("Run failed: " + e.getMessage());
             return 6;
+        }
+    }
+
+    private boolean tryStartMicronautApplication(URLClassLoader classLoader,
+                                                 Class<?> loadedClass,
+                                                 Path resolvedClassesDir) throws Exception {
+        try {
+            Class<?> micronautClass = classLoader.loadClass("io.micronaut.runtime.Micronaut");
+            Method buildMethod = micronautClass.getDeclaredMethod("build", String[].class);
+            buildMethod.setAccessible(true);
+            Object micronaut = buildMethod.invoke(null, (Object) appArgs.toArray(String[]::new));
+
+            Method mainClassMethod = micronautClass.getDeclaredMethod("mainClass", Class.class);
+            mainClassMethod.setAccessible(true);
+            mainClassMethod.invoke(micronaut, loadedClass);
+
+            try {
+                Method keepAliveMethod = micronautClass.getDeclaredMethod("keepAlive", boolean.class);
+                keepAliveMethod.setAccessible(true);
+                keepAliveMethod.invoke(micronaut, true);
+            } catch (NoSuchMethodException ignored) {
+            }
+
+            List<String> packages = discoverApplicationPackages(resolvedClassesDir);
+            if (!packages.isEmpty()) {
+                Method packagesMethod = micronautClass.getDeclaredMethod("packages", String[].class);
+                packagesMethod.setAccessible(true);
+                packagesMethod.invoke(micronaut, (Object) packages.toArray(String[]::new));
+            }
+
+            Method startMethod = micronautClass.getDeclaredMethod("start");
+            startMethod.setAccessible(true);
+            startMethod.invoke(micronaut);
+            return true;
+        } catch (ClassNotFoundException | NoSuchMethodException e) {
+            return false;
+        }
+    }
+
+    private static void blockUntilInterrupted() {
+        try {
+            new CountDownLatch(1).await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static List<String> discoverApplicationPackages(Path classesDirectory) {
+        try (Stream<Path> stream = Files.list(classesDirectory)) {
+            return stream
+                .filter(Files::isDirectory)
+                .map(path -> path.getFileName().toString())
+                .filter(name -> !name.isBlank())
+                .filter(name -> !"META-INF".equals(name))
+                .filter(name -> !"pyronaut_application".equals(name))
+                .toList();
+        } catch (Exception ignored) {
+            return List.of();
         }
     }
 

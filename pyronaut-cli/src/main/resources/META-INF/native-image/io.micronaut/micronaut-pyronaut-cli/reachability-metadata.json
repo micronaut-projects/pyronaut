@@ -9,7 +9,7 @@
     {
       "type": {
         "proxy": [
-          "io.micronaut.python.processing.annotation.PythonApplication"
+          "io.micronaut.context.python.annotation.PythonApplication"
         ]
       }
     },

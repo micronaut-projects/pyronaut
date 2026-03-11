@@ -1,3 +1,140 @@
 plugins {
     id 'io.micronaut.build.internal.pyronaut-module'
 }
+
+def wheelStagingDir = layout.buildDirectory.dir("wheel/staging")
+def wheelDistDir = layout.buildDirectory.dir("wheel/dist")
+def wheelVersion = providers.provider {
+    project.version.toString().replace("-SNAPSHOT", ".dev0")
+}
+def defaultGraalVmHome = "/Users/graemerocher/dev/oracle/graalvm-25.1.0-dev+10.1/Contents/Home"
+def graalVmHomeProvider = providers.gradleProperty("pyronautGraalVmHome").orElse(defaultGraalVmHome)
+
+def delegatedCliProjects = [
+    [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
+    [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"],
+    [path: ":micronaut-pyronaut-run", command: "pyronaut-run"],
+    [path: ":micronaut-pyronaut-test", command: "pyronaut-test"]
+]
+
+tasks.register("prepareWheelSources", Sync) {
+    from("src/main/python") {
+        into("src")
+    }
+    into(wheelStagingDir)
+
+    delegatedCliProjects.each { cliProject ->
+        dependsOn(project(cliProject.path).tasks.named("installDist"))
+        from(project(cliProject.path).layout.buildDirectory.dir("install/${project(cliProject.path).name}")) {
+            into("src/pyronaut_cli_v2/tools/${cliProject.command}")
+        }
+    }
+
+    doLast {
+        def pyprojectFile = wheelStagingDir.get().file("pyproject.toml").asFile
+        pyprojectFile.parentFile.mkdirs()
+        pyprojectFile.text = """
+[project]
+name = "pyronaut"
+version = "${wheelVersion.get()}"
+description = "Pyronaut v2 SDK orchestrator"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+pyronaut = "pyronaut_cli_v2.cli:main"
+
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+pyronaut_cli_v2 = ["tools/**"]
+""".trim() + System.lineSeparator()
+    }
+}
+
+tasks.register("buildSdkWheel", Exec) {
+    group = "build"
+    description = "Builds the Pyronaut SDK wheel"
+    dependsOn(tasks.named("prepareWheelSources"))
+    outputs.dir(wheelDistDir)
+    commandLine(
+        "python3",
+        "-m",
+        "pip",
+        "wheel",
+        "--no-deps",
+        "--wheel-dir",
+        wheelDistDir.get().asFile.absolutePath,
+        wheelStagingDir.get().asFile.absolutePath
+    )
+}
+
+tasks.register("testPythonOrchestrator", Exec) {
+    group = "verification"
+    description = "Runs Python tests for pyronaut orchestrator"
+    commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "*_test.py")
+    environment("PYTHONPATH", file("src/main/python").absolutePath)
+}
+
+tasks.register("testPythonOrchestratorE2E", Exec) {
+    group = "verification"
+    description = "Runs end-to-end orchestrator flow and migration gate checks"
+
+    dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
+
+    commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "e2e_flow_test.py")
+    environment("PYTHONPATH", file("src/main/python").absolutePath)
+    environment("PYRONAUT_E2E", "true")
+    environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment("PYRONAUT_E2E_FIXTURE_DIR", file("src/test/resources/e2e-app").absolutePath)
+    environment(
+        "PYRONAUT_INSTALL_EXECUTABLE",
+        project(":micronaut-pyronaut-install").layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_PROCESSOR_EXECUTABLE",
+        project(":micronaut-pyronaut-processor").layout.buildDirectory.file("install/micronaut-pyronaut-processor/bin/pyronaut-processor").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_RUN_EXECUTABLE",
+        project(":micronaut-pyronaut-run").layout.buildDirectory.file("install/micronaut-pyronaut-run/bin/pyronaut-run").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_TEST_EXECUTABLE",
+        project(":micronaut-pyronaut-test").layout.buildDirectory.file("install/micronaut-pyronaut-test/bin/pyronaut-test").get().asFile.absolutePath
+    )
+    doFirst {
+        def graalVmHome = graalVmHomeProvider.get()
+        if (file(graalVmHome).exists()) {
+            environment("JAVA_HOME", graalVmHome)
+            environment("PATH", graalVmHome + "/bin" + File.pathSeparator + System.getenv("PATH"))
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn(tasks.named("testPythonOrchestrator"))
+    if (project.findProperty("pyronautE2E") == "true") {
+        dependsOn(tasks.named("testPythonOrchestratorE2E"))
+    }
+}
+
+tasks.named("checkstyleMain") {
+    enabled = false
+}
+
+tasks.named("checkstyleTest") {
+    enabled = false
+}
+
+tasks.named("assemble") {
+    dependsOn(tasks.named("buildSdkWheel"))
+}

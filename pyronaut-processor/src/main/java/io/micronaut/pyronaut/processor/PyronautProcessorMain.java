@@ -28,6 +28,7 @@ import java.util.concurrent.Callable;
 @CommandLine.Command(name = "pyronaut-processor", mixinStandardHelpOptions = true, description = "Process Python sources and generate Micronaut metadata")
 public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_PYTHON_SRC = "src";
+    private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_TARGET_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_JAVA_SRC = "src-java";
 
@@ -72,14 +73,14 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
             List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()
                 ? ClasspathManifestReader.read(
-                root.resolve(".pytest_cache").resolve("resolved-build-dependencies"),
+                root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-build-dependencies"),
                 "Missing build scope cache. Run pyronaut-install first"
             )
                 : annotationProcessorPath;
 
             List<Path> effectiveClasspath = classpath == null || classpath.isEmpty()
                 ? ClasspathManifestReader.read(
-                root.resolve(".pytest_cache").resolve("resolved-runtime-dependencies"),
+                root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"),
                 "Missing runtime scope cache. Run pyronaut-install first"
             )
                 : classpath;

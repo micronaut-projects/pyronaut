@@ -23,7 +23,7 @@ class PyronautProcessorCompilationTest {
     void processesMicronautPythonControllerAndGeneratesBeanDefinitionMetadata() throws Exception {
         Path project = tempDir.resolve("project");
         Path srcDir = project.resolve("src");
-        Path cacheDir = project.resolve(".pytest_cache");
+        Path cacheDir = project.resolve("__pyronaut__");
         Files.createDirectories(srcDir);
         Files.createDirectories(cacheDir);
 
