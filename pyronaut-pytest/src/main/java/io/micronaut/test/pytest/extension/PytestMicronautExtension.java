@@ -16,6 +16,7 @@
 package io.micronaut.test.pytest.extension;
 
 import io.micronaut.context.ApplicationContext;
+import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.annotation.Property;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.test.annotation.MicronautTestValue;
@@ -60,6 +61,15 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         } catch (RuntimeException e) {
             LOG.error("Error PytestMicronautExtension beforeClass: " + e.getMessage(), e);
             throw e;
+        }
+    }
+
+    @Override
+    protected void postProcessBuilder(ApplicationContextBuilder builder) {
+        // propagate context classloader
+        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+        if (contextClassLoader != null) {
+            builder.classLoader(contextClassLoader);
         }
     }
 
