@@ -1,0 +1,29 @@
+Task 13 diagnostics evidence: PythonApplication annotation-type failure path
+==========================================================================
+
+Date: 2026-03-12
+
+Historical reproducible command (captured during diagnostics draft):
+  pyronaut process --project-dir /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app
+
+Historical non-verbose failure output:
+  Processing failed: java.lang.IllegalArgumentException: The argument does not represent an annotation type: PythonApplication
+
+Historical deep-diagnostics evidence (captured with temporary debug + verbose stacktrace path):
+  - Failure originated from:
+      io.micronaut.annotation.processing.PackageElementVisitorProcessor.process(...)
+      -> RoundEnvironment.getElementsAnnotatedWith(...)
+      -> com.sun.tools.javac.processing.JavacRoundEnvironment.throwIfNotAnnotation(...)
+  - Annotation symbol itself was verified present and annotation-typed in resolved artifacts:
+      io.micronaut.python.processing.annotation.PythonApplication
+  - javac round diagnostics (`--option -XprintRounds`) showed PythonApplication in the annotation set.
+
+Current re-check command (post-upstream regression fix):
+  ./pyronaut-processor/build/install/micronaut-pyronaut-processor/bin/pyronaut-processor \
+    --project-dir /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app
+
+Current result:
+  Command succeeds and emits processor output (no annotation-type failure), confirming regression is no longer reproducible in current dependency state.
+
+Reference source for historical evidence:
+  .sisyphus/drafts/process-verbose-diagnostics.md

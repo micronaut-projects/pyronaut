@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -418,6 +419,15 @@ class PyronautInstallMainTest {
 
     @Test
     void dependenciesModePrintsResolutionErrorAndReturnsResolutionCode() throws Exception {
+        Path repository = tempDir.resolve("repo-tree-failure");
+        writeArtifactWithDependencies(
+            repository,
+            "com.example",
+            "runtime-root",
+            "1.0.0",
+            List.of(new DependencyCoordinate("com.example", "missing-child", "1.0.0"))
+        );
+
         Path project = tempDir.resolve("project-tree-failure");
         Files.createDirectories(project);
         Files.writeString(project.resolve("pyproject.toml"), """
@@ -428,10 +438,10 @@ class PyronautInstallMainTest {
             repositories = ["%s"]
 
             [tool.pyronaut.dependencies]
-            runtime = ["com.example:missing:1.0.0"]
+            runtime = ["com.example:runtime-root:1.0.0"]
             build = []
             test = []
-            """.formatted(project.resolve("empty-repo").toUri()));
+            """.formatted(repository.toUri()));
 
         PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
         command.projectDir = project;
@@ -451,6 +461,77 @@ class PyronautInstallMainTest {
         String output = stdout.toString(StandardCharsets.UTF_8);
         assertTrue(output.contains("Dependency tree (runtime):"));
         assertTrue(output.contains("ERROR: Dependency resolution failed for scope 'runtime'"));
+        assertTrue(output.contains("com.example:missing-child:1.0.0 [runtime] [ERROR]"));
+        assertTrue(output.contains("ERROR path: com.example:runtime-root:1.0.0 -> com.example:missing-child:1.0.0"));
+    }
+
+    @Test
+    void resolutionErrorIncludesProxySourceSummaryWhenProxyConfigured() throws Exception {
+        Path project = tempDir.resolve("project-proxy-failure");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "broken-proxy-tree"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:missing:1.0.0"]
+            build = []
+            test = []
+            """.formatted(project.resolve("empty-repo").toUri()));
+
+        ProxyConfigurationLoader proxyConfigurationLoader = new ProxyConfigurationLoader(
+            Map.of("HTTPS_PROXY", "http://proxy.example:3128"),
+            tempDir.resolve("missing-pyronaut-settings.toml"),
+            tempDir.resolve("missing-m2-settings.xml")
+        );
+        MavenClasspathResolver resolver = new MavenClasspathResolver(proxyConfigurationLoader);
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), resolver);
+        command.projectDir = project;
+        command.dependencies = true;
+        command.progress = "off";
+        command.color = "never";
+
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
+        System.setOut(new PrintStream(stdout, true, StandardCharsets.UTF_8));
+        try {
+            assertEquals(InstallExitCode.RESOLUTION_ERROR.code(), command.call());
+        } finally {
+            System.setOut(originalOut);
+        }
+
+        String output = stdout.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("proxy environment -> http://proxy.example:3128"));
+    }
+
+    @Test
+    void installSucceedsWithProxyConfigurationPresent() throws Exception {
+        Path repository = tempDir.resolve("repo-proxy-success");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-proxy-success");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        ProxyConfigurationLoader proxyConfigurationLoader = new ProxyConfigurationLoader(
+            Map.of("HTTPS_PROXY", "http://proxy.example:3128"),
+            tempDir.resolve("missing-pyronaut-settings.toml"),
+            tempDir.resolve("missing-m2-settings.xml")
+        );
+        MavenClasspathResolver resolver = new MavenClasspathResolver(proxyConfigurationLoader);
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), resolver);
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        Path cacheDir = project.resolve("__pyronaut__");
+        assertTrue(Files.exists(cacheDir.resolve("resolved-build-dependencies")));
+        assertTrue(Files.exists(cacheDir.resolve("resolved-runtime-dependencies")));
+        assertTrue(Files.exists(cacheDir.resolve("resolved-test-dependencies")));
     }
 
     private static String pyproject(Path repository) {
@@ -487,6 +568,44 @@ class PyronautInstallMainTest {
               <version>%s</version>
             </project>
             """.formatted(groupId, artifactId, version));
+
+        Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
+        Files.write(jarFile, new byte[]{0});
+    }
+
+    private static void writeArtifactWithDependencies(Path repository,
+                                                      String groupId,
+                                                      String artifactId,
+                                                      String version,
+                                                      List<DependencyCoordinate> dependencies) throws IOException {
+        Path artifactDir = repository
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version);
+        Files.createDirectories(artifactDir);
+
+        StringBuilder dependencyBlock = new StringBuilder();
+        for (DependencyCoordinate dependency : dependencies) {
+            dependencyBlock
+                .append("    <dependency>\n")
+                .append("      <groupId>").append(dependency.groupId()).append("</groupId>\n")
+                .append("      <artifactId>").append(dependency.artifactId()).append("</artifactId>\n")
+                .append("      <version>").append(dependency.version()).append("</version>\n")
+                .append("    </dependency>\n");
+        }
+
+        Files.writeString(artifactDir.resolve(artifactId + "-" + version + ".pom"), """
+            <project xmlns="http://maven.apache.org/POM/4.0.0"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>%s</groupId>
+              <artifactId>%s</artifactId>
+              <version>%s</version>
+              <dependencies>
+            %s  </dependencies>
+            </project>
+            """.formatted(groupId, artifactId, version, dependencyBlock), StandardCharsets.UTF_8);
 
         Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
         Files.write(jarFile, new byte[]{0});
@@ -535,5 +654,8 @@ class PyronautInstallMainTest {
     }
 
     private record ManagedDependency(String groupId, String artifactId, String version) {
+    }
+
+    private record DependencyCoordinate(String groupId, String artifactId, String version) {
     }
 }

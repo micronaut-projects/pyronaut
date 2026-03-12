@@ -69,6 +69,19 @@ Option behavior:
 - `--progress`: `auto`, `on`, or `off` (`auto` enables interactive rendering only on TTY).
 - `--color`: `auto`, `always`, or `never` (`auto` only emits ANSI where supported).
 
+### Proxy configuration precedence
+
+`pyronaut install` can apply proxy settings for Maven artifact resolution with this precedence:
+
+1. Environment (`HTTPS_PROXY`/`HTTP_PROXY`, optional `NO_PROXY`)
+2. `~/.pyronaut/settings.toml`
+3. `~/.m2/settings.xml`
+
+`~/.pyronaut/settings.toml` supports a `[proxy]` table with either `url` or `host` + `port`, and optional `protocol`,
+`username`, `password`, and `nonProxyHosts`.
+
+When resolution fails, diagnostics include the selected proxy source and endpoint host/port without printing credentials.
+
 Delegation tracing is disabled by default. To print delegated tool command lines for debugging:
 
 ```bash
@@ -99,6 +112,6 @@ PYRONAUT_E2E=true ./gradlew :micronaut-pyronaut:check
 The E2E test validates:
 
 1. `install` writes all scoped cache manifests
-2. `process` generates `__pyronaut__/classes`
+2. `process` generates `__pyronaut__/classes` and `__pyronaut__/test-classes`
 3. `run` starts the real Micronaut server and serves HTTP on `localhost:8080`
 4. `test` executes real pytest-backed tests through `micronaut-pytest-engine`

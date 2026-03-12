@@ -139,6 +139,90 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertIn("/tmp/pyronaut-install --project-dir /tmp/demo", stderr.getvalue())
 
+    def test_process_forwards_verbose_flag(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["process", "--project-dir", "/tmp/demo", "--verbose"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--verbose"]],
+            executed,
+        )
+
+    def test_test_performs_process_when_test_classes_missing(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "missing-test-classes"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            for file_name in [
+                "resolved-build-dependencies",
+                "resolved-runtime-dependencies",
+                "resolved-test-dependencies",
+            ]:
+                (cache_dir / file_name).write_text("/tmp/stub.jar\n", encoding="utf-8")
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            exit_code = cli.run(
+                ["test", "--project-dir", str(project_dir)],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [
+                ["/tmp/pyronaut-processor", "--project-dir", str(project_dir)],
+                ["/tmp/pyronaut-test", "--project-dir", str(project_dir)],
+            ],
+            executed,
+        )
+
+    def test_test_skips_process_when_both_output_dirs_exist(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "ready-test"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            for file_name in [
+                "resolved-build-dependencies",
+                "resolved-runtime-dependencies",
+                "resolved-test-dependencies",
+            ]:
+                (cache_dir / file_name).write_text("/tmp/stub.jar\n", encoding="utf-8")
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            exit_code = cli.run(
+                ["test", "--project-dir", str(project_dir)],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([["/tmp/pyronaut-test", "--project-dir", str(project_dir)]], executed)
+
     @staticmethod
     def _resolver():
         def resolve(command_name):

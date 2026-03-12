@@ -26,6 +26,8 @@ import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.repository.Authentication;
+import org.eclipse.aether.repository.Proxy;
 import org.eclipse.aether.resolution.ArtifactDescriptorException;
 import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
 import org.eclipse.aether.resolution.ArtifactDescriptorResult;
@@ -36,6 +38,8 @@ import org.eclipse.aether.supplier.RepositorySystemSupplier;
 import org.eclipse.aether.supplier.SessionBuilderSupplier;
 import org.eclipse.aether.util.artifact.JavaScopes;
 import org.eclipse.aether.util.filter.DependencyFilterUtils;
+import org.eclipse.aether.util.repository.AuthenticationBuilder;
+import org.eclipse.aether.util.repository.DefaultProxySelector;
 
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -51,9 +55,19 @@ import java.util.Objects;
  */
 final class MavenClasspathResolver {
     private final RepositorySystem repositorySystem;
+    private final ProxyConfigurationLoader proxyConfigurationLoader;
 
     MavenClasspathResolver() {
-        this.repositorySystem = newRepositorySystem();
+        this(newRepositorySystem(), new ProxyConfigurationLoader());
+    }
+
+    MavenClasspathResolver(ProxyConfigurationLoader proxyConfigurationLoader) {
+        this(newRepositorySystem(), proxyConfigurationLoader);
+    }
+
+    MavenClasspathResolver(RepositorySystem repositorySystem, ProxyConfigurationLoader proxyConfigurationLoader) {
+        this.repositorySystem = repositorySystem;
+        this.proxyConfigurationLoader = proxyConfigurationLoader;
     }
 
     List<Path> resolveScope(PyprojectModel model,
@@ -73,7 +87,8 @@ final class MavenClasspathResolver {
         }
 
         List<RemoteRepository> repositories = toRepositories(model.pyronaut() == null ? List.of() : model.pyronaut().repositories());
-        try (CloseableSession session = newSession(localRepositoryPath, offline)) {
+        ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration)) {
             CollectRequest collectRequest = new CollectRequest();
             collectRequest.setRepositories(repositories);
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
@@ -108,7 +123,11 @@ final class MavenClasspathResolver {
                 .toList();
             return new ResolvedScopeDetails(classpath, result.getRoot());
         } catch (DependencyResolutionException e) {
-            throw new PyprojectModelException("Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage(), e);
+            String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage();
+            if (proxyConfiguration != null) {
+                message = message + " (proxy " + proxyConfiguration.summary() + ")";
+            }
+            throw new PyprojectModelException(message, e);
         }
     }
 
@@ -212,11 +231,41 @@ final class MavenClasspathResolver {
         throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate + "'. Expected group:artifact[:version]");
     }
 
-    private CloseableSession newSession(Path localRepositoryPath, boolean offline) {
+    private CloseableSession newSession(Path localRepositoryPath,
+                                        boolean offline,
+                                        ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
         sessionBuilder.withLocalRepositoryBaseDirectories(localRepositoryPath.toAbsolutePath());
+        if (proxyConfiguration != null) {
+            DefaultProxySelector proxySelector = new DefaultProxySelector();
+            proxySelector.add(
+                new Proxy(
+                    proxyConfiguration.protocol(),
+                    proxyConfiguration.host(),
+                    proxyConfiguration.port(),
+                    authentication(proxyConfiguration)
+                ),
+                proxyConfiguration.nonProxyHosts()
+            );
+            sessionBuilder.setProxySelector(proxySelector);
+        }
         return sessionBuilder.build();
+    }
+
+    private static Authentication authentication(ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration) {
+        if ((proxyConfiguration.username() == null || proxyConfiguration.username().isBlank())
+            && (proxyConfiguration.password() == null || proxyConfiguration.password().isBlank())) {
+            return null;
+        }
+        AuthenticationBuilder authenticationBuilder = new AuthenticationBuilder();
+        if (proxyConfiguration.username() != null && !proxyConfiguration.username().isBlank()) {
+            authenticationBuilder.addUsername(proxyConfiguration.username());
+        }
+        if (proxyConfiguration.password() != null && !proxyConfiguration.password().isBlank()) {
+            authenticationBuilder.addPassword(proxyConfiguration.password());
+        }
+        return authenticationBuilder.build();
     }
 
     private static RepositorySystem newRepositorySystem() {

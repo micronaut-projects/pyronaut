@@ -69,7 +69,7 @@ def run(
             install_code = _delegate("install", ["--project-dir", project_dir], execute, locate)
             if install_code != SUCCESS:
                 return install_code
-        if _process_required(project_path):
+        if _process_required(project_path, command):
             process_code = _delegate("process", ["--project-dir", project_dir], execute, locate)
             if process_code != SUCCESS:
                 return process_code
@@ -131,8 +131,12 @@ def _install_required(project_dir: Path) -> bool:
     return not all(path.exists() for path in required_manifests)
 
 
-def _process_required(project_dir: Path) -> bool:
-    return not (project_dir / "__pyronaut__" / "classes").is_dir()
+def _process_required(project_dir: Path, command: str) -> bool:
+    classes_ready = (project_dir / "__pyronaut__" / "classes").is_dir()
+    if command == "test":
+        test_classes_ready = (project_dir / "__pyronaut__" / "test-classes").is_dir()
+        return not (classes_ready and test_classes_ready)
+    return not classes_ready
 
 
 def _run_subprocess(command_line: list[str]) -> int:

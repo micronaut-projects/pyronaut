@@ -174,6 +174,10 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
 > Status retention rule:
 > - Install-usability tasks are imported as completed where already verified.
 > - Process verbose diagnostics tasks are imported as pending under new merged task 13.
+> - Dependency-tree unresolved-graph diagnostics are tracked under new merged task 14.
+> - Dual source+test processing in `pyronaut-processor` is tracked under new merged task 15.
+> - Proxy-aware dependency resolution for `pyronaut-install` is tracked under new merged task 16.
+> - `pyronaut-test` classpath alignment with `__pyronaut__/test-classes` is tracked under new merged task 17.
 
 - [x] 1. Define v2 CLI protocol, contracts, and exit-code taxonomy
 
@@ -706,7 +710,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-10-platform-guardrail.txt
   ```
 
-- [ ] 11. End-to-end parity, migration gate, and review/commit checkpoint workflow
+- [x] 11. End-to-end parity, migration gate, and review/commit checkpoint workflow
 
   **What to do**:
   - Build E2E regression harness for sample project flow:
@@ -728,7 +732,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
   - `.github/workflows/gradle.yml` and `.github/workflows/graalvm-latest.yml` - CI patterns.
 
   **Acceptance Criteria**:
-  - [ ] Automated E2E scenario passes in CI on macOS/Linux matrix.
+  - [x] Automated E2E scenario passes in CI on macOS/Linux matrix.
   - [x] Checkpoint template exists and is followed:
     - Component complete
     - Review pause
@@ -800,11 +804,196 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
   - Blocks: final parity sign-off in 11.
 
   **Acceptance Criteria**:
-  - [ ] `pyronaut-processor --help` includes `-v, --verbose`.
-  - [ ] Non-verbose fatal path prints concise message + `--verbose` hint, without stacktrace frames.
-  - [ ] Verbose path prints actionable stacktrace/cause chain.
-  - [ ] Processor/orchestrator tests for verbose behavior pass.
-  - [ ] Demo failure diagnosis artifact captured with reproducible command evidence.
+  - [x] `pyronaut-processor --help` includes `-v, --verbose`.
+  - [x] Non-verbose fatal path prints concise message + `--verbose` hint, without stacktrace frames.
+  - [x] Verbose path prints actionable stacktrace/cause chain.
+  - [x] Processor/orchestrator tests for verbose behavior pass.
+  - [x] Demo failure diagnosis artifact captured with reproducible command evidence.
+
+- [x] 14. Improve `pyronaut install --dependencies` unresolved graph diagnostics *(merged action item)*
+
+  **What to do**:
+  - Improve failure output in `--dependencies` mode so users can still visualize where unresolved artifacts originate.
+  - When a dependency cannot be resolved, continue rendering the tree with unresolved nodes/edges marked as failures.
+  - Highlight unresolved modules in red when ANSI is enabled, with deterministic plain fallback markers (`ERROR`) in non-color mode.
+  - Include dependency path/context leading to unresolved node(s), not only a top-level summary error line.
+
+  **Current observed gap**:
+  - Running `pyronaut install --dependencies --scope build` in
+    `/Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app`
+    currently prints a generic scope-level error:
+    `ERROR: Dependency resolution failed for scope 'build': ...`
+    but does not show where unresolved modules sit within the graph path.
+
+  **Must NOT do**:
+  - Do not suppress the existing explicit resolution error summary.
+  - Do not change existing exit-code taxonomy for resolution failures.
+  - Do not require TTY/human-only interpretation for failure diagnostics.
+
+  **Dependencies**:
+  - Depends on: 3 (install resolver), 12 (install usability hardening baseline).
+  - Blocks: 11 final parity sign-off for dependency diagnostics quality.
+
+  **Acceptance Criteria**:
+  - [x] `--dependencies` mode still prints tree structure when resolution failures occur.
+  - [x] Unresolved modules are visibly marked in-tree (ANSI red when enabled; plain `ERROR` markers otherwise).
+  - [x] Output includes path/context to unresolved artifact(s), not only flat scope-level failure text.
+  - [x] Existing and new tests for dependency-tree error rendering pass.
+  - [x] `pyronaut install --dependencies --scope build` on the demo app yields actionable graph diagnostics.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Unresolved build dependency still renders graph with highlighted failures
+    Tool: Bash
+    Preconditions: Demo app contains unresolved build-scope artifact path
+    Steps:
+      1. Run: pyronaut install --dependencies --scope build --project-dir /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app > .sisyphus/evidence/task-14-tree.out 2> .sisyphus/evidence/task-14-tree.err
+      2. Assert stdout includes "Dependency tree (build):"
+      3. Assert stdout includes unresolved module marker in graph output
+      4. Assert stderr/stdout includes explicit error summary line
+      5. Assert non-zero exit maps to RESOLUTION_ERROR
+    Expected Result: Tree context + highlighted unresolved nodes + deterministic failure signal
+    Evidence: .sisyphus/evidence/task-14-tree.out, .sisyphus/evidence/task-14-tree.err
+  ```
+
+- [x] 15. Extend `pyronaut-process` to process source and test trees with distinct outputs/classpaths *(merged action item)*
+
+  **What to do**:
+  - Keep existing main processing behavior:
+    - process `src` (and `src-java` where applicable) to `__pyronaut__/classes`
+    - use build + runtime classpath behavior for main processing path.
+  - Add test processing behavior:
+    - process `test` tree to `__pyronaut__/test-classes`
+    - use `resolved-test-dependencies` as the primary test processing classpath.
+  - Ensure test processing can compile tests with access to source types by compiling source+test as a single logical unit for the test target (or equivalent deterministic mechanism with identical outcome).
+  - Define clear invocation contract in `pyronaut-process`/`pyronaut-processor` so both trees are processed in one orchestrated flow.
+
+  **Current behavior baseline**:
+  - `pyronaut-processor` currently defaults to one source path and one target path (`__pyronaut__/classes`) and consumes build/runtime manifests.
+  - There is no first-class processing pass that emits `__pyronaut__/test-classes` from a test tree using test-scope classpath.
+
+  **Must NOT do**:
+  - Do not regress current `src -> __pyronaut__/classes` behavior.
+  - Do not collapse main and test outputs into the same target directory.
+  - Do not use runtime-only classpath for test-tree processing when test classpath is available.
+
+  **Dependencies**:
+  - Depends on: 3 (install scoped manifests), 5 (processor CLI), 8 (test CLI wiring baseline).
+  - Blocks: 11 final parity sign-off for end-to-end process/test workflow.
+
+  **Acceptance Criteria**:
+  - [x] Main processing still emits `__pyronaut__/classes` from source tree.
+  - [x] Test processing emits `__pyronaut__/test-classes` from test tree.
+  - [x] Test processing uses install-resolved test classpath (`resolved-test-dependencies`).
+  - [x] Tests requiring source types compile/process successfully in the test processing pass.
+  - [x] Processor/orchestrator integration tests cover both outputs and classpath selection.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: pyronaut process generates both main and test output trees
+    Tool: Bash
+    Preconditions: Project has both src and test trees; install manifests generated
+    Steps:
+      1. Run: pyronaut process --project-dir <app>
+      2. Assert directory exists: <app>/__pyronaut__/classes
+      3. Assert directory exists: <app>/__pyronaut__/test-classes
+      4. Assert both directories contain generated class/metadata outputs
+    Expected Result: One process workflow produces distinct main and test outputs
+    Evidence: .sisyphus/evidence/task-15-process-dual-output.txt
+
+  Scenario: test-tree processing uses test classpath and resolves source references
+    Tool: Bash
+    Preconditions: Fixture test code imports/uses types from src
+    Steps:
+      1. Run: pyronaut install --project-dir <app>
+      2. Run: pyronaut process --project-dir <app>
+      3. Assert processing exits 0
+      4. Assert no classpath/unknown type errors for source types referenced by tests
+      5. Assert __pyronaut__/test-classes contains expected generated artifacts
+    Expected Result: test processing uses test-scope dependencies and source visibility correctly
+    Evidence: .sisyphus/evidence/task-15-test-classpath-source-visibility.txt
+  ```
+
+- [x] 16. Add proxy-aware dependency resolution configuration to `pyronaut-install` *(merged action item)*
+
+  **What to do**:
+  - Add proxy support for artifact resolution in `pyronaut-install`.
+  - Prefer reading proxy configuration from `~/.m2/settings.xml` so users can keep Maven/pyronaut proxy settings in one place.
+  - If Maven settings are unavailable or proxy config is absent, support a pyronaut-specific fallback config file:
+    - `~/.pyronaut/settings.toml`
+  - Define deterministic precedence and override rules (CLI/env > pyronaut settings > Maven settings or equivalent, documented explicitly).
+  - Ensure diagnostics make proxy source/selection clear when resolution fails behind a proxy.
+
+  **Must NOT do**:
+  - Do not break existing non-proxy resolution defaults.
+  - Do not require duplicate proxy configuration if `~/.m2/settings.xml` already provides valid settings.
+  - Do not leak credentials in normal logs/error output.
+
+  **Dependencies**:
+  - Depends on: 3 (install resolver), 14 (dependency diagnostics clarity).
+  - Blocks: 11 parity sign-off for enterprise/proxy environments.
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut-install` honors proxy settings from `~/.m2/settings.xml` when present.
+  - [x] `pyronaut-install` supports proxy settings from `~/.pyronaut/settings.toml` as fallback.
+  - [x] Proxy precedence behavior is documented and test-covered.
+  - [x] Resolution succeeds in proxy-configured fixtures and fails with actionable diagnostics when proxy config is invalid.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Maven settings proxy is used for dependency resolution
+    Tool: Bash
+    Preconditions: Fixture/home setup contains valid ~/.m2/settings.xml proxy configuration
+    Steps:
+      1. Run: pyronaut install --project-dir <app>
+      2. Assert resolution succeeds in proxy-only network fixture
+      3. Assert logs/errors do not print proxy credentials
+    Expected Result: Maven settings proxy is automatically applied
+    Evidence: .sisyphus/evidence/task-16-m2-proxy.txt
+
+  Scenario: Fallback ~/.pyronaut/settings.toml proxy is used when Maven config absent
+    Tool: Bash
+    Preconditions: No proxy block in ~/.m2/settings.xml; valid ~/.pyronaut/settings.toml proxy config
+    Steps:
+      1. Run: pyronaut install --project-dir <app>
+      2. Assert resolution succeeds in proxy-required fixture
+      3. Assert diagnostics mention proxy source selection without secrets
+    Expected Result: Fallback proxy settings are honored deterministically
+    Evidence: .sisyphus/evidence/task-16-pyronaut-proxy-fallback.txt
+  ```
+
+- [x] 17. Ensure `pyronaut-test` uses `__pyronaut__/test-classes` on test execution classpath *(merged action item)*
+
+  **What to do**:
+  - Update `pyronaut-test` classpath assembly so generated `__pyronaut__/test-classes` is included for test execution.
+  - Preserve inclusion of `__pyronaut__/classes` and config/runtime/build/test dependencies as required by existing behavior.
+  - Ensure ordering and visibility are correct so generated test artifacts are preferred for test execution semantics.
+
+  **Must NOT do**:
+  - Do not regress existing test command success for projects without test-generated artifacts.
+  - Do not drop main generated classes (`__pyronaut__/classes`) from test runtime unless explicitly replaced by a stricter contract.
+
+  **Dependencies**:
+  - Depends on: 8 (test CLI), 15 (dual source+test processing outputs).
+  - Blocks: 11 parity sign-off for end-to-end test correctness.
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut-test` classpath includes `__pyronaut__/test-classes` when present.
+  - [x] Existing tests continue to pass with `__pyronaut__/classes` + `__pyronaut__/test-classes` composition.
+  - [x] Integration tests verify test-generated artifacts are discoverable during test execution.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: pyronaut-test loads generated test classes
+    Tool: Bash
+    Preconditions: pyronaut process has emitted __pyronaut__/test-classes
+    Steps:
+      1. Run: pyronaut test --project-dir <app>
+      2. Assert command exits 0 for passing fixture
+      3. Assert execution path includes generated test classes lookup
+    Expected Result: test execution uses test-classes output on classpath
+    Evidence: .sisyphus/evidence/task-17-test-classes-classpath.txt
+  ```
 
 ---
 
@@ -823,6 +1012,7 @@ After each component group below:
 | C4 | Task 7-8 | `feat(cli-v2): add run and test JVM commands` |
 | C5 | Task 9-10 | `feat(cli-v2): add python orchestrator and sdk wheel packaging` |
 | C6 | Task 11 | `test(cli-v2): add e2e parity and migration gates` |
+| C7 | Task 13-17 | `feat(cli-v2): improve diagnostics, proxy support, and source-test classpath processing` |
 
 ---
 
@@ -842,4 +1032,8 @@ After each component group below:
 - [ ] E2E orchestrated flow passes on macOS + Linux
 - [ ] Review/commit checkpoints executed between components
 - [x] Install usability hardening merged and retained as completed in canonical plan
-- [ ] Process verbose diagnostics + PythonApplication failure investigation completed and documented
+- [x] Process verbose diagnostics + PythonApplication failure investigation completed and documented
+- [x] Dependency-tree unresolved failures include in-graph highlighted path diagnostics
+- [x] `pyronaut-process` supports dual source+test processing with separate outputs and test classpath
+- [x] `pyronaut-install` supports proxy configuration from `~/.m2/settings.xml` with `~/.pyronaut/settings.toml` fallback
+- [x] `pyronaut-test` includes `__pyronaut__/test-classes` on execution classpath when present

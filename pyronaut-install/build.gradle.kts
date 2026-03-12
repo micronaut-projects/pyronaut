@@ -21,6 +21,7 @@ dependencies {
     implementation(libs.maven.resolver.transport.file)
     implementation(libs.maven.resolver.transport.jdk)
     implementation(libs.maven.resolver.supplier.mvn3)
+    implementation(libs.tomlj)
 
     runtimeOnly(libs.slf4j.simple)
 

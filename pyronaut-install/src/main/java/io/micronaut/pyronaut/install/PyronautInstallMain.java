@@ -26,8 +26,9 @@ import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.Callable;
+
+import org.eclipse.aether.resolution.DependencyResolutionException;
 
 /**
  * Entry point for {@code pyronaut-install}.
@@ -157,9 +158,12 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 renderer.renderScope(installScope, details.root());
             } catch (PyprojectModelException e) {
                 progressReporter.finishScope(installScope, 0);
-                if (e.getCause() instanceof org.eclipse.aether.resolution.DependencyResolutionException) {
+                if (e.getCause() instanceof DependencyResolutionException dependencyResolutionException) {
                     resolutionFailure = true;
-                    renderer.renderResolutionError(installScope, e.getMessage());
+                    renderer.renderResolutionError(
+                        installScope,
+                        DependencyTreeRenderer.ResolutionFailure.fromException(e.getMessage(), dependencyResolutionException)
+                    );
                     continue;
                 }
                 throw e;

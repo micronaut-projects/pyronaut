@@ -16,11 +16,18 @@
 package io.micronaut.pyronaut.install;
 
 import org.eclipse.aether.artifact.Artifact;
+import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
+import org.eclipse.aether.resolution.ArtifactResult;
+import org.eclipse.aether.resolution.DependencyResolutionException;
+import org.eclipse.aether.resolution.DependencyResult;
 
 import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 final class DependencyTreeRenderer {
 
@@ -30,16 +37,16 @@ final class DependencyTreeRenderer {
     private final PrintStream output;
     private final boolean colorEnabled;
 
+    DependencyTreeRenderer(PrintStream output, boolean colorEnabled) {
+        this.output = output;
+        this.colorEnabled = colorEnabled;
+    }
+
     static DependencyTreeRenderer create(String colorMode) {
         ColorMode mode = ColorMode.fromCliValue(colorMode);
         boolean interactive = System.console() != null;
         boolean colorEnabled = mode == ColorMode.ALWAYS || (mode == ColorMode.AUTO && interactive);
         return new DependencyTreeRenderer(System.out, colorEnabled);
-    }
-
-    DependencyTreeRenderer(PrintStream output, boolean colorEnabled) {
-        this.output = output;
-        this.colorEnabled = colorEnabled;
     }
 
     void renderScope(InstallScope scope, DependencyNode root) {
@@ -52,22 +59,98 @@ final class DependencyTreeRenderer {
         for (int index = 0; index < children.size(); index++) {
             DependencyNode child = children.get(index);
             boolean last = index == children.size() - 1;
-            renderNode(child, "", last);
+            renderNode(child, "", last, Set.of());
         }
     }
 
-    void renderResolutionError(InstallScope scope, String message) {
+    void renderResolutionError(InstallScope scope, ResolutionFailure failure) {
         output.println("Dependency tree (" + scope.cliValue() + "):");
-        output.println(applyErrorColor("ERROR: " + message));
+        List<DependencyNode> children = failure.root() == null ? List.of() : failure.root().getChildren();
+        if (children.isEmpty()) {
+            output.println("(no dependencies)");
+        } else {
+            for (int index = 0; index < children.size(); index++) {
+                DependencyNode child = children.get(index);
+                boolean last = index == children.size() - 1;
+                renderNode(child, "", last, failure.unresolvedCoordinates());
+            }
+        }
+        output.println(applyErrorColor("ERROR: " + failure.summaryMessage()));
+
+        List<String> unresolvedPaths = unresolvedPaths(failure.root(), failure.unresolvedCoordinates());
+        for (String unresolvedPath : unresolvedPaths) {
+            output.println(applyErrorColor("ERROR path: " + unresolvedPath));
+        }
     }
 
-    private void renderNode(DependencyNode node, String prefix, boolean last) {
-        output.println(prefix + (last ? "└─ " : "├─ ") + nodeLabel(node));
+    private void renderNode(DependencyNode node,
+                            String prefix,
+                            boolean last,
+                            Set<String> unresolvedCoordinates) {
+        output.println(prefix + (last ? "└─ " : "├─ ") + markedNodeLabel(node, unresolvedCoordinates));
         List<DependencyNode> children = node.getChildren();
         String childPrefix = prefix + (last ? "   " : "│  ");
         for (int index = 0; index < children.size(); index++) {
-            renderNode(children.get(index), childPrefix, index == children.size() - 1);
+            renderNode(children.get(index), childPrefix, index == children.size() - 1, unresolvedCoordinates);
         }
+    }
+
+    private String markedNodeLabel(DependencyNode node, Set<String> unresolvedCoordinates) {
+        String label = nodeLabel(node);
+        if (!isUnresolved(node, unresolvedCoordinates)) {
+            return label;
+        }
+        String marked = label + " [ERROR]";
+        return applyErrorColor(marked);
+    }
+
+    private static boolean isUnresolved(DependencyNode node, Set<String> unresolvedCoordinates) {
+        if (unresolvedCoordinates.isEmpty()) {
+            return false;
+        }
+        Artifact artifact = node.getArtifact();
+        if (artifact == null && node.getDependency() != null) {
+            artifact = node.getDependency().getArtifact();
+        }
+        if (artifact == null) {
+            return false;
+        }
+        return unresolvedCoordinates.contains(coordinate(artifact))
+            || unresolvedCoordinates.contains(artifact.getGroupId() + ":" + artifact.getArtifactId());
+    }
+
+    private static List<String> unresolvedPaths(DependencyNode root, Set<String> unresolvedCoordinates) {
+        if (root == null || unresolvedCoordinates.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
+        for (DependencyNode child : root.getChildren()) {
+            collectUnresolvedPaths(child, unresolvedCoordinates, new ArrayList<>(), paths);
+        }
+        return List.copyOf(paths);
+    }
+
+    private static void collectUnresolvedPaths(DependencyNode node,
+                                               Set<String> unresolvedCoordinates,
+                                               List<String> stack,
+                                               Set<String> outputPaths) {
+        Artifact artifact = node.getArtifact();
+        if (artifact == null && node.getDependency() != null) {
+            artifact = node.getDependency().getArtifact();
+        }
+        String current = artifact == null ? "<unknown>" : coordinate(artifact);
+        stack.add(current);
+
+        if (artifact != null
+            && (unresolvedCoordinates.contains(current)
+            || unresolvedCoordinates.contains(artifact.getGroupId() + ":" + artifact.getArtifactId()))) {
+            outputPaths.add(String.join(" -> ", stack));
+        }
+
+        for (DependencyNode child : node.getChildren()) {
+            collectUnresolvedPaths(child, unresolvedCoordinates, stack, outputPaths);
+        }
+        stack.remove(stack.size() - 1);
     }
 
     private static String nodeLabel(DependencyNode node) {
@@ -79,11 +162,15 @@ final class DependencyTreeRenderer {
         if (artifact == null) {
             return "<unknown>";
         }
-        String coordinate = artifact.getGroupId() + ":" + artifact.getArtifactId() + ":" + artifact.getVersion();
+        String coordinate = coordinate(artifact);
         if (dependency == null || dependency.getScope() == null || dependency.getScope().isBlank()) {
             return coordinate;
         }
         return coordinate + " [" + dependency.getScope() + "]";
+    }
+
+    private static String coordinate(Artifact artifact) {
+        return artifact.getGroupId() + ":" + artifact.getArtifactId() + ":" + artifact.getVersion();
     }
 
     private String applyErrorColor(String value) {
@@ -91,6 +178,67 @@ final class DependencyTreeRenderer {
             return value;
         }
         return RED + value + RESET;
+    }
+
+    record ResolutionFailure(String summaryMessage,
+                             DependencyNode root,
+                             Set<String> unresolvedCoordinates) {
+
+        static ResolutionFailure fromException(String summaryMessage, DependencyResolutionException exception) {
+            DependencyResult result = exception.getResult();
+            DependencyNode root = result == null ? null : result.getRoot();
+            LinkedHashSet<String> unresolved = new LinkedHashSet<>();
+            if (result != null) {
+                for (ArtifactResult artifactResult : result.getArtifactResults()) {
+                    if (artifactResult.isResolved()) {
+                        continue;
+                    }
+                    Artifact requested = artifactResult.getRequest() == null ? null : artifactResult.getRequest().getArtifact();
+                    if (requested != null) {
+                        unresolved.add(coordinate(requested));
+                        unresolved.add(requested.getGroupId() + ":" + requested.getArtifactId());
+                        continue;
+                    }
+                    Artifact unresolvedArtifact = artifactResult.getArtifact();
+                    if (unresolvedArtifact != null) {
+                        unresolved.add(coordinate(unresolvedArtifact));
+                        unresolved.add(unresolvedArtifact.getGroupId() + ":" + unresolvedArtifact.getArtifactId());
+                    }
+                }
+            }
+            if (unresolved.isEmpty()) {
+                DefaultArtifact parsed = parseFirstCoordinate(summaryMessage);
+                if (parsed != null) {
+                    unresolved.add(coordinate(parsed));
+                    unresolved.add(parsed.getGroupId() + ":" + parsed.getArtifactId());
+                }
+            }
+            return new ResolutionFailure(summaryMessage, root, Set.copyOf(unresolved));
+        }
+
+        private static DefaultArtifact parseFirstCoordinate(String summaryMessage) {
+            int index = summaryMessage.indexOf(':');
+            while (index >= 0) {
+                int end = summaryMessage.indexOf(' ', index);
+                if (end < 0) {
+                    end = summaryMessage.length();
+                }
+                String token = summaryMessage.substring(Math.max(0, index - 64), end)
+                    .replace(",", "")
+                    .trim();
+                int artifactStart = Math.max(token.lastIndexOf(' ') + 1, 0);
+                String candidate = token.substring(artifactStart);
+                try {
+                    DefaultArtifact artifact = new DefaultArtifact(candidate);
+                    if (artifact.getGroupId() != null && artifact.getArtifactId() != null && artifact.getVersion() != null) {
+                        return artifact;
+                    }
+                } catch (IllegalArgumentException ignored) {
+                }
+                index = summaryMessage.indexOf(':', index + 1);
+            }
+            return null;
+        }
     }
 
     enum ColorMode {

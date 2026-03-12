@@ -25,11 +25,14 @@ class PyronautProcessorNativeSmokeTest {
         String binaryPath = System.getProperty("pyronaut.processor.native.binary");
         Path project = tempDir.resolve("project");
         Path src = project.resolve("src");
+        Path testSrc = project.resolve("tests");
         Path cache = project.resolve("__pyronaut__");
         Files.createDirectories(src);
+        Files.createDirectories(testSrc);
         Files.createDirectories(cache);
         Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
         Files.writeString(src.resolve("app.py"), "def hello():\n    return 'hello'\n", StandardCharsets.UTF_8);
+        Files.writeString(testSrc.resolve("test_app.py"), "def test_hello():\n    assert True\n", StandardCharsets.UTF_8);
 
         List<String> classpathEntries = Arrays.stream(System.getProperty("java.class.path", "").split(System.getProperty("path.separator")))
             .map(String::trim)
@@ -37,6 +40,7 @@ class PyronautProcessorNativeSmokeTest {
             .toList();
         Files.write(cache.resolve("resolved-build-dependencies"), classpathEntries, StandardCharsets.UTF_8);
         Files.write(cache.resolve("resolved-runtime-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+        Files.write(cache.resolve("resolved-test-dependencies"), classpathEntries, StandardCharsets.UTF_8);
 
         Process process = new ProcessBuilder(binaryPath, "--project-dir", project.toString())
             .redirectErrorStream(true)
@@ -48,6 +52,9 @@ class PyronautProcessorNativeSmokeTest {
         Path targetDir = project.resolve("__pyronaut__/classes");
         assertTrue(Files.isDirectory(targetDir), output);
         assertTrue(containsClassFile(targetDir), output);
+        Path testTargetDir = project.resolve("__pyronaut__/test-classes");
+        assertTrue(Files.isDirectory(testTargetDir), output);
+        assertTrue(containsClassFile(testTargetDir), output);
     }
 
     private static boolean containsClassFile(Path dir) throws IOException {

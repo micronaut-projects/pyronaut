@@ -46,6 +46,7 @@ public final class PyronautTestMain implements Callable<Integer> {
 
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
+    private static final String DEFAULT_TEST_CLASSES_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String DEFAULT_TESTS_DIR = "tests";
     private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
@@ -55,6 +56,9 @@ public final class PyronautTestMain implements Callable<Integer> {
 
     @CommandLine.Option(names = "--classes-dir", defaultValue = DEFAULT_CLASSES_DIR, description = "Processed classes directory")
     Path classesDir = Path.of(DEFAULT_CLASSES_DIR);
+
+    @CommandLine.Option(names = "--test-classes-dir", defaultValue = DEFAULT_TEST_CLASSES_DIR, description = "Processed test classes directory")
+    Path testClassesDir = Path.of(DEFAULT_TEST_CLASSES_DIR);
 
     @CommandLine.Option(names = "--config-dir", defaultValue = DEFAULT_CONFIG_DIR, description = "Configuration directory")
     Path configDir = Path.of(DEFAULT_CONFIG_DIR);
@@ -84,8 +88,15 @@ public final class PyronautTestMain implements Callable<Integer> {
                 testClasspath = List.copyOf(mergedClasspath);
             }
 
+            Path resolvedTestClassesDir = root.resolve(testClassesDir).normalize();
+            boolean hasTestClassesDir = Files.isDirectory(resolvedTestClassesDir);
             Path resolvedClassesDir = root.resolve(classesDir).normalize();
-            if (!Files.isDirectory(resolvedClassesDir)) {
+            Path processedClassesRoot;
+            if (hasTestClassesDir) {
+                processedClassesRoot = resolvedTestClassesDir;
+            } else if (Files.isDirectory(resolvedClassesDir)) {
+                processedClassesRoot = resolvedClassesDir;
+            } else {
                 System.err.println("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
                 return 8;
             }
@@ -94,7 +105,7 @@ public final class PyronautTestMain implements Callable<Integer> {
             for (Path path : testClasspath) {
                 urls.add(path.toUri().toURL());
             }
-            urls.add(resolvedClassesDir.toUri().toURL());
+            urls.add(processedClassesRoot.toUri().toURL());
 
             Path resolvedConfigDir = root.resolve(configDir).normalize();
             if (Files.isDirectory(resolvedConfigDir)) {
@@ -105,7 +116,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                 Thread.currentThread().setContextClassLoader(classLoader);
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
                 if (selectClasses == null || selectClasses.isEmpty()) {
-                    requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(resolvedClassesDir)));
+                    requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(processedClassesRoot)));
                     Path resolvedTestsDir = root.resolve(testsDir).normalize();
                     if (Files.isDirectory(resolvedTestsDir)) {
                         requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedTestsDir.toString()));

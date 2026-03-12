@@ -1,0 +1,26 @@
+Task 17 verification evidence
+=============================
+
+Date: 2026-03-12
+
+Command:
+  PYRONAUT_E2E=true ./gradlew :micronaut-pyronaut:testPythonOrchestratorE2E
+
+Relevant assertions covered by e2e_flow_test.E2EFlowTest.test_orchestrated_install_process_run_test_flow:
+  - process emits __pyronaut__/classes
+  - process emits __pyronaut__/test-classes
+  - pyronaut test exits 0 and reports pytest execution ("1 passed")
+
+Result:
+  BUILD SUCCESSFUL
+  Ran 3 tests in 123.197s
+  OK
+
+Additional module validation:
+  ./gradlew :micronaut-pyronaut-test:test
+  SUCCESS: Executed 6 tests in 1.4s
+
+Notes:
+  - pyronaut-test now always includes __pyronaut__/test-classes when directory is present.
+  - pyronaut-processor skips test compilation when test source trees are absent,
+    while still creating __pyronaut__/test-classes.

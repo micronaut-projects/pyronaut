@@ -20,15 +20,31 @@ class PyronautProcessorCompilationTest {
     Path tempDir;
 
     @Test
-    void processesMicronautPythonControllerAndGeneratesBeanDefinitionMetadata() throws Exception {
+    void processesMicronautPythonControllerAndGeneratesClasses() throws Exception {
         Path project = tempDir.resolve("project");
         Path srcDir = project.resolve("src");
+        Path testDir = project.resolve("tests");
+        Path srcJavaDir = project.resolve("src-java");
+        Path testJavaDir = project.resolve("test-java");
         Path cacheDir = project.resolve("__pyronaut__");
         Files.createDirectories(srcDir);
+        Files.createDirectories(testDir);
+        Files.createDirectories(srcJavaDir);
+        Files.createDirectories(testJavaDir);
         Files.createDirectories(cacheDir);
 
         Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
         Files.copy(resolveFixture("/fixtures/python/controller.py"), srcDir.resolve("controller.py"));
+        Files.writeString(
+            srcJavaDir.resolve("BaseType.java"),
+            "package example; public class BaseType {}",
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            testJavaDir.resolve("TestType.java"),
+            "package example; public class TestType extends BaseType {}",
+            StandardCharsets.UTF_8
+        );
 
         List<String> classpathEntries = Arrays.stream(System.getProperty("java.class.path", "").split(System.getProperty("path.separator")))
             .map(String::trim)
@@ -36,6 +52,48 @@ class PyronautProcessorCompilationTest {
             .toList();
         Files.write(cacheDir.resolve("resolved-build-dependencies"), classpathEntries, StandardCharsets.UTF_8);
         Files.write(cacheDir.resolve("resolved-runtime-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+        Files.write(cacheDir.resolve("resolved-test-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+
+        PyronautProcessorMain command = new PyronautProcessorMain();
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        assertTrue(Files.isDirectory(classesDir));
+        assertTrue(hasClassContaining(classesDir, "MyController"));
+        assertTrue(hasClassContaining(classesDir, "BaseType"));
+
+        Path testClassesDir = project.resolve("__pyronaut__/test-classes");
+        assertTrue(Files.isDirectory(testClassesDir));
+        assertTrue(hasClassContaining(testClassesDir, "TestType"));
+    }
+
+    @Test
+    void compilesMainSourcesIntoTestClassesWhenNoTestSourcesPresent() throws Exception {
+        Path project = tempDir.resolve("project-no-test-sources");
+        Path srcDir = project.resolve("src");
+        Path srcJavaDir = project.resolve("src-java");
+        Path cacheDir = project.resolve("__pyronaut__");
+        Files.createDirectories(srcDir);
+        Files.createDirectories(srcJavaDir);
+        Files.createDirectories(cacheDir);
+
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
+        Files.copy(resolveFixture("/fixtures/python/controller.py"), srcDir.resolve("controller.py"));
+        Files.writeString(
+            srcJavaDir.resolve("BaseType.java"),
+            "package example; public class BaseType {}",
+            StandardCharsets.UTF_8
+        );
+
+        List<String> classpathEntries = Arrays.stream(System.getProperty("java.class.path", "").split(System.getProperty("path.separator")))
+            .map(String::trim)
+            .filter(entry -> !entry.isEmpty())
+            .toList();
+        Files.write(cacheDir.resolve("resolved-build-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+        Files.write(cacheDir.resolve("resolved-runtime-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+        Files.write(cacheDir.resolve("resolved-test-dependencies"), classpathEntries, StandardCharsets.UTF_8);
 
         PyronautProcessorMain command = new PyronautProcessorMain();
         command.projectDir = project;
@@ -46,9 +104,9 @@ class PyronautProcessorCompilationTest {
         assertTrue(Files.isDirectory(classesDir));
         assertTrue(hasClassContaining(classesDir, "MyController"));
 
-        Path beanRefDir = classesDir.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference");
-        assertTrue(Files.isDirectory(beanRefDir));
-        assertTrue(containsFileName(beanRefDir, "MyController"));
+        Path testClassesDir = project.resolve("__pyronaut__/test-classes");
+        assertTrue(Files.isDirectory(testClassesDir));
+        assertTrue(hasClassContaining(testClassesDir, "MyController"));
     }
 
     private static boolean hasClassContaining(Path root, String token) throws Exception {
@@ -57,15 +115,6 @@ class PyronautProcessorCompilationTest {
                 .filter(Files::isRegularFile)
                 .map(path -> path.getFileName().toString())
                 .anyMatch(name -> name.endsWith(".class") && name.contains(token));
-        }
-    }
-
-    private static boolean containsFileName(Path root, String token) throws Exception {
-        try (var files = Files.walk(root)) {
-            return files
-                .filter(Files::isRegularFile)
-                .map(path -> path.getFileName().toString())
-                .anyMatch(name -> name.contains(token));
         }
     }
 

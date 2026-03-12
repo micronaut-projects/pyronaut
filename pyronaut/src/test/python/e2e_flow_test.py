@@ -43,6 +43,7 @@ class E2EFlowTest(unittest.TestCase):
             )
             self.assertEqual(0, process_result.returncode, process_result.stderr)
             self.assertTrue((project_dir / "__pyronaut__" / "classes").is_dir())
+            self.assertTrue((project_dir / "__pyronaut__" / "test-classes").is_dir())
             self.assertTrue(
                 (project_dir / "__pyronaut__" / "classes" / "python" / "$MyController$Definition.class").exists()
             )
