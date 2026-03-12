@@ -4,6 +4,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import socket
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -20,6 +21,8 @@ COMMAND_TO_EXECUTABLE = {
     "run": "pyronaut-run",
     "test": "pyronaut-test",
 }
+
+_JDWP_FLAGS = "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
 
 
 def main() -> None:
@@ -51,6 +54,9 @@ def run(
 
     command = argv[0]
     forwarded_args = _normalize_project_flag(list(argv[1:]))
+    forwarded_args = _normalize_no_cache_flag(forwarded_args)
+    debug_vm = _extract_debug_vm(forwarded_args)
+    forwarded_args = _remove_debug_vm(forwarded_args)
 
     if command not in SUPPORTED_COMMANDS:
         print(f"Unknown command: {command}", file=sys.stderr)
@@ -63,18 +69,33 @@ def run(
 
     project_dir = _extract_project_dir(forwarded_args)
 
-    if command in {"run", "test"}:
-        project_path = Path(project_dir).resolve()
-        if _install_required(project_path):
-            install_code = _delegate("install", ["--project-dir", project_dir], execute, locate)
-            if install_code != SUCCESS:
-                return install_code
-        if _process_required(project_path, command):
-            process_code = _delegate("process", ["--project-dir", project_dir], execute, locate)
-            if process_code != SUCCESS:
-                return process_code
+    no_cache = _extract_no_cache(forwarded_args)
 
-    return _delegate(command, forwarded_args, execute, locate)
+    if debug_vm:
+        port_ok, error = _check_port_available(5005)
+        if not port_ok:
+            print(
+                "Cannot enable --debug-vm because port 5005 is already in use." + (f" ({error})" if error else ""),
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
+
+    if command in {"run", "test"}:
+        install_args = ["--project-dir", project_dir]
+        if no_cache:
+            install_args.append("--refresh")
+        install_code = _delegate("install", install_args, execute, locate)
+        if install_code != SUCCESS:
+            return install_code
+
+        process_args = ["--project-dir", project_dir]
+        if no_cache:
+            process_args.append("--no-cache")
+        process_code = _delegate("process", process_args, execute, locate)
+        if process_code != SUCCESS:
+            return process_code
+
+    return _delegate(command, forwarded_args, execute, locate, debug_vm=debug_vm)
 
 
 def _delegate(
@@ -82,6 +103,8 @@ def _delegate(
     args: Sequence[str],
     runner: Callable[[list[str]], int],
     resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool = False,
 ) -> int:
     executable_name = COMMAND_TO_EXECUTABLE[command]
     executable_path = resolver(executable_name)
@@ -91,7 +114,58 @@ def _delegate(
     command_line = [executable_path, *args]
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
-    return runner(command_line)
+    if not debug_vm:
+        return runner(command_line)
+
+    java_tool_options = _merge_java_tool_options(_read_env("JAVA_TOOL_OPTIONS"), _JDWP_FLAGS)
+    return runner(["__env__", f"JAVA_TOOL_OPTIONS={java_tool_options}", *command_line])
+
+
+def _merge_java_tool_options(existing: str | None, addition: str) -> str:
+    if existing is None or not existing.strip():
+        return addition
+    existing_value = existing.strip()
+    if addition in existing_value:
+        return existing_value
+    return existing_value + " " + addition
+
+
+def _extract_debug_vm(args: Sequence[str]) -> bool:
+    for token in args:
+        if token == "--debug-vm":
+            return True
+        if token.startswith("--debug-vm="):
+            value = token.split("=", 1)[1].strip().lower()
+            if value in {"1", "true", "yes", "on"}:
+                return True
+            if value in {"0", "false", "no", "off"}:
+                return False
+            raise ValueError("Invalid value for --debug-vm. Use true/false")
+    return False
+
+
+def _remove_debug_vm(args: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for token in args:
+        if token == "--debug-vm" or token.startswith("--debug-vm="):
+            continue
+        normalized.append(token)
+    return normalized
+
+
+def _check_port_available(port: int) -> tuple[bool, str | None]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", port))
+        return True, None
+    except OSError as e:
+        return False, str(e)
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
 
 
 def _normalize_project_flag(args: list[str]) -> list[str]:
@@ -110,6 +184,38 @@ def _normalize_project_flag(args: list[str]) -> list[str]:
         normalized.append(token)
         index += 1
     return normalized
+
+
+def _normalize_no_cache_flag(args: list[str]) -> list[str]:
+    normalized: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--no-cache":
+            normalized.append("--no-cache")
+            index += 1
+            continue
+        if token.startswith("--no-cache="):
+            normalized.append("--no-cache=" + token.split("=", 1)[1])
+            index += 1
+            continue
+        normalized.append(token)
+        index += 1
+    return normalized
+
+
+def _extract_no_cache(args: Sequence[str]) -> bool:
+    for token in args:
+        if token == "--no-cache":
+            return True
+        if token.startswith("--no-cache="):
+            value = token.split("=", 1)[1].strip().lower()
+            if value in {"1", "true", "yes", "on"}:
+                return True
+            if value in {"0", "false", "no", "off"}:
+                return False
+            raise ValueError("Invalid value for --no-cache. Use true/false")
+    return False
 
 
 def _extract_project_dir(args: Sequence[str]) -> str:

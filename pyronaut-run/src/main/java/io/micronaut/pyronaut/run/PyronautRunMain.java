@@ -56,6 +56,12 @@ public final class PyronautRunMain implements Callable<Integer> {
     @CommandLine.Option(names = "--main-class", defaultValue = DEFAULT_MAIN_CLASS, description = "Main class to invoke")
     String mainClass = DEFAULT_MAIN_CLASS;
 
+    @CommandLine.Option(
+        names = "--debug-vm",
+        description = "Enable JVM JDWP debugging on port 5005 (flag is accepted for orchestrator forwarding)"
+    )
+    boolean debugVm;
+
     @CommandLine.Parameters
     List<String> appArgs = List.of();
 

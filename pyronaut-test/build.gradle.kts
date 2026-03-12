@@ -17,6 +17,7 @@ dependencies {
 
 application {
     mainClass = "io.micronaut.pyronaut.test.PyronautTestMain"
+    applicationDefaultJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow", "--enable-native-access=ALL-UNNAMED")
 }
 
 tasks {

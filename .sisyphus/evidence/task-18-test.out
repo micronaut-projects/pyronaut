@@ -1,0 +1,41 @@
+Version catalog 'mnLogging' can be automatically imported. You can remove it from settings.gradle(.kts) file.
+Type-safe project accessors is an incubating feature.
+> Task :buildSrc:extractPluginRequests UP-TO-DATE
+> Task :buildSrc:generatePluginAdapters UP-TO-DATE
+> Task :buildSrc:compileJava UP-TO-DATE
+> Task :buildSrc:compileGroovy UP-TO-DATE
+> Task :buildSrc:compileGroovyPlugins UP-TO-DATE
+> Task :buildSrc:pluginDescriptors UP-TO-DATE
+> Task :buildSrc:processResources UP-TO-DATE
+> Task :buildSrc:classes UP-TO-DATE
+> Task :buildSrc:jar UP-TO-DATE
+> Task :micronaut-pyronaut-test:generateMicronautDescriptor UP-TO-DATE
+> Task :micronaut-pyronaut-test:compileJava UP-TO-DATE
+> Task :micronaut-pyronaut-test:compileGroovy NO-SOURCE
+> Task :micronaut-pyronaut-test:generateNativeImageProperties SKIPPED
+> Task :micronaut-pyronaut-test:processResources NO-SOURCE
+> Task :micronaut-pyronaut-test:classes UP-TO-DATE
+[Resource-Usage] Problem extracting process name: com.gradle.scan.plugin.internal.dep.picocli.CommandLine$MissingParameterException Missing required parameter: '<processPath>'
+
+> Task :micronaut-pyronaut-test:run
+============================= test session starts ==============================
+platform darwin -- Python 3.12.8, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app
+configfile: pyproject.toml
+collected 7 items
+
+../../demos/pyronaut-demo-ref/app/tests/test_example.py .....            [ 71%]
+../../demos/pyronaut-demo-ref/app/tests/test_mycontroller.py ..          [100%]
+
+============================== 7 passed in 2.40s ===============================
+
+[Incubating] Problems report is available at: file:///Users/graemerocher/dev/micronaut/pyronaut/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.2.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 12s
+11 actionable tasks: 1 executed, 10 up-to-date

@@ -61,6 +61,9 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @CommandLine.Option(names = "--refresh", description = "Force dependency re-resolution and cache rewrite")
     boolean refresh;
 
+    @CommandLine.Option(names = "--no-cache", description = "Bypass cache reads/writes (alias for --refresh)")
+    boolean noCache;
+
     @CommandLine.Option(names = "--offline", description = "Use offline mode for repository access")
     boolean offline;
 
@@ -91,9 +94,13 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 if (dependencies) {
                     return renderDependencyTrees(root, scopes, progressReporter);
                 }
-                if (!refresh && ResolutionCache.cacheHit(cacheDir, hash, scopes)) {
+                boolean refreshRequested = refresh || noCache;
+                if (!refreshRequested && ResolutionCache.cacheHit(cacheDir, hash, scopes)) {
                     progressReporter.cacheHit();
                     return InstallExitCode.SUCCESS.code();
+                }
+                if (refreshRequested) {
+                    progressReporter.cacheBypass();
                 }
 
                 PyprojectModel model = modelReader.readFile(pyproject);

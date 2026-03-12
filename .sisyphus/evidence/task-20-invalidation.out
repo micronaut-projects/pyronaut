@@ -1,0 +1,79 @@
+Version catalog 'mnLogging' can be automatically imported. You can remove it from settings.gradle(.kts) file.
+Type-safe project accessors is an incubating feature.
+> Task :buildSrc:extractPluginRequests
+> Task :buildSrc:generatePluginAdapters
+> Task :buildSrc:compileJava
+> Task :buildSrc:compileGroovy
+> Task :buildSrc:compileGroovyPlugins
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
+> Task :buildSrc:classes
+> Task :buildSrc:jar
+> Task :micronaut-pyronaut-processor:generateMicronautDescriptor
+> Task :micronaut-pyronaut-config-model:generateMicronautDescriptor
+> Task :micronaut-pyronaut-processor:generateNativeImageProperties SKIPPED
+> Task :micronaut-pyronaut-processor:processResources
+> Task :micronaut-pyronaut-config-model:compileJava
+> Task :micronaut-pyronaut-config-model:compileGroovy NO-SOURCE
+> Task :micronaut-pyronaut-config-model:generateNativeImageProperties SKIPPED
+> Task :micronaut-pyronaut-config-model:processResources NO-SOURCE
+> Task :micronaut-pyronaut-config-model:classes
+> Task :micronaut-pyronaut-config-model:generatePomFileForMavenPublication
+> Task :micronaut-pyronaut-config-model:jar
+> Task :micronaut-pyronaut-processor:compileJava
+> Task :micronaut-pyronaut-processor:compileGroovy NO-SOURCE
+> Task :micronaut-pyronaut-processor:classes
+
+> Task :micronaut-pyronaut-processor:run
+INFO: Generating JSON schema file: META-INF/schemas/person.schema.json
+
+[Incubating] Problems report is available at: file:///Users/graemerocher/dev/micronaut/pyronaut/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.2.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 7s
+16 actionable tasks: 16 executed
+Version catalog 'mnLogging' can be automatically imported. You can remove it from settings.gradle(.kts) file.
+Type-safe project accessors is an incubating feature.
+> Task :buildSrc:extractPluginRequests
+> Task :buildSrc:generatePluginAdapters
+> Task :buildSrc:compileJava
+> Task :buildSrc:compileGroovy
+> Task :buildSrc:compileGroovyPlugins
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
+> Task :buildSrc:classes
+> Task :buildSrc:jar
+> Task :micronaut-pyronaut-processor:generateMicronautDescriptor
+> Task :micronaut-pyronaut-config-model:generateMicronautDescriptor
+> Task :micronaut-pyronaut-processor:generateNativeImageProperties SKIPPED
+> Task :micronaut-pyronaut-processor:processResources
+> Task :micronaut-pyronaut-config-model:compileJava
+> Task :micronaut-pyronaut-config-model:compileGroovy NO-SOURCE
+> Task :micronaut-pyronaut-config-model:generateNativeImageProperties SKIPPED
+> Task :micronaut-pyronaut-config-model:processResources NO-SOURCE
+> Task :micronaut-pyronaut-config-model:classes
+> Task :micronaut-pyronaut-config-model:generatePomFileForMavenPublication
+> Task :micronaut-pyronaut-config-model:jar
+> Task :micronaut-pyronaut-processor:compileJava
+> Task :micronaut-pyronaut-processor:compileGroovy NO-SOURCE
+> Task :micronaut-pyronaut-processor:classes
+
+> Task :micronaut-pyronaut-processor:run
+INFO: Generating JSON schema file: META-INF/schemas/person.schema.json
+INFO: Generating JSON schema file: META-INF/schemas/person.schema.json
+
+[Incubating] Problems report is available at: file:///Users/graemerocher/dev/micronaut/pyronaut/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.2.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 12s
+16 actionable tasks: 16 executed

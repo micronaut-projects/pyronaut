@@ -11,6 +11,7 @@ import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 class PyronautTestMainTest {
 
@@ -85,6 +86,11 @@ class PyronautTestMainTest {
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
         assertEquals(7, command.call());
+    }
+
+    @Test
+    void acceptsDebugVmFlag() {
+        assertDoesNotThrow(() -> new picocli.CommandLine(new PyronautTestMain()).execute("--debug-vm", "--help"));
     }
 
     private Path setupProject() throws Exception {

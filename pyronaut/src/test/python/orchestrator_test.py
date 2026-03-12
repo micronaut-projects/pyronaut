@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+import socket
 
 _CLI_MODULE_PATH = Path(__file__).resolve().parents[2] / "main" / "python" / "pyronaut_cli_v2" / "cli.py"
 _CLI_SPEC = importlib.util.spec_from_file_location("pyronaut_cli_v2.cli", _CLI_MODULE_PATH)
@@ -74,7 +75,11 @@ class OrchestratorTest(unittest.TestCase):
 
             self.assertEqual(0, exit_code)
             self.assertEqual(
-                [["/tmp/pyronaut-run", "--project-dir", str(project_dir), "--main-class", "example.Main"]],
+                [
+                    ["/tmp/pyronaut-install", "--project-dir", str(project_dir)],
+                    ["/tmp/pyronaut-processor", "--project-dir", str(project_dir)],
+                    ["/tmp/pyronaut-run", "--project-dir", str(project_dir), "--main-class", "example.Main"],
+                ],
                 executed,
             )
 
@@ -188,6 +193,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(
             [
+                ["/tmp/pyronaut-install", "--project-dir", str(project_dir)],
                 ["/tmp/pyronaut-processor", "--project-dir", str(project_dir)],
                 ["/tmp/pyronaut-test", "--project-dir", str(project_dir)],
             ],
@@ -221,7 +227,134 @@ class OrchestratorTest(unittest.TestCase):
             )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual([["/tmp/pyronaut-test", "--project-dir", str(project_dir)]], executed)
+        self.assertEqual(
+            [
+                ["/tmp/pyronaut-install", "--project-dir", str(project_dir)],
+                ["/tmp/pyronaut-processor", "--project-dir", str(project_dir)],
+                ["/tmp/pyronaut-test", "--project-dir", str(project_dir)],
+            ],
+            executed,
+        )
+
+    def test_run_forwards_no_cache_to_install_and_processor(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["run", "--project-dir", "/tmp/demo", "--no-cache"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [
+                ["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--refresh"],
+                ["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--no-cache"],
+                ["/tmp/pyronaut-run", "--project-dir", "/tmp/demo", "--no-cache"],
+            ],
+            executed,
+        )
+
+    def test_test_forwards_no_cache_to_install_and_processor(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["test", "--project-dir", "/tmp/demo", "--no-cache"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [
+                ["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--refresh"],
+                ["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--no-cache"],
+                ["/tmp/pyronaut-test", "--project-dir", "/tmp/demo", "--no-cache"],
+            ],
+            executed,
+        )
+
+    def test_run_debug_vm_sets_java_tool_options_and_forwards_flag(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["run", "--project-dir", "/tmp/demo", "--debug-vm"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[1])
+        self.assertEqual(
+            [
+                "__env__",
+                "JAVA_TOOL_OPTIONS=-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005",
+                "/tmp/pyronaut-run",
+                "--project-dir",
+                "/tmp/demo",
+            ],
+            executed[2],
+        )
+
+    def test_test_debug_vm_sets_java_tool_options(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["test", "--project-dir", "/tmp/demo", "--debug-vm"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [
+                "__env__",
+                "JAVA_TOOL_OPTIONS=-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005",
+                "/tmp/pyronaut-test",
+                "--project-dir",
+                "/tmp/demo",
+            ],
+            executed[2],
+        )
+
+    def test_debug_vm_fails_fast_when_port_busy(self):
+        stderr = io.StringIO()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 5005))
+        try:
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["run", "--project-dir", "/tmp/demo", "--debug-vm"],
+                    runner=self._runner_ok(),
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+        finally:
+            sock.close()
+
+        self.assertNotEqual(0, exit_code)
+        self.assertIn("port 5005", stderr.getvalue().lower())
 
     @staticmethod
     def _resolver():

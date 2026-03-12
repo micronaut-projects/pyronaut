@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.pyronaut.install;
+package io.micronaut.pyronaut.processor;
 
 import java.io.PrintStream;
 
-final class InstallProgressReporter implements AutoCloseable {
+final class ProcessorProgressReporter implements AutoCloseable {
 
     private static final char[] SPINNER_FRAMES = {'|', '/', '-', '\\'};
 
@@ -30,35 +30,21 @@ final class InstallProgressReporter implements AutoCloseable {
     private volatile int frameIndex;
     private Thread spinnerThread;
 
-    static InstallProgressReporter create(String mode) {
-        return new InstallProgressReporter(System.err, ProgressMode.fromCliValue(mode), System.console() != null);
-    }
-
-    InstallProgressReporter(PrintStream output, ProgressMode mode, boolean tty) {
+    ProcessorProgressReporter(PrintStream output, ProgressMode mode, boolean tty) {
         this.output = output;
         this.enabled = mode != ProgressMode.OFF;
         this.interactive = mode == ProgressMode.ON || (mode == ProgressMode.AUTO && tty);
     }
 
-    void cacheHit() {
-        if (!enabled) {
-            return;
-        }
-        output.println("Dependency manifests are up to date (cache hit)");
+    static ProcessorProgressReporter create(String mode) {
+        return new ProcessorProgressReporter(System.err, ProgressMode.fromCliValue(mode), System.console() != null);
     }
 
-    void cacheBypass() {
+    void startPass(String passName, long sourceCount) {
         if (!enabled) {
             return;
         }
-        output.println("Bypassing dependency cache (--refresh/--no-cache)");
-    }
-
-    void startScope(InstallScope scope) {
-        if (!enabled) {
-            return;
-        }
-        String message = "Resolving " + scope.cliValue() + " dependencies";
+        String message = "Processing " + passName + " sources (" + sourceCount + " files)";
         if (!interactive) {
             output.println(message + "...");
             return;
@@ -66,7 +52,7 @@ final class InstallProgressReporter implements AutoCloseable {
         stopSpinner();
         spinnerMessage = message;
         spinning = true;
-        spinnerThread = Thread.ofVirtual().name("pyronaut-install-spinner").start(() -> {
+        spinnerThread = Thread.ofVirtual().name("pyronaut-processor-spinner").start(() -> {
             while (spinning) {
                 output.print("\r" + spinnerMessage + " " + SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]);
                 output.flush();
@@ -81,21 +67,57 @@ final class InstallProgressReporter implements AutoCloseable {
         });
     }
 
-    void finishScope(InstallScope scope, int artifactCount) {
+    void finishPass(String passName, long sourceCount) {
         if (!enabled) {
             return;
         }
-        if (interactive) {
-            stopSpinner();
-            output.print("\r");
-            output.flush();
+        clearInteractiveLine();
+        output.println("Processed " + passName + " sources (" + sourceCount + " files)");
+    }
+
+    void cacheHit(String passName, long sourceCount) {
+        if (!enabled) {
+            return;
         }
-        output.println("Resolved " + scope.cliValue() + " dependencies (" + artifactCount + " artifacts)");
+        clearInteractiveLine();
+        output.println("Skipped " + passName + " sources (" + sourceCount + " files, cache hit)");
+    }
+
+    void cacheBypass(String passName, long sourceCount) {
+        if (!enabled) {
+            return;
+        }
+        clearInteractiveLine();
+        output.println("Processing " + passName + " sources (" + sourceCount + " files, cache bypass)");
+    }
+
+    void noSources(String passName) {
+        if (!enabled) {
+            return;
+        }
+        clearInteractiveLine();
+        output.println("Skipped " + passName + " sources (0 files, no processable sources)");
+    }
+
+    void complete(String mainStatus, String testStatus) {
+        if (!enabled) {
+            return;
+        }
+        output.println("Processing completed (main: " + mainStatus + ", test: " + testStatus + ")");
     }
 
     @Override
     public void close() {
         stopSpinner();
+    }
+
+    private void clearInteractiveLine() {
+        if (!interactive) {
+            return;
+        }
+        stopSpinner();
+        output.print("\r");
+        output.flush();
     }
 
     private void stopSpinner() {

@@ -10,6 +10,7 @@ import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 class PyronautRunMainTest {
 
@@ -50,6 +51,11 @@ class PyronautRunMainTest {
         runMain.mainClass = SampleApp.class.getName();
 
         assertEquals(8, runMain.call());
+    }
+
+    @Test
+    void acceptsDebugVmFlag() {
+        assertDoesNotThrow(() -> new picocli.CommandLine(new PyronautRunMain()).execute("--debug-vm", "--help"));
     }
 
     public static final class SampleApp {

@@ -67,6 +67,8 @@ class PyronautProcessorCompilationTest {
         Path testClassesDir = project.resolve("__pyronaut__/test-classes");
         assertTrue(Files.isDirectory(testClassesDir));
         assertTrue(hasClassContaining(testClassesDir, "TestType"));
+        assertTrue(Files.exists(cacheDir.resolve(ProcessorSourceCache.MAIN_HASH_FILE)));
+        assertTrue(Files.exists(cacheDir.resolve(ProcessorSourceCache.TEST_HASH_FILE)));
     }
 
     @Test
@@ -107,6 +109,8 @@ class PyronautProcessorCompilationTest {
         Path testClassesDir = project.resolve("__pyronaut__/test-classes");
         assertTrue(Files.isDirectory(testClassesDir));
         assertTrue(hasClassContaining(testClassesDir, "MyController"));
+        assertTrue(Files.exists(cacheDir.resolve(ProcessorSourceCache.MAIN_HASH_FILE)));
+        assertTrue(Files.exists(cacheDir.resolve(ProcessorSourceCache.TEST_HASH_FILE)));
     }
 
     private static boolean hasClassContaining(Path root, String token) throws Exception {

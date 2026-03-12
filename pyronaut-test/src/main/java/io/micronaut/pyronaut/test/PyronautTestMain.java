@@ -72,6 +72,12 @@ public final class PyronautTestMain implements Callable<Integer> {
     @CommandLine.Option(names = "--select-class", description = "Select class to execute")
     List<String> selectClasses = List.of();
 
+    @CommandLine.Option(
+        names = "--debug-vm",
+        description = "Enable JVM JDWP debugging on port 5005 (flag is accepted for orchestrator forwarding)"
+    )
+    boolean debugVm;
+
     @Override
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();

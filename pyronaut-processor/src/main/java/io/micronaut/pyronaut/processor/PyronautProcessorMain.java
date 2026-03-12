@@ -73,6 +73,12 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     @CommandLine.Option(names = "--option", description = "Additional compiler option")
     List<String> options = List.of();
 
+    @CommandLine.Option(names = "--progress", defaultValue = "auto", description = "Progress output mode: auto|on|off")
+    String progress = "auto";
+
+    @CommandLine.Option(names = "--no-cache", description = "Bypass processor source cache reads/writes")
+    boolean noCache;
+
     @CommandLine.Option(names = {"-v", "--verbose"}, description = "Verbose output with stacktraces on failures")
     boolean verbose;
 
@@ -94,6 +100,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         Path mergedTestRoot = null;
         try {
             modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
+            ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
 
             List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()
                 ? ClasspathManifestReader.read(
@@ -123,33 +130,91 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             Path resolvedTestPythonSrc = root.resolve(testPythonSrc).normalize();
             Path resolvedTestJavaSrc = root.resolve(testJavaSrc).normalize();
             Path resolvedTestTargetDir = root.resolve(testTargetDir).normalize();
+            Path resolvedCacheDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
 
-            compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
-                resolvedMainPythonSrc,
-                resolvedMainJavaSrc,
-                resolvedMainTargetDir,
-                effectiveProcessorPath,
-                effectiveClasspath,
-                options
-            ));
+            String mainStatus;
+            String testStatus;
+            try (ProcessorProgressReporter progressReporter = ProcessorProgressReporter.create(progress)) {
+                long mainSourceCount = ProcessorSourceCache.countSources(resolvedMainPythonSrc, ".py")
+                    + ProcessorSourceCache.countSources(resolvedMainJavaSrc, ".java");
+                progressReporter.startPass("main", mainSourceCount);
 
-            mergedTestRoot = Files.createTempDirectory("pyronaut-test-sources-");
-            Path mergedTestPythonSrc = mergedTestRoot.resolve("python");
-            Path mergedTestJavaSrc = mergedTestRoot.resolve("java");
-            mergeSourceTrees(resolvedMainPythonSrc, resolvedTestPythonSrc, mergedTestPythonSrc);
-            mergeSourceTrees(resolvedMainJavaSrc, resolvedTestJavaSrc, mergedTestJavaSrc);
-
-            if (hasProcessableSources(mergedTestPythonSrc, ".py") || hasProcessableSources(mergedTestJavaSrc, ".java")) {
-                compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
-                    mergedTestPythonSrc,
-                    mergedTestJavaSrc,
-                    resolvedTestTargetDir,
+                String mainFingerprint = ProcessorSourceCache.fingerprint(
+                    resolvedMainPythonSrc,
+                    resolvedMainJavaSrc,
                     effectiveProcessorPath,
-                    effectiveTestClasspath,
+                    effectiveClasspath,
                     options
-                ));
-            } else {
-                Files.createDirectories(resolvedTestTargetDir);
+                );
+                if (!noCache
+                    && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint, resolvedMainTargetDir)) {
+                    progressReporter.cacheHit("main", mainSourceCount);
+                    mainStatus = "cache hit";
+                } else {
+                    if (noCache) {
+                        progressReporter.cacheBypass("main", mainSourceCount);
+                    }
+                    compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
+                        resolvedMainPythonSrc,
+                        resolvedMainJavaSrc,
+                        resolvedMainTargetDir,
+                        effectiveProcessorPath,
+                        effectiveClasspath,
+                        options
+                    ));
+                    if (!noCache) {
+                        ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint);
+                    }
+                    progressReporter.finishPass("main", mainSourceCount);
+                    mainStatus = "processed";
+                }
+
+                mergedTestRoot = Files.createTempDirectory("pyronaut-test-sources-");
+                Path mergedTestPythonSrc = mergedTestRoot.resolve("python");
+                Path mergedTestJavaSrc = mergedTestRoot.resolve("java");
+                mergeSourceTrees(resolvedMainPythonSrc, resolvedTestPythonSrc, mergedTestPythonSrc);
+                mergeSourceTrees(resolvedMainJavaSrc, resolvedTestJavaSrc, mergedTestJavaSrc);
+
+                long testSourceCount = ProcessorSourceCache.countSources(mergedTestPythonSrc, ".py")
+                    + ProcessorSourceCache.countSources(mergedTestJavaSrc, ".java");
+                progressReporter.startPass("test", testSourceCount);
+                if (testSourceCount == 0L) {
+                    Files.createDirectories(resolvedTestTargetDir);
+                    progressReporter.noSources("test");
+                    testStatus = "no sources";
+                } else {
+                    String testFingerprint = ProcessorSourceCache.fingerprint(
+                        mergedTestPythonSrc,
+                        mergedTestJavaSrc,
+                        effectiveProcessorPath,
+                        effectiveTestClasspath,
+                        options
+                    );
+                    if (!noCache
+                        && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint, resolvedTestTargetDir)) {
+                        progressReporter.cacheHit("test", testSourceCount);
+                        testStatus = "cache hit";
+                    } else {
+                        if (noCache) {
+                            progressReporter.cacheBypass("test", testSourceCount);
+                        }
+                        compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
+                            mergedTestPythonSrc,
+                            mergedTestJavaSrc,
+                            resolvedTestTargetDir,
+                            effectiveProcessorPath,
+                            effectiveTestClasspath,
+                            options
+                        ));
+                        if (!noCache) {
+                            ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint);
+                        }
+                        progressReporter.finishPass("test", testSourceCount);
+                        testStatus = "processed";
+                    }
+                }
+
+                progressReporter.complete(mainStatus, testStatus);
             }
             return PyronautProcessorExitCode.SUCCESS.code();
         } catch (PyronautProcessorException e) {
@@ -182,20 +247,6 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautProcessorMain()).execute(args);
         System.exit(exitCode);
-    }
-
-    private static boolean hasProcessableSources(Path directory, String extension) {
-        if (!Files.isDirectory(directory)) {
-            return false;
-        }
-        try (Stream<Path> files = Files.walk(directory)) {
-            return files
-                .filter(Files::isRegularFile)
-                .map(path -> path.getFileName().toString())
-                .anyMatch(name -> name.endsWith(extension));
-        } catch (Exception e) {
-            throw new PyronautProcessorException("Failed to scan source directory: " + directory, e);
-        }
     }
 
     private static void mergeSourceTrees(Path primarySource, Path overlaySource, Path targetDirectory) {

@@ -68,6 +68,45 @@ class E2EFlowTest(unittest.TestCase):
             self.assertEqual(0, test_result.returncode, test_result.stdout + "\n" + test_result.stderr)
             combined_output = test_result.stdout + test_result.stderr
             self.assertIn("1 passed", combined_output)
+            self.assertNotIn("A restricted method in java.lang.System has been called", combined_output)
+            self.assertNotIn("A terminally deprecated method in sun.misc.Unsafe has been called", combined_output)
+
+    def test_run_and_test_always_delegate_install_and_process(self):
+        fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "app"
+            shutil.copytree(fixture_dir, project_dir)
+
+            install_result = self._run_cli("install", "--project-dir", str(project_dir))
+            self.assertEqual(0, install_result.returncode, install_result.stderr)
+            process_result = self._run_cli("process", "--project-dir", str(project_dir))
+            self.assertEqual(0, process_result.returncode, process_result.stderr)
+
+            env = {"PYRONAUT_TRACE_DELEGATION": "true"}
+            run_result = self._run_cli("run", "--project-dir", str(project_dir), extra_env=env)
+            self.assertNotEqual(0, run_result.returncode)
+            self.assertIn("pyronaut-install", run_result.stderr)
+            self.assertIn("pyronaut-processor", run_result.stderr)
+
+            test_result = self._run_cli("test", "--project-dir", str(project_dir), extra_env=env)
+            self.assertEqual(0, test_result.returncode, test_result.stdout + test_result.stderr)
+            self.assertIn("pyronaut-install", test_result.stderr)
+            self.assertIn("pyronaut-processor", test_result.stderr)
+
+    def test_no_cache_propagates_to_install_refresh_and_processor(self):
+        fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "app"
+            shutil.copytree(fixture_dir, project_dir)
+
+            env = {"PYRONAUT_TRACE_DELEGATION": "true"}
+            result = self._run_cli("test", "--no-cache", "--project-dir", str(project_dir), extra_env=env)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+            self.assertIn("pyronaut-install", result.stderr)
+            self.assertIn("--refresh", result.stderr)
+            self.assertIn("pyronaut-processor", result.stderr)
+            self.assertIn("--no-cache", result.stderr)
 
     def test_install_dependencies_tree_mode_outputs_scoped_graph(self):
         fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])

@@ -178,6 +178,13 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
 > - Dual source+test processing in `pyronaut-processor` is tracked under new merged task 15.
 > - Proxy-aware dependency resolution for `pyronaut-install` is tracked under new merged task 16.
 > - `pyronaut-test` classpath alignment with `__pyronaut__/test-classes` is tracked under new merged task 17.
+> - `pyronaut-test` JVM warning suppression is tracked under new merged task 18.
+> - `pyronaut-processor` progress UX is tracked under new merged task 19.
+> - `pyronaut-processor` incremental source caching is tracked under new merged task 20.
+> - Orchestrator global cache-bypass propagation is tracked under new merged task 21.
+> - Orchestrator `run` preflight coordination hardening is tracked under new merged task 22.
+> - Orchestrator `test` preflight coordination hardening is tracked under new merged task 23.
+> - JVM debug mode for `pyronaut-run`/`pyronaut-test` is tracked under new merged task 24.
 
 - [x] 1. Define v2 CLI protocol, contracts, and exit-code taxonomy
 
@@ -995,6 +1002,336 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-17-test-classes-classpath.txt
   ```
 
+- [x] 18. Suppress default `pyronaut-test` JVM warning noise while preserving actionable failures *(merged action item)*
+
+  **What to do**:
+  - Add default JVM launch flags for `pyronaut-test` to suppress known runtime warning noise emitted by current GraalVM/JDK combinations during normal test execution:
+    - restricted native access warnings (`java.lang.System::load` path)
+    - terminally deprecated `sun.misc.Unsafe` warning line noise
+  - Align implementation pattern with existing precedent in `pyronaut-cli` application launch defaults.
+  - If warning noise still appears from JUL logger categories (e.g. `org.graalvm.python.embedding.VirtualFileSystemImpl warn`), add scoped logging configuration for `pyronaut-test` launch path only.
+  - Document default warning-suppression behavior and override guidance.
+
+  **Must NOT do**:
+  - Do not suppress or hide real test failures/exceptions.
+  - Do not globally mute stderr output for pytest/JUnit execution.
+  - Do not apply blanket JVM flags repo-wide without scoping to `pyronaut-test` runtime path.
+
+  **Dependencies**:
+  - Depends on: 8 (test CLI), 17 (test classpath behavior baseline).
+  - Blocks: 11 parity sign-off quality gate for clean test UX logs.
+
+  **References**:
+  - `pyronaut-test/build.gradle.kts` - target launch configuration for `pyronaut-test` JVM args.
+  - `pyronaut-cli/build.gradle.kts` - existing warning-suppression precedent (`applicationDefaultJvmArgs`).
+  - OpenJDK docs: restricted methods + `--enable-native-access` behavior.
+  - OpenJDK launcher docs: `--sun-misc-unsafe-memory-access` behavior.
+
+  **Acceptance Criteria**:
+  - [x] Running `pyronaut-test` on `/Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app` no longer prints default restricted-native-access warning block.
+  - [x] Running `pyronaut-test` on the same app no longer prints default terminally deprecated `sun.misc.Unsafe` warning block.
+  - [x] If JUL warning suppression is added, it is scoped and test-covered (no masking of actual test failures). *(not required; no JUL suppression added)*
+  - [x] Existing `pyronaut-test` behavior and exit-code semantics remain unchanged.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: pyronaut-test output is warning-clean by default
+    Tool: Bash
+    Preconditions: demo app processed and test-ready
+    Steps:
+      1. Run: pyronaut-test --project-dir /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app > .sisyphus/evidence/task-18-test.out 2> .sisyphus/evidence/task-18-test.err
+      2. Assert stderr does not contain "A restricted method in java.lang.System has been called"
+      3. Assert stderr does not contain "A terminally deprecated method in sun.misc.Unsafe has been called"
+      4. Assert command exit behavior still matches fixture expectation
+    Expected Result: Default warning noise removed without breaking test execution semantics
+    Evidence: .sisyphus/evidence/task-18-test.out, .sisyphus/evidence/task-18-test.err
+  ```
+
+- [x] 19. Improve `pyronaut-processor` progress visibility with source counts + completion messaging *(merged action item)*
+
+  **What to do**:
+  - Add explicit progress output for both processor passes (main and test/fused pass).
+  - Print source counts for each pass (processable Python/Java totals) before compilation starts.
+  - Add spinner-style progress in interactive mode and deterministic plain-text fallback for non-interactive mode.
+  - Print clear completion messages per pass and final completion summary.
+
+  **Must NOT do**:
+  - Do not introduce per-file noisy logging in default mode.
+  - Do not regress current concise failure diagnostics (`--verbose` hint and verbose stacktrace path).
+  - Do not rely on human-only visual interpretation; messages must remain machine-capturable.
+
+  **Dependencies**:
+  - Depends on: 5 (processor CLI baseline), 13 (verbose diagnostics behavior), 15 (dual-pass processing).
+  - Blocks: 11 parity sign-off UX criteria for processing observability.
+
+  **References**:
+  - `pyronaut-processor/src/main/java/io/micronaut/pyronaut/processor/PyronautProcessorMain.java` - dual-pass compile orchestration.
+  - `pyronaut-install/src/main/java/io/micronaut/pyronaut/install/InstallProgressReporter.java` - spinner/progress mode pattern.
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut-processor` prints "processing main sources" with concrete source count before main compile.
+  - [x] `pyronaut-processor` prints "processing test sources" with concrete source count before test/fused compile.
+  - [x] Interactive run shows spinner progress; non-interactive run shows deterministic plain-text progress.
+  - [x] Completion messages appear for each pass and final overall completion.
+  - [x] Existing processor tests updated/added for progress output behavior.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Processor emits count + completion for both passes
+    Tool: Bash
+    Preconditions: demo app with src and tests trees; install manifests generated
+    Steps:
+      1. Run: pyronaut-processor --project-dir /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app > .sisyphus/evidence/task-19-processor.out 2> .sisyphus/evidence/task-19-processor.err
+      2. Assert output includes main-pass source count message
+      3. Assert output includes test-pass source count message
+      4. Assert output includes processing completion summary
+    Expected Result: Users can understand in-progress and completed processing work at a glance
+    Evidence: .sisyphus/evidence/task-19-processor.out, .sisyphus/evidence/task-19-processor.err
+  ```
+
+- [x] 20. Add incremental source-change caching to `pyronaut-processor` main/test passes *(merged action item)*
+
+  **What to do**:
+  - Add per-pass cache keys so compiler invocation is skipped when inputs are unchanged:
+    - main pass cache key for `src` + `src-java` inputs and relevant compile inputs.
+    - test pass cache key for fused test inputs (`src/tests` + Java equivalents) and relevant test compile inputs.
+  - Persist cache metadata under `__pyronaut__` in deterministic files.
+  - Emit explicit cache-hit/cache-miss status in processor output.
+  - Ensure cache invalidation includes meaningful non-source inputs (classpath manifests/options) so stale outputs are not reused.
+
+  **Must NOT do**:
+  - Do not skip compilation when any cache key input changed.
+  - Do not delete valid outputs on cache-hit path.
+  - Do not couple cache correctness to wall-clock timestamps only.
+
+  **Dependencies**:
+  - Depends on: 5 (processor CLI), 15 (fused test processing contract), 19 (progress/output contract).
+  - Blocks: 11 parity sign-off for deterministic performance behavior.
+
+  **References**:
+  - `pyronaut-processor/src/main/java/io/micronaut/pyronaut/processor/PyronautProcessorMain.java` - compile skip points.
+  - `pyronaut-install/src/main/java/io/micronaut/pyronaut/install/ResolutionCache.java` - hash-based cache key pattern.
+  - `pyronaut-processor/src/test/java/io/micronaut/pyronaut/processor/PyronautProcessorMainTest.java` - command-flow regression tests.
+  - `pyronaut-processor/src/test/java/io/micronaut/pyronaut/processor/PyronautProcessorCompilationTest.java` - compile behavior assertions.
+
+  **Acceptance Criteria**:
+  - [x] First processor run compiles required passes and writes processor cache metadata.
+  - [x] Second unchanged run reports cache-hit and skips corresponding compiler invocation(s).
+  - [x] Changing only `tests` inputs invalidates only test pass cache key.
+  - [x] Changing `src` inputs invalidates main pass cache and (by fused-contract) test pass cache when applicable.
+  - [x] Changing classpath/options inputs invalidates the affected pass cache key(s).
+  - [x] Processor cache behavior is test-covered and deterministic.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Unchanged project skips recompilation via processor cache
+    Tool: Bash
+    Preconditions: install manifests generated; clean initial processor run completed
+    Steps:
+      1. Run: pyronaut-processor --project-dir /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app > .sisyphus/evidence/task-20-run1.out 2> .sisyphus/evidence/task-20-run1.err
+      2. Run same command again -> .sisyphus/evidence/task-20-run2.out/.err
+      3. Assert second run reports cache-hit/skip for unchanged pass(es)
+      4. Assert output directories remain valid
+    Expected Result: Repeated invocation avoids unnecessary compilation while preserving correctness
+    Evidence: .sisyphus/evidence/task-20-run1.out, .sisyphus/evidence/task-20-run2.out
+
+  Scenario: Targeted source change invalidates only relevant cache
+    Tool: Bash
+    Preconditions: baseline processor cache metadata exists
+    Steps:
+      1. Modify one file under tests tree
+      2. Run processor and assert test pass recompiles while main pass remains cache-hit (if unchanged)
+      3. Modify one file under src tree
+      4. Run processor and assert main pass recompiles and fused test pass invalidates per contract
+    Expected Result: Cache invalidation is granular and contract-correct
+    Evidence: .sisyphus/evidence/task-20-invalidation.out
+  ```
+
+- [ ] 21. Add global `--no-cache` orchestration and cache-bypass propagation for install/process *(merged action item)*
+
+  **What to do**:
+  - Add a global orchestrator option `--no-cache` to `pyronaut` command parsing.
+  - Propagate cache bypass to update/install stage and process stage consistently:
+    - install/update path: bypass install cache layer (`--refresh` behavior)
+    - process path: bypass processor cache layer (skip cache reads/writes for that invocation)
+  - Ensure direct orchestrator command usage (`pyronaut process --no-cache`, `pyronaut run --no-cache`, `pyronaut test --no-cache`) forwards expected flags deterministically.
+
+  **Must NOT do**:
+  - Do not silently ignore `--no-cache` for delegated subcommands.
+  - Do not change default cached behavior when `--no-cache` is absent.
+  - Do not broaden this task to unrelated cache eviction tooling.
+
+  **Dependencies**:
+  - Depends on: 3 (install cache behavior), 9 (orchestrator), 20 (processor cache behavior).
+  - Blocks: 22, 23 parity expectations for deterministic preflight behavior.
+
+  **References**:
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - orchestrator parsing/delegation and preflight flow.
+  - `pyronaut-install/src/main/java/io/micronaut/pyronaut/install/PyronautInstallMain.java` - `--refresh` cache-bypass semantics.
+  - `pyronaut-processor/src/main/java/io/micronaut/pyronaut/processor/PyronautProcessorMain.java` - processor cache path and options.
+  - `pyronaut/src/test/python/orchestrator_test.py` - delegation/ordering assertions.
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut run --no-cache --project-dir <app>` delegates install/update and process using cache-bypass behavior.
+  - [x] `pyronaut test --no-cache --project-dir <app>` delegates install/update and process using cache-bypass behavior.
+  - [x] `pyronaut process --no-cache --project-dir <app>` performs processing without cache-hit skips for that invocation.
+  - [x] Existing default (cached) path is unchanged when `--no-cache` is not passed.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Orchestrator forwards --no-cache to preflight stages
+    Tool: Bash
+    Preconditions: PYRONAUT_TRACE_DELEGATION enabled; project fixture available
+    Steps:
+      1. Run: PYRONAUT_TRACE_DELEGATION=true pyronaut run --no-cache --project-dir <app> > .sisyphus/evidence/task-21-run.out 2> .sisyphus/evidence/task-21-run.err
+      2. Assert traced install/update invocation includes cache-bypass flag
+      3. Assert traced process invocation includes cache-bypass flag
+      4. Assert final delegated run invocation still executes
+    Expected Result: Global --no-cache is propagated deterministically to required stages
+    Evidence: .sisyphus/evidence/task-21-run.out, .sisyphus/evidence/task-21-run.err
+  ```
+
+- [ ] 22. Harden orchestrator `run` coordination to deterministic `update -> process -> run` pipeline *(merged action item)*
+
+  **What to do**:
+  - Introduce explicit orchestrator preflight stage semantics for `run`:
+    - stage 1: `update` (mapped to install behavior)
+    - stage 2: `process`
+    - stage 3: `run`
+  - Ensure ordering is deterministic and observable in delegation traces.
+  - Ensure stage failures short-circuit and return the failing stage exit code.
+
+  **Must NOT do**:
+  - Do not execute `run` if `update` or `process` fails.
+  - Do not reorder stage sequence.
+  - Do not introduce hidden fallback paths that bypass declared preflight.
+
+  **Dependencies**:
+  - Depends on: 9 (orchestrator baseline), 21 (`--no-cache` propagation contract).
+  - Blocks: run-path parity sign-off in 11.
+
+  **References**:
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - `run()` and `_delegate()` sequencing.
+  - `pyronaut/src/test/python/orchestrator_test.py` - run preflight sequencing tests.
+  - `pyronaut/src/test/python/e2e_flow_test.py` - end-to-end run flow behavior.
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut run --project-dir <app>` delegates `update` then `process` then `pyronaut-run` in order.
+  - [x] Failure in `update` or `process` aborts run pipeline and returns that failure code.
+  - [x] Orchestrator tests assert deterministic stage order for run path.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: run command executes strict stage order
+    Tool: Bash
+    Preconditions: PYRONAUT_TRACE_DELEGATION enabled
+    Steps:
+      1. Run: PYRONAUT_TRACE_DELEGATION=true pyronaut run --project-dir <app> > .sisyphus/evidence/task-22-run.out 2> .sisyphus/evidence/task-22-run.err
+      2. Assert stderr trace order: pyronaut-install -> pyronaut-processor -> pyronaut-run
+      3. Assert command exits successfully on passing fixture
+    Expected Result: Deterministic update->process->run choreography
+    Evidence: .sisyphus/evidence/task-22-run.out, .sisyphus/evidence/task-22-run.err
+  ```
+
+- [ ] 23. Harden orchestrator `test` coordination to deterministic `update -> process -> test` pipeline *(merged action item)*
+
+  **What to do**:
+  - Introduce explicit orchestrator preflight stage semantics for `test`:
+    - stage 1: `update` (mapped to install behavior)
+    - stage 2: `process`
+    - stage 3: `test`
+  - Ensure `test` path delegates to `pyronaut-test` (not `pyronaut-run`) after preflight.
+  - Ensure stage failures short-circuit and return the failing stage exit code.
+
+  **Must NOT do**:
+  - Do not run `pyronaut-run` in the `test` pipeline.
+  - Do not execute `pyronaut-test` if `update` or `process` fails.
+  - Do not alter existing test exit-code propagation semantics.
+
+  **Dependencies**:
+  - Depends on: 9 (orchestrator baseline), 17 (test classpath behavior), 21 (`--no-cache` propagation contract).
+  - Blocks: test-path parity sign-off in 11.
+
+  **References**:
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - `run()` branching for `test` command.
+  - `pyronaut/src/test/python/orchestrator_test.py` - current `test` preflight behavior assertions.
+  - `pyronaut-test/src/main/java/io/micronaut/pyronaut/test/PyronautTestMain.java` - delegated target behavior.
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut test --project-dir <app>` delegates `update` then `process` then `pyronaut-test` in order.
+  - [x] Failure in `update` or `process` aborts test pipeline and returns that failure code.
+  - [x] Orchestrator tests assert deterministic stage order and correct final delegated executable for test path.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: test command executes strict stage order and target executable
+    Tool: Bash
+    Preconditions: PYRONAUT_TRACE_DELEGATION enabled
+    Steps:
+      1. Run: PYRONAUT_TRACE_DELEGATION=true pyronaut test --project-dir <app> > .sisyphus/evidence/task-23-test.out 2> .sisyphus/evidence/task-23-test.err
+      2. Assert stderr trace order: pyronaut-install -> pyronaut-processor -> pyronaut-test
+      3. Assert no delegation to pyronaut-run in trace
+      4. Assert test summary reports expected pass/fail output
+    Expected Result: Deterministic update->process->test choreography
+    Evidence: .sisyphus/evidence/task-23-test.out, .sisyphus/evidence/task-23-test.err
+  ```
+
+- [ ] 24. Add `--debug-vm` support to `pyronaut-run` and `pyronaut-test` with JDWP flags *(merged action item)*
+
+  **What to do**:
+  - Add `--debug-vm` command option to both `pyronaut-run` and `pyronaut-test` command surfaces.
+  - Ensure enabling `--debug-vm` activates JVM debug arguments:
+    - `-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005`
+  - Define deterministic behavior for port conflicts and suspended startup (clear diagnostics, no silent hang ambiguity).
+  - Ensure orchestrator forwarding for `pyronaut run --debug-vm` and `pyronaut test --debug-vm` reaches delegated commands.
+
+  **Must NOT do**:
+  - Do not enable debug mode by default.
+  - Do not suppress or alter regular failure/exit-code semantics when debug mode is disabled.
+  - Do not broaden scope to remote debugging UX beyond requested fixed JDWP arguments.
+
+  **Dependencies**:
+  - Depends on: 7 (`pyronaut-run`), 8 (`pyronaut-test`), 9 (orchestrator forwarding).
+  - Blocks: run/test developer-debug workflow parity sign-off.
+
+  **References**:
+  - `pyronaut-run/src/main/java/io/micronaut/pyronaut/run/PyronautRunMain.java` - run command options/launch behavior.
+  - `pyronaut-test/src/main/java/io/micronaut/pyronaut/test/PyronautTestMain.java` - test command options/launch behavior.
+  - `pyronaut-run/src/test/java/io/micronaut/pyronaut/run/PyronautRunMainTest.java` - run option behavior test baseline.
+  - `pyronaut-test/src/test/java/io/micronaut/pyronaut/test/PyronautTestMainTest.java` - test option behavior test baseline.
+  - `pyronaut/src/test/python/orchestrator_test.py` - orchestrator argument forwarding assertions.
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut-run --debug-vm --project-dir <app>` starts with requested JDWP arguments and suspend behavior.
+  - [x] `pyronaut-test --debug-vm --project-dir <app>` starts with requested JDWP arguments and suspend behavior.
+  - [x] If port `5005` is unavailable, command fails with actionable port-conflict diagnostics.
+  - [x] `pyronaut run --debug-vm` and `pyronaut test --debug-vm` forward debug mode to delegated commands.
+  - [x] Existing non-debug behavior is unchanged when `--debug-vm` is absent.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Debug VM mode activates JDWP for run command
+    Tool: Bash
+    Preconditions: Fixture app available
+    Steps:
+      1. Run: pyronaut run --debug-vm --project-dir <app> > .sisyphus/evidence/task-24-run.out 2> .sisyphus/evidence/task-24-run.err
+      2. Assert output indicates JVM waiting for debugger / JDWP listener startup on 5005
+      3. Terminate process after assertion capture
+    Expected Result: Debug VM mode applies requested JDWP arguments for run
+    Evidence: .sisyphus/evidence/task-24-run.out, .sisyphus/evidence/task-24-run.err
+
+  Scenario: Debug VM mode port conflict returns clear diagnostics
+    Tool: Bash
+    Preconditions: Port 5005 occupied by separate process
+    Steps:
+      1. Start a listener on port 5005
+      2. Run: pyronaut test --debug-vm --project-dir <app> > .sisyphus/evidence/task-24-test.out 2> .sisyphus/evidence/task-24-test.err
+      3. Assert non-zero exit code
+      4. Assert stderr includes actionable message indicating debug port conflict
+    Expected Result: Debug mode failure is explicit and diagnosable
+    Evidence: .sisyphus/evidence/task-24-test.out, .sisyphus/evidence/task-24-test.err
+  ```
+
 ---
 
 ## Component Review & Commit Strategy (User-required cadence)
@@ -1013,6 +1350,8 @@ After each component group below:
 | C5 | Task 9-10 | `feat(cli-v2): add python orchestrator and sdk wheel packaging` |
 | C6 | Task 11 | `test(cli-v2): add e2e parity and migration gates` |
 | C7 | Task 13-17 | `feat(cli-v2): improve diagnostics, proxy support, and source-test classpath processing` |
+| C8 | Task 18-20 | `feat(cli-v2): suppress test JVM noise and add processor progress/caching` |
+| C9 | Task 21-24 | `feat(cli-v2): add no-cache orchestration, deterministic preflight, and debug-vm support` |
 
 ---
 
@@ -1037,3 +1376,10 @@ After each component group below:
 - [x] `pyronaut-process` supports dual source+test processing with separate outputs and test classpath
 - [x] `pyronaut-install` supports proxy configuration from `~/.m2/settings.xml` with `~/.pyronaut/settings.toml` fallback
 - [x] `pyronaut-test` includes `__pyronaut__/test-classes` on execution classpath when present
+- [x] `pyronaut-test` default runtime output suppresses restricted-native-access and Unsafe warning noise without masking failures
+- [x] `pyronaut-processor` reports pass-level source counts + progress + completion in interactive/non-interactive modes
+- [x] `pyronaut-processor` incremental caching skips unchanged compiles with deterministic invalidation for source/classpath/option changes
+ - [x] `pyronaut --no-cache` propagates to update/install and process stages with deterministic cache-bypass behavior
+ - [x] `pyronaut run` enforces deterministic `update -> process -> run` orchestration order
+ - [x] `pyronaut test` enforces deterministic `update -> process -> test` orchestration order
+ - [x] `pyronaut-run` and `pyronaut-test` support `--debug-vm` with requested JDWP arguments and clear port-conflict diagnostics
