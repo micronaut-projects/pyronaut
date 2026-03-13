@@ -93,10 +93,20 @@ public final class PyronautRunMain implements Callable<Integer> {
             URLClassLoader classLoader = new URLClassLoader(urls.toArray(URL[]::new), ClassLoader.getPlatformClassLoader());
             ACTIVE_CLASSLOADERS.add(classLoader);
             Thread.currentThread().setContextClassLoader(classLoader);
-            Class<?> loadedClass = classLoader.loadClass(mainClass);
-            if (DEFAULT_MAIN_CLASS.equals(mainClass) && tryStartMicronautApplication(classLoader, loadedClass, resolvedClassesDir)) {
-                blockUntilInterrupted();
-                return 0;
+            Class<?> loadedClass;
+            if (DEFAULT_MAIN_CLASS.equals(mainClass)) {
+                loadedClass = loadDefaultMainClass(classLoader);
+                if (tryStartMicronautApplication(classLoader, loadedClass, resolvedClassesDir)) {
+                    blockUntilInterrupted();
+                    return 0;
+                }
+                if (loadedClass == null) {
+                    System.err.println("Run failed: Missing generated main class '" + DEFAULT_MAIN_CLASS
+                        + "' and reflective Micronaut startup is unavailable.");
+                    return 6;
+                }
+            } else {
+                loadedClass = classLoader.loadClass(mainClass);
             }
             var method = loadedClass.getDeclaredMethod("main", String[].class);
             method.setAccessible(true);
@@ -124,9 +134,11 @@ public final class PyronautRunMain implements Callable<Integer> {
             buildMethod.setAccessible(true);
             Object micronaut = buildMethod.invoke(null, (Object) appArgs.toArray(String[]::new));
 
-            Method mainClassMethod = micronautClass.getDeclaredMethod("mainClass", Class.class);
-            mainClassMethod.setAccessible(true);
-            mainClassMethod.invoke(micronaut, loadedClass);
+            if (loadedClass != null) {
+                Method mainClassMethod = micronautClass.getDeclaredMethod("mainClass", Class.class);
+                mainClassMethod.setAccessible(true);
+                mainClassMethod.invoke(micronaut, loadedClass);
+            }
 
             try {
                 Method keepAliveMethod = micronautClass.getDeclaredMethod("keepAlive", boolean.class);
@@ -148,6 +160,14 @@ public final class PyronautRunMain implements Callable<Integer> {
             return true;
         } catch (ClassNotFoundException | NoSuchMethodException e) {
             return false;
+        }
+    }
+
+    private Class<?> loadDefaultMainClass(URLClassLoader classLoader) throws Exception {
+        try {
+            return classLoader.loadClass(mainClass);
+        } catch (ClassNotFoundException ignored) {
+            return null;
         }
     }
 

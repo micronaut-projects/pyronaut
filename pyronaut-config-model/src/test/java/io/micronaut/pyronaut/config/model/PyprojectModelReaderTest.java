@@ -34,6 +34,7 @@ class PyprojectModelReaderTest {
         assertEquals(8, model.pyronaut().dependencies().runtime().size());
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());
+        assertEquals("jvm", model.pyronaut().build().mode());
     }
 
     @Test
@@ -98,5 +99,56 @@ class PyprojectModelReaderTest {
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
         assertEquals("Invalid type for 'tool.pyronaut.repositories': expected array", exception.getMessage());
+    }
+
+    @Test
+    void parseBuildModeDefaultsToJvmWhenMissing() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("jvm", model.pyronaut().build().mode());
+    }
+
+    @Test
+    void rejectInvalidBuildModeType() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.build]
+            mode = ["native"]
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid type for 'tool.pyronaut.build.mode': expected string", exception.getMessage());
+    }
+
+    @Test
+    void rejectInvalidBuildModeValue() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.build]
+            mode = "fast"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid value for 'tool.pyronaut.build.mode': expected 'jvm' or 'native'", exception.getMessage());
     }
 }

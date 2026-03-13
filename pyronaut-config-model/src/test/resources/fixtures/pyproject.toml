@@ -15,6 +15,9 @@ repositories = [
     "https://repo.gradle.org/gradle/libs-releases"
 ]
 
+[tool.pyronaut.build]
+mode = "jvm"
+
 [tool.pyronaut.dependencies]
 runtime = [ "io.micronaut:micronaut-inject-python",
     "io.micronaut:micronaut-context-python",

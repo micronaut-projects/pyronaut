@@ -3,15 +3,21 @@ package io.micronaut.pyronaut.test;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.List;
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PyronautTestMainTest {
 
@@ -91,6 +97,118 @@ class PyronautTestMainTest {
     @Test
     void acceptsDebugVmFlag() {
         assertDoesNotThrow(() -> new picocli.CommandLine(new PyronautTestMain()).execute("--debug-vm", "--help"));
+    }
+
+    @Test
+    void acceptsRepeatableTestsSelectors() {
+        PyronautTestMain main = new PyronautTestMain();
+        var value = PyronautTestMain.buildPytestTestsParameter(java.util.List.of("tests/test_math.py::test_add", "*test_*"));
+        assertEquals(java.util.Optional.of("tests/test_math.py::test_add|*test_*"), value);
+    }
+
+    @Test
+    void rejectsBlankTestsSelectorWithDeterministicMessage() {
+        IllegalStateException e = assertThrows(
+            IllegalStateException.class,
+            () -> PyronautTestMain.buildPytestTestsParameter(java.util.List.of(" "))
+        );
+        assertEquals("Invalid --tests selector: blank value", e.getMessage());
+    }
+
+    @Test
+    void resolvesPlainTestsSelectorToFileInTestsDirectory() throws Exception {
+        Path project = tempDir.resolve("selector-project");
+        Path testsDir = project.resolve("tests");
+        Files.createDirectories(testsDir);
+        Path selected = testsDir.resolve("test_mycontroller.py");
+        Files.writeString(selected, "def test_ok():\n  assert True\n", StandardCharsets.UTF_8);
+
+        List<Path> files = PyronautTestMain.resolveDirectTestFileSelectors(project, testsDir, List.of("test_mycontroller"));
+        assertEquals(List.of(selected), files);
+    }
+
+    @Test
+    void resolvesNodeIdSelectorToFilePath() throws Exception {
+        Path project = tempDir.resolve("selector-nodeid-project");
+        Path testsDir = project.resolve("tests");
+        Files.createDirectories(testsDir);
+        Path selected = testsDir.resolve("test_mycontroller.py");
+        Files.writeString(selected, "def test_ok():\n  assert True\n", StandardCharsets.UTF_8);
+
+        List<Path> files = PyronautTestMain.resolveDirectTestFileSelectors(project, testsDir, List.of("tests/test_mycontroller.py::test_ok"));
+        assertEquals(List.of(selected), files);
+    }
+
+    @Test
+    void wildcardTestsSelectorDoesNotForceFileSelection() throws Exception {
+        Path project = tempDir.resolve("selector-wildcard-project");
+        Path testsDir = project.resolve("tests");
+        Files.createDirectories(testsDir);
+        Files.writeString(testsDir.resolve("test_mycontroller.py"), "def test_ok():\n  assert True\n", StandardCharsets.UTF_8);
+
+        List<Path> files = PyronautTestMain.resolveDirectTestFileSelectors(project, testsDir, List.of("*mycontroller*"));
+        assertTrue(files.isEmpty());
+    }
+
+    @Test
+    void mixedSelectorsAreNotTreatedAsOnlyDirectFiles() {
+        assertTrue(PyronautTestMain.hasOnlyDirectFileSelectors(List.of("test_mycontroller", "tests/test_a.py::test_x")));
+        assertFalse(PyronautTestMain.hasOnlyDirectFileSelectors(List.of("test_mycontroller", "*integration*")));
+    }
+
+    @Test
+    void clearsLegacyReportAliasesBeforeExecution() throws Exception {
+        Path project = tempDir.resolve("legacy-report-clean-project");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("junit.xml"), "<testsuite/>", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("index.html"), "<html></html>", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve(".pyronaut-last-nodeid.txt"), "tests/test_a.py::test_ok\n", StandardCharsets.UTF_8);
+
+        PyronautTestMain.clearLegacyReportAliases(project);
+
+        assertFalse(Files.exists(project.resolve("junit.xml")));
+        assertFalse(Files.exists(project.resolve("index.html")));
+        assertFalse(Files.exists(project.resolve(".pyronaut-last-nodeid.txt")));
+    }
+
+    @Test
+    void recoversCanonicalReportsFromLegacyArtifactsWhenNeeded() throws Exception {
+        Path project = tempDir.resolve("legacy-report-recovery-project");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("junit.xml"), "<testsuite name=\"legacy\"/>", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("index.html"), "<html><body>legacy</body></html>", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve(".pyronaut-last-nodeid.txt"), "tests/test_a.py::test_ok\n", StandardCharsets.UTF_8);
+
+        PyronautTestMain.publishReportLocations(project);
+
+        Path reportsDir = project.resolve("__pyronaut__/reports/tests");
+        assertTrue(Files.exists(reportsDir.resolve("junit.xml")));
+        assertTrue(Files.exists(reportsDir.resolve("index.html")));
+        assertTrue(Files.exists(reportsDir.resolve(".pyronaut-last-nodeid.txt")));
+        assertEquals("<testsuite name=\"legacy\"/>", Files.readString(reportsDir.resolve("junit.xml"), StandardCharsets.UTF_8));
+        assertEquals("<html><body>legacy</body></html>", Files.readString(reportsDir.resolve("index.html"), StandardCharsets.UTF_8));
+        assertEquals("tests/test_a.py::test_ok\n", Files.readString(reportsDir.resolve(".pyronaut-last-nodeid.txt"), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void reportLocationsOutputOnlyMentionsReportsDirectoryAndHtml() throws Exception {
+        Path project = tempDir.resolve("report-links-project");
+        Files.createDirectories(project.resolve("__pyronaut__/reports/tests"));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream original = System.out;
+        try {
+            System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
+            PyronautTestMain.publishReportLocations(project);
+        } finally {
+            System.setOut(original);
+        }
+
+        String output = out.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("Test reports directory:"));
+        assertTrue(output.contains("HTML report:"));
+        assertFalse(output.contains("JUnit XML report:"));
+        assertFalse(output.contains("Last nodeid report:"));
     }
 
     private Path setupProject() throws Exception {

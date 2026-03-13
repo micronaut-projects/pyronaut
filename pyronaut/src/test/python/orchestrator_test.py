@@ -3,9 +3,10 @@ import io
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import socket
+from unittest.mock import patch
 
 _CLI_MODULE_PATH = Path(__file__).resolve().parents[2] / "main" / "python" / "pyronaut_cli_v2" / "cli.py"
 _CLI_SPEC = importlib.util.spec_from_file_location("pyronaut_cli_v2.cli", _CLI_MODULE_PATH)
@@ -284,7 +285,7 @@ class OrchestratorTest(unittest.TestCase):
             executed,
         )
 
-    def test_run_debug_vm_sets_java_tool_options_and_forwards_flag(self):
+    def test_test_forwards_tests_selectors_after_preflight(self):
         executed = []
 
         def runner(command_line):
@@ -292,36 +293,81 @@ class OrchestratorTest(unittest.TestCase):
             return 0
 
         exit_code = cli.run(
-            ["run", "--project-dir", "/tmp/demo", "--debug-vm"],
+            [
+                "test",
+                "--project-dir",
+                "/tmp/demo",
+                "--tests",
+                "tests/test_math.py::test_add",
+                "--tests",
+                "*test_add*",
+            ],
             runner=runner,
             resolver=self._resolver(),
             platform_name="linux",
         )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[0])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[1])
         self.assertEqual(
             [
-                "__env__",
-                "JAVA_TOOL_OPTIONS=-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005",
+                ["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"],
+                ["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"],
+                [
+                    "/tmp/pyronaut-test",
+                    "--project-dir",
+                    "/tmp/demo",
+                    "--tests",
+                    "tests/test_math.py::test_add",
+                    "--tests",
+                    "*test_add*",
+                ],
+            ],
+            executed,
+        )
+
+    def test_run_debug_vm_sets_java_tool_options_and_forwards_flag(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        exit_code = cli.run(
+            ["run", "--project-dir", "/tmp/demo", "--debug-vm"],
+            runner_with_env=runner_with_env,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[0][0])
+        self.assertIsNone(executed[0][1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[1][0])
+        self.assertIsNone(executed[1][1])
+        self.assertEqual(
+            [
                 "/tmp/pyronaut-run",
                 "--project-dir",
                 "/tmp/demo",
+                "--debug-vm",
             ],
-            executed[2],
+            executed[2][0],
+        )
+        self.assertEqual(
+            "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005",
+            executed[2][1]["JAVA_TOOL_OPTIONS"],
         )
 
     def test_test_debug_vm_sets_java_tool_options(self):
         executed = []
 
-        def runner(command_line):
-            executed.append(command_line)
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
             return 0
 
         exit_code = cli.run(
             ["test", "--project-dir", "/tmp/demo", "--debug-vm"],
-            runner=runner,
+            runner_with_env=runner_with_env,
             resolver=self._resolver(),
             platform_name="linux",
         )
@@ -329,13 +375,16 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(
             [
-                "__env__",
-                "JAVA_TOOL_OPTIONS=-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005",
                 "/tmp/pyronaut-test",
                 "--project-dir",
                 "/tmp/demo",
+                "--debug-vm",
             ],
-            executed[2],
+            executed[2][0],
+        )
+        self.assertEqual(
+            "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005",
+            executed[2][1]["JAVA_TOOL_OPTIONS"],
         )
 
     def test_debug_vm_fails_fast_when_port_busy(self):
@@ -355,6 +404,480 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertNotEqual(0, exit_code)
         self.assertIn("port 5005", stderr.getvalue().lower())
+
+    def test_run_restarts_after_src_change_and_replays_preflight(self):
+        executed = []
+        started = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "watched"
+            src_dir = project_dir / "src"
+            src_dir.mkdir(parents=True, exist_ok=True)
+            source_file = src_dir / "controller.py"
+            source_file.write_text("print('v1')\n", encoding="utf-8")
+
+            class FakeProcess:
+                def __init__(self, exit_after_polls, exit_code=0):
+                    self.exit_after_polls = exit_after_polls
+                    self.exit_code = exit_code
+                    self.polls = 0
+                    self.terminated = False
+
+                def poll(self):
+                    if self.terminated:
+                        return 0
+                    self.polls += 1
+                    if self.polls >= self.exit_after_polls:
+                        return self.exit_code
+                    return None
+
+                def terminate(self):
+                    self.terminated = True
+
+                def wait(self, timeout=None):
+                    return 0
+
+                def kill(self):
+                    self.terminated = True
+
+            first_process = FakeProcess(exit_after_polls=100)
+            second_process = FakeProcess(exit_after_polls=1, exit_code=0)
+            processes = [first_process, second_process]
+
+            def process_runner(command_line, env):
+                started.append((command_line, env))
+                return processes.pop(0)
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            ticks = {"count": 0}
+            now = {"value": 0.0}
+
+            def monotonic():
+                return now["value"]
+
+            def sleep(seconds):
+                now["value"] += seconds
+                ticks["count"] += 1
+                if ticks["count"] == 1:
+                    source_file.write_text("print('v2')\n", encoding="utf-8")
+
+            exit_code = cli.run(
+                ["run", "--project-dir", str(project_dir)],
+                runner=runner,
+                process_runner=process_runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+                watch_poll_interval=0.2,
+                watch_debounce_seconds=0.2,
+                monotonic=monotonic,
+                sleep=sleep,
+            )
+
+            resolved_project_dir = str(project_dir.resolve())
+            self.assertEqual(0, exit_code)
+            self.assertEqual(
+                [
+                    ["/tmp/pyronaut-install", "--project-dir", resolved_project_dir],
+                    ["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir],
+                    ["/tmp/pyronaut-install", "--project-dir", resolved_project_dir],
+                    ["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir],
+                ],
+                executed,
+            )
+            self.assertEqual(2, len(started))
+            self.assertEqual("/tmp/pyronaut-run", started[0][0][0])
+            self.assertEqual("/tmp/pyronaut-run", started[1][0][0])
+            self.assertTrue(first_process.terminated)
+
+    def test_run_ignores_generated_output_changes_for_restart(self):
+        executed = []
+        started = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "watched-ignore"
+            src_dir = project_dir / "src"
+            src_dir.mkdir(parents=True, exist_ok=True)
+            (src_dir / "controller.py").write_text("print('v1')\n", encoding="utf-8")
+            reports_dir = project_dir / "__pyronaut__" / "reports" / "tests"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+
+            class FakeProcess:
+                def __init__(self, exit_after_polls, exit_code=0):
+                    self.exit_after_polls = exit_after_polls
+                    self.exit_code = exit_code
+                    self.polls = 0
+
+                def poll(self):
+                    self.polls += 1
+                    if self.polls >= self.exit_after_polls:
+                        return self.exit_code
+                    return None
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+                def kill(self):
+                    return None
+
+            process = FakeProcess(exit_after_polls=3, exit_code=0)
+
+            def process_runner(command_line, env):
+                started.append((command_line, env))
+                return process
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            now = {"value": 0.0}
+            ticks = {"count": 0}
+
+            def monotonic():
+                return now["value"]
+
+            def sleep(seconds):
+                now["value"] += seconds
+                ticks["count"] += 1
+                if ticks["count"] == 1:
+                    (reports_dir / "junit.xml").write_text("<testsuite/>\n", encoding="utf-8")
+
+            exit_code = cli.run(
+                ["run", "--project-dir", str(project_dir)],
+                runner=runner,
+                process_runner=process_runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+                watch_poll_interval=0.2,
+                watch_debounce_seconds=0.2,
+                monotonic=monotonic,
+                sleep=sleep,
+            )
+
+            resolved_project_dir = str(project_dir.resolve())
+            self.assertEqual(0, exit_code)
+            self.assertEqual(1, len(started))
+            self.assertEqual(
+                [
+                    ["/tmp/pyronaut-install", "--project-dir", resolved_project_dir],
+                    ["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir],
+                ],
+                executed,
+            )
+
+    def test_run_uses_provided_java_home_for_run_delegation(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        exit_code = cli.run(
+            ["run", "--project-dir", "/tmp/demo"],
+            runner_with_env=runner_with_env,
+            resolver=self._resolver(),
+            platform_name="linux",
+            java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[0][0])
+        self.assertIsNone(executed[0][1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[1][0])
+        self.assertIsNone(executed[1][1])
+        self.assertEqual(["/tmp/pyronaut-run", "--project-dir", "/tmp/demo"], executed[2][0])
+        self.assertEqual("/tmp/graalvm-jdk-25", executed[2][1]["JAVA_HOME"])
+        self.assertTrue(executed[2][1]["PATH"].startswith("/tmp/graalvm-jdk-25/bin"))
+
+    def test_run_fails_when_java_home_provider_cannot_provision(self):
+        executed = []
+        stderr = io.StringIO()
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with redirect_stderr(stderr):
+            exit_code = cli.run(
+                ["run", "--project-dir", "/tmp/demo"],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: None,
+            )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("compatible GraalVM JDK", stderr.getvalue())
+        self.assertEqual(2, len(executed))
+
+    def test_build_defaults_to_jvm_wheel_command(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "build-demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    ["build", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, len(executed))
+        self.assertEqual("-m", executed[0][0][1])
+        self.assertEqual("pip", executed[0][0][2])
+        self.assertEqual("wheel", executed[0][0][3])
+        self.assertIn("--wheel-dir", executed[0][0])
+        self.assertIsNone(executed[0][1])
+        self.assertIn("Wheel build complete", stdout.getvalue())
+        self.assertIn("Install with:", stdout.getvalue())
+
+    def test_build_native_runs_preflight_then_native_image_with_java_home(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-demo"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    ["build", "--native", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+
+        self.assertEqual(0, exit_code)
+        resolved_project_dir = str(project_dir.resolve())
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", resolved_project_dir], executed[0][0])
+        self.assertIsNone(executed[0][1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir], executed[1][0])
+        self.assertIsNone(executed[1][1])
+        self.assertEqual("native-image", executed[2][0][0])
+        self.assertIn("-cp", executed[2][0])
+        self.assertEqual("/tmp/graalvm-jdk-25", executed[2][1]["JAVA_HOME"])
+        self.assertIn("Native build complete", stdout.getvalue())
+
+    def test_stop_managed_process_kills_when_terminate_times_out(self):
+        class HungProcess:
+            def __init__(self):
+                self.terminate_called = False
+                self.kill_called = False
+                self.wait_calls = 0
+
+            def terminate(self):
+                self.terminate_called = True
+
+            def wait(self, timeout=None):
+                self.wait_calls += 1
+                if self.wait_calls == 1:
+                    raise TimeoutError("process did not stop")
+                return 0
+
+            def kill(self):
+                self.kill_called = True
+
+        process = HungProcess()
+        stopped = cli._stop_managed_process(process)
+        self.assertTrue(stopped)
+        self.assertTrue(process.terminate_called)
+        self.assertTrue(process.kill_called)
+
+    def test_stop_managed_process_returns_false_when_kill_fails(self):
+        class BrokenProcess:
+            def terminate(self):
+                raise RuntimeError("terminate failure")
+
+            def wait(self, timeout=None):
+                raise RuntimeError("wait failure")
+
+            def kill(self):
+                raise RuntimeError("kill failure")
+
+        self.assertFalse(cli._stop_managed_process(BrokenProcess()))
+
+    def test_build_mode_from_pyproject_defaults_to_native(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-default"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.build]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+
+            exit_code = cli.run(
+                ["build", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("native-image", executed[2][0][0])
+
+    def test_build_mode_flag_with_separate_value_uses_native(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-flag"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+
+            exit_code = cli.run(
+                ["build", "--mode", "native", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("native-image", executed[2][0][0])
+
+    def test_build_rejects_invalid_mode_flag_value(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = cli.run(
+                ["build", "--mode=fast", "--project-dir", "/tmp/demo"],
+                runner=self._runner_ok(),
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertIn("Invalid value for --mode", stderr.getvalue())
+
+    def test_build_rejects_invalid_mode_in_pyproject(self):
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "invalid-mode"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.build]\nmode = \"fast\"\n",
+                encoding="utf-8",
+            )
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["build", "--project-dir", str(project_dir)],
+                    runner=self._runner_ok(),
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertIn("Invalid build mode in pyproject.toml", stderr.getvalue())
+
+    def test_build_native_requires_processed_classes(self):
+        stderr = io.StringIO()
+
+        def runner_with_env(command_line, env):
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-missing-classes"
+            cache_dir = project_dir / "__pyronaut__"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["build", "--native", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Missing processed classes directory", stderr.getvalue())
+
+    def test_ensure_graalvm_java_home_prefers_sdkman_before_download(self):
+        call_order = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            expected = Path(temp_dir) / "sdkman-home"
+            with patch.object(cli, "_PROVISIONED_GRAALVM_HOME", None, create=True), \
+                patch.object(cli, "_read_env", lambda name: None, create=True), \
+                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
+                patch.object(cli, "_find_compatible_cached_jdk", lambda _root: None, create=True), \
+                patch.object(cli, "_install_with_sdkman", lambda _root: call_order.append("sdkman") or expected, create=True), \
+                patch.object(cli, "_download_and_install_graalvm", lambda _root: call_order.append("download") or None, create=True):
+                resolved = cli._ensure_graalvm_java_home()
+
+        self.assertEqual(str(expected), resolved)
+        self.assertEqual(["sdkman"], call_order)
+
+    def test_ensure_graalvm_java_home_falls_back_to_download(self):
+        call_order = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            expected = Path(temp_dir) / "download-home"
+            with patch.object(cli, "_PROVISIONED_GRAALVM_HOME", None, create=True), \
+                patch.object(cli, "_read_env", lambda name: None, create=True), \
+                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
+                patch.object(cli, "_find_compatible_cached_jdk", lambda _root: None, create=True), \
+                patch.object(cli, "_install_with_sdkman", lambda _root: call_order.append("sdkman") or None, create=True), \
+                patch.object(cli, "_download_and_install_graalvm", lambda _root: call_order.append("download") or expected, create=True):
+                resolved = cli._ensure_graalvm_java_home()
+
+        self.assertEqual(str(expected), resolved)
+        self.assertEqual(["sdkman", "download"], call_order)
+
+    def test_ensure_graalvm_java_home_is_idempotent_after_first_resolution(self):
+        counts = {"sdkman": 0, "download": 0}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            expected = Path(temp_dir) / "download-home"
+            with patch.object(cli, "_PROVISIONED_GRAALVM_HOME", None, create=True), \
+                patch.object(cli, "_read_env", lambda name: None, create=True), \
+                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
+                patch.object(cli, "_find_compatible_cached_jdk", lambda _root: None, create=True), \
+                patch.object(cli, "_install_with_sdkman", lambda _root: counts.__setitem__("sdkman", counts["sdkman"] + 1) or None, create=True), \
+                patch.object(cli, "_download_and_install_graalvm", lambda _root: counts.__setitem__("download", counts["download"] + 1) or expected, create=True):
+                first = cli._ensure_graalvm_java_home()
+                second = cli._ensure_graalvm_java_home()
+
+        self.assertEqual(str(expected), first)
+        self.assertEqual(str(expected), second)
+        self.assertEqual(1, counts["sdkman"])
+        self.assertEqual(1, counts["download"])
 
     @staticmethod
     def _resolver():

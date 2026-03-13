@@ -99,7 +99,8 @@ public final class PyprojectModelReader {
                 runtime,
                 build,
                 readStringList(parsed, "tool.pyronaut.dependencies.test")
-            )
+            ),
+            new PyprojectModel.Build(resolveBuildMode(parsed))
         );
 
         return new PyprojectModel(project, buildSystem, pyronaut);
@@ -136,5 +137,17 @@ public final class PyprojectModelReader {
 
     private static PyprojectModelException invalidType(String key, String expected, TomlInvalidTypeException e) {
         return new PyprojectModelException("Invalid type for '" + key + "': expected " + expected, e);
+    }
+
+    private static String resolveBuildMode(TomlParseResult parsed) {
+        String mode = readString(parsed, "tool.pyronaut.build.mode");
+        if (mode == null || mode.isBlank()) {
+            return "jvm";
+        }
+        String normalized = mode.trim().toLowerCase();
+        if ("jvm".equals(normalized) || "native".equals(normalized)) {
+            return normalized;
+        }
+        throw new PyprojectModelException("Invalid value for 'tool.pyronaut.build.mode': expected 'jvm' or 'native'");
     }
 }

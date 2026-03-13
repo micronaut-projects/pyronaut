@@ -15,6 +15,8 @@
  */
 package io.micronaut.test.pytest.discovery;
 
+import io.micronaut.test.pytest.PytestTestDescriptor;
+import io.micronaut.test.pytest.PytestTestFilters;
 import org.graalvm.polyglot.Context;
 import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestDescriptor;
@@ -33,12 +35,13 @@ import java.util.stream.Stream;
 /**
  * Resolves JUnit 5 discovery selectors into pytest test descriptors.
  */
-public class PytestDiscoverySelectorResolver {
+public final class PytestDiscoverySelectorResolver {
  
     private static final Logger LOG = LoggerFactory.getLogger(PytestDiscoverySelectorResolver.class);
  
     private final Context context;
     private Path baseDirectory;
+    private PytestTestFilters testFilters = PytestTestFilters.from(null);
  
     public PytestDiscoverySelectorResolver(Context context) {
         this.context = context;
@@ -53,6 +56,9 @@ public class PytestDiscoverySelectorResolver {
         this.baseDirectory = baseDirectory;
     }
 
+    public void setTestFilters(PytestTestFilters testFilters) {
+        this.testFilters = testFilters == null ? PytestTestFilters.from(null) : testFilters;
+    }
 
     /**
      * Resolves discovery selectors and adds corresponding test descriptors.
@@ -129,6 +135,13 @@ public class PytestDiscoverySelectorResolver {
             List<TestDescriptor> testDescriptors = astParser.parsePythonFileAsTests(filePath, baseDirectory);
 
             for (TestDescriptor testDescriptor : testDescriptors) {
+                if (testDescriptor instanceof PytestTestDescriptor pytestDescriptor) {
+                    if (!testFilters.matches(pytestDescriptor.getUniqueId().toString())
+                        && !testFilters.matches(pytestDescriptor.getDisplayName())
+                        && !testFilters.matches(pytestDescriptor.getFilePath().toString())) {
+                        continue;
+                    }
+                }
                 engineDescriptor.addChild(testDescriptor);
             }
         } catch (Exception e) {

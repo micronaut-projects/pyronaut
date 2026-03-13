@@ -1,16 +1,20 @@
+## Notepad: pyronaut-sdk-v2-rearchitecture - learnings
 
-## 2026-03-12
+_(records from this session appear here)_
 
-- Added orchestrator-level `--debug-vm` for `pyronaut run` / `pyronaut test` that:
-  - preflights port 5005 availability (fail-fast with a clear port-in-use error)
-  - sets `JAVA_TOOL_OPTIONS` to include `-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005` for the delegated JVM process
-  - forwards `--debug-vm` through to `pyronaut-run` / `pyronaut-test` (which now accept the flag to avoid unknown-option errors and to preserve invocation traceability)
-## [2026-03-12 17:10] Task 24 – debug-vm
-- Added `--debug-vm` to pyronaut-run/test so the CLI accepts the flag and the orchestrator can forward it.
-- The orchestrator now checks port 5005, sets `JAVA_TOOL_OPTIONS` to the exact JDWP string, and keeps trace output showing the flag propagation.
-- Tests cover the new flag/port failure paths in both the Jupiter tests and orchestrator tests.
-
-## [2026-03-12 17:04] Tasks 21–23 – no-cache and deterministic preflight
-- Added a global `--no-cache` flag to the orchestrator that forwards `pyronaut-install --refresh`, `pyronaut-processor --no-cache`, and the final delegated command.
-- Run/test commands now always go through install/process before delegating to pyronaut-run/test, reporting failures per stage and keeping trace logs clear.
-- Added orchestrator tests for the new flag/stage order and ensured install/processor output mention cache bypass when requested.
+- 2026-03-13: Implemented Gradle-like `--tests` selection by forwarding repeatable selectors from `pyronaut-test` via JUnit configuration parameter `pytest.tests`, then filtering *after* pytest descriptors are created in the engine. This preserves whole-suite default behavior while allowing nodeid/path passthrough and wildcard matching.
+- 2026-03-13: Verified the Gradle-compatible selector flow via `./gradlew :micronaut-pyronaut-pytest:test`, `./gradlew :micronaut-pyronaut-test:test`, and `./gradlew :micronaut-pyronaut:testPythonOrchestrator`; `bun run build/test` still fail immediately in this repo (missing scripts/globs) and `lsp_diagnostics` could not run because no server is configured for the workspace root.
+- 2026-03-13: For `pyronaut-run` fallback hardening, the critical fix was allowing default-main startup to continue when `pyronaut_application.PyronautMain` is absent, then attempting reflective `io.micronaut.runtime.Micronaut` startup before failing with a concise actionable message.
+- 2026-03-13: Added run-module reachability metadata (`pyronaut-run/.../reachability-metadata.json`) with explicit reflective method declarations for `Micronaut.build/mainClass/keepAlive/packages/start`; verified via `:micronaut-pyronaut-run:test` and `:micronaut-pyronaut-run:check`.
+- 2026-03-13: Implemented orchestrator run auto-restart in `cli.py` using a polling snapshot over `src/tests/config`, debounce gating, and explicit process termination before relaunch; each restart replays deterministic `install -> process -> run` ordering.
+- 2026-03-13: Added orchestrator tests for restart-on-src-change and ignore of generated output writes under `__pyronaut__/reports/tests`; verified via `:micronaut-pyronaut:testPythonOrchestrator` and combined `:micronaut-pyronaut-run:test :micronaut-pyronaut:testPythonOrchestrator`.
+- 2026-03-13: Standardized pytest reporting paths by passing deterministic config parameters from `pyronaut-test` into `pyronaut-pytest`; junit XML now uses pytest `--junitxml=<app>/__pyronaut__/reports/tests/junit.xml` and listener-generated HTML uses `<app>/__pyronaut__/reports/tests/index.html`.
+- 2026-03-13: `.pyronaut-last-nodeid.txt` is now emitted via listener into `<app>/__pyronaut__/reports/tests/.pyronaut-last-nodeid.txt`; verified with new `JUnitPytestTestListenerTest` and module test suites.
+- 2026-03-13: Implemented GraalVM JDK auto-provisioning in orchestrator with cache under `~/.pyronaut/jdks`, compatibility check (`java -version` contains graalvm + major >= 25), SDKMAN-first install attempt (`sdk install java 25-graal` + `sdk home java 25-graal`), and fallback download from GraalVM CE release assets.
+- 2026-03-13: Added orchestrator tests validating JAVA_HOME env injection for run/test delegation, provider failure precondition behavior, SDKMAN-before-download ordering, fallback path usage, and idempotent cached reuse.
+- 2026-03-13: Completed Task 30 build wiring in `cli.py`: default JVM mode runs `python -m pip wheel --no-deps --wheel-dir <project>/dist <project>`, while native mode runs preflight (`install -> process`) then `native-image` into `<project>/__pyronaut__/native/application`.
+- 2026-03-13: Added deterministic native build failure diagnostics: invalid `--mode`/pyproject build mode now returns usage errors, and missing processed classes for native mode returns precondition failure with actionable message.
+- 2026-03-13: Post-Task-30 regression hardening confirmed selector edge-cases: plain module stems like `--tests test_mycontroller` are now resolved to explicit file selectors when possible, avoiding accidental full-suite execution while still preserving mixed wildcard behavior.
+- 2026-03-13: Restart reliability improved by shortening graceful terminate wait and enforcing kill fallback in orchestrator-managed process shutdown; this removes long hangs where delegated `pyronaut-run` ignored SIGTERM and blocked restart loops.
+- 2026-03-13: Report UX now mirrors canonical `__pyronaut__/reports/tests` artifacts back to project-root compatibility filenames (`junit.xml`, `index.html`, `.pyronaut-last-nodeid.txt`) when present, and removes stale root copies when absent.
+- 2026-03-13: `pyronaut build` success path now prints explicit post-build usage guidance (wheel install/run hints for JVM mode and binary path/run hint for native mode), reducing ambiguity for first-time users.

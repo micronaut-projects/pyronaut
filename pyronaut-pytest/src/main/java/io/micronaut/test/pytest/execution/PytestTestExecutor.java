@@ -36,13 +36,42 @@ import java.util.Set;
  */
 public class PytestTestExecutor {
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestExecutor.class);
+    private static final String DEFAULT_REPORTS_DIR = "__pyronaut__/reports/tests";
+    private static final String DEFAULT_JUNIT_XML_REPORT = "junit.xml";
+    private static final String DEFAULT_HTML_REPORT = "index.html";
+    private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
 
     private final EngineExecutionListener listener;
     private final Context context;
+    private final String junitXmlReportPath;
+    private final String htmlReportPath;
+    private final String lastNodeIdReportPath;
 
-    public PytestTestExecutor(Context context, EngineExecutionListener listener) {
+    public PytestTestExecutor(
+        Context context,
+        EngineExecutionListener listener,
+        String junitXmlReportPath,
+        String htmlReportPath,
+        String lastNodeIdReportPath
+    ) {
         this.listener = listener;
         this.context = context;
+        Path reportsDir = resolveReportsDir();
+        this.junitXmlReportPath = resolveReportPath(junitXmlReportPath, reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT));
+        this.htmlReportPath = resolveReportPath(htmlReportPath, reportsDir.resolve(DEFAULT_HTML_REPORT));
+        this.lastNodeIdReportPath = resolveReportPath(lastNodeIdReportPath, reportsDir.resolve(DEFAULT_NODEID_REPORT));
+    }
+
+    static String resolveReportPath(String configuredPath, Path fallbackPath) {
+        if (configuredPath == null || configuredPath.isBlank()) {
+            return fallbackPath.toString();
+        }
+        return configuredPath;
+    }
+
+    private static Path resolveReportsDir() {
+        Path workingDirectory = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+        return workingDirectory.resolve(DEFAULT_REPORTS_DIR).normalize();
     }
 
     /**
@@ -96,7 +125,12 @@ public class PytestTestExecutor {
 
         Path filePath = Paths.get(fileDescriptor.getUniqueId().getSegments().get(1).getValue());
         try {
-            JUnitPytestTestListener testListener = new JUnitPytestTestListener(listener, fileDescriptor.getChildren());
+            JUnitPytestTestListener testListener = new JUnitPytestTestListener(
+                listener,
+                fileDescriptor.getChildren(),
+                htmlReportPath,
+                lastNodeIdReportPath
+            );
             // Call run_pytest with the file path and listener
             Value result = context.eval("python", """
 from pyronaut.test import run_pytest
@@ -104,7 +138,8 @@ from pyronaut.test import run_pytest
 run_pytest
             """).execute(
                 new String[]{filePath.toString()},
-                testListener
+                testListener,
+                junitXmlReportPath
             );
 
             LOG.debug("Pytest execution completed for file: {}", fileDescriptor.getDisplayName());
@@ -126,13 +161,25 @@ run_pytest
 
         if (testFiles.isEmpty()) {
             LOG.debug("No test files found to execute");
+            JUnitPytestTestListener testListener = new JUnitPytestTestListener(
+                listener,
+                engineDescriptor.getChildren(),
+                htmlReportPath,
+                lastNodeIdReportPath
+            );
+            testListener.onResult(TestExecutionResult.successful());
             return;
         }
 
         LOG.debug("Running pytest on {} test files: {}", testFiles.size(), testFiles);
 
         try {
-            JUnitPytestTestListener testListener = new JUnitPytestTestListener(listener, engineDescriptor.getChildren());
+            JUnitPytestTestListener testListener = new JUnitPytestTestListener(
+                listener,
+                engineDescriptor.getChildren(),
+                htmlReportPath,
+                lastNodeIdReportPath
+            );
             // Convert paths to strings for pytest
             String[] fileArgs = testFiles.stream()
                 .map(Path::toString)
@@ -145,7 +192,8 @@ from pyronaut.test import run_pytest
 run_pytest
             """).execute(
                 fileArgs,
-                testListener
+                testListener,
+                junitXmlReportPath
             );
 
             LOG.debug("Pytest execution completed for all tests");
@@ -162,14 +210,20 @@ run_pytest
         try {
             // Execute only the file containing this test via pytest; the plugin will map events back
             Path filePath = testDescriptor.getFilePath();
-            JUnitPytestTestListener testListener = new JUnitPytestTestListener(listener, Set.copyOf(List.of(testDescriptor)));
+            JUnitPytestTestListener testListener = new JUnitPytestTestListener(
+                listener,
+                Set.copyOf(List.of(testDescriptor)),
+                htmlReportPath,
+                lastNodeIdReportPath
+            );
             context.eval("python", """
 from pyronaut.test import run_pytest
 
 run_pytest
             """).execute(
                 new String[]{filePath.toString()},
-                testListener
+                testListener,
+                junitXmlReportPath
             );
             LOG.debug("Test {} executed via pytest for file {}", testDescriptor.getDisplayName(), filePath);
 

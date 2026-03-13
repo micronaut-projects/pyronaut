@@ -30,7 +30,7 @@ def setup_virtual_filesystem():
         sys.path.insert(0, str(test_python_dir))
 
 
-def run_pytest(test_files: List[str], listener: Any):
+def run_pytest(test_files: List[str], listener: Any, junit_xml: Optional[str] = None):
     """
     Run pytest with the specified test files and listener.
 
@@ -46,14 +46,20 @@ def run_pytest(test_files: List[str], listener: Any):
         # Create the plugin with the Java listener
         plugin = create_plugin(listener)
 
+        pytest_args = list(test_files)
+        if junit_xml:
+            junit_path = Path(junit_xml)
+            junit_path.parent.mkdir(parents=True, exist_ok=True)
+            pytest_args.append(f"--junitxml={junit_path}")
+
         # Set sys.argv to avoid argument parsing issues in pytest
         # pytest tries to access sys.argv[0] for the program name
         original_argv = sys.argv[:]
-        sys.argv = ['pytest'] + test_files
+        sys.argv = ['pytest'] + pytest_args
 
         try:
             # Use pytest.main() with plugins - this should work now that sys.argv is set
-            exit_code = pytest.main(test_files, plugins=[plugin])
+            exit_code = pytest.main(pytest_args, plugins=[plugin])
             return exit_code
         finally:
             # Restore original sys.argv

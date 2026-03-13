@@ -28,9 +28,11 @@ import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 
 /**
@@ -49,7 +51,17 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_TEST_CLASSES_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String DEFAULT_TESTS_DIR = "tests";
+    private static final String DEFAULT_REPORTS_DIR = "__pyronaut__/reports/tests";
+    private static final String DEFAULT_JUNIT_XML_REPORT = "junit.xml";
+    private static final String DEFAULT_HTML_REPORT = "index.html";
+    private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
+
+    private static final String PYTEST_TESTS = "pytest.tests";
+    private static final String PYTEST_REPORT_DIR = "pytest.report.dir";
+    private static final String PYTEST_JUNIT_XML_REPORT = "pytest.report.junit";
+    private static final String PYTEST_HTML_REPORT = "pytest.report.html";
+    private static final String PYTEST_LAST_NODEID_REPORT = "pytest.report.nodeid";
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -71,6 +83,9 @@ public final class PyronautTestMain implements Callable<Integer> {
 
     @CommandLine.Option(names = "--select-class", description = "Select class to execute")
     List<String> selectClasses = List.of();
+
+    @CommandLine.Option(names = "--tests", description = "Select tests (Gradle-like). Repeatable.")
+    List<String> tests = List.of();
 
     @CommandLine.Option(
         names = "--debug-vm",
@@ -121,13 +136,37 @@ public final class PyronautTestMain implements Callable<Integer> {
             try (URLClassLoader classLoader = new URLClassLoader(urls.toArray(URL[]::new), Thread.currentThread().getContextClassLoader())) {
                 Thread.currentThread().setContextClassLoader(classLoader);
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
+                boolean publishReports = false;
                 if (selectClasses == null || selectClasses.isEmpty()) {
                     requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(processedClassesRoot)));
                     Path resolvedTestsDir = root.resolve(testsDir).normalize();
+                    Optional<String> pytestTests = buildPytestTestsParameter(tests);
                     if (Files.isDirectory(resolvedTestsDir)) {
-                        requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedTestsDir.toString()));
-                        requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedTestsDir.toString());
+                        List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
+                        boolean onlyDirectSelectors = hasOnlyDirectFileSelectors(tests);
+                        if (explicitFiles.isEmpty() || !onlyDirectSelectors) {
+                            requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedTestsDir.toString()));
+                            requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedTestsDir.toString());
+                        } else {
+                            for (Path file : explicitFiles) {
+                                requestBuilder.selectors(DiscoverySelectors.selectFile(file.toString()));
+                            }
+                        }
                     }
+
+                    Path reportsDir = root.resolve(DEFAULT_REPORTS_DIR).normalize();
+                    Path junitReport = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
+                    Path htmlReport = reportsDir.resolve(DEFAULT_HTML_REPORT);
+                    Path nodeIdReport = reportsDir.resolve(DEFAULT_NODEID_REPORT);
+                    Files.createDirectories(reportsDir);
+                    clearLegacyReportAliases(root);
+                    requestBuilder.configurationParameter(PYTEST_REPORT_DIR, reportsDir.toString());
+                    requestBuilder.configurationParameter(PYTEST_JUNIT_XML_REPORT, junitReport.toString());
+                    requestBuilder.configurationParameter(PYTEST_HTML_REPORT, htmlReport.toString());
+                    requestBuilder.configurationParameter(PYTEST_LAST_NODEID_REPORT, nodeIdReport.toString());
+                    publishReports = true;
+
+                    pytestTests.ifPresent(value -> requestBuilder.configurationParameter(PYTEST_TESTS, value));
                 } else {
                     for (String className : selectClasses) {
                         requestBuilder.selectors(DiscoverySelectors.selectClass(className));
@@ -137,7 +176,13 @@ public final class PyronautTestMain implements Callable<Integer> {
                 Launcher launcher = LauncherFactory.create();
                 SummaryGeneratingListener listener = new SummaryGeneratingListener();
                 launcher.registerTestExecutionListeners(listener);
-                launcher.execute(request);
+                try {
+                    launcher.execute(request);
+                } finally {
+                    if (publishReports) {
+                        publishReportLocations(root);
+                    }
+                }
                 long failures = listener.getSummary().getTotalFailureCount();
                 return failures == 0 ? 0 : 7;
             }
@@ -147,6 +192,177 @@ public final class PyronautTestMain implements Callable<Integer> {
         } catch (Exception e) {
             System.err.println("Test execution failed: " + e.getMessage());
             return 7;
+        }
+    }
+
+    static Optional<String> buildPytestTestsParameter(List<String> rawSelectors) {
+        if (rawSelectors == null || rawSelectors.isEmpty()) {
+            return Optional.empty();
+        }
+        List<String> cleaned = new ArrayList<>();
+        for (String raw : rawSelectors) {
+            if (raw == null) {
+                continue;
+            }
+            String value = raw.trim();
+            if (value.isEmpty()) {
+                throw new IllegalStateException("Invalid --tests selector: blank value");
+            }
+            if (value.contains("\n") || value.contains("\r")) {
+                throw new IllegalStateException("Invalid --tests selector: newlines are not allowed: " + value);
+            }
+            cleaned.add(value);
+        }
+        if (cleaned.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(String.join("|", cleaned));
+    }
+
+    static List<Path> resolveDirectTestFileSelectors(Path projectRoot, Path resolvedTestsDir, List<String> rawSelectors) {
+        if (rawSelectors == null || rawSelectors.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<Path> resolved = new LinkedHashSet<>();
+        for (String raw : rawSelectors) {
+            if (raw == null) {
+                continue;
+            }
+            String value = raw.trim();
+            if (value.isEmpty()) {
+                continue;
+            }
+
+            String selector = value;
+            int nodeIndex = selector.indexOf("::");
+            if (nodeIndex >= 0) {
+                selector = selector.substring(0, nodeIndex);
+            }
+
+            if (selector.contains("*") || selector.contains("?")) {
+                continue;
+            }
+
+            Path candidate = null;
+            if (selector.endsWith(".py")) {
+                candidate = toProjectPath(projectRoot, resolvedTestsDir, selector);
+            } else if (!selector.contains("/") && !selector.contains("\\")) {
+                candidate = resolvedTestsDir.resolve(selector + ".py");
+            }
+
+            if (candidate != null) {
+                Path normalized = candidate.normalize();
+                if (Files.isRegularFile(normalized)) {
+                    resolved.add(normalized);
+                }
+            }
+        }
+        return List.copyOf(resolved);
+    }
+
+    static boolean hasOnlyDirectFileSelectors(List<String> rawSelectors) {
+        if (rawSelectors == null || rawSelectors.isEmpty()) {
+            return false;
+        }
+        for (String raw : rawSelectors) {
+            if (raw == null) {
+                continue;
+            }
+            String value = raw.trim();
+            if (value.isEmpty()) {
+                continue;
+            }
+            String selector = value;
+            int nodeIndex = selector.indexOf("::");
+            if (nodeIndex >= 0) {
+                selector = selector.substring(0, nodeIndex);
+            }
+            if (selector.contains("*") || selector.contains("?")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static Path toProjectPath(Path projectRoot, Path resolvedTestsDir, String selector) {
+        Path selectorPath = Path.of(selector);
+        if (selectorPath.isAbsolute()) {
+            return selectorPath;
+        }
+        Path testsRelative = resolvedTestsDir.resolve(selectorPath);
+        if (Files.exists(testsRelative)) {
+            return testsRelative;
+        }
+        return projectRoot.resolve(selectorPath);
+    }
+
+    static void publishReportLocations(Path projectRoot) {
+        Path reportsDir = projectRoot.resolve(DEFAULT_REPORTS_DIR).normalize();
+        Path junit = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
+        Path html = reportsDir.resolve(DEFAULT_HTML_REPORT);
+        Path nodeid = reportsDir.resolve(DEFAULT_NODEID_REPORT);
+        Path legacyJunit = projectRoot.resolve(DEFAULT_JUNIT_XML_REPORT).normalize();
+        Path legacyHtml = projectRoot.resolve(DEFAULT_HTML_REPORT).normalize();
+        Path legacyNodeid = projectRoot.resolve(DEFAULT_NODEID_REPORT).normalize();
+
+        recoverCanonicalFromLegacy(junit, legacyJunit);
+        recoverCanonicalFromLegacy(html, legacyHtml);
+        recoverCanonicalFromLegacy(nodeid, legacyNodeid);
+
+        System.out.println("Test reports directory: " + reportsDir);
+        System.out.println("HTML report: " + html);
+
+        syncMirror(junit, legacyJunit);
+        syncMirror(html, legacyHtml);
+        syncMirror(nodeid, legacyNodeid);
+    }
+
+    static void clearLegacyReportAliases(Path projectRoot) {
+        try {
+            Files.deleteIfExists(projectRoot.resolve(DEFAULT_JUNIT_XML_REPORT).normalize());
+        } catch (Exception e) {
+            System.err.println("Unable to remove stale mirrored report: " + projectRoot.resolve(DEFAULT_JUNIT_XML_REPORT).normalize() + " (" + e.getMessage() + ")");
+        }
+        try {
+            Files.deleteIfExists(projectRoot.resolve(DEFAULT_HTML_REPORT).normalize());
+        } catch (Exception e) {
+            System.err.println("Unable to remove stale mirrored report: " + projectRoot.resolve(DEFAULT_HTML_REPORT).normalize() + " (" + e.getMessage() + ")");
+        }
+        try {
+            Files.deleteIfExists(projectRoot.resolve(DEFAULT_NODEID_REPORT).normalize());
+        } catch (Exception e) {
+            System.err.println("Unable to remove stale mirrored report: " + projectRoot.resolve(DEFAULT_NODEID_REPORT).normalize() + " (" + e.getMessage() + ")");
+        }
+    }
+
+    private static void recoverCanonicalFromLegacy(Path canonical, Path legacy) {
+        if (Files.exists(canonical) || !Files.exists(legacy)) {
+            return;
+        }
+        try {
+            Path parent = canonical.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            Files.copy(legacy, canonical, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            System.err.println("Unable to recover canonical report from legacy location: " + canonical + " (" + e.getMessage() + ")");
+        }
+    }
+
+    private static void syncMirror(Path source, Path target) {
+        if (!Files.exists(source)) {
+            try {
+                Files.deleteIfExists(target);
+            } catch (Exception e) {
+                System.err.println("Unable to remove stale mirrored report: " + target + " (" + e.getMessage() + ")");
+            }
+            return;
+        }
+        try {
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            System.err.println("Unable to mirror report to project root: " + target + " (" + e.getMessage() + ")");
         }
     }
 

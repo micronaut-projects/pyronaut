@@ -27,10 +27,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 
@@ -40,19 +44,49 @@ import java.util.Set;
 public class JUnitPytestTestListener implements PytestTestListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(JUnitPytestTestListener.class);
+    private static final String MICRONAUT_LOGO_SVG = """
+        <svg class="micronaut-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120" role="img" aria-label="Micronaut">
+          <circle cx="44" cy="60" r="24" fill="#ff4500"/>
+          <text x="84" y="72" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#ff4500">Micronaut</text>
+        </svg>
+        """;
     private final EngineExecutionListener junitListener;
     private final Set<? extends TestDescriptor> children;
     private final List<TestDescriptor> allDescriptors;
+    private final Path htmlReportPath;
+    private final Path lastNodeIdPath;
+    private final List<TestOutcome> outcomes = new ArrayList<>();
+    private final Set<String> writtenNodeIds = new HashSet<>();
+    private final Map<String, TestStreamOutput> outputByTest = new LinkedHashMap<>();
 
     public JUnitPytestTestListener(
         EngineExecutionListener junitListener,
         Set<? extends TestDescriptor> testDescriptors) {
+        this(junitListener, testDescriptors, null, null);
+    }
+
+    public JUnitPytestTestListener(
+        EngineExecutionListener junitListener,
+        Set<? extends TestDescriptor> testDescriptors,
+        String htmlReportPath,
+        String lastNodeIdPath
+    ) {
         this.junitListener = junitListener;
         this.children = testDescriptors;
         this.allDescriptors = new ArrayList<>();
+        this.htmlReportPath = toPath(htmlReportPath);
+        this.lastNodeIdPath = toPath(lastNodeIdPath);
+        initializeNodeIdReport();
         for (TestDescriptor td : testDescriptors) {
             flatten(td);
         }
+    }
+
+    private static Path toPath(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return Paths.get(value);
     }
 
     private void flatten(TestDescriptor d) {
@@ -77,6 +111,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     @Override
     public void beforeTest(String testId, Value item) {
         LOG.debug("Pytest starting test: {}", testId);
+        writeNodeId(testId);
 
         allDescriptors
             .stream()
@@ -94,6 +129,8 @@ public class JUnitPytestTestListener implements PytestTestListener {
     @Override
     public void afterTest(String testId, Value item, TestExecutionResult result) {
         LOG.debug("Pytest finished test: {} with result: {}", testId, result);
+        writeNodeId(testId);
+        outcomes.add(new TestOutcome(testId, result));
         allDescriptors
             .stream()
             .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
@@ -118,22 +155,204 @@ public class JUnitPytestTestListener implements PytestTestListener {
     @Override
     public void onResult(TestExecutionResult result) {
         LOG.debug("Pytest session completed");
+        writeHtmlReport();
     }
 
     @Override
     public void onOutput(String testId, String stream, String text) {
-        // Write nodeid to a debug file for troubleshooting mapping issues
-        try {
-            Files.writeString(
-                Paths.get(".pyronaut-last-nodeid.txt"),
-                testId + "\n",
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND
-            );
-        } catch (Exception ignored) { /* ignored */ }
+        if (testId != null && text != null && !text.isBlank()) {
+            outputByTest.computeIfAbsent(testId, ignored -> new TestStreamOutput())
+                .append(stream, text);
+        }
         allDescriptors
             .stream()
             .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
             .findAny().ifPresent(td -> junitListener.reportingEntryPublished(td, ReportEntry.from(stream, text)));
+    }
+
+    private void writeNodeId(String testId) {
+        if (lastNodeIdPath == null) {
+            return;
+        }
+        if (!writtenNodeIds.add(testId)) {
+            return;
+        }
+        try {
+            Path parent = lastNodeIdPath.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            Files.writeString(
+                lastNodeIdPath,
+                testId + "\n",
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND
+            );
+        } catch (Exception e) {
+            LOG.debug("Unable to write last nodeid report: {}", lastNodeIdPath, e);
+        }
+    }
+
+    private void initializeNodeIdReport() {
+        if (lastNodeIdPath == null) {
+            return;
+        }
+        try {
+            Path parent = lastNodeIdPath.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            Files.writeString(lastNodeIdPath, "", StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (Exception e) {
+            LOG.debug("Unable to initialize last nodeid report: {}", lastNodeIdPath, e);
+        }
+    }
+
+    private void writeHtmlReport() {
+        if (htmlReportPath == null) {
+            ensureNodeIdFileExists();
+            return;
+        }
+        try {
+            Path parent = htmlReportPath.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+
+            long total = outcomes.size();
+            long passed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.SUCCESSFUL).count();
+            long failed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.FAILED).count();
+
+            StringBuilder html = new StringBuilder(4096);
+            html.append("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n");
+            html.append("<title>Pyronaut Test Report</title>\n");
+            html.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+            html.append("<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\" crossorigin=\"anonymous\">\n");
+            html.append("<style>")
+                .append("body{margin:24px;background:#f8f9fa;} ")
+                .append(".report-shell{max-width:1100px;margin:0 auto;} ")
+                .append(".micronaut-logo{width:320px;max-width:100%;height:auto;display:block;margin:0 auto 1rem auto;} ")
+                .append("details>summary{cursor:pointer;list-style:none;} ")
+                .append("details>summary::-webkit-details-marker{display:none;} ")
+                .append("pre{white-space:pre-wrap;word-break:break-word;} ")
+                .append(".status-badge{font-size:.85rem;} ")
+                .append("</style>\n");
+            html.append("</head><body>\n");
+            html.append("<main class=\"report-shell\">\n")
+                .append("<div class=\"card shadow-sm\"><div class=\"card-body\">\n")
+                .append(MICRONAUT_LOGO_SVG)
+                .append("<h1 class=\"h3 text-center mb-3\">Pyronaut Test Report</h1>\n")
+                .append("<div class=\"d-flex flex-wrap justify-content-center gap-2 mb-4\">\n")
+                .append("<span class=\"badge text-bg-secondary\">Total: ").append(total).append("</span>")
+                .append("<span class=\"badge text-bg-success\">Passed: ").append(passed).append("</span>")
+                .append("<span class=\"badge text-bg-danger\">Failed: ").append(failed).append("</span>")
+                .append("</div>\n");
+
+            for (TestOutcome outcome : outcomes) {
+                boolean isSuccess = outcome.result().getStatus() == TestExecutionResult.Status.SUCCESSFUL;
+                String status = isSuccess ? "PASSED" : "FAILED";
+                TestStreamOutput details = outputByTest.getOrDefault(outcome.testId(), new TestStreamOutput());
+                String failure = outcome.result().getThrowable().map(Throwable::toString).orElse("");
+                String badgeClass = isSuccess ? "text-bg-success" : "text-bg-danger";
+
+                html.append("<details class=\"card mb-2\">\n")
+                    .append("<summary class=\"card-header d-flex justify-content-between align-items-center\">\n")
+                    .append("<span class=\"fw-semibold text-break\">").append(escapeHtml(outcome.testId())).append("</span>")
+                    .append("<span class=\"badge status-badge ").append(badgeClass).append("\">")
+                    .append(status)
+                    .append("</span></summary>\n")
+                    .append("<div class=\"card-body\">\n");
+
+                appendDetailsSection(html, "Failure", failure, "danger");
+                appendDetailsSection(html, "Framework Log", details.log(), "warning");
+                appendDetailsSection(html, "System Out", details.stdout(), "primary");
+                appendDetailsSection(html, "System Err", details.stderr(), "secondary");
+
+                if (failure.isBlank() && details.log().isBlank() && details.stdout().isBlank() && details.stderr().isBlank()) {
+                    html.append("<p class=\"text-body-secondary mb-0\">No additional diagnostics captured for this test.</p>\n");
+                }
+
+                html.append("</div></details>\n");
+            }
+
+            html.append("</div></div></main>\n</body></html>\n");
+            Files.writeString(htmlReportPath, html.toString(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (Exception e) {
+            LOG.debug("Unable to write HTML report: {}", htmlReportPath, e);
+        } finally {
+            ensureNodeIdFileExists();
+        }
+    }
+
+    private static void appendDetailsSection(StringBuilder html, String title, String content, String color) {
+        if (content == null || content.isBlank()) {
+            return;
+        }
+        html.append("<section class=\"mb-3\">\n")
+            .append("<h2 class=\"h6 text-").append(color).append("\">")
+            .append(escapeHtml(title))
+            .append("</h2>\n")
+            .append("<pre class=\"bg-light border rounded p-2\"><code>")
+            .append(escapeHtml(content))
+            .append("</code></pre>\n")
+            .append("</section>\n");
+    }
+
+    private void ensureNodeIdFileExists() {
+        if (lastNodeIdPath == null || Files.exists(lastNodeIdPath)) {
+            return;
+        }
+        try {
+            Path parent = lastNodeIdPath.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            Files.writeString(lastNodeIdPath, "", StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (Exception e) {
+            LOG.debug("Unable to initialize last nodeid report: {}", lastNodeIdPath, e);
+        }
+    }
+
+    private static String escapeHtml(String text) {
+        return text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;");
+    }
+
+    private record TestOutcome(String testId, TestExecutionResult result) {
+    }
+
+    private static final class TestStreamOutput {
+        private final StringBuilder stdout = new StringBuilder();
+        private final StringBuilder stderr = new StringBuilder();
+        private final StringBuilder log = new StringBuilder();
+
+        private void append(String stream, String text) {
+            if (text == null || text.isEmpty()) {
+                return;
+            }
+            if ("stderr".equals(stream)) {
+                stderr.append(text);
+            } else if ("log".equals(stream)) {
+                log.append(text);
+            } else {
+                stdout.append(text);
+            }
+        }
+
+        private String stdout() {
+            return stdout.toString();
+        }
+
+        private String stderr() {
+            return stderr.toString();
+        }
+
+        private String log() {
+            return log.toString();
+        }
     }
 }

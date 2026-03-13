@@ -27,6 +27,8 @@ import org.graalvm.python.embedding.VirtualFileSystem;
 import org.junit.platform.engine.*;
 import org.junit.platform.engine.discovery.ClassNameFilter;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
+import org.junit.platform.engine.discovery.DirectorySelector;
+import org.junit.platform.engine.discovery.FileSelector;
 import org.junit.platform.engine.discovery.PackageNameFilter;
 import org.junit.platform.engine.support.descriptor.EngineDescriptor;
 import org.slf4j.Logger;
@@ -46,8 +48,16 @@ public class PytestTestEngine implements TestEngine {
  
     public static final String ENGINE_ID = "pyronaut-pytest";
     public static final String TEST_SOURCE_DIR = "pytest.src.dir";
+    public static final String TESTS = "pytest.tests";
+    public static final String REPORT_DIR = "pytest.report.dir";
+    public static final String JUNIT_XML_REPORT = "pytest.report.junit";
+    public static final String HTML_REPORT = "pytest.report.html";
+    public static final String LAST_NODEID_REPORT = "pytest.report.nodeid";
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
     private Context context = ContextHolder.isInitialized() && ContextHolder.isReuseContext() ? ContextHolder.getContext() : null;
+    private String junitXmlReport;
+    private String htmlReport;
+    private String lastNodeIdReport;
  
     @Override
     public String getId() {
@@ -66,16 +76,24 @@ public class PytestTestEngine implements TestEngine {
 
         var engineDescriptor = new EngineDescriptor(uniqueId, "Micronaut Pytest Engine");
         var selectorResolver = new PytestDiscoverySelectorResolver(context);
+        selectorResolver.setTestFilters(PytestTestFilters.from(discoveryRequest.getConfigurationParameters().get(TESTS).orElse(null)));
+        this.junitXmlReport = configurationParameters.get(JUNIT_XML_REPORT).orElse(null);
+        this.htmlReport = configurationParameters.get(HTML_REPORT).orElse(null);
+        this.lastNodeIdReport = configurationParameters.get(LAST_NODEID_REPORT).orElse(null);
 
         var testSrc = configurationParameters.get(TEST_SOURCE_DIR).orElse(null);
         Path baseDirectory = null;
+        var explicitFileSelectors = discoveryRequest.getSelectorsByType(FileSelector.class);
+        var explicitDirectorySelectors = discoveryRequest.getSelectorsByType(DirectorySelector.class);
         if (testSrc != null) {
             var srcPath = Paths.get(testSrc);
             if (Files.exists(srcPath)) {
                 baseDirectory = srcPath;
                 selectorResolver.setBaseDirectory(baseDirectory);
-                var directorySelector = DiscoverySelectors.selectDirectory(testSrc);
-                selectorResolver.resolveSelectors(directorySelector, engineDescriptor);
+                if (explicitFileSelectors.isEmpty() && explicitDirectorySelectors.isEmpty()) {
+                    var directorySelector = DiscoverySelectors.selectDirectory(testSrc);
+                    selectorResolver.resolveSelectors(directorySelector, engineDescriptor);
+                }
             }
         }
 
@@ -133,7 +151,13 @@ public class PytestTestEngine implements TestEngine {
             LOG.debug("Starting test execution");
 
             var rootDescriptor = request.getRootTestDescriptor();
-            var executor = new PytestTestExecutor(this.context, request.getEngineExecutionListener());
+            var executor = new PytestTestExecutor(
+                this.context,
+                request.getEngineExecutionListener(),
+                junitXmlReport,
+                htmlReport,
+                lastNodeIdReport
+            );
 
             try {
                 executor.execute(rootDescriptor);

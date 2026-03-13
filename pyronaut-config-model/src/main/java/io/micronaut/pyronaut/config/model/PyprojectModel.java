@@ -56,10 +56,12 @@ public record PyprojectModel(Project project,
      * @param version pyronaut version
      * @param repositories configured repositories
      * @param dependencies dependency scopes
+     * @param build build defaults/settings
      */
     public record Pyronaut(String version,
                            List<String> repositories,
-                           Dependencies dependencies) {
+                           Dependencies dependencies,
+                           Build build) {
     }
 
     /**
@@ -72,5 +74,13 @@ public record PyprojectModel(Project project,
     public record Dependencies(List<String> runtime,
                                List<String> build,
                                List<String> test) {
+    }
+
+    /**
+     * tool.pyronaut.build table.
+     *
+     * @param mode default build mode (for example jvm or native)
+     */
+    public record Build(String mode) {
     }
 }

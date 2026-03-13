@@ -185,6 +185,13 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
 > - Orchestrator `run` preflight coordination hardening is tracked under new merged task 22.
 > - Orchestrator `test` preflight coordination hardening is tracked under new merged task 23.
 > - JVM debug mode for `pyronaut-run`/`pyronaut-test` is tracked under new merged task 24.
+> - `pyronaut-test` Gradle-like `--tests` filtering is tracked under new merged task 25.
+> - `pyronaut-run` native reflection metadata + missing-main fallback hardening is tracked under new merged task 26.
+> - Orchestrator auto-restart-on-change for `pyronaut run` is tracked under new merged task 27.
+> - Test report outputs and `.pyronaut-last-nodeid.txt` relocation under `__pyronaut__` are tracked under new merged task 28.
+> - Orchestrator GraalVM JDK auto-provisioning (SDKMAN-first, fallback download, JDK 25+) is tracked under new merged task 29.
+> - New `pyronaut build` command + `[tool.pyronaut]` build-mode model support is tracked under new merged task 30.
+> - `pyronaut-test` report UX modernization (console link minimization + rich HTML details + Micronaut branding) is tracked under new merged task 31.
 
 - [x] 1. Define v2 CLI protocol, contracts, and exit-code taxonomy
 
@@ -1332,6 +1339,414 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-24-test.out, .sisyphus/evidence/task-24-test.err
   ```
 
+- [x] 25. Add Gradle-like `--tests` selection support to `pyronaut-test` and orchestrator forwarding *(merged action item)*
+
+  **What to do**:
+  - Add repeatable `--tests` option to `pyronaut-test` CLI and orchestrator forwarding path (`pyronaut test --tests ...`).
+  - Define deterministic selector mapping (default for this plan):
+    - each `--tests` value is OR-combined with other `--tests` values.
+    - if selector contains `::` or ends with `.py`, treat as pytest nodeid/path selector and pass through.
+    - otherwise treat as Gradle-like wildcard (`*`, `?`) against normalized pytest nodeids.
+  - Wire selection down to pytest execution layer so only matching tests are executed.
+  - Preserve current behavior when `--tests` is absent.
+
+  **Must NOT do**:
+  - Do not change default whole-suite behavior when no `--tests` option is provided.
+  - Do not broaden scope to marker-expression DSL redesign beyond requested `--tests` support.
+  - Do not silently ignore invalid/empty selectors; return deterministic diagnostics.
+
+  **Dependencies**:
+  - Depends on: 8 (test CLI baseline), 9 (orchestrator forwarding), 17 (test classpath parity).
+  - Blocks: 11 parity sign-off for selective test execution UX.
+
+  **References**:
+  - `pyronaut-test/src/main/java/io/micronaut/pyronaut/test/PyronautTestMain.java` - new CLI option and discovery wiring.
+  - `pyronaut-pytest/src/main/java/io/micronaut/test/pytest/PytestTestEngine.java` - engine selection/descriptor integration.
+  - `pyronaut-pytest/src/main/java/io/micronaut/test/pytest/execution/PytestTestExecutor.java` - pytest invocation argument wiring.
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - orchestrator argument propagation.
+  - Pytest usage docs (`-k`, nodeid selection): https://github.com/pytest-dev/pytest/blob/main/doc/en/how-to/usage.rst
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut-test --tests tests/test_health.py::test_ping --project-dir <app>` executes only the targeted nodeid.
+  - [x] `pyronaut-test --tests '*health*' --project-dir <app>` filters execution to wildcard-matching tests.
+  - [x] Multiple `--tests` options are OR-combined deterministically.
+  - [x] `pyronaut test --tests ...` forwards selectors to delegated `pyronaut-test` command unchanged.
+  - [x] Invalid selector input produces clear deterministic error message while preserving existing exit semantics policy.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Nodeid selector executes exactly one targeted test
+    Tool: Bash
+    Preconditions: fixture project has at least 3 tests including tests/test_health.py::test_ping
+    Steps:
+      1. Run: pyronaut test --tests tests/test_health.py::test_ping --project-dir <app> > .sisyphus/evidence/task-25-nodeid.out 2> .sisyphus/evidence/task-25-nodeid.err
+      2. Assert report output includes executed test id tests/test_health.py::test_ping
+      3. Assert no unrelated test ids appear in output/report
+    Expected Result: only selected nodeid executes
+    Evidence: .sisyphus/evidence/task-25-nodeid.out, .sisyphus/evidence/task-25-nodeid.err
+
+  Scenario: Wildcard selector excludes non-matching tests
+    Tool: Bash
+    Preconditions: fixture contains both health and non-health tests
+    Steps:
+      1. Run: pyronaut-test --tests '*health*' --project-dir <app> > .sisyphus/evidence/task-25-wildcard.out 2> .sisyphus/evidence/task-25-wildcard.err
+      2. Assert execution report contains only wildcard-matching nodeids
+      3. Assert command exit matches filtered suite result
+    Expected Result: deterministic Gradle-like wildcard filtering works
+    Evidence: .sisyphus/evidence/task-25-wildcard.out, .sisyphus/evidence/task-25-wildcard.err
+  ```
+
+- [x] 26. Harden `pyronaut-run` native/reflection behavior with explicit metadata and quiet missing-main fallback *(merged action item)*
+
+  **What to do**:
+  - Add run-module reachability metadata file for reflective Micronaut startup path used by `PyronautRunMain`.
+  - Ensure missing default main class (`pyronaut_application.PyronautMain`) follows tolerant fallback path without noisy stacktrace spam in normal mode.
+  - Keep actionable diagnostics when both default-main and fallback startup fail.
+  - Add tests for fallback/noisy-log behavior and native metadata presence.
+
+  **Must NOT do**:
+  - Do not remove reflective fallback behavior.
+  - Do not hide real runtime failures when fallback path also fails.
+  - Do not broaden scope to unrelated run-command feature additions.
+
+  **Dependencies**:
+  - Depends on: 7 (`pyronaut-run` baseline), 24 (`--debug-vm` behavior baseline).
+  - Blocks: 11 parity sign-off for run reliability and native readiness.
+
+  **References**:
+  - `pyronaut-run/src/main/java/io/micronaut/pyronaut/run/PyronautRunMain.java` - fallback and startup path.
+  - `pyronaut-run/src/test/java/io/micronaut/pyronaut/run/PyronautRunMainTest.java` - run behavior tests.
+  - `pyronaut-install/src/main/resources/META-INF/native-image/io.micronaut/micronaut-pyronaut-install/reachability-metadata.json` - metadata structure precedent.
+  - GraalVM reachability metadata docs: https://github.com/oracle/graal/blob/master/docs/reference-manual/native-image/ReachabilityMetadata.md
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut-run` module contains reachability metadata covering reflective Micronaut startup entry points.
+  - [x] Missing `pyronaut_application.PyronautMain` uses fallback startup path without default stacktrace noise in non-verbose mode.
+  - [x] If fallback startup also fails, command returns non-zero with concise root-cause diagnostics.
+  - [x] Run tests validate fallback path and diagnostics behavior.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Missing default main class falls back cleanly
+    Tool: Bash
+    Preconditions: fixture without pyronaut_application.PyronautMain but with valid Micronaut bean bootstrap path
+    Steps:
+      1. Run: pyronaut-run --project-dir <fixture> > .sisyphus/evidence/task-26-fallback.out 2> .sisyphus/evidence/task-26-fallback.err
+      2. Assert process starts successfully via fallback path
+      3. Assert stderr does not contain full ClassNotFoundException stacktrace in default mode
+    Expected Result: fallback startup works with low-noise diagnostics
+    Evidence: .sisyphus/evidence/task-26-fallback.out, .sisyphus/evidence/task-26-fallback.err
+
+  Scenario: Broken fallback still fails with actionable diagnostics
+    Tool: Bash
+    Preconditions: fixture missing both default main and required fallback classes
+    Steps:
+      1. Run: pyronaut-run --project-dir <broken-fixture> > .sisyphus/evidence/task-26-fail.out 2> .sisyphus/evidence/task-26-fail.err
+      2. Assert non-zero exit code
+      3. Assert stderr contains concise cause chain and recovery hint
+    Expected Result: true failures remain visible and diagnosable
+    Evidence: .sisyphus/evidence/task-26-fail.out, .sisyphus/evidence/task-26-fail.err
+  ```
+
+- [x] 27. Add orchestrator-managed auto-restart for `pyronaut run` on `src`/`tests`/`config` changes *(merged action item)*
+
+  **What to do**:
+  - Add file-watch loop for orchestrated `pyronaut run` that monitors `src`, `tests`, and `config`.
+  - On qualifying change, re-run deterministic pipeline `update -> process -> run` and replace active run process.
+  - Add debounce and ignore rules to prevent restart loops from generated artifacts.
+  - Add integration/e2e tests proving restart triggers and ignore behavior.
+
+  **Must NOT do**:
+  - Do not restart on writes under generated/output/cache paths (`__pyronaut__`, `.pytest_cache`, build outputs).
+  - Do not bypass declared `update -> process -> run` order during restart cycle.
+  - Do not leave orphan run processes after restart.
+
+  **Dependencies**:
+  - Depends on: 22 (deterministic run preflight), 21 (`--no-cache` propagation contract), 24 (debug-vm delegation behavior).
+  - Blocks: 11 parity sign-off for iterative dev-loop UX.
+
+  **References**:
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - run orchestration and subprocess lifecycle.
+  - `pyronaut/src/test/python/orchestrator_test.py` - deterministic stage-order tests and delegation tracing.
+  - `pyronaut/src/test/python/e2e_flow_test.py` - process lifecycle test patterns.
+  - `pyronaut-cli/src/main/java/io/micronaut/python/cli/PyronautFileWatcher.java` - watch-root and restart-loop precedent.
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut run --project-dir <app>` automatically restarts on source changes under `src`, `tests`, or `config`.
+  - [x] Restart path always re-runs `update -> process -> run` in order.
+  - [x] Writes under ignored output/cache directories do not trigger restart.
+  - [x] Restart logic terminates prior run process before starting replacement.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Source change triggers full restart pipeline
+    Tool: Bash
+    Preconditions: PYRONAUT_TRACE_DELEGATION=true; app fixture starts successfully
+    Steps:
+      1. Start: pyronaut run --project-dir <app> > .sisyphus/evidence/task-27-run.out 2> .sisyphus/evidence/task-27-run.err
+      2. Modify file: <app>/src/... (touch or small content change)
+      3. Assert trace shows new cycle of pyronaut-install -> pyronaut-processor -> pyronaut-run
+      4. Assert only one active run process remains after restart
+    Expected Result: orchestrator restarts app deterministically after source change
+    Evidence: .sisyphus/evidence/task-27-run.out, .sisyphus/evidence/task-27-run.err
+
+  Scenario: Generated output write does not trigger restart
+    Tool: Bash
+    Preconditions: run watcher active
+    Steps:
+      1. Modify file under <app>/__pyronaut__/reports/tests
+      2. Wait debounce interval
+      3. Assert no additional restart cycle appears in delegation trace
+    Expected Result: ignore rules prevent restart loops
+    Evidence: .sisyphus/evidence/task-27-ignore.out
+  ```
+
+- [x] 28. Standardize test reporting outputs under `__pyronaut__/reports/tests` and relocate `.pyronaut-last-nodeid.txt` *(merged action item)*
+
+  **What to do**:
+  - Ensure `pyronaut-test` emits JUnit XML and HTML reports under `__pyronaut__/reports/tests` with deterministic filenames.
+  - Move `.pyronaut-last-nodeid.txt` from project root to `__pyronaut__/reports/tests/.pyronaut-last-nodeid.txt`.
+  - Ensure report directories are created automatically and are stable for CI artifact collection.
+  - Keep report generation behavior deterministic for both full suite and filtered runs.
+
+  **Must NOT do**:
+  - Do not keep writing nodeid file to project root.
+  - Do not require manual post-processing to find report outputs.
+  - Do not break existing failure propagation semantics in test execution.
+
+  **Dependencies**:
+  - Depends on: 8 (`pyronaut-test` baseline), 25 (`--tests` filtering), 27 (run watcher ignore path needs report location awareness).
+  - Blocks: 11 parity sign-off for CI-reporting determinism.
+
+  **References**:
+  - `pyronaut-pytest/src/main/java/io/micronaut/test/pytest/execution/JUnitPytestTestListener.java` - current `.pyronaut-last-nodeid.txt` write location.
+  - `pyronaut-test/src/main/java/io/micronaut/pyronaut/test/PyronautTestMain.java` - test command/report listener wiring.
+  - `pyronaut-pytest/src/main/resources/META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/pytest_listener.py` - pytest event/report bridge.
+  - Pytest JUnit report docs: https://github.com/pytest-dev/pytest/blob/main/doc/en/how-to/output.rst
+  - pytest-html docs: https://github.com/pytest-dev/pytest-html/blob/master/docs/user_guide.rst
+
+  **Acceptance Criteria**:
+  - [x] Running `pyronaut test --project-dir <app>` writes JUnit XML to `<app>/__pyronaut__/reports/tests/junit.xml`.
+  - [x] Running same command writes HTML report to `<app>/__pyronaut__/reports/tests/index.html`.
+  - [x] Last-nodeid file is written to `<app>/__pyronaut__/reports/tests/.pyronaut-last-nodeid.txt`.
+  - [x] No `.pyronaut-last-nodeid.txt` is created at project root.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Test run emits XML and HTML reports in deterministic directory
+    Tool: Bash
+    Preconditions: fixture app with passing tests
+    Steps:
+      1. Run: pyronaut test --project-dir <app> > .sisyphus/evidence/task-28-test.out 2> .sisyphus/evidence/task-28-test.err
+      2. Assert file exists: <app>/__pyronaut__/reports/tests/junit.xml
+      3. Assert file exists: <app>/__pyronaut__/reports/tests/index.html
+      4. Assert junit.xml contains executed testcase entries
+    Expected Result: report artifacts are generated in canonical directory
+    Evidence: .sisyphus/evidence/task-28-test.out, .sisyphus/evidence/task-28-test.err
+
+  Scenario: Last nodeid file moved out of project root
+    Tool: Bash
+    Preconditions: fixture includes at least one failing test
+    Steps:
+      1. Run failing test invocation via pyronaut test
+      2. Assert file exists: <app>/__pyronaut__/reports/tests/.pyronaut-last-nodeid.txt
+      3. Assert file does not exist: <app>/.pyronaut-last-nodeid.txt
+    Expected Result: nodeid tracking is stored under __pyronaut__/reports/tests only
+    Evidence: .sisyphus/evidence/task-28-nodeid-location.txt
+  ```
+
+- [x] 29. Add GraalVM JDK auto-provisioning in orchestrator (`~/.pyronaut/jdks`, SDKMAN-first, fallback download, min JDK 25) *(merged action item)*
+
+  **What to do**:
+  - Add orchestrator JDK provisioning service for GraalVM-compatible JDKs under `~/.pyronaut/jdks`.
+  - Provisioning order (default for this plan):
+    1. use existing compatible JDK if already configured/present,
+    2. attempt SDKMAN-managed install when SDKMAN is available,
+    3. fallback to official script-friendly archive download URLs.
+  - Enforce minimum JDK major version 25 for provisioned GraalVM runtime.
+  - Keep installs idempotent and reuse already-provisioned versions.
+
+  **Must NOT do**:
+  - Do not re-download/reinstall same compatible JDK on every command run.
+  - Do not override explicit user Java settings when already compatible.
+  - Do not broaden phase-1 support beyond macOS/Linux platform matrix.
+
+  **Dependencies**:
+  - Depends on: 9 (orchestrator baseline), 10 (wheel packaging path for bundled behavior), 26 (run native-readiness assumptions), 30 (build native mode).
+  - Blocks: native build/run developer workflow parity in 11.
+
+  **References**:
+  - GraalVM setup automation action: https://github.com/graalvm/setup-graalvm/blob/main/README.md
+  - Oracle GraalVM support matrix (JDK 25 baseline): https://github.com/oracle/graal/blob/master/docs/oracle-graalvm/support.md
+  - SDKMAN install/init docs: https://github.com/sdkman/sdkman-cli/blob/master/README.md and https://github.com/sdkman/sdkman-cli/blob/master/src/main/bash/sdkman-init.sh
+  - GraalVM CE release artifacts (script-friendly URLs): https://github.com/graalvm/graalvm-ce-builds/releases
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - orchestrator command bootstrap and environment wiring.
+
+  **Acceptance Criteria**:
+  - [x] Commands requiring GraalVM detect compatible preinstalled JDK and skip provisioning.
+  - [x] When no compatible JDK exists, orchestrator provisions JDK 25+ under `~/.pyronaut/jdks`.
+  - [x] SDKMAN path is attempted first when available; fallback download path works when SDKMAN unavailable.
+  - [x] Second identical run is idempotent (no re-download) and reuses installed JDK.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Provisioning installs GraalVM JDK into ~/.pyronaut/jdks
+    Tool: Bash
+    Preconditions: No compatible GraalVM JDK configured; network-enabled fixture
+    Steps:
+      1. Run command requiring GraalVM (e.g., pyronaut build --native --project-dir <app>)
+      2. Assert directory created under ~/.pyronaut/jdks/<resolved-version>
+      3. Assert selected JAVA_HOME points to provisioned location for delegated native step
+    Expected Result: compatible JDK auto-provisioned and used
+    Evidence: .sisyphus/evidence/task-29-provisioning.out
+
+  Scenario: SDKMAN unavailable triggers fallback download flow
+    Tool: Bash
+    Preconditions: SDKMAN not present in environment; no compatible cached JDK
+    Steps:
+      1. Run same native-required command
+      2. Assert logs indicate SDKMAN path skipped/unavailable
+      3. Assert fallback archive download path completes and install is usable
+    Expected Result: orchestrator provisions via fallback without manual intervention
+    Evidence: .sisyphus/evidence/task-29-fallback.out
+  ```
+
+- [x] 30. Add new `pyronaut build` command with `[tool.pyronaut]` build-mode model (JVM wheel default, `--native` native flow) *(merged action item)*
+
+  **What to do**:
+  - Add orchestrator command surface `pyronaut build`.
+  - Extend config model (`[tool.pyronaut]`) with build-mode settings used by `pyronaut build`.
+  - Define deterministic build modes (default for this plan):
+    - default JVM mode builds project wheel artifact,
+    - `--native` mode builds native-image artifact using provisioned GraalVM JDK path.
+  - Ensure command composes with existing install/process/build pipeline and artifact output conventions.
+
+  **Must NOT do**:
+  - Do not implement a second dependency resolver path; reuse existing install/config infrastructure.
+  - Do not make `--native` default mode.
+  - Do not introduce unrelated packaging system redesign.
+
+  **Dependencies**:
+  - Depends on: 2 (config model), 9 (orchestrator), 10 (wheel packaging), 29 (GraalVM JDK provisioning).
+  - Blocks: 11 parity sign-off for packaging/build workflow completeness.
+
+  **References**:
+  - `pyronaut-config-model/src/main/java/io/micronaut/pyronaut/config/model/PyprojectModel.java` - typed model extension point.
+  - `pyronaut-config-model/src/main/java/io/micronaut/pyronaut/config/model/PyprojectModelReader.java` - parser extension point.
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - new orchestrator subcommand implementation.
+  - `pyronaut/build.gradle` - existing wheel build workflow baseline.
+  - GraalVM native-image docs: https://github.com/oracle/graal/blob/master/docs/reference-manual/native-image/README.md
+
+  **Acceptance Criteria**:
+  - [x] `pyronaut build --project-dir <app>` (without `--native`) produces wheel artifact under canonical dist output.
+  - [x] `pyronaut build --native --project-dir <app>` produces native artifact under deterministic build output path.
+  - [x] `[tool.pyronaut]` build configuration is parsed by config model and respected by build command defaults.
+  - [x] Build command tests cover mode selection, config fallback, and failure diagnostics.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Default build mode produces wheel artifact
+    Tool: Bash
+    Preconditions: fixture app with valid pyproject.toml build metadata
+    Steps:
+      1. Run: pyronaut build --project-dir <app> > .sisyphus/evidence/task-30-jvm.out 2> .sisyphus/evidence/task-30-jvm.err
+      2. Assert dist directory contains wheel artifact (*.whl)
+      3. Optionally install wheel in fresh venv and assert import/entrypoint smoke
+    Expected Result: default build path yields JVM wheel artifact
+    Evidence: .sisyphus/evidence/task-30-jvm.out, .sisyphus/evidence/task-30-jvm.err
+
+  Scenario: Native build mode uses provisioned GraalVM and emits native artifact
+    Tool: Bash
+    Preconditions: fixture supports native build; provisioning path available
+    Steps:
+      1. Run: pyronaut build --native --project-dir <app> > .sisyphus/evidence/task-30-native.out 2> .sisyphus/evidence/task-30-native.err
+      2. Assert logs show GraalVM JDK selection/provisioning source
+      3. Assert native artifact exists at documented output location
+    Expected Result: native build mode is deterministic and fully automated
+    Evidence: .sisyphus/evidence/task-30-native.out, .sisyphus/evidence/task-30-native.err
+  ```
+
+- [ ] 31. Modernize `pyronaut-test` report UX output and HTML report presentation *(new requirement)*
+
+  **What to do**:
+  - Update `pyronaut-test` console report messaging to print only:
+    - reports directory path,
+    - HTML report path.
+  - Keep JUnit XML and last-nodeid artifacts generated, but remove direct console link lines for those artifact paths.
+  - Enhance HTML report so each test is expandable/collapsible and includes per-test detail payloads:
+    - assertion failure details,
+    - captured stdout/stderr (system output) when present.
+  - Modernize report styling with a popular CDN CSS library (default decision: Bootstrap 5 CDN).
+  - Keep fallback decision documented: if Bootstrap CDN is blocked by policy, use UIkit 3 CDN accordion pattern with equivalent expand/collapse behavior.
+  - Include Micronaut logo in the generated HTML report header.
+  - Ensure all dynamic test data is HTML-escaped and report remains readable when CDN resources are unavailable.
+
+  **Must NOT do**:
+  - Do not change canonical report artifact paths or filenames under `__pyronaut__/reports/tests`.
+  - Do not remove JUnit XML or last-nodeid artifact generation.
+  - Do not introduce extra report formats/pages, client-side bundling pipelines, or search/sort/filter UI scope.
+  - Do not require network connectivity for baseline report readability.
+
+  **Dependencies**:
+  - Depends on: 8 (`pyronaut-test` baseline), 28 (report artifact location contracts), 30 (current orchestrator/report UX baseline).
+  - Blocks: final reporting UX sign-off and parity quality gate in 11.
+
+  **References**:
+  - `pyronaut-test/src/main/java/io/micronaut/pyronaut/test/PyronautTestMain.java` - `publishReportLocations(...)` console report output contract.
+  - `pyronaut-test/src/test/java/io/micronaut/pyronaut/test/PyronautTestMainTest.java` - report output/legacy compatibility tests.
+  - `pyronaut-pytest/src/main/java/io/micronaut/test/pytest/execution/JUnitPytestTestListener.java` - HTML report generation pipeline.
+  - `pyronaut-pytest/src/main/resources/META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/pytest_listener.py` - captured stdout/stderr/failure forwarding.
+  - `pyronaut-projectgen-app/src/main/resources/assets/images/logo.svg` - Micronaut logo asset reference.
+  - Bootstrap docs/CDN: https://getbootstrap.com/docs/5.3/getting-started/introduction/
+  - UIkit CDN fallback reference: https://github.com/uikit/uikit#readme
+
+  **Acceptance Criteria**:
+  - [ ] Running `pyronaut test --project-dir <app>` prints report links for only reports directory + HTML report path.
+  - [ ] Same command output does not print direct JUnit XML or last-nodeid report lines.
+  - [ ] Generated HTML report includes Micronaut logo and Bootstrap-based styling loaded from CDN.
+  - [ ] Each test entry supports expand/collapse details showing failure message and captured stdout/stderr when available.
+  - [ ] HTML report escapes dynamic test content safely and remains structurally readable when CDN CSS is unavailable.
+  - [ ] Existing canonical report artifacts (`junit.xml`, `index.html`, `.pyronaut-last-nodeid.txt`) remain generated under `__pyronaut__/reports/tests`.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Console output links only reports directory and HTML report
+    Tool: Bash
+    Preconditions: fixture app with passing tests
+    Steps:
+      1. Run: pyronaut test --project-dir <app> > .sisyphus/evidence/task-31-console.out 2> .sisyphus/evidence/task-31-console.err
+      2. Assert stdout contains reports directory line
+      3. Assert stdout contains HTML report line
+      4. Assert stdout does NOT contain `JUnit XML report:` or `Last nodeid report:`
+    Expected Result: concise console linking behavior with deterministic report discovery
+    Evidence: .sisyphus/evidence/task-31-console.out, .sisyphus/evidence/task-31-console.err
+
+  Scenario: HTML report exposes expandable per-test diagnostics
+    Tool: Bash
+    Preconditions: fixture with at least one failing test and one test emitting stdout/stderr
+    Steps:
+      1. Run: pyronaut test --project-dir <app> > .sisyphus/evidence/task-31-html.out 2> .sisyphus/evidence/task-31-html.err
+      2. Assert file exists: <app>/__pyronaut__/reports/tests/index.html
+      3. Assert HTML contains Bootstrap CDN reference and Micronaut logo markup
+      4. Assert HTML contains expandable section structure per test and includes failure/output payload text
+      5. Assert special characters in payload are escaped (e.g., `<` rendered as `&lt;`)
+    Expected Result: rich per-test report diagnostics are visible without breaking HTML safety
+    Evidence: .sisyphus/evidence/task-31-html.out, .sisyphus/evidence/task-31-html.err
+
+  Scenario: Canonical artifacts remain stable while UX output changes
+    Tool: Bash
+    Preconditions: fixture app with test execution completed
+    Steps:
+      1. Run: pyronaut test --project-dir <app>
+      2. Assert files exist under canonical path:
+         - <app>/__pyronaut__/reports/tests/junit.xml
+         - <app>/__pyronaut__/reports/tests/index.html
+         - <app>/__pyronaut__/reports/tests/.pyronaut-last-nodeid.txt
+      3. Assert no artifact path contract changes from Task 28
+    Expected Result: report UX improvements do not regress artifact contracts
+    Evidence: .sisyphus/evidence/task-31-artifacts.txt
+  ```
+
 ---
 
 ## Component Review & Commit Strategy (User-required cadence)
@@ -1352,6 +1767,7 @@ After each component group below:
 | C7 | Task 13-17 | `feat(cli-v2): improve diagnostics, proxy support, and source-test classpath processing` |
 | C8 | Task 18-20 | `feat(cli-v2): suppress test JVM noise and add processor progress/caching` |
 | C9 | Task 21-24 | `feat(cli-v2): add no-cache orchestration, deterministic preflight, and debug-vm support` |
+| C10 | Task 25-31 | `feat(cli-v2): add test filtering/reporting UX, run restart/native hardening, GraalVM provisioning, and build command` |
 
 ---
 
@@ -1379,7 +1795,14 @@ After each component group below:
 - [x] `pyronaut-test` default runtime output suppresses restricted-native-access and Unsafe warning noise without masking failures
 - [x] `pyronaut-processor` reports pass-level source counts + progress + completion in interactive/non-interactive modes
 - [x] `pyronaut-processor` incremental caching skips unchanged compiles with deterministic invalidation for source/classpath/option changes
- - [x] `pyronaut --no-cache` propagates to update/install and process stages with deterministic cache-bypass behavior
- - [x] `pyronaut run` enforces deterministic `update -> process -> run` orchestration order
- - [x] `pyronaut test` enforces deterministic `update -> process -> test` orchestration order
- - [x] `pyronaut-run` and `pyronaut-test` support `--debug-vm` with requested JDWP arguments and clear port-conflict diagnostics
+- [x] `pyronaut --no-cache` propagates to update/install and process stages with deterministic cache-bypass behavior
+- [x] `pyronaut run` enforces deterministic `update -> process -> run` orchestration order
+- [x] `pyronaut test` enforces deterministic `update -> process -> test` orchestration order
+- [x] `pyronaut-run` and `pyronaut-test` support `--debug-vm` with requested JDWP arguments and clear port-conflict diagnostics
+  - [x] `pyronaut-test` supports Gradle-like `--tests` filtering with deterministic selector forwarding
+- [x] `pyronaut-run` includes explicit native-image reflection metadata and low-noise missing-main fallback behavior
+- [x] `pyronaut run` auto-restarts on `src/tests/config` changes without restart loops from generated outputs
+- [x] Test reports (`junit.xml`, `index.html`) and `.pyronaut-last-nodeid.txt` are written under `__pyronaut__/reports/tests`
+- [x] Orchestrator auto-provisions compatible GraalVM JDK (SDKMAN-first, fallback download) under `~/.pyronaut/jdks` with JDK 25+ minimum
+- [x] `pyronaut build` exists and supports JVM wheel default mode plus `--native` mode via `[tool.pyronaut]` config
+- [ ] `pyronaut-test` console output links only reports directory + HTML report, and HTML report includes expandable per-test diagnostics with Bootstrap CDN styling + Micronaut logo

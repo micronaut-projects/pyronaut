@@ -5,8 +5,14 @@ import shutil
 import subprocess
 import sys
 import socket
+import os
+import platform
+import tarfile
+import tempfile
+import time
+import urllib.request
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Protocol, Sequence
 
 SUCCESS = 0
 USAGE_ERROR = 2
@@ -14,7 +20,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"install", "process", "run", "test"}
+SUPPORTED_COMMANDS = {"install", "process", "run", "test", "build"}
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
     "process": "pyronaut-processor",
@@ -24,6 +30,31 @@ COMMAND_TO_EXECUTABLE = {
 
 _JDWP_FLAGS = "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
 
+Runner = Callable[[list[str]], int]
+RunnerWithEnv = Callable[[list[str], dict[str, str] | None], int]
+
+
+class ManagedProcess(Protocol):
+    def poll(self) -> int | None:
+        ...
+
+    def terminate(self) -> None:
+        ...
+
+    def wait(self, timeout: float | None = None) -> int:
+        ...
+
+    def kill(self) -> None:
+        ...
+
+
+ProcessRunner = Callable[[list[str], dict[str, str] | None], ManagedProcess]
+JavaHomeProvider = Callable[[], str | None]
+
+_PROVISIONED_GRAALVM_HOME: str | None = None
+_GRAALVM_MIN_JDK_MAJOR = 25
+_GRAALVM_SDKMAN_CANDIDATE = "25-graal"
+
 
 def main() -> None:
     code = run(sys.argv[1:])
@@ -32,11 +63,24 @@ def main() -> None:
 
 def run(
     argv: Sequence[str],
-    runner: Callable[[list[str]], int] | None = None,
+    runner: Runner | None = None,
+    runner_with_env: RunnerWithEnv | None = None,
+    process_runner: ProcessRunner | None = None,
     resolver: Callable[[str], str | None] | None = None,
     platform_name: str | None = None,
+    watch_poll_interval: float = 0.25,
+    watch_debounce_seconds: float = 0.5,
+    snapshotter: Callable[[Path], tuple[tuple[str, int, int], ...]] | None = None,
+    monotonic: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
+    java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    execute = runner or _run_subprocess
+    if runner_with_env is not None:
+        execute = runner_with_env
+    elif runner is not None:
+        execute = lambda command_line, env=None: runner(command_line)
+    else:
+        execute = _run_subprocess
     locate = resolver or _resolve_executable
     current_platform = platform_name or sys.platform
 
@@ -55,6 +99,7 @@ def run(
     command = argv[0]
     forwarded_args = _normalize_project_flag(list(argv[1:]))
     forwarded_args = _normalize_no_cache_flag(forwarded_args)
+    forwarded_args = _normalize_tests_selection_flag(forwarded_args)
     debug_vm = _extract_debug_vm(forwarded_args)
     forwarded_args = _remove_debug_vm(forwarded_args)
 
@@ -71,6 +116,21 @@ def run(
 
     no_cache = _extract_no_cache(forwarded_args)
 
+    effective_java_home_provider = java_home_provider or _default_java_home_provider(
+        runner=runner,
+        runner_with_env=runner_with_env,
+        process_runner=process_runner,
+    )
+
+    if command == "build":
+        return _run_build(
+            args=forwarded_args,
+            runner=execute,
+            resolver=locate,
+            no_cache=no_cache,
+            java_home_provider=effective_java_home_provider,
+        )
+
     if debug_vm:
         port_ok, error = _check_port_available(5005)
         if not port_ok:
@@ -80,31 +140,46 @@ def run(
             )
             return PRECONDITION_FAILED
 
+    if command == "run" and (process_runner is not None or (runner is None and runner_with_env is None)):
+        return _run_with_auto_restart(
+            project_dir=Path(project_dir),
+            run_args=forwarded_args,
+            no_cache=no_cache,
+            execute=execute,
+            process_runner=process_runner or _spawn_subprocess,
+            resolver=locate,
+            debug_vm=debug_vm,
+            poll_interval=watch_poll_interval,
+            debounce_seconds=watch_debounce_seconds,
+            snapshotter=snapshotter or _snapshot_watched_files,
+            monotonic=monotonic or time.monotonic,
+            sleep=sleep or time.sleep,
+            java_home_provider=effective_java_home_provider,
+        )
+
     if command in {"run", "test"}:
-        install_args = ["--project-dir", project_dir]
-        if no_cache:
-            install_args.append("--refresh")
-        install_code = _delegate("install", install_args, execute, locate)
-        if install_code != SUCCESS:
-            return install_code
+        preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
+        if preflight_code != SUCCESS:
+            return preflight_code
 
-        process_args = ["--project-dir", project_dir]
-        if no_cache:
-            process_args.append("--no-cache")
-        process_code = _delegate("process", process_args, execute, locate)
-        if process_code != SUCCESS:
-            return process_code
-
-    return _delegate(command, forwarded_args, execute, locate, debug_vm=debug_vm)
+    return _delegate(
+        command,
+        forwarded_args,
+        execute,
+        locate,
+        debug_vm=debug_vm,
+        java_home_provider=effective_java_home_provider,
+    )
 
 
 def _delegate(
     command: str,
     args: Sequence[str],
-    runner: Callable[[list[str]], int],
+    runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
     *,
     debug_vm: bool = False,
+    java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
     executable_name = COMMAND_TO_EXECUTABLE[command]
     executable_path = resolver(executable_name)
@@ -112,13 +187,601 @@ def _delegate(
         print(f"Missing delegated executable: {executable_name}", file=sys.stderr)
         return PRECONDITION_FAILED
     command_line = [executable_path, *args]
+    if debug_vm and command in {"run", "test"}:
+        command_line = [*command_line, "--debug-vm"]
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
-    if not debug_vm:
-        return runner(command_line)
+    try:
+        env = _build_java_home_env(command, java_home_provider)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    if debug_vm:
+        env = _build_debug_vm_env(env)
+    return runner(command_line, env)
 
-    java_tool_options = _merge_java_tool_options(_read_env("JAVA_TOOL_OPTIONS"), _JDWP_FLAGS)
-    return runner(["__env__", f"JAVA_TOOL_OPTIONS={java_tool_options}", *command_line])
+
+def _run_preflight(
+    project_dir: str,
+    no_cache: bool,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+) -> int:
+    install_args = ["--project-dir", project_dir]
+    if no_cache:
+        install_args.append("--refresh")
+    install_code = _delegate("install", install_args, runner, resolver)
+    if install_code != SUCCESS:
+        return install_code
+
+    process_args = ["--project-dir", project_dir]
+    if no_cache:
+        process_args.append("--no-cache")
+    return _delegate("process", process_args, runner, resolver)
+
+
+def _run_build(
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    no_cache: bool,
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    try:
+        mode = _resolve_build_mode(project_dir, args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
+
+    if mode == "native":
+        preflight = _run_preflight(str(project_dir), no_cache, runner, resolver)
+        if preflight != SUCCESS:
+            return preflight
+
+        try:
+            env = _build_java_home_env("build", java_home_provider)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+
+        try:
+            classpath = _build_native_classpath(project_dir)
+            main_class = _extract_main_class(args)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return USAGE_ERROR
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        output_dir = project_dir / "__pyronaut__" / "native"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_binary = output_dir / "application"
+        native_command = ["native-image", "-cp", classpath, main_class, str(output_binary)]
+        if _delegation_trace_enabled():
+            print(shlex.join(native_command), file=sys.stderr)
+        exit_code = runner(native_command, env)
+        if exit_code == SUCCESS:
+            print(f"Native build complete: {output_binary}")
+            print(f"Run it with: {output_binary}")
+        return exit_code
+
+    dist_dir = project_dir / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    python_exec = _read_env("PYRONAUT_PYTHON_EXECUTABLE") or sys.executable or "python3"
+    wheel_command = [
+        python_exec,
+        "-m",
+        "pip",
+        "wheel",
+        "--no-deps",
+        "--wheel-dir",
+        str(dist_dir),
+        str(project_dir),
+    ]
+    if _delegation_trace_enabled():
+        print(shlex.join(wheel_command), file=sys.stderr)
+    exit_code = runner(wheel_command, None)
+    if exit_code == SUCCESS:
+        print(f"Wheel build complete. Artifacts are in: {dist_dir}")
+        print(f"Install with: {python_exec} -m pip install {dist_dir}/*.whl")
+        print("Run the project with: pyronaut run --project-dir " + str(project_dir))
+    return exit_code
+
+
+def _resolve_build_mode(project_dir: Path, args: Sequence[str]) -> str:
+    explicit = _extract_build_mode_flag(args)
+    if explicit is not None:
+        return explicit
+
+    configured = _read_pyproject_build_mode(project_dir)
+    if configured is not None:
+        return configured
+    return "jvm"
+
+
+def _extract_build_mode_flag(args: Sequence[str]) -> str | None:
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--native":
+            return "native"
+        if token == "--jvm":
+            return "jvm"
+        if token == "--mode":
+            if index + 1 >= len(args):
+                raise ValueError("Missing value for --mode. Use native|jvm")
+            value = args[index + 1].strip().lower()
+            if value in {"native", "jvm"}:
+                return value
+            raise ValueError("Invalid value for --mode. Use native|jvm")
+        if token.startswith("--mode="):
+            value = token.split("=", 1)[1].strip().lower()
+            if value in {"native", "jvm"}:
+                return value
+            raise ValueError("Invalid value for --mode. Use native|jvm")
+        index += 1
+    return None
+
+
+def _read_pyproject_build_mode(project_dir: Path) -> str | None:
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    try:
+        import tomllib
+    except Exception:
+        return None
+    try:
+        with pyproject.open("rb") as fp:
+            data = tomllib.load(fp)
+    except Exception:
+        return None
+
+    tool = data.get("tool")
+    if not isinstance(tool, dict):
+        return None
+    pyronaut = tool.get("pyronaut")
+    if not isinstance(pyronaut, dict):
+        return None
+    build = pyronaut.get("build")
+    if not isinstance(build, dict):
+        return None
+    mode = build.get("mode")
+    if not isinstance(mode, str):
+        return None
+    normalized = mode.strip().lower()
+    if normalized in {"native", "jvm"}:
+        return normalized
+    raise ValueError("Invalid build mode in pyproject.toml. Use tool.pyronaut.build.mode = 'native' or 'jvm'")
+
+
+def _extract_main_class(args: Sequence[str]) -> str:
+    default_main = "pyronaut_application.PyronautMain"
+    for index, token in enumerate(args):
+        if token == "--main-class" and index + 1 < len(args):
+            value = args[index + 1].strip()
+            if not value:
+                raise ValueError("Invalid value for --main-class. Value cannot be empty")
+            return value
+        if token.startswith("--main-class="):
+            value = token.split("=", 1)[1].strip()
+            if not value:
+                raise ValueError("Invalid value for --main-class. Value cannot be empty")
+            return value
+    return default_main
+
+
+def _build_native_classpath(project_dir: Path) -> str:
+    runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+    classes_dir = project_dir / "__pyronaut__" / "classes"
+    if not classes_dir.is_dir():
+        raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+
+    entries = []
+    if runtime_manifest.exists():
+        for line in runtime_manifest.read_text(encoding="utf-8").splitlines():
+            value = line.strip()
+            if value:
+                entries.append(value)
+    entries.append(str(classes_dir))
+    return os.pathsep.join(entries)
+
+
+def _run_with_auto_restart(
+    project_dir: Path,
+    run_args: Sequence[str],
+    no_cache: bool,
+    execute: RunnerWithEnv,
+    process_runner: ProcessRunner,
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool,
+    poll_interval: float,
+    debounce_seconds: float,
+    snapshotter: Callable[[Path], tuple[tuple[str, int, int], ...]],
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    if poll_interval <= 0:
+        poll_interval = 0.25
+    if debounce_seconds < 0:
+        debounce_seconds = 0.0
+
+    project_root = project_dir.resolve()
+    snapshot = snapshotter(project_root)
+
+    while True:
+        preflight_code = _run_preflight(str(project_root), no_cache, execute, resolver)
+        if preflight_code != SUCCESS:
+            return preflight_code
+
+        executable_path = resolver(COMMAND_TO_EXECUTABLE["run"])
+        if executable_path is None:
+            print("Missing delegated executable: pyronaut-run", file=sys.stderr)
+            return PRECONDITION_FAILED
+
+        command_line = [executable_path, *run_args]
+        try:
+            env = _build_java_home_env("run", java_home_provider)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        if debug_vm:
+            command_line = [*command_line, "--debug-vm"]
+            env = _build_debug_vm_env(env)
+
+        if _delegation_trace_enabled():
+            print(shlex.join(command_line), file=sys.stderr)
+
+        try:
+            process = process_runner(command_line, env)
+        except OSError as exception:
+            print(f"Failed executing delegated command: {exception}", file=sys.stderr)
+            return INTERNAL_ERROR
+
+        restart_requested_at: float | None = None
+
+        try:
+            while True:
+                code = process.poll()
+                if code is not None:
+                    return int(code)
+
+                sleep(poll_interval)
+                next_snapshot = snapshotter(project_root)
+                if next_snapshot == snapshot:
+                    restart_requested_at = None
+                    continue
+
+                now = monotonic()
+                if restart_requested_at is None:
+                    restart_requested_at = now
+                    continue
+
+                if now - restart_requested_at < debounce_seconds:
+                    continue
+
+                if not _stop_managed_process(process):
+                    print("Failed to stop running process for restart.", file=sys.stderr)
+                    return INTERNAL_ERROR
+                snapshot = next_snapshot
+                break
+        except KeyboardInterrupt:
+            _stop_managed_process(process)
+            return 130
+
+
+def _stop_managed_process(process: ManagedProcess) -> bool:
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+        return True
+    except Exception:
+        try:
+            process.kill()
+            process.wait(timeout=5)
+            return True
+        except Exception:
+            return False
+
+
+def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    watched_roots = ("src", "tests", "config")
+    ignored_dirs = {"__pyronaut__", ".pytest_cache", "build", ".gradle", "__pycache__", ".git"}
+    entries: list[tuple[str, int, int]] = []
+
+    for root_name in watched_roots:
+        root = project_dir / root_name
+        if not root.is_dir():
+            continue
+
+        for current_root, dirs, files in __import__("os").walk(root):
+            dirs[:] = [name for name in dirs if name not in ignored_dirs and not name.startswith(".")]
+            base = Path(current_root)
+            for file_name in sorted(files):
+                if file_name.startswith("."):
+                    continue
+                file_path = base / file_name
+                try:
+                    stat = file_path.stat()
+                except OSError:
+                    continue
+                relative = file_path.relative_to(project_dir).as_posix()
+                entries.append((relative, int(stat.st_mtime_ns), int(stat.st_size)))
+
+    entries.sort(key=lambda item: item[0])
+    return tuple(entries)
+
+
+def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> ManagedProcess:
+    return subprocess.Popen(command_line, env=env)
+
+
+def _default_java_home_provider(
+    *,
+    runner: Runner | None,
+    runner_with_env: RunnerWithEnv | None,
+    process_runner: ProcessRunner | None,
+) -> JavaHomeProvider | None:
+    if runner is None and runner_with_env is None and process_runner is None:
+        return _ensure_graalvm_java_home
+    return None
+
+
+def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
+    if command not in {"run", "test", "build"}:
+        return None
+    if java_home_provider is None:
+        return None
+
+    java_home = java_home_provider()
+    if java_home is None or not java_home.strip():
+        raise RuntimeError("Unable to locate or provision compatible GraalVM JDK (requires JDK 25+)")
+
+    env = dict(os.environ)
+    env["JAVA_HOME"] = java_home
+    java_bin = str(Path(java_home) / "bin")
+    path_value = env.get("PATH", "")
+    if path_value:
+        if not path_value.startswith(java_bin + os.pathsep):
+            env["PATH"] = java_bin + os.pathsep + path_value
+    else:
+        env["PATH"] = java_bin
+    return env
+
+
+def _build_debug_vm_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(base_env) if base_env is not None else dict(os.environ)
+    env["JAVA_TOOL_OPTIONS"] = _merge_java_tool_options(env.get("JAVA_TOOL_OPTIONS"), _JDWP_FLAGS)
+    return env
+
+
+def _ensure_graalvm_java_home() -> str | None:
+    global _PROVISIONED_GRAALVM_HOME
+    if _PROVISIONED_GRAALVM_HOME is not None:
+        return _PROVISIONED_GRAALVM_HOME
+
+    env_java_home = _read_env("JAVA_HOME")
+    if env_java_home and _is_compatible_graalvm_home(Path(env_java_home)):
+        _PROVISIONED_GRAALVM_HOME = env_java_home
+        return env_java_home
+
+    pyronaut_jdks = _graalvm_jdks_root()
+    pyronaut_jdks.mkdir(parents=True, exist_ok=True)
+
+    cached = _find_compatible_cached_jdk(pyronaut_jdks)
+    if cached is not None:
+        _PROVISIONED_GRAALVM_HOME = str(cached)
+        return _PROVISIONED_GRAALVM_HOME
+
+    sdkman_home = _install_with_sdkman(pyronaut_jdks)
+    if sdkman_home is not None:
+        _PROVISIONED_GRAALVM_HOME = str(sdkman_home)
+        return _PROVISIONED_GRAALVM_HOME
+
+    downloaded = _download_and_install_graalvm(pyronaut_jdks)
+    if downloaded is not None:
+        _PROVISIONED_GRAALVM_HOME = str(downloaded)
+        return _PROVISIONED_GRAALVM_HOME
+    return None
+
+
+def _graalvm_jdks_root() -> Path:
+    return Path.home() / ".pyronaut" / "jdks"
+
+
+def _find_compatible_cached_jdk(jdks_root: Path) -> Path | None:
+    for child in sorted(jdks_root.iterdir(), key=lambda path: path.name):
+        if not child.is_dir():
+            continue
+        home = _normalize_extracted_home(child)
+        if home is not None and _is_compatible_graalvm_home(home):
+            return home
+    return None
+
+
+def _normalize_extracted_home(path: Path) -> Path | None:
+    if (path / "bin" / "java").exists():
+        return path
+
+    contents_home = path / "Contents" / "Home"
+    if (contents_home / "bin" / "java").exists():
+        return contents_home
+
+    candidates = [p for p in path.iterdir() if p.is_dir()] if path.exists() else []
+    for candidate in candidates:
+        if (candidate / "bin" / "java").exists():
+            return candidate
+        nested_contents = candidate / "Contents" / "Home"
+        if (nested_contents / "bin" / "java").exists():
+            return nested_contents
+    return None
+
+
+def _is_compatible_graalvm_home(java_home: Path) -> bool:
+    java_bin = java_home / "bin" / "java"
+    if not java_bin.exists():
+        return False
+    try:
+        completed = subprocess.run(
+            [str(java_bin), "-version"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return False
+
+    if completed.returncode != 0:
+        return False
+    output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+    lower = output.lower()
+    if "graalvm" not in lower:
+        return False
+    major = _parse_java_major_version(output)
+    return major is not None and major >= _GRAALVM_MIN_JDK_MAJOR
+
+
+def _parse_java_major_version(version_output: str) -> int | None:
+    for line in version_output.splitlines():
+        if "version" not in line:
+            continue
+        quote_index = line.find('"')
+        if quote_index < 0:
+            continue
+        end_quote = line.find('"', quote_index + 1)
+        if end_quote < 0:
+            continue
+        raw_version = line[quote_index + 1:end_quote]
+        if raw_version.startswith("1."):
+            try:
+                return int(raw_version.split(".")[1])
+            except Exception:
+                return None
+        first = raw_version.split(".")[0]
+        try:
+            return int(first)
+        except Exception:
+            return None
+    return None
+
+
+def _install_with_sdkman(jdks_root: Path) -> Path | None:
+    sdkman_dir = _read_env("SDKMAN_DIR") or str(Path.home() / ".sdkman")
+    init_script = Path(sdkman_dir) / "bin" / "sdkman-init.sh"
+    if not init_script.exists():
+        return None
+
+    install_command = (
+        f"source {shlex.quote(str(init_script))} && "
+        f"sdk install java {_GRAALVM_SDKMAN_CANDIDATE}"
+    )
+    install_result = subprocess.run(["bash", "-lc", install_command], check=False, capture_output=True, text=True)
+    if install_result.returncode != 0:
+        return None
+
+    home_command = (
+        f"source {shlex.quote(str(init_script))} && "
+        f"sdk home java {_GRAALVM_SDKMAN_CANDIDATE}"
+    )
+    home_result = subprocess.run(["bash", "-lc", home_command], check=False, capture_output=True, text=True)
+    if home_result.returncode != 0:
+        return None
+
+    installed_home = Path((home_result.stdout or "").strip())
+    if not installed_home.exists() or not _is_compatible_graalvm_home(installed_home):
+        return None
+
+    link_target = jdks_root / installed_home.name
+    if not link_target.exists():
+        try:
+            link_target.symlink_to(installed_home)
+        except Exception:
+            shutil.copytree(installed_home, link_target, dirs_exist_ok=True)
+
+    normalized = _normalize_extracted_home(link_target) or link_target
+    return normalized if _is_compatible_graalvm_home(normalized) else None
+
+
+def _download_and_install_graalvm(jdks_root: Path) -> Path | None:
+    archive_url = _resolve_graalvm_archive_url()
+    if archive_url is None:
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="pyronaut-graalvm-") as temp_dir:
+        temp_path = Path(temp_dir)
+        archive_name = archive_url.rsplit("/", 1)[-1]
+        archive_file = temp_path / archive_name
+        try:
+            urllib.request.urlretrieve(archive_url, archive_file)
+        except Exception:
+            return None
+
+        extract_dir = temp_path / "extract"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if archive_name.endswith(".zip"):
+                shutil.unpack_archive(str(archive_file), str(extract_dir))
+            else:
+                with tarfile.open(archive_file, "r:*") as tf:
+                    tf.extractall(extract_dir)
+        except Exception:
+            return None
+
+        extracted_homes = []
+        for child in extract_dir.iterdir():
+            normalized = _normalize_extracted_home(child)
+            if normalized is not None:
+                extracted_homes.append(normalized)
+
+        for home in extracted_homes:
+            if not _is_compatible_graalvm_home(home):
+                continue
+            destination = jdks_root / home.parent.name if (home.parent / "bin" / "java").exists() and home.name == "Home" else jdks_root / home.name
+            if destination.exists():
+                normalized_existing = _normalize_extracted_home(destination) or destination
+                if _is_compatible_graalvm_home(normalized_existing):
+                    return normalized_existing
+                shutil.rmtree(destination, ignore_errors=True)
+
+            source_root = home.parent if home.name == "Home" and home.parent.name == "Contents" else home
+            shutil.copytree(source_root, destination, dirs_exist_ok=True)
+            normalized_destination = _normalize_extracted_home(destination) or destination
+            if _is_compatible_graalvm_home(normalized_destination):
+                return normalized_destination
+    return None
+
+
+def _resolve_graalvm_archive_url() -> str | None:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    if system.startswith("linux"):
+        os_segment = "linux"
+        ext = "tar.gz"
+    elif system == "darwin":
+        os_segment = "macos"
+        ext = "tar.gz"
+    elif system.startswith("win"):
+        os_segment = "windows"
+        ext = "zip"
+    else:
+        return None
+
+    if machine in {"x86_64", "amd64"}:
+        arch = "x64"
+    elif machine in {"aarch64", "arm64"}:
+        arch = "aarch64"
+    else:
+        return None
+
+    if os_segment == "macos" and arch == "x64":
+        return None
+
+    base = f"graalvm-community-jdk-25.0.2_{os_segment}-{arch}_bin.{ext}"
+    return f"https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.2/{base}"
 
 
 def _merge_java_tool_options(existing: str | None, addition: str) -> str:
@@ -204,6 +867,27 @@ def _normalize_no_cache_flag(args: list[str]) -> list[str]:
     return normalized
 
 
+def _normalize_tests_selection_flag(args: list[str]) -> list[str]:
+    normalized: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--tests":
+            normalized.append("--tests")
+            index += 1
+            if index < len(args):
+                normalized.append(args[index])
+                index += 1
+            continue
+        if token.startswith("--tests="):
+            normalized.append("--tests=" + token.split("=", 1)[1])
+            index += 1
+            continue
+        normalized.append(token)
+        index += 1
+    return normalized
+
+
 def _extract_no_cache(args: Sequence[str]) -> bool:
     for token in args:
         if token == "--no-cache":
@@ -245,9 +929,9 @@ def _process_required(project_dir: Path, command: str) -> bool:
     return not classes_ready
 
 
-def _run_subprocess(command_line: list[str]) -> int:
+def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> int:
     try:
-        completed = subprocess.run(command_line, check=False)
+        completed = subprocess.run(command_line, check=False, env=env)
         return int(completed.returncode)
     except KeyboardInterrupt:
         return 130
@@ -298,4 +982,4 @@ def _is_supported_platform(platform_name: str) -> bool:
 
 
 def _print_usage(stream=sys.stdout) -> None:
-    stream.write("Usage: pyronaut [--version] <install|process|run|test> [args...]\n")
+    stream.write("Usage: pyronaut [--version] <install|process|run|test|build> [args...]\n")

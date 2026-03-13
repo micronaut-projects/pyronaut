@@ -1,0 +1,76 @@
+{
+  "reflection": [
+    {
+      "type": "io.micronaut.runtime.Micronaut",
+      "methods": [
+        {
+          "name": "build",
+          "parameterTypes": [
+            "java.lang.String[]"
+          ]
+        },
+        {
+          "name": "mainClass",
+          "parameterTypes": [
+            "java.lang.Class"
+          ]
+        },
+        {
+          "name": "keepAlive",
+          "parameterTypes": [
+            "boolean"
+          ]
+        },
+        {
+          "name": "packages",
+          "parameterTypes": [
+            "java.lang.String[]"
+          ]
+        },
+        {
+          "name": "start",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.micronaut.pyronaut.run.PyronautRunMain",
+      "fields": [
+        {
+          "name": "appArgs"
+        },
+        {
+          "name": "classesDir"
+        },
+        {
+          "name": "classpath"
+        },
+        {
+          "name": "configDir"
+        },
+        {
+          "name": "mainClass"
+        },
+        {
+          "name": "projectDir"
+        }
+      ]
+    },
+    {
+      "type": "picocli.CommandLine$AutoHelpMixin",
+      "fields": [
+        {
+          "name": "helpRequested"
+        },
+        {
+          "name": "versionRequested"
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "glob": "META-INF/services/**"
+    }
+  ]
+}
