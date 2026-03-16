@@ -55,6 +55,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_JUNIT_XML_REPORT = "junit.xml";
     private static final String DEFAULT_HTML_REPORT = "index.html";
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
+    private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
     private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
 
     private static final String PYTEST_TESTS = "pytest.tests";
@@ -62,6 +63,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String PYTEST_JUNIT_XML_REPORT = "pytest.report.junit";
     private static final String PYTEST_HTML_REPORT = "pytest.report.html";
     private static final String PYTEST_LAST_NODEID_REPORT = "pytest.report.nodeid";
+    private static final String PYTEST_EVENTS_REPORT = "pytest.report.events";
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -158,12 +160,14 @@ public final class PyronautTestMain implements Callable<Integer> {
                     Path junitReport = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
                     Path htmlReport = reportsDir.resolve(DEFAULT_HTML_REPORT);
                     Path nodeIdReport = reportsDir.resolve(DEFAULT_NODEID_REPORT);
+                    Path eventsReport = reportsDir.resolve(DEFAULT_EVENTS_REPORT);
                     Files.createDirectories(reportsDir);
                     clearLegacyReportAliases(root);
                     requestBuilder.configurationParameter(PYTEST_REPORT_DIR, reportsDir.toString());
                     requestBuilder.configurationParameter(PYTEST_JUNIT_XML_REPORT, junitReport.toString());
                     requestBuilder.configurationParameter(PYTEST_HTML_REPORT, htmlReport.toString());
                     requestBuilder.configurationParameter(PYTEST_LAST_NODEID_REPORT, nodeIdReport.toString());
+                    requestBuilder.configurationParameter(PYTEST_EVENTS_REPORT, eventsReport.toString());
                     publishReports = true;
 
                     pytestTests.ifPresent(value -> requestBuilder.configurationParameter(PYTEST_TESTS, value));

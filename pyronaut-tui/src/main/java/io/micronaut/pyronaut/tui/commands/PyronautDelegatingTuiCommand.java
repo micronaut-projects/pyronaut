@@ -1,3 +1,18 @@
+/*
+ * Copyright 2017-2026 original authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.micronaut.pyronaut.tui.commands;
 
 import io.micronaut.python.cli.ui.Mode;
@@ -14,18 +29,30 @@ import picocli.CommandLine.Option;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardWatchEventKinds;
+import java.nio.file.WatchEvent;
+import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
@@ -33,6 +60,8 @@ import java.util.regex.Pattern;
 public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
     private static final int PRECONDITION_FAILED = 8;
+    private static final String EVENTS_REPORT = "events.ndjson";
+    private static final long WATCH_DEBOUNCE_MILLIS = 250;
     private static final Pattern SERVER_URI = Pattern.compile("Server Running:\\s*(\\S+)");
 
     @Option(names = "--project-dir", required = true, description = "Project directory")
@@ -60,11 +89,16 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     boolean traceDelegation;
 
     private final ExecutorService controlExecutor = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
-    private final AtomicReference<Process> activeProcess = new AtomicReference<>();
+    private final AtomicReference<ManagedProcess> activeProcess = new AtomicReference<>();
     private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
+    private final AtomicLong executionGeneration = new AtomicLong();
+    private final AtomicReference<WatchLoop> watchLoop = new AtomicReference<>();
 
     private UiController controller;
     private PyronautTui tui;
+    private volatile Mode activeMode;
+    private Path currentProject;
+    private Path currentReportDir;
 
     @Override
     public Integer call() throws Exception {
@@ -83,15 +117,19 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         tui = new PyronautTui();
         controller = tui.getController();
         tui.setMode(initialMode);
+        activeMode = initialMode;
 
-        tui.setOnQuit(() -> controlExecutor.submit(this::shutdownActiveProcess));
+        tui.setOnQuit(() -> controlExecutor.submit(() -> {
+            stopWatcher();
+            shutdownActiveProcess();
+        }));
         tui.setOnRunRequested(() -> controlExecutor.submit(() -> switchToRun(resolvedProject)));
         tui.setOnTestRequested(() -> controlExecutor.submit(() -> switchToTest(resolvedProject, resolvedReportDir)));
 
         if (initialMode == Mode.RUN) {
-            controlExecutor.submit(() -> runMode(resolvedProject));
+            controlExecutor.submit(() -> runMode(resolvedProject, false));
         } else {
-            controlExecutor.submit(() -> testMode(resolvedProject, resolvedReportDir));
+            controlExecutor.submit(() -> testMode(resolvedProject, resolvedReportDir, false));
         }
 
         try {
@@ -106,6 +144,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             }
         } finally {
             shuttingDown.set(true);
+            stopWatcher();
             controlExecutor.shutdownNow();
             shutdownActiveProcess();
             StreamsCapture.getInstance().restore();
@@ -113,33 +152,58 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private void switchToRun(Path project) {
+        activeMode = Mode.RUN;
         controller.resetState();
         controller.setRunning();
         tui.setMode(Mode.RUN);
-        runMode(project);
+        runMode(project, true);
     }
 
     private void switchToTest(Path project, Path reports) {
+        activeMode = Mode.TEST;
         controller.resetState();
         controller.startTesting();
         tui.setMode(Mode.TEST);
-        testMode(project, reports);
+        testMode(project, reports, true);
     }
 
-    private void runMode(Path project) {
+    private void runMode(Path project, boolean modeSwitch) {
+        activeMode = Mode.RUN;
+        currentProject = project;
+        currentReportDir = reportDir == null ? project.resolve("__pyronaut__/reports/tests") : reportDir.toAbsolutePath().normalize();
+        startWatcher(project, Mode.RUN);
+        runModeCycle(project, modeSwitch ? "Switching to run mode" : "Preparing run workflow", false);
+    }
+
+    private void testMode(Path project, Path reports, boolean modeSwitch) {
+        activeMode = Mode.TEST;
+        currentProject = project;
+        currentReportDir = reports;
+        startWatcher(project, Mode.TEST);
+        testModeCycle(project, reports, modeSwitch ? "Switching to test mode" : "Executing test workflow", false);
+    }
+
+    private void runModeCycle(Path project, String reason, boolean restart) {
         shutdownActiveProcess();
-        controller.notify("Preparing run workflow (install -> process -> run)", UiModel.Severity.INFO);
+        if (restart) {
+            controller.notify("Change detected, restarting run workflow", UiModel.Severity.INFO);
+        }
+        controller.notify(reason + " (install -> process -> run)", UiModel.Severity.INFO);
+        controller.startCompiling();
 
         var installCode = runForeground(project, List.of(installExecutable.toString(), "--project-dir", project.toString()), false);
         if (installCode != 0) {
+            controller.stopCompiling();
             controller.notify("Install failed with exit code " + installCode, UiModel.Severity.ERROR);
             return;
         }
         var processCode = runForeground(project, List.of(processExecutable.toString(), "--project-dir", project.toString()), false);
         if (processCode != 0) {
+            controller.stopCompiling();
             controller.notify("Process failed with exit code " + processCode, UiModel.Severity.ERROR);
             return;
         }
+        controller.stopCompiling();
 
         var runCommand = List.of(runExecutable.toString(), "--project-dir", project.toString());
         if (traceDelegation) {
@@ -147,33 +211,30 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         }
 
         try {
+            long generation = executionGeneration.incrementAndGet();
             var process = startProcess(project, runCommand);
-            activeProcess.set(process);
+            activeProcess.set(new ManagedProcess(generation, process));
             controller.setRunning();
-            controller.notify("Run command started", UiModel.Severity.SUCCESS);
+            controller.notify(restart ? "Run command restarted" : "Run command started", UiModel.Severity.SUCCESS);
             attachOutputReaders(process, true);
-            Thread.ofVirtual().start(() -> {
-                var code = waitFor(process);
-                if (activeProcess.compareAndSet(process, null) && !shuttingDown.get()) {
-                    if (code == 0) {
-                        controller.notify("Run command exited", UiModel.Severity.INFO);
-                    } else {
-                        controller.notify("Run command exited with code " + code, UiModel.Severity.ERROR);
-                    }
-                }
-            });
+            Thread.ofVirtual().start(() -> onBackgroundProcessExit(generation, process, "Run command"));
         } catch (IOException e) {
             controller.notify("Failed starting run command: " + e.getMessage(), UiModel.Severity.ERROR);
         }
     }
 
-    private void testMode(Path project, Path reports) {
+    private void testModeCycle(Path project, Path reports, String reason, boolean restart) {
         shutdownActiveProcess();
         controller.startTesting();
-        controller.notify("Executing test workflow", UiModel.Severity.INFO);
+        if (restart) {
+            controller.notify("Change detected, rerunning tests", UiModel.Severity.INFO);
+        }
+        controller.notify(reason + " (install -> process -> test)", UiModel.Severity.INFO);
+        controller.startCompiling();
 
         var installCode = runForeground(project, List.of(installExecutable.toString(), "--project-dir", project.toString()), false);
         if (installCode != 0) {
+            controller.stopCompiling();
             controller.notify("Install failed with exit code " + installCode, UiModel.Severity.ERROR);
             controller.stopTesting();
             return;
@@ -181,12 +242,18 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
         var processCode = runForeground(project, List.of(processExecutable.toString(), "--project-dir", project.toString()), false);
         if (processCode != 0) {
+            controller.stopCompiling();
             controller.notify("Process failed with exit code " + processCode, UiModel.Severity.ERROR);
             controller.stopTesting();
             return;
         }
+        controller.stopCompiling();
 
-        var testCode = runForeground(project, List.of(testExecutable.toString(), "--project-dir", project.toString()), true);
+        var testCode = runForegroundWithIncrementalEvents(
+            project,
+            List.of(testExecutable.toString(), "--project-dir", project.toString()),
+            reports.resolve(EVENTS_REPORT)
+        );
         var summary = summarizeReports(reports);
         renderSummary(summary);
         if (testCode == 0 && summary.failed == 0) {
@@ -204,19 +271,48 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             controller.addActivityOutput("[tui-delegate] " + String.join(" ", command));
         }
         try {
+            long generation = executionGeneration.incrementAndGet();
             var process = startProcess(project, command);
-            activeProcess.set(process);
+            activeProcess.set(new ManagedProcess(generation, process));
             var reader = Thread.ofVirtual().unstarted(() -> consumeOutput(process, parseServerUri));
             reader.start();
             var code = waitFor(process);
             reader.join(1000);
-            activeProcess.compareAndSet(process, null);
+            clearActiveProcessIfMatch(generation, process);
             return code;
         } catch (IOException e) {
             controller.notify("Failed running command: " + e.getMessage(), UiModel.Severity.ERROR);
             return -1;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            return -1;
+        }
+    }
+
+    private int runForegroundWithIncrementalEvents(Path project, List<String> command, Path eventsFile) {
+        if (traceDelegation) {
+            controller.addActivityOutput("[tui-delegate] " + String.join(" ", command));
+        }
+        var stream = new IncrementalEventStream(eventsFile);
+        try {
+            long generation = executionGeneration.incrementAndGet();
+            var process = startProcess(project, command);
+            activeProcess.set(new ManagedProcess(generation, process));
+            var reader = Thread.ofVirtual().unstarted(() -> consumeOutput(process, false));
+            reader.start();
+            stream.start();
+            var code = waitFor(process);
+            stream.close();
+            reader.join(1000);
+            clearActiveProcessIfMatch(generation, process);
+            return code;
+        } catch (IOException e) {
+            controller.notify("Failed running command: " + e.getMessage(), UiModel.Severity.ERROR);
+            stream.close();
+            return -1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            stream.close();
             return -1;
         }
     }
@@ -249,11 +345,19 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         }
     }
 
+    private void clearActiveProcessIfMatch(long generation, Process process) {
+        var current = activeProcess.get();
+        if (current != null && current.generation == generation && current.process == process) {
+            activeProcess.compareAndSet(current, null);
+        }
+    }
+
     private void shutdownActiveProcess() {
-        var process = activeProcess.getAndSet(null);
-        if (process == null) {
+        var managed = activeProcess.getAndSet(null);
+        if (managed == null) {
             return;
         }
+        var process = managed.process;
         if (!process.isAlive()) {
             return;
         }
@@ -277,6 +381,71 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             process.destroyForcibly();
             return -1;
         }
+    }
+
+    private void onBackgroundProcessExit(long generation, Process process, String label) {
+        var code = waitFor(process);
+        var current = activeProcess.get();
+        if (current != null && current.generation == generation && current.process == process) {
+            activeProcess.compareAndSet(current, null);
+            if (!shuttingDown.get()) {
+                if (code == 0) {
+                    controller.notify(label + " exited", UiModel.Severity.INFO);
+                } else {
+                    controller.notify(label + " exited with code " + code, UiModel.Severity.ERROR);
+                }
+            }
+        }
+    }
+
+    private void startWatcher(Path project, Mode mode) {
+        var existing = watchLoop.get();
+        if (existing != null && existing.project.equals(project) && existing.mode == mode) {
+            return;
+        }
+        stopWatcher();
+        try {
+            var loop = new WatchLoop(project, mode);
+            watchLoop.set(loop);
+            loop.start();
+        } catch (IOException e) {
+            controller.notify("Unable to start file watcher: " + e.getMessage(), UiModel.Severity.WARNING);
+        }
+    }
+
+    private void stopWatcher() {
+        var existing = watchLoop.getAndSet(null);
+        if (existing != null) {
+            existing.stop();
+        }
+    }
+
+    private void onWatchChanges(Mode mode, List<Path> changedFiles) {
+        if (shuttingDown.get() || activeMode != mode || changedFiles.isEmpty() || currentProject == null) {
+            return;
+        }
+        var updates = changedFiles.stream()
+            .sorted(Comparator.naturalOrder())
+            .map(path -> new UiModel.FileUpdate(path.toString(), UiModel.UpdateType.CHANGED))
+            .toList();
+        controller.updateFiles(updates);
+        controller.startCompiling();
+        controller.notify("Detected file changes: " + changedFiles.size(), UiModel.Severity.INFO);
+        if (mode == Mode.RUN) {
+            runModeCycle(currentProject, "Refreshing run workflow", true);
+        } else {
+            var reports = currentReportDir == null
+                ? currentProject.resolve("__pyronaut__/reports/tests")
+                : currentReportDir;
+            testModeCycle(currentProject, reports, "Refreshing test workflow", true);
+        }
+    }
+
+    private Set<String> watchRootsForMode(Mode mode) {
+        if (mode == Mode.TEST) {
+            return Set.of("src", "config", "tests");
+        }
+        return Set.of("src", "config");
     }
 
     private ReportSummary summarizeReports(Path reportsDir) {
@@ -460,6 +629,442 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             case "test" -> Mode.TEST;
             default -> throw new IllegalArgumentException("Invalid --mode. Use run|test");
         };
+    }
+
+    private final class WatchLoop {
+        private final Path project;
+        private final Mode mode;
+        private final Set<String> watchedRoots;
+        private final AtomicBoolean running = new AtomicBoolean(true);
+        private final WatchService watchService;
+        private final Map<WatchKey, Path> keyToDirectory = new HashMap<>();
+        private final Set<Path> changedPaths = new HashSet<>();
+        private Thread thread;
+        private long lastChangeAt = -1L;
+
+        private WatchLoop(Path project, Mode mode) throws IOException {
+            this.project = project;
+            this.mode = mode;
+            this.watchedRoots = watchRootsForMode(mode);
+            this.watchService = FileSystems.getDefault().newWatchService();
+            registerRoots();
+        }
+
+        private void start() {
+            thread = Thread.ofVirtual().name("pyronaut-tui-watcher").unstarted(this::run);
+            thread.start();
+        }
+
+        private void stop() {
+            running.set(false);
+            try {
+                watchService.close();
+            } catch (IOException ignored) {
+            }
+            if (thread != null) {
+                thread.interrupt();
+            }
+        }
+
+        private void run() {
+            while (running.get() && !shuttingDown.get()) {
+                try {
+                    WatchKey key = watchService.poll(100, TimeUnit.MILLISECONDS);
+                    if (key != null) {
+                        collectChanges(key);
+                    }
+                    maybeFlushChanges();
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Exception e) {
+                    if (running.get()) {
+                        controller.notify("File watcher error: " + e.getMessage(), UiModel.Severity.WARNING);
+                    }
+                    return;
+                }
+            }
+        }
+
+        private void collectChanges(WatchKey key) {
+            var base = keyToDirectory.get(key);
+            if (base == null) {
+                key.reset();
+                return;
+            }
+            for (WatchEvent<?> rawEvent : key.pollEvents()) {
+                var kind = rawEvent.kind();
+                if (kind == StandardWatchEventKinds.OVERFLOW) {
+                    continue;
+                }
+                @SuppressWarnings("unchecked")
+                var event = (WatchEvent<Path>) rawEvent;
+                var changed = base.resolve(event.context()).toAbsolutePath().normalize();
+                if (Files.isDirectory(changed)) {
+                    if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
+                        registerDirectoryRecursively(changed);
+                    }
+                    continue;
+                }
+                var relative = project.relativize(changed);
+                if (!isRelevant(relative)) {
+                    continue;
+                }
+                changedPaths.add(relative);
+                lastChangeAt = System.currentTimeMillis();
+            }
+            key.reset();
+        }
+
+        private void maybeFlushChanges() {
+            if (changedPaths.isEmpty() || lastChangeAt < 0) {
+                return;
+            }
+            long idleMillis = System.currentTimeMillis() - lastChangeAt;
+            if (idleMillis < WATCH_DEBOUNCE_MILLIS) {
+                return;
+            }
+            var batch = changedPaths.stream().sorted().toList();
+            changedPaths.clear();
+            controlExecutor.submit(() -> onWatchChanges(mode, batch));
+        }
+
+        private void registerRoots() {
+            for (var rootName : watchedRoots) {
+                var root = project.resolve(rootName).normalize();
+                registerDirectoryRecursively(root);
+            }
+        }
+
+        private void registerDirectoryRecursively(Path root) {
+            if (!Files.isDirectory(root)) {
+                return;
+            }
+            try {
+                Files.walk(root)
+                    .filter(Files::isDirectory)
+                    .forEach(dir -> {
+                        try {
+                            var key = dir.register(
+                                watchService,
+                                StandardWatchEventKinds.ENTRY_CREATE,
+                                StandardWatchEventKinds.ENTRY_DELETE,
+                                StandardWatchEventKinds.ENTRY_MODIFY
+                            );
+                            keyToDirectory.put(key, dir);
+                        } catch (IOException ignored) {
+                        }
+                    });
+            } catch (IOException ignored) {
+            }
+        }
+
+        private boolean isRelevant(Path relativePath) {
+            if (relativePath.getNameCount() == 0) {
+                return false;
+            }
+            var first = relativePath.getName(0).toString();
+            if ("__pyronaut__".equals(first) || ".pytest_cache".equals(first) || "build".equals(first) || ".gradle".equals(first)) {
+                return false;
+            }
+            return watchedRoots.contains(first);
+        }
+    }
+
+    private final class IncrementalEventStream implements AutoCloseable {
+        private final Path eventsFile;
+        private final AtomicBoolean running = new AtomicBoolean();
+        private final IncrementalTestTracker tracker = new IncrementalTestTracker();
+        private Thread thread;
+        private long offset;
+        private final StringBuilder tailBuffer = new StringBuilder();
+
+        private IncrementalEventStream(Path eventsFile) {
+            this.eventsFile = eventsFile;
+        }
+
+        private void start() {
+            tracker.reset();
+            running.set(true);
+            thread = Thread.ofVirtual().name("pyronaut-tui-test-events").unstarted(this::runLoop);
+            thread.start();
+        }
+
+        private void runLoop() {
+            while (running.get() && !shuttingDown.get()) {
+                try {
+                    drainNewLines();
+                    Thread.sleep(80);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Exception ignored) {
+                }
+            }
+            try {
+                drainNewLines();
+            } catch (Exception ignored) {
+            }
+        }
+
+        private void drainNewLines() throws IOException {
+            if (!Files.exists(eventsFile)) {
+                return;
+            }
+            byte[] bytes = Files.readAllBytes(eventsFile);
+            if (bytes.length < offset) {
+                offset = 0;
+                tailBuffer.setLength(0);
+                tracker.reset();
+            }
+            if (bytes.length == offset) {
+                return;
+            }
+            int start = (int) offset;
+            offset = bytes.length;
+            tailBuffer.append(new String(bytes, start, bytes.length - start, StandardCharsets.UTF_8));
+            int lineBreak;
+            while ((lineBreak = tailBuffer.indexOf("\n")) >= 0) {
+                String line = tailBuffer.substring(0, lineBreak).trim();
+                tailBuffer.delete(0, lineBreak + 1);
+                if (!line.isEmpty()) {
+                    tracker.accept(line);
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            running.set(false);
+            if (thread != null) {
+                thread.interrupt();
+                try {
+                    thread.join(500);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+    }
+
+    private final class IncrementalTestTracker {
+        private final Map<String, Integer> classNodeIds = new LinkedHashMap<>();
+        private final Map<String, Integer> methodNodeIds = new LinkedHashMap<>();
+        private final Map<String, UiModel.Status> methodStatuses = new LinkedHashMap<>();
+        private int nextNodeId = 1;
+        private String activeRunId;
+        private long lastSeq;
+
+        private void reset() {
+            classNodeIds.clear();
+            methodNodeIds.clear();
+            methodStatuses.clear();
+            nextNodeId = 1;
+            activeRunId = null;
+            lastSeq = 0;
+            controller.startTesting();
+            controller.resetTestTree();
+            controller.updateTestSummary(0, 0, 0, 0, 0);
+        }
+
+        private void accept(String line) {
+            String eventType = jsonString(line, "eventType");
+            if (eventType == null) {
+                return;
+            }
+            String runId = jsonString(line, "runId");
+            long seq = jsonLong(line, "seq");
+            if (activeRunId == null && "session_started".equals(eventType)) {
+                activeRunId = runId;
+                lastSeq = seq;
+            }
+            if (activeRunId != null && runId != null && !activeRunId.equals(runId)) {
+                return;
+            }
+            if (seq > 0 && seq <= lastSeq) {
+                return;
+            }
+            if (seq > 0) {
+                lastSeq = seq;
+            }
+
+            switch (eventType) {
+                case "session_started" -> {
+                    controller.startTesting();
+                    controller.resetTestTree();
+                    controller.notify("Tests running (live updates)", UiModel.Severity.INFO);
+                }
+                case "test_started" -> onTestStarted(jsonString(line, "testId"));
+                case "test_output" -> onTestOutput(jsonString(line, "testId"), jsonString(line, "stream"), jsonString(line, "text"));
+                case "test_finished" -> onTestFinished(jsonString(line, "testId"), jsonString(line, "status"), jsonString(line, "failure"));
+                case "session_finished" -> updateSummary();
+                default -> {
+                }
+            }
+        }
+
+        private void onTestStarted(String testId) {
+            if (testId == null || testId.isBlank()) {
+                return;
+            }
+            int methodId = ensureNode(testId);
+            methodStatuses.put(testId, UiModel.Status.RUNNING);
+            controller.nodeStarted(methodId);
+            updateSummary();
+        }
+
+        private void onTestOutput(String testId, String stream, String text) {
+            if (testId == null || testId.isBlank() || text == null || text.isBlank()) {
+                return;
+            }
+            int methodId = ensureNode(testId);
+            String prefix = stream == null || stream.isBlank() ? "output" : stream;
+            controller.addTestLog(methodId, "[" + prefix + "] " + text.strip());
+        }
+
+        private void onTestFinished(String testId, String status, String failureMessage) {
+            if (testId == null || testId.isBlank()) {
+                return;
+            }
+            int methodId = ensureNode(testId);
+            UiModel.Status mapped = mapTestStatus(status);
+            methodStatuses.put(testId, mapped);
+            controller.nodeFinished(methodId, mapped, failureMessage);
+            updateSummary();
+        }
+
+        private int ensureNode(String testId) {
+            Integer existing = methodNodeIds.get(testId);
+            if (existing != null) {
+                return existing;
+            }
+            String className = testId;
+            String methodName = testId;
+            int sep = testId.indexOf("::");
+            if (sep >= 0) {
+                className = testId.substring(0, sep);
+                methodName = testId.substring(sep + 2);
+            }
+
+            Integer classId = classNodeIds.get(className);
+            if (classId == null) {
+                classId = nextNodeId++;
+                classNodeIds.put(className, classId);
+                controller.addTestNode(classId, 0, (byte) 1, className, className);
+            }
+
+            int methodId = nextNodeId++;
+            methodNodeIds.put(testId, methodId);
+            controller.addTestNode(methodId, classId, (byte) 2, methodName, methodName);
+            return methodId;
+        }
+
+        private UiModel.Status mapTestStatus(String status) {
+            if (status == null) {
+                return UiModel.Status.PASSED;
+            }
+            return switch (status.trim().toUpperCase(Locale.ROOT)) {
+                case "FAILED" -> UiModel.Status.FAILED;
+                case "ABORTED", "SKIPPED" -> UiModel.Status.SKIPPED;
+                case "RUNNING" -> UiModel.Status.RUNNING;
+                case "PENDING" -> UiModel.Status.PENDING;
+                default -> UiModel.Status.PASSED;
+            };
+        }
+
+        private void updateSummary() {
+            long passed = methodStatuses.values().stream().filter(s -> s == UiModel.Status.PASSED).count();
+            long failed = methodStatuses.values().stream().filter(s -> s == UiModel.Status.FAILED).count();
+            long skipped = methodStatuses.values().stream().filter(s -> s == UiModel.Status.SKIPPED).count();
+            long running = methodStatuses.values().stream().filter(s -> s == UiModel.Status.RUNNING).count();
+            long pending = methodStatuses.values().stream().filter(s -> s == UiModel.Status.PENDING).count();
+            controller.updateTestSummary(passed, failed, skipped, running, pending);
+        }
+
+        private static String jsonString(String line, String key) {
+            int keyIndex = line.indexOf('"' + key + '"');
+            if (keyIndex < 0) {
+                return null;
+            }
+            int colon = line.indexOf(':', keyIndex);
+            if (colon < 0) {
+                return null;
+            }
+            int pos = colon + 1;
+            while (pos < line.length() && Character.isWhitespace(line.charAt(pos))) {
+                pos++;
+            }
+            if (pos >= line.length() || line.startsWith("null", pos)) {
+                return null;
+            }
+            if (line.charAt(pos) != '"') {
+                return null;
+            }
+            pos++;
+            var out = new StringBuilder();
+            boolean escaping = false;
+            while (pos < line.length()) {
+                char ch = line.charAt(pos++);
+                if (escaping) {
+                    out.append(switch (ch) {
+                        case 'n' -> '\n';
+                        case 'r' -> '\r';
+                        case 't' -> '\t';
+                        case '"' -> '"';
+                        case '\\' -> '\\';
+                        default -> ch;
+                    });
+                    escaping = false;
+                    continue;
+                }
+                if (ch == '\\') {
+                    escaping = true;
+                    continue;
+                }
+                if (ch == '"') {
+                    break;
+                }
+                out.append(ch);
+            }
+            return out.toString();
+        }
+
+        private static long jsonLong(String line, String key) {
+            int keyIndex = line.indexOf('"' + key + '"');
+            if (keyIndex < 0) {
+                return 0L;
+            }
+            int colon = line.indexOf(':', keyIndex);
+            if (colon < 0) {
+                return 0L;
+            }
+            int pos = colon + 1;
+            while (pos < line.length() && Character.isWhitespace(line.charAt(pos))) {
+                pos++;
+            }
+            int end = pos;
+            while (end < line.length() && Character.isDigit(line.charAt(end))) {
+                end++;
+            }
+            if (end == pos) {
+                return 0L;
+            }
+            try {
+                return Long.parseLong(line.substring(pos, end));
+            } catch (NumberFormatException ignored) {
+                return 0L;
+            }
+        }
+    }
+
+    private static final class ManagedProcess {
+        private final long generation;
+        private final Process process;
+
+        private ManagedProcess(long generation, Process process) {
+            this.generation = generation;
+            this.process = process;
+        }
     }
 
     private static final class TestCaseResult {

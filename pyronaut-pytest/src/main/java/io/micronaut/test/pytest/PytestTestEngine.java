@@ -53,11 +53,13 @@ public class PytestTestEngine implements TestEngine {
     public static final String JUNIT_XML_REPORT = "pytest.report.junit";
     public static final String HTML_REPORT = "pytest.report.html";
     public static final String LAST_NODEID_REPORT = "pytest.report.nodeid";
+    public static final String EVENTS_REPORT = "pytest.report.events";
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
     private Context context = ContextHolder.isInitialized() && ContextHolder.isReuseContext() ? ContextHolder.getContext() : null;
     private String junitXmlReport;
     private String htmlReport;
     private String lastNodeIdReport;
+    private String eventsReport;
  
     @Override
     public String getId() {
@@ -80,6 +82,7 @@ public class PytestTestEngine implements TestEngine {
         this.junitXmlReport = configurationParameters.get(JUNIT_XML_REPORT).orElse(null);
         this.htmlReport = configurationParameters.get(HTML_REPORT).orElse(null);
         this.lastNodeIdReport = configurationParameters.get(LAST_NODEID_REPORT).orElse(null);
+        this.eventsReport = configurationParameters.get(EVENTS_REPORT).orElse(null);
 
         var testSrc = configurationParameters.get(TEST_SOURCE_DIR).orElse(null);
         Path baseDirectory = null;
@@ -156,7 +159,8 @@ public class PytestTestEngine implements TestEngine {
                 request.getEngineExecutionListener(),
                 junitXmlReport,
                 htmlReport,
-                lastNodeIdReport
+                lastNodeIdReport,
+                eventsReport
             );
 
             try {

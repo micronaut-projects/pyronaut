@@ -40,19 +40,22 @@ public class PytestTestExecutor {
     private static final String DEFAULT_JUNIT_XML_REPORT = "junit.xml";
     private static final String DEFAULT_HTML_REPORT = "index.html";
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
+    private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
 
     private final EngineExecutionListener listener;
     private final Context context;
     private final String junitXmlReportPath;
     private final String htmlReportPath;
     private final String lastNodeIdReportPath;
+    private final String eventsReportPath;
 
     public PytestTestExecutor(
         Context context,
         EngineExecutionListener listener,
         String junitXmlReportPath,
         String htmlReportPath,
-        String lastNodeIdReportPath
+        String lastNodeIdReportPath,
+        String eventsReportPath
     ) {
         this.listener = listener;
         this.context = context;
@@ -60,6 +63,7 @@ public class PytestTestExecutor {
         this.junitXmlReportPath = resolveReportPath(junitXmlReportPath, reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT));
         this.htmlReportPath = resolveReportPath(htmlReportPath, reportsDir.resolve(DEFAULT_HTML_REPORT));
         this.lastNodeIdReportPath = resolveReportPath(lastNodeIdReportPath, reportsDir.resolve(DEFAULT_NODEID_REPORT));
+        this.eventsReportPath = resolveReportPath(eventsReportPath, reportsDir.resolve(DEFAULT_EVENTS_REPORT));
     }
 
     static String resolveReportPath(String configuredPath, Path fallbackPath) {
@@ -129,7 +133,8 @@ public class PytestTestExecutor {
                 listener,
                 fileDescriptor.getChildren(),
                 htmlReportPath,
-                lastNodeIdReportPath
+                lastNodeIdReportPath,
+                eventsReportPath
             );
             // Call run_pytest with the file path and listener
             Value result = context.eval("python", """
@@ -165,7 +170,8 @@ run_pytest
                 listener,
                 engineDescriptor.getChildren(),
                 htmlReportPath,
-                lastNodeIdReportPath
+                lastNodeIdReportPath,
+                eventsReportPath
             );
             testListener.onResult(TestExecutionResult.successful());
             return;
@@ -178,7 +184,8 @@ run_pytest
                 listener,
                 engineDescriptor.getChildren(),
                 htmlReportPath,
-                lastNodeIdReportPath
+                lastNodeIdReportPath,
+                eventsReportPath
             );
             // Convert paths to strings for pytest
             String[] fileArgs = testFiles.stream()
@@ -214,7 +221,8 @@ run_pytest
                 listener,
                 Set.copyOf(List.of(testDescriptor)),
                 htmlReportPath,
-                lastNodeIdReportPath
+                lastNodeIdReportPath,
+                eventsReportPath
             );
             context.eval("python", """
 from pyronaut.test import run_pytest

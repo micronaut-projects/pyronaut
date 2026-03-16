@@ -137,4 +137,35 @@ class JUnitPytestTestListenerTest {
         assertTrue(Files.exists(nodeIdReport));
         assertTrue(Files.readString(nodeIdReport, StandardCharsets.UTF_8).isEmpty());
     }
+
+    @Test
+    void writesIncrementalEventsNdjsonDuringSession() throws Exception {
+        Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
+        Path eventsReport = reportsDir.resolve("events.ndjson");
+
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of(),
+            reportsDir.resolve("index.html").toString(),
+            reportsDir.resolve(".pyronaut-last-nodeid.txt").toString(),
+            eventsReport.toString()
+        );
+
+        listener.beforeTest("tests/test_stream.py::test_one", null);
+        listener.onOutput("tests/test_stream.py::test_one", "stdout", "hello\n");
+        listener.afterTest("tests/test_stream.py::test_one", null, TestExecutionResult.successful());
+        listener.onResult(TestExecutionResult.successful());
+
+        assertTrue(Files.exists(eventsReport));
+        String content = Files.readString(eventsReport, StandardCharsets.UTF_8);
+        assertTrue(content.contains("\"eventType\":\"session_started\""));
+        assertTrue(content.contains("\"eventType\":\"test_started\""));
+        assertTrue(content.contains("\"eventType\":\"test_output\""));
+        assertTrue(content.contains("\"eventType\":\"test_finished\""));
+        assertTrue(content.contains("\"eventType\":\"session_finished\""));
+        assertTrue(content.contains("\"stream\":\"stdout\""));
+        assertTrue(content.contains("\"text\":\"hello\\n\""));
+        assertTrue(content.contains("\"testId\":\"tests/test_stream.py::test_one\""));
+        assertFalse(content.contains("\"eventType\":\"unknown\""));
+    }
 }

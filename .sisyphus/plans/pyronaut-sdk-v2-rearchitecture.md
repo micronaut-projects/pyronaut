@@ -195,6 +195,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
 > - `pyronaut run` restart-cycle optimization (parallel stop + process synchronization) is tracked under new merged task 32.
 > - `pyronaut-test` official online Micronaut SVG logo provenance/reference update is tracked under new merged task 33.
 > - Monolith Tamboui TUI port to v2 orchestrator via `pyronaut --tui` delegation and report-analysis workflow is tracked under new merged task 34.
+> - Delegated v2 TUI live-reload/status parity + incremental per-test progress artifacts are tracked under new merged task 35.
 
 - [x] 1. Define v2 CLI protocol, contracts, and exit-code taxonomy
 
@@ -1913,6 +1914,100 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-34-tui-report-analysis.txt
   ```
 
+- [ ] 35. Harden delegated v2 TUI live-reload/status behavior and add incremental per-test progress artifacts *(new requirement)*
+
+  **What to do**:
+  - Ensure `pyronaut --tui` run mode visibly reflects file-change detection, processing, and restart lifecycle transitions.
+  - Ensure delegated run mode responds to `src`/`config` edits by re-running `pyronaut-processor` and restarting safely.
+  - Ensure delegated test mode responds to `tests` (and relevant `src`/`config`) edits by re-running `pyronaut-processor` and re-running tests automatically.
+  - Add an incremental per-test artifact stream in `pyronaut-pytest` for in-progress updates while tests are running.
+  - Keep final canonical artifacts (`junit.xml`, `index.html`, `.pyronaut-last-nodeid.txt`) intact for final summary/traceability.
+  - Use generation-scoped restart supervision so stale stop events cannot terminate newly started processes.
+
+  **Default design decisions (locked for this task)**:
+  - Incremental progress artifact format: append-only NDJSON, line-buffered, flush-per-event.
+  - Artifact path: `<project>/__pyronaut__/reports/tests/events.ndjson`.
+  - Minimum event fields:
+    - `runId` (string)
+    - `eventType` (`session_started` | `test_started` | `test_output` | `test_finished` | `session_finished`)
+    - `testId` (nullable string)
+    - `status` (nullable enum)
+    - `timestamp` (ISO-8601 string)
+    - `payload` (object for output/failure/metadata)
+  - TUI consumes `events.ndjson` incrementally for live state, then reconciles final status from canonical reports.
+
+  **Current observed gap baseline**:
+  - `pyronaut-tui` delegated command currently performs one-shot run/test flows and does not sustain delegated watcher-triggered loop behavior across `src/tests/config` edits.
+  - TUI status signaling for change/process/restart is incomplete during delegated execution.
+  - Test progress is effectively end-of-run because no persisted incremental event stream exists today.
+
+  **Must NOT do**:
+  - Do not migrate away from Tamboui.
+  - Do not change canonical report filenames/locations defined in Task 28.
+  - Do not remove or weaken final JUnit/HTML report generation.
+  - Do not introduce restart races or orphan processes under rapid file changes.
+  - Do not re-couple delegated TUI flow to monolith-only in-process assumptions.
+
+  **Dependencies**:
+  - Depends on: 27 (watch/restart baseline), 28 (report artifact contract), 32 (restart transaction hardening), 34 (delegated TUI baseline).
+  - Blocks: final interactive v2 parity sign-off in 11.
+
+  **References**:
+  - `pyronaut-tui/src/main/java/io/micronaut/pyronaut/tui/commands/PyronautDelegatingTuiCommand.java` - delegated run/test wiring.
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - orchestrator lifecycle/delegation behavior.
+  - `pyronaut/src/main/python/pyronaut_cli_v2/tui/app.py` - TUI integration and workflow state.
+  - `pyronaut/src/main/python/pyronaut_cli_v2/tui/reports.py` - final report parsing behavior.
+  - `pyronaut-pytest/src/main/resources/META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/pytest_listener.py` - pytest hook timings.
+  - `pyronaut-pytest/src/main/java/io/micronaut/test/pytest/execution/JUnitPytestTestListener.java` - report/event listener extension point.
+  - `pyronaut-pytest/src/main/java/io/micronaut/test/pytest/listener/PytestTestListener.java` - listener callback contract.
+  - pytest-reportlog incremental stream pattern: https://github.com/pytest-dev/pytest-reportlog
+  - JUnit Open Test Reporting incremental event pattern: https://github.com/junit-team/junit5/tree/main/junit-platform-reporting
+
+  **Acceptance Criteria**:
+  - [ ] In `pyronaut --tui` run mode, edits under `src` or `config` visibly transition TUI through change-detected → processing → restarting → running.
+  - [ ] Run-mode edit handling re-runs delegated `pyronaut-processor` and restarts app safely (no stale-process termination race).
+  - [ ] In `pyronaut --tui` test mode, edits under `tests` (and relevant `src`/`config`) re-run delegated `pyronaut-processor` and `pyronaut-test` automatically.
+  - [ ] `pyronaut-pytest` writes `__pyronaut__/reports/tests/events.ndjson` incrementally while tests execute.
+  - [ ] TUI test mode consumes incremental events for live per-test progress before final JUnit parse completes.
+  - [ ] Final summary output remains deterministic and consistent with canonical final artifacts.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Delegated TUI run mode surfaces change + safe restart lifecycle
+    Tool: Bash
+    Preconditions: TUI smoke/trace mode enabled; app runs successfully
+    Steps:
+      1. Run: PYRONAUT_TRACE_DELEGATION=true pyronaut --tui --project-dir <app> --smoke-run > .sisyphus/evidence/task-35-run.out 2> .sisyphus/evidence/task-35-run.err
+      2. Modify a file under <app>/src
+      3. Assert state trace includes change-detected/processing/restart markers
+      4. Assert delegation trace includes `pyronaut-processor` then `pyronaut-run`
+      5. Assert single active run process remains after restart
+    Expected Result: visible, deterministic restart lifecycle on source edits
+    Evidence: .sisyphus/evidence/task-35-run.out, .sisyphus/evidence/task-35-run.err
+
+  Scenario: Delegated TUI test mode reruns process+tests on test edits
+    Tool: Bash
+    Preconditions: TUI test smoke mode enabled
+    Steps:
+      1. Run: PYRONAUT_TRACE_DELEGATION=true pyronaut --tui --project-dir <app> --smoke-test > .sisyphus/evidence/task-35-test.out 2> .sisyphus/evidence/task-35-test.err
+      2. Modify a file under <app>/tests
+      3. Assert delegation trace includes `pyronaut-processor` and `pyronaut-test` rerun sequence
+      4. Assert TUI trace indicates rerun in progress and completion
+    Expected Result: test edits trigger deterministic process+test rerun with visible status
+    Evidence: .sisyphus/evidence/task-35-test.out, .sisyphus/evidence/task-35-test.err
+
+  Scenario: Incremental per-test event stream is available before session end
+    Tool: Bash
+    Preconditions: fixture with multiple tests (pass/fail/stdout)
+    Steps:
+      1. Run: pyronaut test --project-dir <app> with controlled harness
+      2. While run is active, read `<app>/__pyronaut__/reports/tests/events.ndjson` and verify lines append over time
+      3. Assert `test_started` and `test_finished` events appear for executed tests
+      4. Assert final `junit.xml` and `index.html` still exist at completion
+    Expected Result: incremental progress is persisted during execution without regressing final reports
+    Evidence: .sisyphus/evidence/task-35-events-stream.txt
+  ```
+
 ---
 
 ## Component Review & Commit Strategy (User-required cadence)
@@ -1933,7 +2028,7 @@ After each component group below:
 | C7 | Task 13-17 | `feat(cli-v2): improve diagnostics, proxy support, and source-test classpath processing` |
 | C8 | Task 18-20 | `feat(cli-v2): suppress test JVM noise and add processor progress/caching` |
 | C9 | Task 21-24 | `feat(cli-v2): add no-cache orchestration, deterministic preflight, and debug-vm support` |
-| C10 | Task 25-34 | `feat(cli-v2): add test filtering/reporting UX, restart optimization, TUI delegation port, GraalVM provisioning, and build command` |
+| C10 | Task 25-35 | `feat(cli-v2): add test filtering/reporting UX, restart optimization, TUI delegation hardening, GraalVM provisioning, and build command` |
 
 ---
 
@@ -1965,7 +2060,7 @@ After each component group below:
 - [x] `pyronaut run` enforces deterministic `update -> process -> run` orchestration order
 - [x] `pyronaut test` enforces deterministic `update -> process -> test` orchestration order
 - [x] `pyronaut-run` and `pyronaut-test` support `--debug-vm` with requested JDWP arguments and clear port-conflict diagnostics
-  - [x] `pyronaut-test` supports Gradle-like `--tests` filtering with deterministic selector forwarding
+- [x] `pyronaut-test` supports Gradle-like `--tests` filtering with deterministic selector forwarding
 - [x] `pyronaut-run` includes explicit native-image reflection metadata and low-noise missing-main fallback behavior
 - [x] `pyronaut run` auto-restarts on `src/tests/config` changes without restart loops from generated outputs
 - [x] Test reports (`junit.xml`, `index.html`) and `.pyronaut-last-nodeid.txt` are written under `__pyronaut__/reports/tests`
@@ -1975,3 +2070,4 @@ After each component group below:
 - [ ] `pyronaut run` restart cycle overlaps delegated processing with server stop and restarts only after both complete deterministically
 - [ ] `pyronaut-test` report HTML references official online Micronaut SVG source (with documented fallback/provenance)
 - [ ] `pyronaut --tui` launches Tamboui-based v2 delegated TUI and analyzes `pyronaut-test` report artifacts without embedded monolith runtime/compiler coupling
+- [ ] `pyronaut --tui` run/test loops surface change/restart progress and consume incremental per-test events from `__pyronaut__/reports/tests/events.ndjson`

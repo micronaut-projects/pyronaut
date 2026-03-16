@@ -26,6 +26,7 @@ import org.junit.platform.engine.reporting.ReportEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -36,6 +37,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 
 /**
@@ -68,6 +71,9 @@ public class JUnitPytestTestListener implements PytestTestListener {
     private final List<TestDescriptor> allDescriptors;
     private final Path htmlReportPath;
     private final Path lastNodeIdPath;
+    private final Path eventsReportPath;
+    private final String runId;
+    private final AtomicLong eventSequence = new AtomicLong();
     private final List<TestOutcome> outcomes = new ArrayList<>();
     private final Set<String> writtenNodeIds = new HashSet<>();
     private final Map<String, TestStreamOutput> outputByTest = new LinkedHashMap<>();
@@ -75,7 +81,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     public JUnitPytestTestListener(
         EngineExecutionListener junitListener,
         Set<? extends TestDescriptor> testDescriptors) {
-        this(junitListener, testDescriptors, null, null);
+        this(junitListener, testDescriptors, null, null, null);
     }
 
     public JUnitPytestTestListener(
@@ -84,12 +90,25 @@ public class JUnitPytestTestListener implements PytestTestListener {
         String htmlReportPath,
         String lastNodeIdPath
     ) {
+        this(junitListener, testDescriptors, htmlReportPath, lastNodeIdPath, null);
+    }
+
+    public JUnitPytestTestListener(
+        EngineExecutionListener junitListener,
+        Set<? extends TestDescriptor> testDescriptors,
+        String htmlReportPath,
+        String lastNodeIdPath,
+        String eventsReportPath
+    ) {
         this.junitListener = junitListener;
         this.children = testDescriptors;
         this.allDescriptors = new ArrayList<>();
         this.htmlReportPath = toPath(htmlReportPath);
         this.lastNodeIdPath = toPath(lastNodeIdPath);
+        this.eventsReportPath = toPath(eventsReportPath);
+        this.runId = UUID.randomUUID().toString();
         initializeNodeIdReport();
+        initializeEventsReport();
         for (TestDescriptor td : testDescriptors) {
             flatten(td);
         }
@@ -125,6 +144,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     public void beforeTest(String testId, Value item) {
         LOG.debug("Pytest starting test: {}", testId);
         writeNodeId(testId);
+        writeEvent("test_started", testId, null, Map.of());
 
         allDescriptors
             .stream()
@@ -144,6 +164,9 @@ public class JUnitPytestTestListener implements PytestTestListener {
         LOG.debug("Pytest finished test: {} with result: {}", testId, result);
         writeNodeId(testId);
         outcomes.add(new TestOutcome(testId, result));
+        var payload = new LinkedHashMap<String, String>();
+        result.getThrowable().ifPresent(throwable -> payload.put("failure", throwable.toString()));
+        writeEvent("test_finished", testId, result.getStatus().name(), payload);
         allDescriptors
             .stream()
             .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
@@ -168,6 +191,15 @@ public class JUnitPytestTestListener implements PytestTestListener {
     @Override
     public void onResult(TestExecutionResult result) {
         LOG.debug("Pytest session completed");
+        long passed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.SUCCESSFUL).count();
+        long failed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.FAILED).count();
+        long skipped = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.ABORTED).count();
+        var payload = new LinkedHashMap<String, String>();
+        payload.put("total", Long.toString(outcomes.size()));
+        payload.put("passed", Long.toString(passed));
+        payload.put("failed", Long.toString(failed));
+        payload.put("skipped", Long.toString(skipped));
+        writeEvent("session_finished", null, result.getStatus().name(), payload);
         writeHtmlReport();
     }
 
@@ -176,6 +208,10 @@ public class JUnitPytestTestListener implements PytestTestListener {
         if (testId != null && text != null && !text.isBlank()) {
             outputByTest.computeIfAbsent(testId, ignored -> new TestStreamOutput())
                 .append(stream, text);
+            var payload = new LinkedHashMap<String, String>();
+            payload.put("stream", stream == null ? "stdout" : stream);
+            payload.put("text", text);
+            writeEvent("test_output", testId, null, payload);
         }
         allDescriptors
             .stream()
@@ -219,6 +255,108 @@ public class JUnitPytestTestListener implements PytestTestListener {
         } catch (Exception e) {
             LOG.debug("Unable to initialize last nodeid report: {}", lastNodeIdPath, e);
         }
+    }
+
+    private void initializeEventsReport() {
+        if (eventsReportPath == null) {
+            return;
+        }
+        try {
+            Path parent = eventsReportPath.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            Files.writeString(eventsReportPath, "", StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            writeEvent("session_started", null, null, Map.of());
+        } catch (Exception e) {
+            LOG.debug("Unable to initialize events report: {}", eventsReportPath, e);
+        }
+    }
+
+    private synchronized void writeEvent(String eventType, String testId, String status, Map<String, String> payload) {
+        if (eventsReportPath == null) {
+            return;
+        }
+        try {
+            var line = toJsonEvent(eventType, testId, status, payload) + "\n";
+            Files.writeString(eventsReportPath, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (Exception e) {
+            LOG.debug("Unable to append events report: {}", eventsReportPath, e);
+        }
+    }
+
+    private String toJsonEvent(String eventType, String testId, String status, Map<String, String> payload) {
+        var seq = eventSequence.incrementAndGet();
+        var safePayload = payload == null ? Map.<String, String>of() : payload;
+        var builder = new StringBuilder(256);
+        builder.append('{');
+        appendJsonField(builder, "runId", runId);
+        builder.append(',');
+        builder.append("\"seq\":").append(seq);
+        builder.append(',');
+        appendJsonField(builder, "eventType", eventType);
+        builder.append(',');
+        appendJsonNullableField(builder, "testId", testId);
+        builder.append(',');
+        appendJsonNullableField(builder, "status", status);
+        builder.append(',');
+        appendJsonField(builder, "timestamp", Instant.now().toString());
+        builder.append(',');
+        builder.append("\"payload\":{");
+        boolean first = true;
+        for (var entry : safePayload.entrySet()) {
+            if (!first) {
+                builder.append(',');
+            }
+            appendJsonField(builder, entry.getKey(), entry.getValue());
+            first = false;
+        }
+        builder.append("}}");
+        return builder.toString();
+    }
+
+    private static void appendJsonField(StringBuilder builder, String name, String value) {
+        builder.append('"').append(escapeJson(name)).append("\":\"")
+            .append(escapeJson(value == null ? "" : value))
+            .append('"');
+    }
+
+    private static void appendJsonNullableField(StringBuilder builder, String name, String value) {
+        builder.append('"').append(escapeJson(name)).append("\":");
+        if (value == null) {
+            builder.append("null");
+        } else {
+            builder.append('"').append(escapeJson(value)).append('"');
+        }
+    }
+
+    private static String escapeJson(String value) {
+        var builder = new StringBuilder(value.length() + 16);
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            switch (ch) {
+                case '"' -> builder.append("\\\"");
+                case '\\' -> builder.append("\\\\");
+                case '\b' -> builder.append("\\b");
+                case '\f' -> builder.append("\\f");
+                case '\n' -> builder.append("\\n");
+                case '\r' -> builder.append("\\r");
+                case '\t' -> builder.append("\\t");
+                default -> {
+                    if (ch < 0x20) {
+                        builder.append("\\u");
+                        String hex = Integer.toHexString(ch);
+                        for (int j = hex.length(); j < 4; j++) {
+                            builder.append('0');
+                        }
+                        builder.append(hex);
+                    } else {
+                        builder.append(ch);
+                    }
+                }
+            }
+        }
+        return builder.toString();
     }
 
     private void writeHtmlReport() {
