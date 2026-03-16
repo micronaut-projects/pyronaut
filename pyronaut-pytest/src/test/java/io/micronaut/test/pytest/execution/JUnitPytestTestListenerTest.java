@@ -81,6 +81,8 @@ class JUnitPytestTestListenerTest {
         assertTrue(html.contains("Pyronaut Test Report"));
         assertTrue(html.contains("cdn.jsdelivr.net/npm/bootstrap@5.3.3"));
         assertTrue(html.contains("micronaut-logo"));
+        assertTrue(html.contains("MIcronautLogo_Horizontal.svg"));
+        assertTrue(html.contains("data-pyronaut-logo-fallback"));
         assertTrue(html.contains("<details class=\"card mb-2\">"));
         assertTrue(html.contains("tests/test_health.py::test_ping"));
     }

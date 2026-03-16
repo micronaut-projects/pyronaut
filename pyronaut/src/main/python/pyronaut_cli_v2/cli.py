@@ -9,6 +9,7 @@ import os
 import platform
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -51,7 +52,7 @@ class ManagedProcess(Protocol):
 ProcessRunner = Callable[[list[str], dict[str, str] | None], ManagedProcess]
 JavaHomeProvider = Callable[[], str | None]
 
-_PROVISIONED_GRAALVM_HOME: str | None = None
+_provisioned_graalvm_home: str | None = None
 _GRAALVM_MIN_JDK_MAJOR = 25
 _GRAALVM_SDKMAN_CANDIDATE = "25-graal"
 
@@ -75,6 +76,11 @@ def run(
     sleep: Callable[[float], None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    if monotonic is None:
+        monotonic = time.monotonic
+    if sleep is None:
+        sleep = time.sleep
+
     if runner_with_env is not None:
         execute = runner_with_env
     elif runner is not None:
@@ -95,6 +101,9 @@ def run(
     if argv[0] in {"-V", "--version"}:
         print("pyronaut 2")
         return SUCCESS
+
+    if "--tui" in argv or argv[0] == "--tui":
+        return _run_tui(argv=list(argv), runner_with_env=execute, resolver=locate)
 
     command = argv[0]
     forwarded_args = _normalize_project_flag(list(argv[1:]))
@@ -152,8 +161,8 @@ def run(
             poll_interval=watch_poll_interval,
             debounce_seconds=watch_debounce_seconds,
             snapshotter=snapshotter or _snapshot_watched_files,
-            monotonic=monotonic or time.monotonic,
-            sleep=sleep or time.sleep,
+            monotonic=monotonic,
+            sleep=sleep,
             java_home_provider=effective_java_home_provider,
         )
 
@@ -463,9 +472,40 @@ def _run_with_auto_restart(
                 if now - restart_requested_at < debounce_seconds:
                     continue
 
-                if not _stop_managed_process(process):
+                stop_ok: bool | None = None
+                refresh_code: int | None = None
+                refresh_exception: BaseException | None = None
+
+                def _stop_worker() -> None:
+                    nonlocal stop_ok
+                    stop_ok = _stop_managed_process(process)
+
+                def _refresh_worker() -> None:
+                    nonlocal refresh_code, refresh_exception
+                    try:
+                        refresh_code = _run_preflight(str(project_root), no_cache, execute, resolver)
+                    except BaseException as exc:
+                        refresh_exception = exc
+                        refresh_code = INTERNAL_ERROR
+
+                stop_thread = threading.Thread(target=_stop_worker, name="pyronaut-stop-for-restart", daemon=True)
+                refresh_thread = threading.Thread(target=_refresh_worker, name="pyronaut-refresh-for-restart", daemon=True)
+                stop_thread.start()
+                refresh_thread.start()
+                stop_thread.join()
+                refresh_thread.join()
+
+                if stop_ok is not True:
                     print("Failed to stop running process for restart.", file=sys.stderr)
                     return INTERNAL_ERROR
+                if refresh_exception is not None:
+                    print("Failed to refresh artifacts for restart.", file=sys.stderr)
+                    return INTERNAL_ERROR
+                if refresh_code is None:
+                    print("Failed to refresh artifacts for restart.", file=sys.stderr)
+                    return INTERNAL_ERROR
+                if refresh_code != SUCCESS:
+                    return int(refresh_code)
                 snapshot = next_snapshot
                 break
         except KeyboardInterrupt:
@@ -559,13 +599,13 @@ def _build_debug_vm_env(base_env: dict[str, str] | None = None) -> dict[str, str
 
 
 def _ensure_graalvm_java_home() -> str | None:
-    global _PROVISIONED_GRAALVM_HOME
-    if _PROVISIONED_GRAALVM_HOME is not None:
-        return _PROVISIONED_GRAALVM_HOME
+    global _provisioned_graalvm_home
+    if _provisioned_graalvm_home is not None:
+        return _provisioned_graalvm_home
 
     env_java_home = _read_env("JAVA_HOME")
     if env_java_home and _is_compatible_graalvm_home(Path(env_java_home)):
-        _PROVISIONED_GRAALVM_HOME = env_java_home
+        _provisioned_graalvm_home = env_java_home
         return env_java_home
 
     pyronaut_jdks = _graalvm_jdks_root()
@@ -573,18 +613,18 @@ def _ensure_graalvm_java_home() -> str | None:
 
     cached = _find_compatible_cached_jdk(pyronaut_jdks)
     if cached is not None:
-        _PROVISIONED_GRAALVM_HOME = str(cached)
-        return _PROVISIONED_GRAALVM_HOME
+        _provisioned_graalvm_home = str(cached)
+        return _provisioned_graalvm_home
 
     sdkman_home = _install_with_sdkman(pyronaut_jdks)
     if sdkman_home is not None:
-        _PROVISIONED_GRAALVM_HOME = str(sdkman_home)
-        return _PROVISIONED_GRAALVM_HOME
+        _provisioned_graalvm_home = str(sdkman_home)
+        return _provisioned_graalvm_home
 
     downloaded = _download_and_install_graalvm(pyronaut_jdks)
     if downloaded is not None:
-        _PROVISIONED_GRAALVM_HOME = str(downloaded)
-        return _PROVISIONED_GRAALVM_HOME
+        _provisioned_graalvm_home = str(downloaded)
+        return _provisioned_graalvm_home
     return None
 
 
@@ -982,4 +1022,141 @@ def _is_supported_platform(platform_name: str) -> bool:
 
 
 def _print_usage(stream=sys.stdout) -> None:
-    stream.write("Usage: pyronaut [--version] <install|process|run|test|build> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build> [args...]\n")
+
+
+def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Callable[[str], str | None]) -> int:
+    from .tui.app import TuiApp, TuiOptions
+    from .tui.reports import render_summary_line
+
+    args = [a for a in argv if a != "--tui"]
+
+    if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
+        return _delegate_to_tui_binary(["--help"], runner_with_env, resolver)
+    if _extract_flag(args, "--version") or _extract_flag(args, "-V"):
+        return _delegate_to_tui_binary(["--version"], runner_with_env, resolver)
+
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    smoke = _extract_flag(args, "--smoke") or _extract_flag(args, "--non-interactive")
+    non_interactive = _extract_flag(args, "--non-interactive")
+    initial_mode = "test" if _extract_flag(args, "--test") else "run"
+    report_dir = (_extract_path_flag(args, "--report-dir") or (project_dir / "__pyronaut__" / "reports" / "tests")).resolve()
+    trace_delegation = _delegation_trace_enabled() or _extract_flag(args, "--trace-delegation")
+
+    if not smoke and not non_interactive:
+        return _run_tamboui_tui(
+            project_dir=project_dir,
+            initial_mode=initial_mode,
+            report_dir=report_dir,
+            trace_delegation=trace_delegation,
+            runner=runner_with_env,
+            resolver=resolver,
+        )
+
+    def _delegate(command: str, forwarded: Sequence[str]) -> int:
+        previous = os.environ.get("PYRONAUT_TRACE_DELEGATION")
+        if trace_delegation:
+            os.environ["PYRONAUT_TRACE_DELEGATION"] = "true"
+        try:
+            return run([command, *forwarded], runner_with_env=runner_with_env, resolver=resolver)
+        finally:
+            if trace_delegation:
+                if previous is None:
+                    os.environ.pop("PYRONAUT_TRACE_DELEGATION", None)
+                else:
+                    os.environ["PYRONAUT_TRACE_DELEGATION"] = previous
+
+    options = TuiOptions(
+        project_dir=project_dir,
+        report_dir=report_dir,
+        initial_mode=initial_mode,
+        smoke=smoke,
+        non_interactive=non_interactive,
+        trace_delegation=trace_delegation,
+    )
+    app = TuiApp(options=options, delegate=_delegate, report_summary=render_summary_line)
+    return app.run()
+
+
+def _run_tamboui_tui(
+    *,
+    project_dir: Path,
+    initial_mode: str,
+    report_dir: Path,
+    trace_delegation: bool,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+) -> int:
+    tui_executable = _resolve_required_tui_executable(resolver)
+    if tui_executable is None:
+        return PRECONDITION_FAILED
+
+    delegated = {
+        "install": resolver("pyronaut-install"),
+        "process": resolver("pyronaut-processor"),
+        "run": resolver("pyronaut-run"),
+        "test": resolver("pyronaut-test"),
+    }
+    missing = [name for (name, path) in delegated.items() if path is None]
+    if missing:
+        print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
+        return PRECONDITION_FAILED
+
+    command_line = [
+        tui_executable,
+        "delegating-tui",
+        "--project-dir",
+        str(project_dir),
+        "--mode",
+        initial_mode,
+        "--report-dir",
+        str(report_dir),
+        "--install-executable",
+        str(delegated["install"]),
+        "--process-executable",
+        str(delegated["process"]),
+        "--run-executable",
+        str(delegated["run"]),
+        "--test-executable",
+        str(delegated["test"]),
+    ]
+    if trace_delegation:
+        command_line.append("--trace-delegation")
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    return runner(command_line, None)
+
+
+def _delegate_to_tui_binary(
+    args: Sequence[str], runner: RunnerWithEnv, resolver: Callable[[str], str | None]
+) -> int:
+    tui_executable = _resolve_required_tui_executable(resolver)
+    if tui_executable is None:
+        return PRECONDITION_FAILED
+    command_line = [tui_executable, *args]
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    return runner(command_line, None)
+
+
+def _resolve_required_tui_executable(resolver: Callable[[str], str | None]) -> str | None:
+    tui_executable = resolver("pyronaut-tui")
+    if tui_executable is None:
+        print("Missing delegated executable: pyronaut-tui", file=sys.stderr)
+        return None
+    return tui_executable
+
+
+def _extract_flag(argv: Sequence[str], name: str) -> bool:
+    return any(token == name or token.startswith(name + "=") for token in argv)
+
+
+def _extract_path_flag(argv: Sequence[str], name: str) -> Path | None:
+    for i, token in enumerate(argv):
+        if token == name and i + 1 < len(argv):
+            value = argv[i + 1].strip()
+            return Path(value) if value else None
+        if token.startswith(name + "="):
+            value = token.split("=", 1)[1].strip()
+            return Path(value) if value else None
+    return None

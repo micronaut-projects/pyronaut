@@ -14,7 +14,8 @@ def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
     [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"],
     [path: ":micronaut-pyronaut-run", command: "pyronaut-run"],
-    [path: ":micronaut-pyronaut-test", command: "pyronaut-test"]
+    [path: ":micronaut-pyronaut-test", command: "pyronaut-test"],
+    [path: ":micronaut-pyronaut-tui", command: "pyronaut-tui", installDir: "pyronaut-tui"]
 ]
 
 tasks.register("prepareWheelSources", Sync) {
@@ -25,12 +26,29 @@ tasks.register("prepareWheelSources", Sync) {
 
     delegatedCliProjects.each { cliProject ->
         dependsOn(project(cliProject.path).tasks.named("installDist"))
-        from(project(cliProject.path).layout.buildDirectory.dir("install/${project(cliProject.path).name}")) {
+        def installDirName = cliProject.containsKey("installDir") ? cliProject.installDir : project(cliProject.path).name
+        from(project(cliProject.path).layout.buildDirectory.dir("install/${installDirName}")) {
             into("src/pyronaut_cli_v2/tools/${cliProject.command}")
         }
     }
 
     doLast {
+        delegatedCliProjects.each { cliProject ->
+            def sourceCommand = cliProject.containsKey("sourceCommand") ? cliProject.sourceCommand : cliProject.command
+            if (sourceCommand != cliProject.command) {
+                def sourceScript = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/bin/${sourceCommand}").asFile
+                def targetScript = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/bin/${cliProject.command}").asFile
+                if (sourceScript.exists() && !targetScript.exists()) {
+                    sourceScript.renameTo(targetScript)
+                }
+                def sourceBat = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/bin/${sourceCommand}.bat").asFile
+                def targetBat = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/bin/${cliProject.command}.bat").asFile
+                if (sourceBat.exists() && !targetBat.exists()) {
+                    sourceBat.renameTo(targetBat)
+                }
+            }
+        }
+
         def pyprojectFile = wheelStagingDir.get().file("pyproject.toml").asFile
         pyprojectFile.parentFile.mkdirs()
         pyprojectFile.text = """

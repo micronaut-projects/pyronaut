@@ -44,12 +44,25 @@ import java.util.Set;
 public class JUnitPytestTestListener implements PytestTestListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(JUnitPytestTestListener.class);
-    private static final String MICRONAUT_LOGO_SVG = """
-        <svg class="micronaut-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120" role="img" aria-label="Micronaut">
-          <circle cx="44" cy="60" r="24" fill="#ff4500"/>
-          <text x="84" y="72" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#ff4500">Micronaut</text>
-        </svg>
-        """;
+    private static final String MICRONAUT_LOGO_URL =
+        "https://micronaut.io/wp-content/uploads/2020/11/MIcronautLogo_Horizontal.svg";
+    private static final String MICRONAUT_LOGO_MARKUP = """
+        <div class="micronaut-brand" aria-label="Micronaut">
+          <img
+            class="micronaut-logo"
+            src="%s"
+            alt="Micronaut"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+            onerror="this.style.display='none';this.parentElement?.classList.add('micronaut-logo--failed');"
+          >
+          <div class="micronaut-logo-fallback" data-pyronaut-logo-fallback>
+            Micronaut
+            <span class="text-body-secondary">(logo unavailable — offline-safe fallback)</span>
+            <span class="visually-hidden">Official logo source: https://micronaut.io</span>
+          </div>
+        </div>
+        """.formatted(MICRONAUT_LOGO_URL);
     private final EngineExecutionListener junitListener;
     private final Set<? extends TestDescriptor> children;
     private final List<TestDescriptor> allDescriptors;
@@ -232,6 +245,8 @@ public class JUnitPytestTestListener implements PytestTestListener {
                 .append("body{margin:24px;background:#f8f9fa;} ")
                 .append(".report-shell{max-width:1100px;margin:0 auto;} ")
                 .append(".micronaut-logo{width:320px;max-width:100%;height:auto;display:block;margin:0 auto 1rem auto;} ")
+                .append(".micronaut-logo-fallback{display:none;text-align:center;font-weight:800;font-size:1.75rem;letter-spacing:.02em;color:#ff4500;margin:0 auto 1rem auto;} ")
+                .append(".micronaut-logo--failed .micronaut-logo-fallback{display:block;} ")
                 .append("details>summary{cursor:pointer;list-style:none;} ")
                 .append("details>summary::-webkit-details-marker{display:none;} ")
                 .append("pre{white-space:pre-wrap;word-break:break-word;} ")
@@ -240,7 +255,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
             html.append("</head><body>\n");
             html.append("<main class=\"report-shell\">\n")
                 .append("<div class=\"card shadow-sm\"><div class=\"card-body\">\n")
-                .append(MICRONAUT_LOGO_SVG)
+                .append(MICRONAUT_LOGO_MARKUP)
                 .append("<h1 class=\"h3 text-center mb-3\">Pyronaut Test Report</h1>\n")
                 .append("<div class=\"d-flex flex-wrap justify-content-center gap-2 mb-4\">\n")
                 .append("<span class=\"badge text-bg-secondary\">Total: ").append(total).append("</span>")

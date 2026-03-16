@@ -29,7 +29,7 @@ Re-architect Pyronaut from monolithic `pyronaut-cli/` into modular v2 CLIs with 
 - Orchestrator UX: **`pyronaut process` delegates to `pyronaut-processor`**.
 - Orchestrator implementation language (phase 1): **Python**.
 - Phase-1 platform matrix: **macOS + Linux first**.
-- TUI rework: **out of scope (phase 2)**.
+- Initial baseline had TUI rework out of scope (phase 2); superseded by follow-up Task 34 (`pyronaut --tui` Tamboui delegation port).
 - Phase-1 default wheel strategy: **platform-specific SDK wheels for macOS/Linux**.
 - Phase-1 default runtime baseline: align with current repo toolchain conventions (Gradle CI Java 21/25; Micronaut/Pyronaut snapshots already used in repo).
 - `pyronaut-test` CLI is introduced as new executable surface, while reusing existing `pyronaut-pytest` engine module internals.
@@ -79,7 +79,7 @@ Deliver a modular Pyronaut SDK v2 with independent executable responsibilities, 
 - Review/commit checkpoint after each component.
 
 ### Must NOT Have (Guardrails)
-- No TUI redesign in phase 1.
+- No TUI framework migration away from Tamboui; keep TUI scope to delegation port + report analysis (no unrelated redesign).
 - No plugin ecosystem introduction in phase 1.
 - No Windows deliverable in phase 1.
 - No reintroduction of monolithic shared classloader orchestration from v1.
@@ -192,6 +192,9 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
 > - Orchestrator GraalVM JDK auto-provisioning (SDKMAN-first, fallback download, JDK 25+) is tracked under new merged task 29.
 > - New `pyronaut build` command + `[tool.pyronaut]` build-mode model support is tracked under new merged task 30.
 > - `pyronaut-test` report UX modernization (console link minimization + rich HTML details + Micronaut branding) is tracked under new merged task 31.
+> - `pyronaut run` restart-cycle optimization (parallel stop + process synchronization) is tracked under new merged task 32.
+> - `pyronaut-test` official online Micronaut SVG logo provenance/reference update is tracked under new merged task 33.
+> - Monolith Tamboui TUI port to v2 orchestrator via `pyronaut --tui` delegation and report-analysis workflow is tracked under new merged task 34.
 
 - [x] 1. Define v2 CLI protocol, contracts, and exit-code taxonomy
 
@@ -1696,7 +1699,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
   - `pyronaut-test/src/test/java/io/micronaut/pyronaut/test/PyronautTestMainTest.java` - report output/legacy compatibility tests.
   - `pyronaut-pytest/src/main/java/io/micronaut/test/pytest/execution/JUnitPytestTestListener.java` - HTML report generation pipeline.
   - `pyronaut-pytest/src/main/resources/META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/pytest_listener.py` - captured stdout/stderr/failure forwarding.
-  - `pyronaut-projectgen-app/src/main/resources/assets/images/logo.svg` - Micronaut logo asset reference.
+  - Task 33 reference sources - official online Micronaut SVG provenance/fallback policy for logo rendering.
   - Bootstrap docs/CDN: https://getbootstrap.com/docs/5.3/getting-started/introduction/
   - UIkit CDN fallback reference: https://github.com/uikit/uikit#readme
 
@@ -1747,6 +1750,169 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-31-artifacts.txt
   ```
 
+- [x] 32. Optimize `pyronaut run` edit/reload cycle by parallelizing stop + process during restart *(new requirement)*
+
+  **What to do**:
+  - Update orchestrator restart behavior in `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` so watcher-triggered restart executes:
+    1. delegated process refresh (`pyronaut-processor`) and
+    2. managed server stop (`_stop_managed_process`)
+    in parallel.
+  - Restart `pyronaut-run` only after **both** operations complete successfully.
+  - Keep deterministic restart transaction semantics:
+    - if stop fails, restart is aborted and command exits non-zero,
+    - if process fails, restart is aborted and command exits non-zero,
+    - no stale process from prior generation is allowed to terminate the newly started process.
+  - Preserve existing watcher debounce + ignored directory behavior and existing preflight guardrails.
+
+  **Must NOT do**:
+  - Do not bypass orchestrator preflight/install policy for initial startup.
+  - Do not introduce restart races where old stop operations can kill a newly spawned run process.
+  - Do not trigger restart from writes inside ignored output/cache directories.
+
+  **Dependencies**:
+  - Depends on: 22 (deterministic preflight ordering), 27 (auto-restart baseline), 31 (report UX task remains independent).
+  - Blocks: end-to-end reload latency/behavior sign-off in 11.
+
+  **References**:
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - `_run_with_auto_restart(...)`, `_stop_managed_process(...)`.
+  - `pyronaut/src/test/python/orchestrator_test.py` - restart and stop fallback test baselines.
+
+  **Acceptance Criteria**:
+  - [ ] On source change, orchestrator launches delegated process refresh in parallel with stop, then restarts run only after both complete.
+  - [ ] If stop phase fails, restart is aborted and deterministic non-zero failure is returned.
+  - [ ] If process phase fails, restart is aborted and deterministic non-zero failure is returned.
+  - [ ] Existing debounce and ignored-directory restart guardrails remain intact.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Restart overlaps stop and process phases
+    Tool: Bash
+    Preconditions: orchestrator test harness with deterministic fake process + timing hooks
+    Steps:
+      1. Run orchestrator tests covering restart ordering/timestamps
+      2. Assert event order shows stop and process overlap before restart
+      3. Assert restart launch occurs only after both phases report success
+    Expected Result: parallel stop+process behavior reduces restart critical path without race regressions
+    Evidence: .sisyphus/evidence/task-32-restart-parallel.txt
+
+  Scenario: Stop/process failure aborts restart deterministically
+    Tool: Bash
+    Preconditions: tests injecting stop failure and process failure conditions
+    Steps:
+      1. Run failure-path orchestrator tests
+      2. Assert non-zero exit and explicit stderr diagnostics for each failing phase
+      3. Assert no second run process is started when either phase fails
+    Expected Result: failure handling is deterministic and safe
+    Evidence: .sisyphus/evidence/task-32-restart-failures.txt
+  ```
+
+- [x] 33. Replace report logo placeholder with official online Micronaut SVG reference + provenance guardrails *(new requirement)*
+
+  **What to do**:
+  - Update report HTML generation to reference a real official Micronaut SVG online source:
+    - primary: `https://micronaut.io/wp-content/uploads/2020/11/MIcronautLogo_Horizontal.svg`
+    - fallback: sanctioned brand-kit download link from official logos page.
+  - Keep logo rendering deterministic in generated HTML while preserving report readability when external logo loading fails.
+  - Document source authority/provenance in code comments/tests and plan references.
+
+  **Must NOT do**:
+  - Do not use unofficial third-party logo assets.
+  - Do not remove report readability when logo fetch fails.
+  - Do not regress existing HTML report structure/sections used by downstream tooling.
+
+  **Dependencies**:
+  - Depends on: 31 (report UX modernization baseline).
+  - Blocks: report branding sign-off and TUI report-analysis coupling in 34.
+
+  **References**:
+  - `pyronaut-pytest/src/main/java/io/micronaut/test/pytest/execution/JUnitPytestTestListener.java` - logo/report HTML generation path.
+  - Official Micronaut logos policy/source: https://micronaut.io/brand-guidelines/micronaut-logos/
+  - Primary online SVG: https://micronaut.io/wp-content/uploads/2020/11/MIcronautLogo_Horizontal.svg
+
+  **Acceptance Criteria**:
+  - [ ] Generated report HTML references the official online Micronaut SVG URL in logo markup.
+  - [ ] Fallback behavior/source is present and test-covered for failed primary logo load.
+  - [ ] Existing HTML report diagnostics sections and canonical report artifact behavior remain unchanged.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: HTML report contains official Micronaut SVG source reference
+    Tool: Bash
+    Preconditions: report generation tests and fixture run
+    Steps:
+      1. Execute pyronaut-pytest report generation tests
+      2. Assert generated HTML contains primary official SVG URL
+      3. Assert fallback marker/source is present in markup
+    Expected Result: report branding uses official Micronaut source with deterministic fallback
+    Evidence: .sisyphus/evidence/task-33-logo-reference.txt
+
+  Scenario: Logo load failure does not break report readability
+    Tool: Bash
+    Preconditions: fixture HTML validation with simulated unavailable logo URL
+    Steps:
+      1. Run test validating fallback/no-logo failure path
+      2. Assert report body, test cards, and diagnostics sections remain renderable
+    Expected Result: branding failure does not break report usability
+    Evidence: .sisyphus/evidence/task-33-logo-fallback.txt
+  ```
+
+- [x] 34. Port monolith Tamboui TUI to v2 and activate with `pyronaut --tui` delegation model *(new requirement)*
+
+  **What to do**:
+  - Introduce v2 TUI activation path via orchestrator global flag: `pyronaut --tui` (default mode run; test mode toggle supported).
+  - Extract TUI runtime into dedicated module/project `pyronaut-tui` so legacy `pyronaut-cli` remains unchanged during v2 migration.
+  - Keep TUI implementation on **Tamboui** (no framework migration), reusing/porting applicable `pyronaut-cli` view/controller patterns.
+  - Replace embedded monolith runtime/compiler coupling with explicit delegation to independent v2 commands (`install`, `process`, `run`, `test`).
+  - Add report-analysis workflow in TUI test mode that consumes canonical `pyronaut-test` artifacts (`junit.xml`, `index.html`, `.pyronaut-last-nodeid.txt`) from `__pyronaut__/reports/tests`.
+  - Add non-interactive/agent-executable TUI smoke verification path so CI/agents can validate launch + delegation + report parsing without manual terminal interaction.
+
+  **Must NOT do**:
+  - Do not embed monolith `PyronautCliCompiler`/application manager runtime into v2 TUI flow.
+  - Do not migrate away from Tamboui.
+  - Do not redesign report schema beyond parsing existing canonical outputs.
+  - Do not bypass orchestrator lifecycle guardrails while in TUI mode.
+
+  **Dependencies**:
+  - Depends on: 9 (orchestrator baseline), 27 (restart baseline), 31/33 (report structure + branding source), existing protocol/delegation contracts.
+  - Blocks: final v2 parity sign-off for interactive developer workflow.
+
+  **References**:
+  - Legacy Tamboui TUI: `pyronaut-cli/src/main/java/io/micronaut/python/cli/ui/PyronautTui.java`, `ui/view/RootView.java`, `ui/view/TestTreeView.java`, `ui/UiController.java`, `commands/BaseSourceCommand.java`.
+  - Extracted v2 TUI module: `pyronaut-tui/src/main/java/io/micronaut/pyronaut/tui/`.
+  - Legacy test event flow: `pyronaut-cli/src/main/java/io/micronaut/python/cli/TestApplicationManager.java`, `ui/TuiEventSink.java`, `protocol/ProtocolConstants.java`.
+  - Tamboui docs (must retain framework): https://tamboui.dev/docs/main/index.html
+  - v2 orchestrator entrypoint: `pyronaut/src/main/python/pyronaut_cli_v2/cli.py`
+
+  **Acceptance Criteria**:
+  - [ ] `pyronaut --tui` launches Tamboui-based v2 TUI and enters delegated run workflow.
+  - [ ] TUI run/test actions delegate to independent v2 CLIs (no embedded monolith compiler/runtime).
+  - [ ] TUI test workflow parses canonical report artifacts and renders deterministic test summary/status details.
+  - [ ] Non-interactive TUI smoke path is available and CI/agent executable.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: v2 TUI launch/delegation smoke in non-interactive mode
+    Tool: Bash
+    Preconditions: TUI smoke mode enabled for CI/agents
+    Steps:
+      1. Run: pyronaut --tui --project-dir <app> --smoke
+      2. Assert process exits 0 and logs indicate Tamboui TUI initialized
+      3. Assert delegation trace includes v2 executable invocations (install/process/run or test path)
+    Expected Result: TUI launches and delegates through independent CLI commands deterministically
+    Evidence: .sisyphus/evidence/task-34-tui-smoke.txt
+
+  Scenario: TUI test mode analyzes pyronaut-test reports
+    Tool: Bash
+    Preconditions: canonical report artifacts exist under <app>/__pyronaut__/reports/tests
+    Steps:
+      1. Run delegated test flow to generate reports
+      2. Run TUI in test-analysis smoke mode
+      3. Assert parsed summary includes pass/fail counts and failing test identifiers from reports
+      4. Assert missing/corrupt report fixture path emits deterministic warning without crash
+    Expected Result: TUI test pane/report analysis is driven by pyronaut-test report outputs
+    Evidence: .sisyphus/evidence/task-34-tui-report-analysis.txt
+  ```
+
 ---
 
 ## Component Review & Commit Strategy (User-required cadence)
@@ -1767,7 +1933,7 @@ After each component group below:
 | C7 | Task 13-17 | `feat(cli-v2): improve diagnostics, proxy support, and source-test classpath processing` |
 | C8 | Task 18-20 | `feat(cli-v2): suppress test JVM noise and add processor progress/caching` |
 | C9 | Task 21-24 | `feat(cli-v2): add no-cache orchestration, deterministic preflight, and debug-vm support` |
-| C10 | Task 25-31 | `feat(cli-v2): add test filtering/reporting UX, run restart/native hardening, GraalVM provisioning, and build command` |
+| C10 | Task 25-34 | `feat(cli-v2): add test filtering/reporting UX, restart optimization, TUI delegation port, GraalVM provisioning, and build command` |
 
 ---
 
@@ -1806,3 +1972,6 @@ After each component group below:
 - [x] Orchestrator auto-provisions compatible GraalVM JDK (SDKMAN-first, fallback download) under `~/.pyronaut/jdks` with JDK 25+ minimum
 - [x] `pyronaut build` exists and supports JVM wheel default mode plus `--native` mode via `[tool.pyronaut]` config
 - [ ] `pyronaut-test` console output links only reports directory + HTML report, and HTML report includes expandable per-test diagnostics with Bootstrap CDN styling + Micronaut logo
+- [ ] `pyronaut run` restart cycle overlaps delegated processing with server stop and restarts only after both complete deterministically
+- [ ] `pyronaut-test` report HTML references official online Micronaut SVG source (with documented fallback/provenance)
+- [ ] `pyronaut --tui` launches Tamboui-based v2 delegated TUI and analyzes `pyronaut-test` report artifacts without embedded monolith runtime/compiler coupling
