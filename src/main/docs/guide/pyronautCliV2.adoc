@@ -1,0 +1,218 @@
+= Pyronaut CLI v2
+
+Pyronaut CLI v2 is a process-oriented toolchain. The `pyronaut` command is a Python orchestrator that delegates work to focused executables:
+
+- `pyronaut-install`
+- `pyronaut-processor`
+- `pyronaut-run`
+- `pyronaut-test`
+- `pyronaut-native-build` (used by `pyronaut build --native`)
+
+This separation keeps dependency resolution, processing, run/test execution, and native-image orchestration deterministic and independently testable.
+
+== Platform support
+
+Phase 1 supports macOS and Linux.
+
+== Command syntax
+
+[source,bash]
+----
+pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build> [args...]
+----
+
+== Quickstart workflow
+
+[source,bash]
+----
+pyronaut install --project-dir /path/to/app
+pyronaut process --project-dir /path/to/app
+pyronaut run --project-dir /path/to/app
+pyronaut test --project-dir /path/to/app
+----
+
+== Command reference
+
+=== `pyronaut install`
+
+Resolves dependencies and writes scoped manifests under `__pyronaut__/`.
+
+Common options:
+
+- `--project-dir <dir>`: project root (default `.`)
+- `--scope <build|runtime|test|all>`: restrict resolution scope
+- `--dependencies`: render dependency tree output
+- `--progress <auto|on|off>`: progress display mode
+- `--color <auto|always|never>`: dependency output color mode
+- `--refresh`: force re-resolution and cache rewrite
+- `--no-cache`: alias for refresh behavior
+- `--offline`: resolve using offline repository mode
+
+Generated manifests:
+
+- `__pyronaut__/resolved-build-dependencies`
+- `__pyronaut__/resolved-runtime-dependencies`
+- `__pyronaut__/resolved-test-dependencies`
+
+=== `pyronaut process`
+
+Processes source trees and generates metadata/classes via `pyronaut-processor`.
+
+Common options:
+
+- `--project-dir <dir>`
+- `--verbose`: full diagnostics on failures
+- `--no-cache`: bypass processor source cache
+
+Default processing outputs:
+
+- `src` + `src-java` -> `__pyronaut__/classes`
+- merged source+test pass -> `__pyronaut__/test-classes`
+
+=== `pyronaut run`
+
+Runs the processed application via `pyronaut-run`.
+
+Common options:
+
+- `--project-dir <dir>`
+- `--debug-vm`: enables JDWP JVM debug flags (port 5005)
+
+Behavior:
+
+- Automatically performs install/process preflight before launching.
+- Uses runtime classpath manifests plus processed classes.
+- Includes `config/` on classpath if present.
+
+=== `pyronaut test`
+
+Runs tests via `pyronaut-test` and the pytest-backed JUnit engine.
+
+Common options:
+
+- `--project-dir <dir>`
+- `--debug-vm`: enables JDWP JVM debug flags (port 5005)
+- `--tests <selector>`: repeatable Gradle-like test selector filter
+
+Behavior:
+
+- Automatically performs install/process preflight.
+- Uses test classpath manifest and processed test classes when available.
+- Writes reports under `__pyronaut__/reports/tests`.
+
+Report artifacts:
+
+- `__pyronaut__/reports/tests/index.html`
+- `__pyronaut__/reports/tests/junit.xml`
+- `__pyronaut__/reports/tests/.pyronaut-last-nodeid.txt`
+- `__pyronaut__/reports/tests/events.ndjson`
+
+=== `pyronaut build`
+
+Builds either a JVM wheel or a native executable.
+
+Build mode selection:
+
+- `--mode jvm|native`
+- `--jvm` (shortcut for JVM mode)
+- `--native` (shortcut for native mode)
+- `tool.pyronaut.build.mode` in `pyproject.toml` (default mode)
+
+Common options:
+
+- `--project-dir <dir>`
+- `--main-class <fqcn>` (native mode)
+- `--verbose` (native mode, forwarded to `native-image`)
+
+JVM mode:
+
+- Builds a wheel using `pip wheel`.
+- Outputs artifacts to `dist/`.
+
+Native mode:
+
+- Runs install/process preflight.
+- Delegates to `pyronaut-native-build`.
+- Produces `__pyronaut__/native/application` by default.
+
+=== Native-image argument passthrough
+
+`pyronaut build --native` forwards native-image arguments that are not consumed by `pyronaut build` itself.
+
+Examples:
+
+[source,bash]
+----
+pyronaut build --native --project-dir /path/to/app \
+  --trace-object-instantiation=ch.qos.logback.classic.Logger
+
+pyronaut build --native --project-dir /path/to/app -- \
+  --trace-object-instantiation=ch.qos.logback.classic.Logger \
+  --initialize-at-run-time io.netty.util.ResourceLeakDetector
+----
+
+`--` is supported to explicitly separate orchestrator arguments from native-image passthrough arguments.
+
+=== Reachability metadata repository (native mode)
+
+Native builds integrate GraalVM reachability metadata repository selection.
+
+Optional `pyproject.toml` settings:
+
+[source,toml]
+----
+[tool.pyronaut.build]
+mode = "native"
+
+[tool.pyronaut.build.metadata]
+enabled = true
+version = "0.11.5"
+repositoryUrl = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/0.11.5/graalvm-reachability-metadata-0.11.5-repository.zip"
+excludedModules = ["ch.qos.logback:logback-classic"]
+----
+
+Notes:
+
+- By default, metadata is enabled.
+- Versioned repository zips are resolved from Maven Central when only `version` is set.
+- Repository-based selection is applied to runtime artifacts and feeds `-H:ConfigurationFileDirectories=...`.
+
+=== `pyronaut --tui`
+
+Launches the delegated TUI workflow (`pyronaut-tui`).
+
+Common options:
+
+- `--project-dir <dir>`
+- `--test`: start in test mode (default run mode)
+- `--report-dir <dir>`
+- `--smoke`: smoke mode
+- `--non-interactive`: non-interactive mode
+- `--trace-delegation`: prints delegated command lines
+
+In smoke/non-interactive paths, the TUI delegates through the same orchestrator flow (`install`, `process`, `run`/`test`).
+
+== Preflight behavior summary
+
+- `run`, `test`: orchestrator runs install+process preflight.
+- `build --native`: orchestrator runs install+process preflight, then delegates native build.
+- `install`, `process`, `build` (JVM): no additional orchestrator preflight stage.
+
+== Environment variables
+
+- `PYRONAUT_TRACE_DELEGATION=true`: prints delegated command lines.
+- `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides Python executable used for wheel builds.
+- `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.
+- `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.
+
+== Exit code conventions
+
+The orchestrator uses stable high-level categories:
+
+- `0`: success
+- `2`: usage/argument error
+- `8`: precondition failure (missing executable/artifacts/prerequisites)
+- `9`: unsupported platform
+- `10`: internal execution error
+
+Delegated tools may return command-specific non-zero codes for domain failures (for example, test failures), and those are propagated back to the caller.

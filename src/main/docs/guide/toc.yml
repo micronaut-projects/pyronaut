@@ -7,6 +7,7 @@ pyronautProjectgen:
   title: Pyronaut Project Generator
 pyronautRequests:
   title: Pyronaut Requests
+pyronautCliV2:
+  title: Pyronaut CLI v2
 repository: Repository
-
 
