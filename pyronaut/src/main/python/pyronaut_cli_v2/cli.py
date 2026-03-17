@@ -28,6 +28,7 @@ COMMAND_TO_EXECUTABLE = {
     "run": "pyronaut-run",
     "test": "pyronaut-test",
 }
+NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
 
 _JDWP_FLAGS = "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
 
@@ -237,6 +238,7 @@ def _run_build(
     java_home_provider: JavaHomeProvider | None,
 ) -> int:
     project_dir = Path(_extract_project_dir(args)).resolve()
+    verbose = _extract_build_verbose(args)
     try:
         mode = _resolve_build_mode(project_dir, args)
     except ValueError as exc:
@@ -255,7 +257,7 @@ def _run_build(
             return PRECONDITION_FAILED
 
         try:
-            classpath = _build_native_classpath(project_dir)
+            _build_native_classpath(project_dir)
             main_class = _extract_main_class(args)
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
@@ -266,7 +268,21 @@ def _run_build(
         output_dir = project_dir / "__pyronaut__" / "native"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_binary = output_dir / "application"
-        native_command = ["native-image", "-cp", classpath, main_class, str(output_binary)]
+        delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
+        if delegate_executable is None:
+            print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
+            return PRECONDITION_FAILED
+        native_command = [
+            delegate_executable,
+            "--project-dir",
+            str(project_dir),
+            "--main-class",
+            main_class,
+            "--output",
+            str(output_binary),
+        ]
+        if verbose:
+            native_command.append("--verbose")
         if _delegation_trace_enabled():
             print(shlex.join(native_command), file=sys.stderr)
         exit_code = runner(native_command, env)
@@ -379,6 +395,10 @@ def _extract_main_class(args: Sequence[str]) -> str:
                 raise ValueError("Invalid value for --main-class. Value cannot be empty")
             return value
     return default_main
+
+
+def _extract_build_verbose(args: Sequence[str]) -> bool:
+    return any(token == "--verbose" for token in args)
 
 
 def _build_native_classpath(project_dir: Path) -> str:

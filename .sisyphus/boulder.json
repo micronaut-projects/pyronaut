@@ -6,5 +6,6 @@
     "ses_resume_20260311T161141Z"
   ],
   "plan_name": "pyronaut-sdk-v2-rearchitecture",
-  "agent": "atlas"
+  "agent": "atlas",
+  "worktree_path": "/Users/graemerocher/dev/micronaut/pyronaut"
 }

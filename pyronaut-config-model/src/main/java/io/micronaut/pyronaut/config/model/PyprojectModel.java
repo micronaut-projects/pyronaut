@@ -81,6 +81,13 @@ public record PyprojectModel(Project project,
      *
      * @param mode default build mode (for example jvm or native)
      */
-    public record Build(String mode) {
+    public record Build(String mode,
+                        Metadata metadata) {
+    }
+
+    public record Metadata(Boolean enabled,
+                           String version,
+                           String repositoryUrl,
+                           List<String> excludedModules) {
     }
 }

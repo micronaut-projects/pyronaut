@@ -807,7 +807,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("Wheel build complete", stdout.getvalue())
         self.assertIn("Install with:", stdout.getvalue())
 
-    def test_build_native_runs_preflight_then_native_image_with_java_home(self):
+    def test_build_native_runs_preflight_then_native_delegate_with_java_home(self):
         executed = []
 
         def runner_with_env(command_line, env):
@@ -838,8 +838,9 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIsNone(executed[0][1])
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir], executed[1][0])
         self.assertIsNone(executed[1][1])
-        self.assertEqual("native-image", executed[2][0][0])
-        self.assertIn("-cp", executed[2][0])
+        self.assertEqual("/tmp/pyronaut-native-build", executed[2][0][0])
+        self.assertIn("--main-class", executed[2][0])
+        self.assertIn("--output", executed[2][0])
         self.assertEqual("/tmp/graalvm-jdk-25", executed[2][1]["JAVA_HOME"])
         self.assertIn("Native build complete", stdout.getvalue())
 
@@ -909,7 +910,7 @@ class OrchestratorTest(unittest.TestCase):
             )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual("native-image", executed[2][0][0])
+        self.assertEqual("/tmp/pyronaut-native-build", executed[2][0][0])
 
     def test_build_mode_flag_with_separate_value_uses_native(self):
         executed = []
@@ -935,7 +936,62 @@ class OrchestratorTest(unittest.TestCase):
             )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual("native-image", executed[2][0][0])
+        self.assertEqual("/tmp/pyronaut-native-build", executed[2][0][0])
+
+    def test_build_native_returns_precondition_when_native_delegate_missing(self):
+        stderr = io.StringIO()
+
+        def resolver(command_name):
+            if command_name == "pyronaut-native-build":
+                return None
+            return f"/tmp/{command_name}"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-missing-delegate"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["build", "--native", "--project-dir", str(project_dir)],
+                    runner_with_env=lambda _cmd, _env: 0,
+                    resolver=resolver,
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Missing delegated executable: pyronaut-native-build", stderr.getvalue())
+
+    def test_build_native_forwards_verbose_to_native_delegate(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-verbose"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+
+            exit_code = cli.run(
+                ["build", "--native", "--verbose", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("/tmp/pyronaut-native-build", executed[2][0][0])
+        self.assertIn("--verbose", executed[2][0])
 
     def test_build_rejects_invalid_mode_flag_value(self):
         stderr = io.StringIO()

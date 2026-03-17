@@ -196,6 +196,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
 > - `pyronaut-test` official online Micronaut SVG logo provenance/reference update is tracked under new merged task 33.
 > - Monolith Tamboui TUI port to v2 orchestrator via `pyronaut --tui` delegation and report-analysis workflow is tracked under new merged task 34.
 > - Delegated v2 TUI live-reload/status parity + incremental per-test progress artifacts are tracked under new merged task 35.
+> - `pyronaut build --native` GraalVM reachability metadata repository integration is tracked under new merged task 36.
 
 - [x] 1. Define v2 CLI protocol, contracts, and exit-code taxonomy
 
@@ -803,7 +804,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
   - [x] Install usability deliverables merged into canonical v2 execution history.
   - [x] Existing verification runs demonstrate no regression for merged install UX scope.
 
-- [ ] 13. Add process verbose diagnostics and root-cause investigation workflow *(merged from process-diagnostics sub-plan)*
+- [x] 13. Add process verbose diagnostics and root-cause investigation workflow *(merged from process-diagnostics sub-plan)*
 
   **What to do**:
   - Add `-v/--verbose` to `pyronaut-processor` failure path.
@@ -1158,7 +1159,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-20-invalidation.out
   ```
 
-- [ ] 21. Add global `--no-cache` orchestration and cache-bypass propagation for install/process *(merged action item)*
+- [x] 21. Add global `--no-cache` orchestration and cache-bypass propagation for install/process *(merged action item)*
 
   **What to do**:
   - Add a global orchestrator option `--no-cache` to `pyronaut` command parsing.
@@ -1202,7 +1203,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-21-run.out, .sisyphus/evidence/task-21-run.err
   ```
 
-- [ ] 22. Harden orchestrator `run` coordination to deterministic `update -> process -> run` pipeline *(merged action item)*
+- [x] 22. Harden orchestrator `run` coordination to deterministic `update -> process -> run` pipeline *(merged action item)*
 
   **What to do**:
   - Introduce explicit orchestrator preflight stage semantics for `run`:
@@ -1244,7 +1245,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-22-run.out, .sisyphus/evidence/task-22-run.err
   ```
 
-- [ ] 23. Harden orchestrator `test` coordination to deterministic `update -> process -> test` pipeline *(merged action item)*
+- [x] 23. Harden orchestrator `test` coordination to deterministic `update -> process -> test` pipeline *(merged action item)*
 
   **What to do**:
   - Introduce explicit orchestrator preflight stage semantics for `test`:
@@ -1287,7 +1288,7 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-23-test.out, .sisyphus/evidence/task-23-test.err
   ```
 
-- [ ] 24. Add `--debug-vm` support to `pyronaut-run` and `pyronaut-test` with JDWP flags *(merged action item)*
+- [x] 24. Add `--debug-vm` support to `pyronaut-run` and `pyronaut-test` with JDWP flags *(merged action item)*
 
   **What to do**:
   - Add `--debug-vm` command option to both `pyronaut-run` and `pyronaut-test` command surfaces.
@@ -2008,6 +2009,114 @@ Critical Path: 1 → 2 → 3 → 5 → 9 → 10 → 11
     Evidence: .sisyphus/evidence/task-35-events-stream.txt
   ```
 
+- [ ] 36. Integrate GraalVM reachability metadata repository into `pyronaut build --native` via Python+Java hybrid delegation *(new requirement)*
+
+  **What to do**:
+  - Keep `pyronaut build` command ownership in Python orchestrator (`pyronaut/src/main/python/pyronaut_cli_v2/cli.py`) for mode selection and preflight behavior.
+  - Replace Python direct `native-image` invocation for native mode with delegation to a new Java executable (default contract name in this plan: `pyronaut-native-build`).
+  - Implement the Java native delegate to:
+    - read project inputs (`--project-dir`, `--main-class`, `--output`),
+    - resolve/apply GraalVM reachability metadata repository entries for runtime dependencies,
+    - execute native-image with metadata configuration included,
+    - return deterministic exit codes/messages aligned with existing orchestrator taxonomy.
+  - Extend config modeling to include native metadata controls under `[tool.pyronaut.build]` with defaults that preserve current UX:
+    - `mode` (existing)
+    - `metadata.enabled` (default `true`)
+    - `metadata.version` (optional pinned repository version)
+    - `metadata.repositoryUrl` (optional override)
+    - `metadata.excludedModules` (optional list)
+  - Ensure wheel/bundled executable packaging includes the new delegate binary/script and resolver wiring.
+
+  **Default design decisions (locked for this task)**:
+  - Architecture: **Option C hybrid** (Python orchestrator + Java native delegate); full build-command migration to Java is out of scope for this task.
+  - Native metadata behavior default: enabled and repository-backed.
+  - On metadata repository unavailability with empty local cache: fail fast with deterministic precondition-style diagnostic (no silent best-effort continue).
+  - On metadata repository unavailability with valid cached metadata: continue using cache and emit deterministic warning.
+  - JVM wheel branch of `pyronaut build` remains unchanged.
+
+  **Current observed gap baseline**:
+  - Native build path currently shells `native-image` directly in Python with classpath + main class only and has no metadata repository integration.
+  - Real-project native build failure reproduced at:
+    - `/Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app`
+  - `pyronaut-config-model` currently exposes only `tool.pyronaut.build.mode`; no metadata controls exist.
+
+  **Must NOT do**:
+  - Do not migrate all `pyronaut build` logic to Java in this task.
+  - Do not change JVM wheel-mode behavior/output conventions.
+  - Do not introduce a second independent dependency resolver path disconnected from existing install manifests.
+  - Do not silently ignore metadata resolution failures when no cache is available.
+  - Do not break existing orchestrator exit-code semantics.
+
+  **Dependencies**:
+  - Depends on: 2 (config model), 9 (orchestrator command framework), 10 (wheel packaging), 29 (GraalVM provisioning), 30 (build command baseline).
+  - Blocks: native build parity quality gate in 11.
+
+  **References**:
+  - `pyronaut/src/main/python/pyronaut_cli_v2/cli.py` - current `_run_build` implementation and native branch behavior.
+  - `pyronaut/src/test/python/orchestrator_test.py` - build-mode/native invocation tests.
+  - `pyronaut-config-model/src/main/java/io/micronaut/pyronaut/config/model/PyprojectModel.java` - `[tool.pyronaut.build]` typed model.
+  - `pyronaut-config-model/src/main/java/io/micronaut/pyronaut/config/model/PyprojectModelReader.java` - parser/validation extension points.
+  - `pyronaut-install/build.gradle.kts`, `pyronaut-processor/build.gradle.kts` - in-repo Graal native plugin patterns.
+  - Native build tools metadata docs:
+    - https://github.com/graalvm/native-build-tools/blob/master/docs/src/docs/asciidoc/gradle-plugin.adoc
+    - https://github.com/graalvm/native-build-tools/blob/master/docs/src/docs/asciidoc/maven-plugin.adoc
+  - Reachability metadata repository:
+    - https://github.com/oracle/graalvm-reachability-metadata
+    - https://github.com/graalvm/native-build-tools/tree/master/common/graalvm-reachability-metadata
+
+  **Acceptance Criteria**:
+  - [ ] `pyronaut build --native --project-dir /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app` succeeds and produces a native binary in deterministic output location.
+  - [ ] Python build native path no longer directly executes `native-image`; it delegates to Java native-build executable.
+  - [ ] Native delegate resolves/applies repository metadata for runtime dependencies and emits deterministic evidence (resolved metadata source/path/count).
+  - [ ] Config model parses new metadata settings under `[tool.pyronaut.build]` with deterministic defaults and validation.
+  - [ ] Metadata unavailable + no cache yields deterministic non-zero exit with actionable error.
+  - [ ] Metadata unavailable + cache present uses cache with deterministic warning and successful build where otherwise valid.
+  - [ ] Wheel packaging and command resolution include the native delegate executable without regressing existing install/process/run/test/build command discovery.
+
+  **Agent-Executed QA Scenarios**:
+  ```
+  Scenario: Demo app native build succeeds with repository metadata enabled
+    Tool: Bash
+    Preconditions: GraalVM available/provisionable; demo app install/process prerequisites resolvable
+    Steps:
+      1. Run: pyronaut build --native --project-dir /Users/graemerocher/dev/micronaut/demos/pyronaut-demo-ref/app > .sisyphus/evidence/task-36-native-success.out 2> .sisyphus/evidence/task-36-native-success.err
+      2. Assert native artifact exists under <app>/__pyronaut__/native/application (or final documented output path)
+      3. Assert logs include metadata repository resolution evidence (version/url/cache source and applied module count)
+      4. Assert command exits 0
+    Expected Result: repository-backed metadata path enables successful native build for target project
+    Evidence: .sisyphus/evidence/task-36-native-success.out, .sisyphus/evidence/task-36-native-success.err
+
+  Scenario: Native build delegates to Java executable instead of direct Python native-image call
+    Tool: Bash
+    Preconditions: Delegation trace enabled
+    Steps:
+      1. Run: PYRONAUT_TRACE_DELEGATION=true pyronaut build --native --project-dir <app> > .sisyphus/evidence/task-36-delegation.out 2> .sisyphus/evidence/task-36-delegation.err
+      2. Assert trace contains delegated Java native-build executable invocation
+      3. Assert trace does not show Python constructing direct terminal `native-image -cp ...` command as execution path
+    Expected Result: native build responsibility is encapsulated in Java delegate
+    Evidence: .sisyphus/evidence/task-36-delegation.out, .sisyphus/evidence/task-36-delegation.err
+
+  Scenario: Metadata repository unavailable with no cache fails deterministically
+    Tool: Bash
+    Preconditions: Force metadata URL/network failure and clear local metadata cache fixture
+    Steps:
+      1. Run native build command against failure fixture
+      2. Assert non-zero exit code maps to deterministic precondition/config category
+      3. Assert stderr includes explicit metadata repository failure cause and recovery hint
+    Expected Result: no silent partial success when metadata cannot be resolved and cache is absent
+    Evidence: .sisyphus/evidence/task-36-metadata-unavailable-fail.txt
+
+  Scenario: Metadata repository unavailable with valid cache reuses cache
+    Tool: Bash
+    Preconditions: Populate metadata cache once; then simulate repository outage
+    Steps:
+      1. Run native build command with repository unavailable
+      2. Assert build succeeds when other inputs are valid
+      3. Assert logs include deterministic cache-reuse warning/source marker
+    Expected Result: cached metadata enables deterministic offline-compatible behavior
+    Evidence: .sisyphus/evidence/task-36-metadata-cache-reuse.txt
+  ```
+
 ---
 
 ## Component Review & Commit Strategy (User-required cadence)
@@ -2028,7 +2137,7 @@ After each component group below:
 | C7 | Task 13-17 | `feat(cli-v2): improve diagnostics, proxy support, and source-test classpath processing` |
 | C8 | Task 18-20 | `feat(cli-v2): suppress test JVM noise and add processor progress/caching` |
 | C9 | Task 21-24 | `feat(cli-v2): add no-cache orchestration, deterministic preflight, and debug-vm support` |
-| C10 | Task 25-35 | `feat(cli-v2): add test filtering/reporting UX, restart optimization, TUI delegation hardening, GraalVM provisioning, and build command` |
+| C10 | Task 25-36 | `feat(cli-v2): add test filtering/reporting UX, restart optimization, TUI delegation hardening, and native metadata-aware build flow` |
 
 ---
 
@@ -2066,6 +2175,7 @@ After each component group below:
 - [x] Test reports (`junit.xml`, `index.html`) and `.pyronaut-last-nodeid.txt` are written under `__pyronaut__/reports/tests`
 - [x] Orchestrator auto-provisions compatible GraalVM JDK (SDKMAN-first, fallback download) under `~/.pyronaut/jdks` with JDK 25+ minimum
 - [x] `pyronaut build` exists and supports JVM wheel default mode plus `--native` mode via `[tool.pyronaut]` config
+- [ ] `pyronaut build --native` resolves/applies GraalVM reachability metadata repository entries (with deterministic cache/offline behavior) for real-project native builds
 - [ ] `pyronaut-test` console output links only reports directory + HTML report, and HTML report includes expandable per-test diagnostics with Bootstrap CDN styling + Micronaut logo
 - [ ] `pyronaut run` restart cycle overlaps delegated processing with server stop and restarts only after both complete deterministically
 - [ ] `pyronaut-test` report HTML references official online Micronaut SVG source (with documented fallback/provenance)

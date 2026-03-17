@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.net.URISyntaxException;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -35,6 +36,8 @@ class PyprojectModelReaderTest {
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());
         assertEquals("jvm", model.pyronaut().build().mode());
+        assertNotNull(model.pyronaut().build().metadata());
+        assertEquals(List.of(), model.pyronaut().build().metadata().excludedModules());
     }
 
     @Test
@@ -150,5 +153,51 @@ class PyprojectModelReaderTest {
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
         assertEquals("Invalid value for 'tool.pyronaut.build.mode': expected 'jvm' or 'native'", exception.getMessage());
+    }
+
+    @Test
+    void parseBuildMetadataConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.build]
+            mode = "native"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            version = "0.9.0"
+            repositoryUrl = "https://example.test/metadata.zip"
+            excludedModules = ["org.slf4j:slf4j-api", "ch.qos.logback:logback-classic"]
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("native", model.pyronaut().build().mode());
+        assertEquals(Boolean.FALSE, model.pyronaut().build().metadata().enabled());
+        assertEquals("0.9.0", model.pyronaut().build().metadata().version());
+        assertEquals("https://example.test/metadata.zip", model.pyronaut().build().metadata().repositoryUrl());
+        assertEquals(List.of("org.slf4j:slf4j-api", "ch.qos.logback:logback-classic"), model.pyronaut().build().metadata().excludedModules());
+    }
+
+    @Test
+    void rejectInvalidBuildMetadataEnabledType() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.build.metadata]
+            enabled = "yes"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid type for 'tool.pyronaut.build.metadata.enabled': expected boolean", exception.getMessage());
     }
 }

@@ -100,7 +100,7 @@ public final class PyprojectModelReader {
                 build,
                 readStringList(parsed, "tool.pyronaut.dependencies.test")
             ),
-            new PyprojectModel.Build(resolveBuildMode(parsed))
+            new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed))
         );
 
         return new PyprojectModel(project, buildSystem, pyronaut);
@@ -149,5 +149,19 @@ public final class PyprojectModelReader {
             return normalized;
         }
         throw new PyprojectModelException("Invalid value for 'tool.pyronaut.build.mode': expected 'jvm' or 'native'");
+    }
+
+    private static PyprojectModel.Metadata resolveBuildMetadata(TomlParseResult parsed) {
+        Boolean enabled;
+        try {
+            enabled = parsed.getBoolean("tool.pyronaut.build.metadata.enabled");
+        } catch (TomlInvalidTypeException e) {
+            throw invalidType("tool.pyronaut.build.metadata.enabled", "boolean", e);
+        }
+
+        String version = readString(parsed, "tool.pyronaut.build.metadata.version");
+        String repositoryUrl = readString(parsed, "tool.pyronaut.build.metadata.repositoryUrl");
+        List<String> excludedModules = readStringList(parsed, "tool.pyronaut.build.metadata.excludedModules");
+        return new PyprojectModel.Metadata(enabled, version, repositoryUrl, excludedModules);
     }
 }
