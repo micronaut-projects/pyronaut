@@ -100,7 +100,8 @@ public final class PyprojectModelReader {
                 build,
                 readStringList(parsed, "tool.pyronaut.dependencies.test")
             ),
-            new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed))
+            new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed)),
+            resolveValidation(parsed)
         );
 
         return new PyprojectModel(project, buildSystem, pyronaut);
@@ -163,5 +164,111 @@ public final class PyprojectModelReader {
         String repositoryUrl = readString(parsed, "tool.pyronaut.build.metadata.repositoryUrl");
         List<String> excludedModules = readStringList(parsed, "tool.pyronaut.build.metadata.excludedModules");
         return new PyprojectModel.Metadata(enabled, version, repositoryUrl, excludedModules);
+    }
+
+    private static PyprojectModel.Validation resolveValidation(TomlParseResult parsed) {
+        Boolean enabled = readBoolean(parsed, "tool.pyronaut.validation.enabled", true);
+        Boolean failOnNotPresent = readBoolean(parsed, "tool.pyronaut.validation.failOnNotPresent", true);
+        Boolean deduceEnvironments = readBoolean(parsed, "tool.pyronaut.validation.deduceEnvironments", false);
+        Boolean validateDependencyInjection = readBoolean(parsed, "tool.pyronaut.validation.validateDependencyInjection", false);
+        String diStrategy = readEnum(
+            parsed,
+            "tool.pyronaut.validation.dependencyInjectionValidationStrategy",
+            List.of("reachable", "application-beans", "all-beans"),
+            "reachable"
+        );
+        String format = readEnum(parsed, "tool.pyronaut.validation.format", List.of("json", "html", "both"), "both");
+        List<String> suppressions = readStringList(parsed, "tool.pyronaut.validation.suppressions");
+        List<String> suppressInjectErrors = readStringList(parsed, "tool.pyronaut.validation.suppressInjectErrors");
+        String projectBaseDir = readString(parsed, "tool.pyronaut.validation.projectBaseDir");
+        List<String> resourcesDirs = readStringList(parsed, "tool.pyronaut.validation.resourcesDirs");
+
+        PyprojectModel.ValidationScenario run = resolveValidationScenario(
+            parsed,
+            "tool.pyronaut.validation.run",
+            List.of("dev"),
+            List.of("src/main/resources")
+        );
+        PyprojectModel.ValidationScenario test = resolveValidationScenario(
+            parsed,
+            "tool.pyronaut.validation.test",
+            List.of("test"),
+            List.of("src/main/resources", "src/test/resources")
+        );
+        PyprojectModel.ValidationScenario production = resolveValidationScenario(
+            parsed,
+            "tool.pyronaut.validation.production",
+            List.of(),
+            List.of("src/main/resources")
+        );
+
+        return new PyprojectModel.Validation(
+            enabled,
+            failOnNotPresent,
+            deduceEnvironments,
+            validateDependencyInjection,
+            diStrategy,
+            format,
+            suppressions,
+            suppressInjectErrors,
+            projectBaseDir,
+            resourcesDirs,
+            run,
+            test,
+            production
+        );
+    }
+
+    private static PyprojectModel.ValidationScenario resolveValidationScenario(
+        TomlParseResult parsed,
+        String prefix,
+        List<String> defaultEnvironments,
+        List<String> defaultResourcesDirs
+    ) {
+        Boolean enabled = readBoolean(parsed, prefix + ".enabled", true);
+        List<String> environments = readStringList(parsed, prefix + ".environments");
+        if (environments.isEmpty()) {
+            environments = defaultEnvironments;
+        }
+        Boolean includeDefaultEnvironment = readBoolean(parsed, prefix + ".includeDefaultEnvironment", true);
+        Boolean overrideClasspath = readBoolean(parsed, prefix + ".overrideClasspath", false);
+        List<String> classpath = readStringList(parsed, prefix + ".classpath");
+        List<String> additionalClasspath = readStringList(parsed, prefix + ".additionalClasspath");
+        List<String> resourcesDirs = readStringList(parsed, prefix + ".resourcesDirs");
+        if (resourcesDirs.isEmpty()) {
+            resourcesDirs = defaultResourcesDirs;
+        }
+        String outputDir = readString(parsed, prefix + ".outputDir");
+        return new PyprojectModel.ValidationScenario(
+            enabled,
+            environments,
+            includeDefaultEnvironment,
+            overrideClasspath,
+            classpath,
+            additionalClasspath,
+            resourcesDirs,
+            outputDir
+        );
+    }
+
+    private static Boolean readBoolean(TomlParseResult parsed, String key, boolean defaultValue) {
+        try {
+            Boolean value = parsed.getBoolean(key);
+            return value == null ? defaultValue : value;
+        } catch (TomlInvalidTypeException e) {
+            throw invalidType(key, "boolean", e);
+        }
+    }
+
+    private static String readEnum(TomlParseResult parsed, String key, List<String> accepted, String defaultValue) {
+        String raw = readString(parsed, key);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        String normalized = raw.trim();
+        if (!accepted.contains(normalized)) {
+            throw new PyprojectModelException("Invalid value for '" + key + "': expected one of " + accepted);
+        }
+        return normalized;
     }
 }

@@ -1433,6 +1433,45 @@ class OrchestratorTest(unittest.TestCase):
         )
         self.assertIn("tests: 1 passed, 1 failed, 0 skipped", stderr.getvalue())
 
+    def test_validate_config_delegates_to_validate_config_executable(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["validate-config", "--project-dir", "/tmp/demo", "--scenario", "production"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "production"]],
+            executed,
+        )
+
+    def test_validate_config_returns_precondition_when_executable_missing(self):
+        stderr = io.StringIO()
+
+        def resolver(command_name):
+            if command_name == "pyronaut-validate-config":
+                return None
+            return f"/tmp/{command_name}"
+
+        with redirect_stderr(stderr):
+            exit_code = cli.run(
+                ["validate-config", "--project-dir", "/tmp/demo"],
+                runner=self._runner_ok(),
+                resolver=resolver,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Missing delegated executable: pyronaut-validate-config", stderr.getvalue())
+
     @staticmethod
     def _resolver():
         def resolve(command_name):

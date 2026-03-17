@@ -38,6 +38,13 @@ class PyprojectModelReaderTest {
         assertEquals("jvm", model.pyronaut().build().mode());
         assertNotNull(model.pyronaut().build().metadata());
         assertEquals(List.of(), model.pyronaut().build().metadata().excludedModules());
+        assertNotNull(model.pyronaut().validation());
+        assertEquals(Boolean.TRUE, model.pyronaut().validation().enabled());
+        assertEquals(Boolean.TRUE, model.pyronaut().validation().failOnNotPresent());
+        assertEquals("both", model.pyronaut().validation().format());
+        assertEquals(List.of("dev"), model.pyronaut().validation().run().environments());
+        assertEquals(List.of("test"), model.pyronaut().validation().test().environments());
+        assertEquals(List.of(), model.pyronaut().validation().production().environments());
     }
 
     @Test
@@ -199,5 +206,68 @@ class PyprojectModelReaderTest {
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
         assertEquals("Invalid type for 'tool.pyronaut.build.metadata.enabled': expected boolean", exception.getMessage());
+    }
+
+    @Test
+    void parseValidationConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.validation]
+            enabled = true
+            failOnNotPresent = false
+            deduceEnvironments = true
+            validateDependencyInjection = true
+            dependencyInjectionValidationStrategy = "all-beans"
+            format = "json"
+            suppressions = ["micronaut.config.deprecated"]
+            suppressInjectErrors = ["missing.bean"]
+            projectBaseDir = "src"
+            resourcesDirs = ["src/main/resources"]
+
+            [tool.pyronaut.validation.run]
+            environments = ["dev", "cloud"]
+            includeDefaultEnvironment = false
+            overrideClasspath = true
+            classpath = ["/tmp/run-cp"]
+            additionalClasspath = ["/tmp/additional"]
+            resourcesDirs = ["src/run/resources"]
+            outputDir = "build/reports/run"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals(Boolean.TRUE, model.pyronaut().validation().enabled());
+        assertEquals(Boolean.FALSE, model.pyronaut().validation().failOnNotPresent());
+        assertEquals(Boolean.TRUE, model.pyronaut().validation().validateDependencyInjection());
+        assertEquals("all-beans", model.pyronaut().validation().dependencyInjectionValidationStrategy());
+        assertEquals("json", model.pyronaut().validation().format());
+        assertEquals(List.of("micronaut.config.deprecated"), model.pyronaut().validation().suppressions());
+        assertEquals(List.of("missing.bean"), model.pyronaut().validation().suppressInjectErrors());
+        assertEquals(List.of("dev", "cloud"), model.pyronaut().validation().run().environments());
+        assertEquals(Boolean.TRUE, model.pyronaut().validation().run().overrideClasspath());
+        assertEquals(List.of("/tmp/run-cp"), model.pyronaut().validation().run().classpath());
+    }
+
+    @Test
+    void rejectInvalidValidationFailOnNotPresentType() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.validation]
+            failOnNotPresent = "yes"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid type for 'tool.pyronaut.validation.failOnNotPresent': expected boolean", exception.getMessage());
     }
 }

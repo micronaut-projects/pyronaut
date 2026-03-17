@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "1.1",
+  "command": "validate-config",
+  "status": "ok",
+  "exitCode": 0,
+  "durationMs": 812,
+  "artifacts": {
+    "scenario": "production",
+    "jsonReport": "__pyronaut__/reports/config-validation/production/configuration-errors.json",
+    "htmlReport": "__pyronaut__/reports/config-validation/production/configuration-errors.html"
+  },
+  "warnings": []
+}

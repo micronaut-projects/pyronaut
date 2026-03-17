@@ -7,6 +7,7 @@ Pyronaut CLI v2 is a process-oriented toolchain. The `pyronaut` command is a Pyt
 - `pyronaut-run`
 - `pyronaut-test`
 - `pyronaut-native-build` (used by `pyronaut build --native`)
+- `pyronaut-validate-config` (used by `pyronaut validate-config`)
 
 This separation keeps dependency resolution, processing, run/test execution, and native-image orchestration deterministic and independently testable.
 
@@ -18,7 +19,7 @@ Phase 1 supports macOS and Linux.
 
 [source,bash]
 ----
-pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build> [args...]
+pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|validate-config> [args...]
 ----
 
 == Quickstart workflow
@@ -135,6 +136,39 @@ Native mode:
 - Delegates to `pyronaut-native-build`.
 - Produces `__pyronaut__/native/application` by default.
 
+=== `pyronaut validate-config`
+
+Validates Micronaut configuration and writes deterministic reports.
+
+Common options:
+
+- `--project-dir <dir>`
+- `--scenario <run|test|production>` (default `production`)
+- `--validate-dependency-injection`
+- `--dependency-injection-validation-strategy <reachable|application-beans|all-beans>`
+- `--format <json|html|both>`
+- `--out <dir>`
+
+Report artifacts (default):
+
+- `__pyronaut__/reports/config-validation/<scenario>/configuration-errors.json`
+- `__pyronaut__/reports/config-validation/<scenario>/configuration-errors.html`
+
+Example `pyproject.toml` validation settings:
+
+[source,toml]
+----
+[tool.pyronaut.validation]
+enabled = true
+failOnNotPresent = true
+validateDependencyInjection = false
+dependencyInjectionValidationStrategy = "reachable"
+format = "both"
+
+[tool.pyronaut.validation.production]
+environments = []
+----
+
 === Native-image argument passthrough
 
 `pyronaut build --native` forwards native-image arguments that are not consumed by `pyronaut build` itself.
@@ -203,7 +237,7 @@ In smoke/non-interactive paths, the TUI delegates through the same orchestrator 
 - `PYRONAUT_TRACE_DELEGATION=true`: prints delegated command lines.
 - `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.
-- `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.
+- `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_VALIDATE_CONFIG_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.
 
 == Exit code conventions
 

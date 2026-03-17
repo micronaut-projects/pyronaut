@@ -33,6 +33,7 @@
           "run",
           "test",
           "build",
+          "validate-config",
           "tui",
           "native-build"
         ]
@@ -73,6 +74,9 @@
           "type": "boolean"
         },
         "nativeImageArgPassthrough": {
+          "type": "boolean"
+        },
+        "validateConfig": {
           "type": "boolean"
         },
         "tuiDelegation": {

@@ -25,6 +25,7 @@
         "run",
         "test",
         "build",
+        "validate-config",
         "tui",
         "native-build"
       ]

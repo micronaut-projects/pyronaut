@@ -61,7 +61,8 @@ public record PyprojectModel(Project project,
     public record Pyronaut(String version,
                            List<String> repositories,
                            Dependencies dependencies,
-                           Build build) {
+                           Build build,
+                           Validation validation) {
     }
 
     /**
@@ -89,5 +90,30 @@ public record PyprojectModel(Project project,
                            String version,
                            String repositoryUrl,
                            List<String> excludedModules) {
+    }
+
+    public record Validation(Boolean enabled,
+                             Boolean failOnNotPresent,
+                             Boolean deduceEnvironments,
+                             Boolean validateDependencyInjection,
+                             String dependencyInjectionValidationStrategy,
+                             String format,
+                             List<String> suppressions,
+                             List<String> suppressInjectErrors,
+                             String projectBaseDir,
+                             List<String> resourcesDirs,
+                             ValidationScenario run,
+                             ValidationScenario test,
+                             ValidationScenario production) {
+    }
+
+    public record ValidationScenario(Boolean enabled,
+                                     List<String> environments,
+                                     Boolean includeDefaultEnvironment,
+                                     Boolean overrideClasspath,
+                                     List<String> classpath,
+                                     List<String> additionalClasspath,
+                                     List<String> resourcesDirs,
+                                     String outputDir) {
     }
 }
