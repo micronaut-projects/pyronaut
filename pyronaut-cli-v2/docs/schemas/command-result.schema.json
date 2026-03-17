@@ -23,7 +23,10 @@
         "install",
         "process",
         "run",
-        "test"
+        "test",
+        "build",
+        "tui",
+        "native-build"
       ]
     },
     "status": {

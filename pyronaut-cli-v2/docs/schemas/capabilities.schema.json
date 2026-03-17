@@ -31,7 +31,10 @@
           "install",
           "process",
           "run",
-          "test"
+          "test",
+          "build",
+          "tui",
+          "native-build"
         ]
       }
     },
@@ -59,6 +62,21 @@
           "items": {
             "type": "string"
           }
+        },
+        "debugVm": {
+          "type": "boolean"
+        },
+        "testSelectors": {
+          "type": "boolean"
+        },
+        "nativeBuild": {
+          "type": "boolean"
+        },
+        "nativeImageArgPassthrough": {
+          "type": "boolean"
+        },
+        "tuiDelegation": {
+          "type": "boolean"
         }
       }
     }

@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "1.0",
+  "protocolVersion": "1.1",
   "commandName": "pyronaut-install",
   "commandVersion": "0.1.0-SNAPSHOT",
   "supportedCommands": [
@@ -9,6 +9,11 @@
     "jsonOutput": true,
     "offlineMode": true,
     "dryRun": false,
+    "nativeBuild": false,
+    "nativeImageArgPassthrough": false,
+    "debugVm": false,
+    "testSelectors": false,
+    "tuiDelegation": false,
     "platforms": [
       "darwin-amd64",
       "darwin-aarch64",

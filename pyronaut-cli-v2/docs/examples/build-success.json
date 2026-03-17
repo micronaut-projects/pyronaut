@@ -1,0 +1,13 @@
+{
+  "protocolVersion": "1.1",
+  "command": "build",
+  "status": "ok",
+  "exitCode": 0,
+  "durationMs": 4210,
+  "artifacts": {
+    "mode": "native",
+    "nativeBinary": "__pyronaut__/native/application",
+    "metadataRepository": "__pyronaut__/reachability-metadata"
+  },
+  "warnings": []
+}
