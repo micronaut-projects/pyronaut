@@ -993,6 +993,77 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual("/tmp/pyronaut-native-build", executed[2][0][0])
         self.assertIn("--verbose", executed[2][0])
 
+    def test_build_native_forwards_unconsumed_native_image_args_to_delegate(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-passthrough"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+
+            exit_code = cli.run(
+                [
+                    "build",
+                    "--native",
+                    "--project-dir",
+                    str(project_dir),
+                    "--trace-object-instantiation=ch.qos.logback.classic.Logger",
+                    "--initialize-at-run-time",
+                    "io.netty.util.ResourceLeakDetector",
+                ],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("/tmp/pyronaut-native-build", executed[2][0][0])
+        self.assertIn("--trace-object-instantiation=ch.qos.logback.classic.Logger", executed[2][0])
+        self.assertIn("--initialize-at-run-time", executed[2][0])
+        self.assertIn("io.netty.util.ResourceLeakDetector", executed[2][0])
+
+    def test_build_native_forwards_args_after_separator_to_delegate(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-separator"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+
+            exit_code = cli.run(
+                [
+                    "build",
+                    "--native",
+                    "--project-dir",
+                    str(project_dir),
+                    "--",
+                    "--trace-object-instantiation=ch.qos.logback.classic.Logger",
+                ],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("/tmp/pyronaut-native-build", executed[2][0][0])
+        self.assertIn("--trace-object-instantiation=ch.qos.logback.classic.Logger", executed[2][0])
+
     def test_build_rejects_invalid_mode_flag_value(self):
         stderr = io.StringIO()
         with redirect_stderr(stderr):

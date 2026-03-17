@@ -161,6 +161,48 @@ class PyronautNativeBuildMainTest {
         assertTrue(nativeCommand.contains("--verbose"));
     }
 
+    @Test
+    void unmatchedArgsAreForwardedToNativeImage() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["org.example:demo:1.0"]
+            """);
+
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            createRequiredSchemas(extractedRoot);
+            createModuleMetadata(extractedRoot, "org.example", "demo", "1.0.0", Set.of("1.0"), true);
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        int exit = new CommandLine(command).execute(
+            "--project-dir",
+            project.toString(),
+            "--native-image-executable",
+            "/tmp/native-image",
+            "--trace-object-instantiation=ch.qos.logback.classic.Logger",
+            "--initialize-at-run-time",
+            "io.netty.util.ResourceLeakDetector"
+        );
+        assertEquals(0, exit);
+
+        assertEquals(1, executed.size());
+        List<String> nativeCommand = executed.getFirst();
+        assertTrue(nativeCommand.contains("--trace-object-instantiation=ch.qos.logback.classic.Logger"));
+        assertTrue(nativeCommand.contains("--initialize-at-run-time"));
+        assertTrue(nativeCommand.contains("io.netty.util.ResourceLeakDetector"));
+    }
+
     private Path prepareProject(String pyprojectContent) throws IOException {
         Path project = tempDir.resolve("project-" + System.nanoTime());
         Path pyronautDir = project.resolve("__pyronaut__");

@@ -74,6 +74,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     @CommandLine.Option(names = "--verbose", description = "Print and pass verbose mode to native-image")
     boolean verbose;
 
+    @CommandLine.Unmatched
+    List<String> passthroughNativeImageArgs = new ArrayList<>();
+
     private final PyprojectModelReader modelReader;
     private final NativeImageInvoker nativeImageInvoker;
     private final MetadataRepositoryDownloader metadataRepositoryDownloader;
@@ -131,6 +134,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             if (verbose) {
                 command.add("--verbose");
             }
+            command.addAll(passthroughNativeImageArgs);
             command.add(mainClass);
             command.add(outputPath.toString());
 

@@ -283,6 +283,7 @@ def _run_build(
         ]
         if verbose:
             native_command.append("--verbose")
+        native_command.extend(_extract_native_build_passthrough_args(args))
         if _delegation_trace_enabled():
             print(shlex.join(native_command), file=sys.stderr)
         exit_code = runner(native_command, env)
@@ -399,6 +400,34 @@ def _extract_main_class(args: Sequence[str]) -> str:
 
 def _extract_build_verbose(args: Sequence[str]) -> bool:
     return any(token == "--verbose" for token in args)
+
+
+def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
+    passthrough: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            passthrough.extend(args[index + 1:])
+            break
+        if token in {"--native", "--jvm", "--verbose"}:
+            index += 1
+            continue
+        if token in {"--mode", "--main-class", "--project-dir"}:
+            index += 1
+            if index < len(args):
+                index += 1
+            continue
+        if (
+            token.startswith("--mode=")
+            or token.startswith("--main-class=")
+            or token.startswith("--project-dir=")
+        ):
+            index += 1
+            continue
+        passthrough.append(token)
+        index += 1
+    return passthrough
 
 
 def _build_native_classpath(project_dir: Path) -> str:
