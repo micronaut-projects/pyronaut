@@ -1,2 +1,0 @@
-Mar 12, 2026 5:15:03 PM org.graalvm.python.embedding.VirtualFileSystemImpl warn
-WARNING: There are duplicate entries originating from different virtual filesystem instances. The duplicate entries path: /META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/__init__.py.
