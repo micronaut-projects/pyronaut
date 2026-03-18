@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.net.URISyntaxException;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -45,6 +46,12 @@ class PyprojectModelReaderTest {
         assertEquals(List.of("dev"), model.pyronaut().validation().run().environments());
         assertEquals(List.of("test"), model.pyronaut().validation().test().environments());
         assertEquals(List.of(), model.pyronaut().validation().production().environments());
+        assertNotNull(model.pyronaut().testResources());
+        assertEquals(Boolean.TRUE, model.pyronaut().testResources().enabled());
+        assertEquals(Boolean.TRUE, model.pyronaut().testResources().inferClasspath());
+        assertEquals(Integer.valueOf(60), model.pyronaut().testResources().clientTimeout());
+        assertEquals(Boolean.FALSE, model.pyronaut().testResources().sharedServer());
+        assertEquals("auto", model.pyronaut().testResources().startupOptimization());
     }
 
     @Test
@@ -269,5 +276,74 @@ class PyprojectModelReaderTest {
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
         assertEquals("Invalid type for 'tool.pyronaut.validation.failOnNotPresent': expected boolean", exception.getMessage());
+    }
+
+    @Test
+    void parseTestResourcesConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.testResources]
+            enabled = true
+            version = "2.9.0"
+            explicitPort = 18081
+            inferClasspath = false
+            additionalModules = ["jdbc-postgresql"]
+            clientTimeout = 90
+            sharedServer = true
+            sharedServerNamespace = "demo"
+            serverIdleTimeoutMinutes = 15
+            debugServer = true
+            javaExecutable = "/opt/jdk/bin/java"
+            startupOptimization = "leyden"
+            leydenJvmArgs = ["--enable-preview", "-XX:+UseFastUnorderedTimeStamps"]
+
+            [tool.pyronaut.testResources.serverSystemProperties]
+            "micronaut.server.host" = "127.0.0.1"
+
+            [tool.pyronaut.testResources.serverEnvironment]
+            "TEST_RESOURCES_MODE" = "standalone"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        PyprojectModel.TestResources testResources = model.pyronaut().testResources();
+        assertEquals(Boolean.TRUE, testResources.enabled());
+        assertEquals("2.9.0", testResources.version());
+        assertEquals(Integer.valueOf(18081), testResources.explicitPort());
+        assertEquals(Boolean.FALSE, testResources.inferClasspath());
+        assertEquals(List.of("jdbc-postgresql"), testResources.additionalModules());
+        assertEquals(Integer.valueOf(90), testResources.clientTimeout());
+        assertEquals(Boolean.TRUE, testResources.sharedServer());
+        assertEquals("demo", testResources.sharedServerNamespace());
+        assertEquals(Integer.valueOf(15), testResources.serverIdleTimeoutMinutes());
+        assertEquals(Map.of("micronaut.server.host", "127.0.0.1"), testResources.serverSystemProperties());
+        assertEquals(Map.of("TEST_RESOURCES_MODE", "standalone"), testResources.serverEnvironment());
+        assertEquals(Boolean.TRUE, testResources.debugServer());
+        assertEquals("/opt/jdk/bin/java", testResources.javaExecutable());
+        assertEquals("leyden", testResources.startupOptimization());
+        assertEquals(List.of("--enable-preview", "-XX:+UseFastUnorderedTimeStamps"), testResources.leydenJvmArgs());
+    }
+
+    @Test
+    void rejectInvalidTestResourcesClientTimeoutType() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.testResources]
+            clientTimeout = "fast"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid type for 'tool.pyronaut.testResources.clientTimeout': expected integer", exception.getMessage());
     }
 }

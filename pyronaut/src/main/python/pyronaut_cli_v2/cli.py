@@ -21,13 +21,14 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"install", "process", "run", "test", "build", "validate-config"}
+SUPPORTED_COMMANDS = {"install", "process", "run", "test", "build", "validate-config", "test-resources-server"}
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
     "process": "pyronaut-processor",
     "run": "pyronaut-run",
     "test": "pyronaut-test",
     "validate-config": "pyronaut-validate-config",
+    "test-resources-server": "pyronaut-test-resources-server",
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
 
@@ -1072,7 +1073,7 @@ def _is_supported_platform(platform_name: str) -> bool:
 
 
 def _print_usage(stream=sys.stdout) -> None:
-    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|validate-config> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|validate-config|test-resources-server> [args...]\n")
 
 
 def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Callable[[str], str | None]) -> int:

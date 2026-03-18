@@ -20,12 +20,14 @@ import org.tomlj.TomlArray;
 import org.tomlj.TomlInvalidTypeException;
 import org.tomlj.TomlParseError;
 import org.tomlj.TomlParseResult;
+import org.tomlj.TomlTable;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Reader that validates and maps {@code pyproject.toml} into {@link PyprojectModel}.
@@ -101,7 +103,8 @@ public final class PyprojectModelReader {
                 readStringList(parsed, "tool.pyronaut.dependencies.test")
             ),
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed)),
-            resolveValidation(parsed)
+            resolveValidation(parsed),
+            resolveTestResources(parsed)
         );
 
         return new PyprojectModel(project, buildSystem, pyronaut);
@@ -270,5 +273,89 @@ public final class PyprojectModelReader {
             throw new PyprojectModelException("Invalid value for '" + key + "': expected one of " + accepted);
         }
         return normalized;
+    }
+
+    private static Integer readInteger(TomlParseResult parsed, String key) {
+        Long raw;
+        try {
+            raw = parsed.getLong(key);
+        } catch (TomlInvalidTypeException e) {
+            throw invalidType(key, "integer", e);
+        }
+        if (raw == null) {
+            return null;
+        }
+        if (raw > Integer.MAX_VALUE || raw < Integer.MIN_VALUE) {
+            throw new PyprojectModelException("Invalid value for '" + key + "': integer out of range");
+        }
+        return raw.intValue();
+    }
+
+    private static Map<String, String> readStringMap(TomlParseResult parsed, String key) {
+        TomlTable table;
+        try {
+            table = parsed.getTable(key);
+        } catch (TomlInvalidTypeException e) {
+            throw invalidType(key, "table", e);
+        }
+        if (table == null) {
+            return Map.of();
+        }
+        Map<String, Object> raw = table.toMap();
+        if (raw.isEmpty()) {
+            return Map.of();
+        }
+        var out = new java.util.LinkedHashMap<String, String>(raw.size());
+        for (Map.Entry<String, Object> entry : raw.entrySet()) {
+            if (!(entry.getValue() instanceof String value)) {
+                throw new PyprojectModelException("Invalid type for '" + key + "." + entry.getKey() + "': expected string");
+            }
+            out.put(entry.getKey(), value);
+        }
+        return Map.copyOf(out);
+    }
+
+    private static PyprojectModel.TestResources resolveTestResources(TomlParseResult parsed) {
+        Boolean enabled = readBoolean(parsed, "tool.pyronaut.testResources.enabled", true);
+        String version = readString(parsed, "tool.pyronaut.testResources.version");
+        Integer explicitPort = readInteger(parsed, "tool.pyronaut.testResources.explicitPort");
+        Boolean inferClasspath = readBoolean(parsed, "tool.pyronaut.testResources.inferClasspath", true);
+        List<String> additionalModules = readStringList(parsed, "tool.pyronaut.testResources.additionalModules");
+        Integer clientTimeout = readInteger(parsed, "tool.pyronaut.testResources.clientTimeout");
+        if (clientTimeout == null) {
+            clientTimeout = 60;
+        }
+        Boolean sharedServer = readBoolean(parsed, "tool.pyronaut.testResources.sharedServer", false);
+        String sharedServerNamespace = readString(parsed, "tool.pyronaut.testResources.sharedServerNamespace");
+        Integer serverIdleTimeoutMinutes = readInteger(parsed, "tool.pyronaut.testResources.serverIdleTimeoutMinutes");
+        Map<String, String> serverSystemProperties = readStringMap(parsed, "tool.pyronaut.testResources.serverSystemProperties");
+        Map<String, String> serverEnvironment = readStringMap(parsed, "tool.pyronaut.testResources.serverEnvironment");
+        Boolean debugServer = readBoolean(parsed, "tool.pyronaut.testResources.debugServer", false);
+        String javaExecutable = readString(parsed, "tool.pyronaut.testResources.javaExecutable");
+        String startupOptimization = readEnum(
+            parsed,
+            "tool.pyronaut.testResources.startupOptimization",
+            List.of("auto", "leyden", "cds", "none"),
+            "auto"
+        );
+        List<String> leydenJvmArgs = readStringList(parsed, "tool.pyronaut.testResources.leydenJvmArgs");
+
+        return new PyprojectModel.TestResources(
+            enabled,
+            version,
+            explicitPort,
+            inferClasspath,
+            additionalModules,
+            clientTimeout,
+            sharedServer,
+            sharedServerNamespace,
+            serverIdleTimeoutMinutes,
+            serverSystemProperties,
+            serverEnvironment,
+            debugServer,
+            javaExecutable,
+            startupOptimization,
+            leydenJvmArgs
+        );
     }
 }

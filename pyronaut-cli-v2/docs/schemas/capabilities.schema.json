@@ -34,6 +34,7 @@
           "test",
           "build",
           "validate-config",
+          "test-resources-server",
           "tui",
           "native-build"
         ]
@@ -77,6 +78,9 @@
           "type": "boolean"
         },
         "validateConfig": {
+          "type": "boolean"
+        },
+        "testResourcesServer": {
           "type": "boolean"
         },
         "tuiDelegation": {

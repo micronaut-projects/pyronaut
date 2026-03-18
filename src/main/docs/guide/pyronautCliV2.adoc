@@ -8,6 +8,7 @@ Pyronaut CLI v2 is a process-oriented toolchain. The `pyronaut` command is a Pyt
 - `pyronaut-test`
 - `pyronaut-native-build` (used by `pyronaut build --native`)
 - `pyronaut-validate-config` (used by `pyronaut validate-config`)
+- `pyronaut-test-resources-server` (used by `pyronaut test-resources-server`)
 
 This separation keeps dependency resolution, processing, run/test execution, and native-image orchestration deterministic and independently testable.
 
@@ -19,7 +20,7 @@ Phase 1 supports macOS and Linux.
 
 [source,bash]
 ----
-pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|validate-config> [args...]
+pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|validate-config|test-resources-server> [args...]
 ----
 
 == Quickstart workflow
@@ -153,6 +154,7 @@ Report artifacts (default):
 
 - `__pyronaut__/reports/config-validation/<scenario>/configuration-errors.json`
 - `__pyronaut__/reports/config-validation/<scenario>/configuration-errors.html`
+- `__pyronaut__/.config-validation-cache.properties` (input/resource/classpath fingerprint cache)
 
 Example `pyproject.toml` validation settings:
 
@@ -168,6 +170,47 @@ format = "both"
 [tool.pyronaut.validation.production]
 environments = []
 ----
+
+=== `pyronaut test-resources-server`
+
+Manages standalone Micronaut test resources server lifecycle in phase 1.
+
+Actions:
+
+- `start` (default when omitted)
+- `status`
+- `stop`
+
+Common options:
+
+- `--project-dir <dir>`
+
+Deterministic lifecycle metadata:
+
+- project-local settings: `.micronaut/test-resources/test-resources.properties`
+- shared mode settings: `~/.micronaut/test-resources[-<namespace>]/test-resources.properties`
+- startup optimization cache path: `__pyronaut__/test-resources-cds`
+
+Example `pyproject.toml` test resources settings:
+
+[source,toml]
+----
+[tool.pyronaut.testResources]
+enabled = true
+explicitPort = 18080
+inferClasspath = true
+clientTimeout = 60
+sharedServer = false
+startupOptimization = "auto" # auto|leyden|cds|none
+leydenJvmArgs = ["--enable-preview"]
+----
+
+Fallback semantics:
+
+- `auto`: uses CDS by default; if Leyden args are supplied and unsupported, prints one fallback warning and continues.
+- `leyden`: best effort; prints one deterministic fallback warning and continues with CDS/plain startup.
+- `cds`: best effort CDS, fallback to plain startup when unavailable.
+- `none`: no startup optimization flags.
 
 === Native-image argument passthrough
 
@@ -237,7 +280,7 @@ In smoke/non-interactive paths, the TUI delegates through the same orchestrator 
 - `PYRONAUT_TRACE_DELEGATION=true`: prints delegated command lines.
 - `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.
-- `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_VALIDATE_CONFIG_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.
+- `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_VALIDATE_CONFIG_EXECUTABLE`, `PYRONAUT_TEST_RESOURCES_SERVER_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.
 
 == Exit code conventions
 

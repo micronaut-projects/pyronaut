@@ -17,6 +17,7 @@ def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-test", command: "pyronaut-test"],
     [path: ":micronaut-pyronaut-native-build", command: "pyronaut-native-build"],
     [path: ":micronaut-pyronaut-validate-config", command: "pyronaut-validate-config"],
+    [path: ":micronaut-pyronaut-test-resources-server", command: "pyronaut-test-resources-server"],
     [path: ":micronaut-pyronaut-tui", command: "pyronaut-tui", installDir: "pyronaut-tui"]
 ]
 

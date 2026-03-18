@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.config.model;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Immutable model for {@code pyproject.toml}.
@@ -57,12 +58,15 @@ public record PyprojectModel(Project project,
      * @param repositories configured repositories
      * @param dependencies dependency scopes
      * @param build build defaults/settings
+     * @param validation validation settings
+     * @param testResources test resources settings
      */
     public record Pyronaut(String version,
                            List<String> repositories,
                            Dependencies dependencies,
                            Build build,
-                           Validation validation) {
+                           Validation validation,
+                           TestResources testResources) {
     }
 
     /**
@@ -86,12 +90,37 @@ public record PyprojectModel(Project project,
                         Metadata metadata) {
     }
 
+    /**
+     * tool.pyronaut.build.metadata table.
+     *
+     * @param enabled whether metadata lookup is enabled
+     * @param version metadata repository version override
+     * @param repositoryUrl explicit metadata repository URL override
+     * @param excludedModules modules excluded from metadata resolution
+     */
     public record Metadata(Boolean enabled,
                            String version,
                            String repositoryUrl,
                            List<String> excludedModules) {
     }
 
+    /**
+     * tool.pyronaut.validation table.
+     *
+     * @param enabled whether validation is enabled globally
+     * @param failOnNotPresent fail when expected config/classpath entries are missing
+     * @param deduceEnvironments infer environments from runtime context
+     * @param validateDependencyInjection enable dependency-injection validation
+     * @param dependencyInjectionValidationStrategy dependency-injection validation strategy
+     * @param format report format (json/html/both)
+     * @param suppressions warning/error suppression patterns
+     * @param suppressInjectErrors dependency-injection error suppressions
+     * @param projectBaseDir project base directory for path normalization
+     * @param resourcesDirs default resources directories for validation
+     * @param run run scenario validation settings
+     * @param test test scenario validation settings
+     * @param production production scenario validation settings
+     */
     public record Validation(Boolean enabled,
                              Boolean failOnNotPresent,
                              Boolean deduceEnvironments,
@@ -107,6 +136,18 @@ public record PyprojectModel(Project project,
                              ValidationScenario production) {
     }
 
+    /**
+     * Validation scenario table (run/test/production).
+     *
+     * @param enabled whether this scenario is enabled
+     * @param environments environments applied for this scenario
+     * @param includeDefaultEnvironment include Micronaut default environment
+     * @param overrideClasspath use explicit classpath instead of inferred classpath
+     * @param classpath explicit scenario classpath
+     * @param additionalClasspath additional classpath entries appended after base classpath
+     * @param resourcesDirs scenario resources directories
+     * @param outputDir scenario-specific output directory override
+     */
     public record ValidationScenario(Boolean enabled,
                                      List<String> environments,
                                      Boolean includeDefaultEnvironment,
@@ -115,5 +156,41 @@ public record PyprojectModel(Project project,
                                      List<String> additionalClasspath,
                                      List<String> resourcesDirs,
                                      String outputDir) {
+    }
+
+    /**
+     * tool.pyronaut.testResources table.
+     *
+     * @param enabled whether standalone test resources server support is enabled
+     * @param version requested test-resources tooling version
+     * @param explicitPort explicit server port (otherwise ephemeral)
+     * @param inferClasspath infer launcher classpath from runtime
+     * @param additionalModules additional test resources modules
+     * @param clientTimeout client timeout in seconds
+     * @param sharedServer use shared server settings path under user home
+     * @param sharedServerNamespace namespace suffix for shared server settings directory
+     * @param serverIdleTimeoutMinutes idle timeout before server self-shutdown
+     * @param serverSystemProperties JVM system properties passed to server process
+     * @param serverEnvironment environment variables passed to server process
+     * @param debugServer enable server debug mode
+     * @param javaExecutable explicit Java executable for server process
+     * @param startupOptimization startup optimization mode (auto/leyden/cds/none)
+     * @param leydenJvmArgs Leyden JVM args used for best-effort startup optimization
+     */
+    public record TestResources(Boolean enabled,
+                                String version,
+                                Integer explicitPort,
+                                Boolean inferClasspath,
+                                List<String> additionalModules,
+                                Integer clientTimeout,
+                                Boolean sharedServer,
+                                String sharedServerNamespace,
+                                Integer serverIdleTimeoutMinutes,
+                                Map<String, String> serverSystemProperties,
+                                Map<String, String> serverEnvironment,
+                                Boolean debugServer,
+                                String javaExecutable,
+                                String startupOptimization,
+                                List<String> leydenJvmArgs) {
     }
 }

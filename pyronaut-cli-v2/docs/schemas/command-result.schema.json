@@ -26,6 +26,7 @@
         "test",
         "build",
         "validate-config",
+        "test-resources-server",
         "tui",
         "native-build"
       ]

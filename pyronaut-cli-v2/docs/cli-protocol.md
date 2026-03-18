@@ -10,6 +10,7 @@ Current orchestrator command surface:
 - `pyronaut test`
 - `pyronaut build`
 - `pyronaut validate-config`
+- `pyronaut test-resources-server`
 - `pyronaut --tui` (global flag mode)
 
 Delegated executables:
@@ -20,6 +21,7 @@ Delegated executables:
 - `pyronaut-test`
 - `pyronaut-native-build` (native branch of `pyronaut build`)
 - `pyronaut-validate-config` (delegated `pyronaut validate-config` runtime)
+- `pyronaut-test-resources-server` (delegated standalone test resources lifecycle runtime)
 - `pyronaut-tui` (delegated TUI runtime)
 
 ## Stream Contract
@@ -53,6 +55,7 @@ Examples:
 - `examples/process-failure.json`
 - `examples/build-success.json`
 - `examples/validate-config-success.json`
+- `examples/test-resources-server-status.json`
 
 ## Capabilities Contract
 
@@ -74,6 +77,8 @@ Minimum capability expectations by command:
 - `test`: selector-aware execution (`--tests` support)
 - `build`: mode-aware execution (`jvm`/`native`) and native delegate compatibility
 - `validate-config`: configuration validation reports and DI-validation toggle support
+  - cache contract: validator cache persisted at `__pyronaut__/.config-validation-cache.properties`
+- `test-resources-server`: standalone lifecycle (`start|status|stop`) with deterministic settings in `.micronaut/test-resources` and best-effort startup optimization fallback
 - `tui`: delegated interactive/non-interactive TUI workflow compatibility
 
 Feature flags in capabilities should be used for optional behavior negotiation (for example, test selectors, debug-vm forwarding, native passthrough).
