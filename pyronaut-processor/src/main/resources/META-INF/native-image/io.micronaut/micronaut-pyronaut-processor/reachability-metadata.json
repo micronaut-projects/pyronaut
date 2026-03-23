@@ -17,14 +17,74 @@
     {
       "type": {
         "proxy": [
+          "io.micronaut.python.processing.annotation.PythonApplication"
+        ]
+      }
+    },
+    {
+      "type": {
+        "proxy": [
           "io.micronaut.core.annotation.Generated"
         ]
       }
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.ArgumentDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.ArgumentsDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.AttributeDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.ClassDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.DecoratorDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.FunctionDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.PropertyDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.ReturnDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.ScriptDef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
+    },
+    {
+      "type": "io.micronaut.python.processing.visitor.TypeRef",
+      "allPublicConstructors": true,
+      "allPublicMethods": true
     }
   ],
   "resources": [
     {
-      "glob": "META-INF/services/javax.tools.JavaCompiler"
+      "glob": "META-INF/services/**"
+    },
+    {
+      "glob": "GRAALPY-VFS/**"
     },
     {
       "module": "jdk.compiler",

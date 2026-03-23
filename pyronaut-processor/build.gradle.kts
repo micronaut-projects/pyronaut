@@ -77,9 +77,8 @@ graalvmNative {
                 listOf(
                     "--add-modules=java.compiler",
                     "--enable-native-access=org.graalvm.truffle",
-                    "-H:EnableURLProtocols=jar",
                     "-H:+UnlockExperimentalVMOptions",
-                    "-H:+PlatformInterfaceCompatibilityMode",
+                    "-H:EnableURLProtocols=jar",
                     "-H:+RuntimeClassLoading",
                     "-H:+AllowJRTFileSystem",
                     "-H:Preserve=package=javax.annotation.processing",
@@ -93,6 +92,7 @@ graalvmNative {
                     "-H:Preserve=package=io.micronaut.inject.visitor",
                     "-H:Preserve=package=io.micronaut.inject.ast",
                     "-H:Preserve=package=io.micronaut.context",
+                    "-H:-PrintRestrictHeapAccessWarnings",
                     "-H:-UnlockExperimentalVMOptions",
                     "--initialize-at-build-time=com.sun.tools.javac.api.JavacTool",
                     "--initialize-at-build-time=io.micronaut.sourcegen.model,org.objectweb.asm",
