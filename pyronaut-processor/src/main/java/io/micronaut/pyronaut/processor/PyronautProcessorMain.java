@@ -96,6 +96,14 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        if (System.getProperty("java.home") == null) {
+            String javaHome = System.getenv("JAVA_HOME");
+            if (javaHome == null) {
+                System.err.println("Please specify JAVA_HOME environment variable");
+                return PyronautProcessorExitCode.PRECONDITION_FAILED.code();
+            }
+            System.setProperty("java.home", javaHome);
+        }
         Path root = projectDir.toAbsolutePath().normalize();
         Path mergedTestRoot = null;
         try {
