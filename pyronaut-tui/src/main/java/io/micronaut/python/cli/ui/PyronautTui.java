@@ -129,6 +129,7 @@ public final class PyronautTui {
                 .bind(KeyTrigger.ctrl('s'), RootView.SAVE_LOGS)
                 .bind(KeyTrigger.key(KeyCode.F1), RootView.SELECT_TAB_APP)
                 .bind(KeyTrigger.key(KeyCode.F2), RootView.SELECT_TAB_LOGS)
+                .bind(KeyTrigger.key(KeyCode.F3), RootView.SELECT_TAB_RESOURCES)
                 .bind(KeyTrigger.ch('t'), RootView.FOCUS_TREE)
                 .bind(KeyTrigger.ch('o'), RootView.FOCUS_OUTPUT)
                 .bind(KeyTrigger.ctrl('r'), "switchToRun")

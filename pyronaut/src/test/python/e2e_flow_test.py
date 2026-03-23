@@ -1,10 +1,12 @@
 import os
+import json
 import socket
 import shutil
 import subprocess
 import tempfile
 import time
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -181,6 +183,124 @@ class E2EFlowTest(unittest.TestCase):
                     if text:
                         self.assertTrue(Path(text).is_absolute(), text)
 
+    def test_test_resources_insights_api_auth_matrix(self):
+        fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "app"
+            shutil.copytree(fixture_dir, project_dir)
+
+            start_result = self._run_cli_without_capture("test-resources-server", "start", "--project-dir", str(project_dir))
+            self.assertEqual(0, start_result.returncode, start_result.stdout + start_result.stderr)
+            try:
+                server_uri, token = self._wait_for_test_resources_server(project_dir)
+
+                missing_status, _ = self._http_json(server_uri + "/api/test-resources/health")
+                self.assertEqual(401, missing_status)
+
+                invalid_status, _ = self._http_json(
+                    server_uri + "/api/test-resources/health",
+                    headers={"Authorization": "Bearer invalid-token"},
+                )
+                self.assertEqual(403, invalid_status)
+
+                valid_health_status, valid_health_payload = self._http_json(
+                    server_uri + "/api/test-resources/health",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                self.assertEqual(200, valid_health_status)
+                health = valid_health_payload.get("health")
+                self.assertIsInstance(health, dict)
+                assert isinstance(health, dict)
+                self.assertEqual("UP", health.get("status"))
+                self.assertIsInstance(health.get("uri"), str)
+                self.assertIsInstance(health.get("port"), int)
+
+                for endpoint, key in (("containers", "containers"), ("properties", "properties"), ("errors", "errors")):
+                    status, payload = self._http_json(
+                        server_uri + f"/api/test-resources/{endpoint}",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    self.assertEqual(200, status)
+                    self.assertIn(key, payload)
+                    self.assertIsInstance(payload[key], list)
+            finally:
+                stop_result = self._run_cli_without_capture("test-resources-server", "stop", "--project-dir", str(project_dir))
+                self.assertEqual(0, stop_result.returncode, stop_result.stdout + stop_result.stderr)
+
+    def test_test_resources_stale_state_recovery_and_cleanup(self):
+        fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "app"
+            shutil.copytree(fixture_dir, project_dir)
+
+            self._seed_stale_test_resources_settings(project_dir)
+
+            start_result = self._run_cli_without_capture("test-resources-server", "start", "--project-dir", str(project_dir))
+            self.assertEqual(0, start_result.returncode, start_result.stdout + start_result.stderr)
+            server_uri = ""
+            try:
+                server_uri, _ = self._wait_for_test_resources_server(project_dir)
+                self.assertNotEqual("http://127.0.0.1:9", server_uri)
+
+                properties = self._read_test_resources_settings(project_dir)
+                self.assertNotEqual("http://127.0.0.1:9", properties.get("server.uri"))
+                self.assertNotEqual("stale-token", properties.get("server.access.token"))
+
+                status, payload = self._http_json(
+                    server_uri + "/api/test-resources/health",
+                    headers={"Authorization": f"Bearer {properties.get('server.access.token', '')}"},
+                )
+                self.assertEqual(200, status)
+                health = payload.get("health")
+                self.assertIsInstance(health, dict)
+            finally:
+                stop_result = self._run_cli_without_capture("test-resources-server", "stop", "--project-dir", str(project_dir))
+                self.assertEqual(0, stop_result.returncode, stop_result.stdout + stop_result.stderr)
+
+            self.assertTrue(
+                not self._test_resources_settings_file(project_dir).exists()
+                or self._read_test_resources_settings(project_dir).get("server.uri") != "http://127.0.0.1:9"
+            )
+            self.assertTrue(server_uri)
+            self.assertFalse(self._http_health_available(server_uri + "/health"))
+
+    def test_mysql_test_resources_resolution_during_run_and_test(self):
+        self._require_mysql_e2e_environment()
+        fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "app"
+            shutil.copytree(fixture_dir, project_dir)
+            port = self._allocate_port()
+            self._enable_mysql_dependencies(project_dir)
+            self._write_project_sources(project_dir, port)
+            self._write_mysql_test_resources_config(project_dir)
+
+            run_process = self._start_cli(
+                "run",
+                "--project-dir",
+                str(project_dir),
+                extra_env={"MICRONAUT_SERVER_PORT": str(port), "PYRONAUT_TRACE_DELEGATION": "true"},
+            )
+            try:
+                self._wait_for_http(f"http://localhost:{port}/")
+                server_uri, token = self._wait_for_test_resources_server(project_dir)
+                status, payload = self._http_json(
+                    server_uri + "/api/test-resources/properties",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                self.assertEqual(200, status)
+                properties_payload = payload.get("properties", [])
+                self.assertIsInstance(properties_payload, list)
+                assert isinstance(properties_payload, list)
+                self.assertTrue(self._contains_mysql_resolution(properties_payload), payload)
+            finally:
+                self._stop_process(run_process)
+
+            test_result = self._run_cli("test", "--project-dir", str(project_dir), extra_env={"PYRONAUT_TRACE_DELEGATION": "true"})
+            self.assertEqual(0, test_result.returncode, test_result.stdout + test_result.stderr)
+            self.assertIn("[test-resources] start owned server", test_result.stdout + test_result.stderr)
+            self.assertIn("[test-resources] stop owned server", test_result.stdout + test_result.stderr)
+
     def _run_cli(self, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             self._base_command(*args),
@@ -189,6 +309,26 @@ class E2EFlowTest(unittest.TestCase):
             text=True,
             env=self._env(extra_env),
             timeout=240,
+        )
+
+    def _run_cli_without_capture(
+        self,
+        *args: str,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        completed = subprocess.run(
+            self._base_command(*args),
+            check=False,
+            capture_output=False,
+            text=True,
+            env=self._env(extra_env),
+            timeout=240,
+        )
+        return subprocess.CompletedProcess(
+            completed.args,
+            completed.returncode,
+            "",
+            "",
         )
 
     def _start_cli(self, *args: str, extra_env: dict[str, str] | None = None) -> subprocess.Popen[str]:
@@ -216,6 +356,154 @@ class E2EFlowTest(unittest.TestCase):
         if extra_env:
             env.update(extra_env)
         return env
+
+    @staticmethod
+    def _test_resources_settings_file(project_dir: Path) -> Path:
+        return project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+
+    def _wait_for_test_resources_server(self, project_dir: Path) -> tuple[str, str]:
+        deadline = time.time() + 30
+        settings_file = self._test_resources_settings_file(project_dir)
+        while time.time() < deadline:
+            settings = self._read_test_resources_settings(project_dir)
+            uri = settings.get("server.uri")
+            token = settings.get("server.access.token")
+            if uri and token:
+                return uri, token
+            if settings_file.exists():
+                time.sleep(0.25)
+                continue
+            time.sleep(0.25)
+        raise AssertionError(f"Timed out waiting for test resources settings in {settings_file}")
+
+    def _read_test_resources_settings(self, project_dir: Path) -> dict[str, str]:
+        settings_file = self._test_resources_settings_file(project_dir)
+        if not settings_file.exists():
+            return {}
+        result: dict[str, str] = {}
+        for raw in settings_file.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            result[key.strip()] = self._unescape_properties_value(value.strip())
+        return result
+
+    @staticmethod
+    def _unescape_properties_value(value: str) -> str:
+        return (
+            value.replace("\\:", ":")
+            .replace("\\=", "=")
+            .replace("\\ ", " ")
+            .replace("\\\\", "\\")
+        )
+
+    @staticmethod
+    def _seed_stale_test_resources_settings(project_dir: Path) -> None:
+        settings_file = E2EFlowTest._test_resources_settings_file(project_dir)
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
+        settings_file.write_text(
+            "server.uri=http://127.0.0.1:9\n"
+            "server.port=9\n"
+            "server.access.token=stale-token\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _http_json(url: str, headers: dict[str, str] | None = None) -> tuple[int, dict[str, object]]:
+        request = urllib.request.Request(url, method="GET", headers=headers or {})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = response.read().decode("utf-8")
+                return int(response.status), json.loads(payload)
+        except urllib.error.HTTPError as exc:
+            payload = exc.read().decode("utf-8") if exc.fp is not None else "{}"
+            parsed = json.loads(payload) if payload else {}
+            return int(exc.code), parsed
+
+    @staticmethod
+    def _http_health_available(url: str) -> bool:
+        request = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                return int(response.status) == 200
+        except Exception:
+            return False
+
+    def _require_mysql_e2e_environment(self) -> None:
+        if os.environ.get("PYRONAUT_E2E_MYSQL", "false").lower() != "true":
+            self.skipTest("Set PYRONAUT_E2E_MYSQL=true to run MySQL test-resources e2e")
+
+        docker = shutil.which("docker")
+        if docker is None:
+            self.skipTest("Docker CLI is not available")
+
+        probe = subprocess.run(
+            [docker, "info"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if probe.returncode != 0:
+            reason = (probe.stderr or probe.stdout or "docker info failed").strip().splitlines()[0]
+            self.skipTest(f"Docker daemon unavailable: {reason}")
+
+    @staticmethod
+    def _write_mysql_test_resources_config(project_dir: Path) -> None:
+        config_dir = project_dir / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "application.yml").write_text(
+            "micronaut:\n"
+            "  application:\n"
+            "    name: pyronaut-e2e\n"
+            "datasources:\n"
+            "  default:\n"
+            "    dialect: MYSQL\n"
+            "    db-type: mysql\n"
+            "    driver-class-name: com.mysql.cj.jdbc.Driver\n"
+            "    username: test\n"
+            "    password: test\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _enable_mysql_dependencies(project_dir: Path) -> None:
+        pyproject = project_dir / "pyproject.toml"
+        content = pyproject.read_text(encoding="utf-8")
+        runtime_marker = '  "ch.qos.logback:logback-classic"\n]'
+        test_marker = '  "org.junit.jupiter:junit-jupiter-engine"\n]'
+        if runtime_marker not in content or test_marker not in content:
+            raise AssertionError("Unexpected e2e pyproject fixture format")
+
+        content = content.replace(
+            runtime_marker,
+            '  "ch.qos.logback:logback-classic",\n'
+            '  "io.micronaut.sql:micronaut-jdbc-hikari",\n'
+            '  "mysql:mysql-connector-j"\n'
+            ']',
+        )
+        content = content.replace(
+            test_marker,
+            '  "org.junit.jupiter:junit-jupiter-engine",\n'
+            '  "io.micronaut.testresources:micronaut-test-resources-jdbc-mysql"\n'
+            ']',
+        )
+        pyproject.write_text(content, encoding="utf-8")
+
+    @staticmethod
+    def _contains_mysql_resolution(properties_payload: list[object]) -> bool:
+        for entry in properties_payload:
+            if not isinstance(entry, dict):
+                continue
+            key = str(entry.get("key", ""))
+            value = str(entry.get("value", ""))
+            resolver = str(entry.get("resolver", ""))
+            if key == "datasources.default.url" and value.startswith("jdbc:mysql://"):
+                return True
+            if "mysql" in resolver.lower() and value.startswith("jdbc:mysql://"):
+                return True
+        return False
 
     @staticmethod
     def _allocate_port() -> int:

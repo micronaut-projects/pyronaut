@@ -89,6 +89,82 @@ Feature flags in capabilities should be used for optional behavior negotiation (
 - Native mode delegates to `pyronaut-native-build` and may pass unconsumed native-image arguments through to the native-image command.
 - `--tui` is a global orchestrator mode that delegates to `pyronaut-tui` and may drive run/test flows in interactive or smoke/non-interactive paths.
 
+## Test Resources Insights API Contract
+
+When `pyronaut-test-resources-server` is running, it exposes read-only insights endpoints on the same loopback-bound server process for TUI/CLI consumption.
+
+Authentication:
+
+- Header: `Authorization: Bearer <token>`
+- Token source: the current server token persisted in `.micronaut/test-resources/test-resources.properties`
+- Failure behavior:
+  - Missing/malformed bearer header: `401`
+  - Invalid bearer token: `403`
+
+Endpoints:
+
+- `GET /api/test-resources/health`
+  - `200` payload shape:
+    ```json
+    {
+      "health": {
+        "status": "UP",
+        "uri": "http://localhost:18080",
+        "port": 18080
+      }
+    }
+    ```
+
+- `GET /api/test-resources/containers`
+  - `200` payload shape:
+    ```json
+    {
+      "containers": [
+        {
+          "id": "container-id",
+          "name": "container-name",
+          "image": "image-name",
+          "scope": "scope-name",
+          "status": "running"
+        }
+      ]
+    }
+    ```
+
+- `GET /api/test-resources/properties`
+  - `200` payload shape:
+    ```json
+    {
+      "properties": [
+        {
+          "key": "datasources.default.url",
+          "value": "jdbc:mysql://127.0.0.1:3306/test",
+          "resolver": "mysql",
+          "scope": "default"
+        }
+      ]
+    }
+    ```
+
+- `GET /api/test-resources/errors`
+  - `200` payload shape:
+    ```json
+    {
+      "errors": [
+        {
+          "property": "datasources.default.url",
+          "resolver": "mysql",
+          "message": "resolution failed"
+        }
+      ]
+    }
+    ```
+
+Notes:
+
+- All collection payloads must use explicit arrays (`[]`) and never `null`.
+- Insights endpoints are read-only and must not mutate server lifecycle state.
+
 ## Exit Code Taxonomy
 
 | Range | Category | Meaning |

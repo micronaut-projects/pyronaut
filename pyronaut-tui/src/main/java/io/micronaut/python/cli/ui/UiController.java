@@ -52,6 +52,7 @@ public final class UiController {
     private final AtomicBoolean testing = new AtomicBoolean();
     private UiModel.TestTree testTree = null;
     private TestSummary lastTestSummary = null;
+    private TestResourcesSnapshot testResourcesSnapshot = TestResourcesSnapshot.unavailable("test resources server not connected");
 
     private final Map<Integer, Node> testNodes = new HashMap<>();
     private final Map<Integer, List<String>> pendingLogs = new HashMap<>();
@@ -225,6 +226,15 @@ public final class UiController {
         }
     }
 
+    public TestResourcesSnapshot getTestResourcesSnapshot() {
+        readLock.lock();
+        try {
+            return testResourcesSnapshot;
+        } finally {
+            readLock.unlock();
+        }
+    }
+
     /**
      * Clears the activity log maintained by the controller.
      */
@@ -295,7 +305,63 @@ public final class UiController {
             this.compiling.set(false);
             this.testing.set(false);
             this.lastTestSummary = null;
+            this.testResourcesSnapshot = TestResourcesSnapshot.unavailable("test resources server not connected");
             resetTestTree();
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public void setTestResourcesLoading() {
+        writeLock.lock();
+        try {
+            this.testResourcesSnapshot = TestResourcesSnapshot.loading();
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public void setTestResourcesRunning(
+        String healthMessage,
+        List<String> containers,
+        List<String> properties,
+        List<String> errors
+    ) {
+        writeLock.lock();
+        try {
+            this.testResourcesSnapshot = TestResourcesSnapshot.running(
+                healthMessage,
+                List.copyOf(containers),
+                List.copyOf(properties),
+                List.copyOf(errors)
+            );
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public void setTestResourcesAuthFailed(String message) {
+        writeLock.lock();
+        try {
+            this.testResourcesSnapshot = TestResourcesSnapshot.authFailed(message);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public void setTestResourcesUnavailable(String message) {
+        writeLock.lock();
+        try {
+            this.testResourcesSnapshot = TestResourcesSnapshot.unavailable(message);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    public void setTestResourcesError(String message) {
+        writeLock.lock();
+        try {
+            this.testResourcesSnapshot = TestResourcesSnapshot.error(message);
         } finally {
             writeLock.unlock();
         }
@@ -692,5 +758,42 @@ public final class UiController {
      * @param pending number pending
      */
     public record TestSummary(long passed, long failed, long skipped, long running, long pending) {
+    }
+
+    public enum TestResourcesStatus {
+        LOADING,
+        RUNNING,
+        AUTH_FAILED,
+        ERROR,
+        UNAVAILABLE
+    }
+
+    public record TestResourcesSnapshot(
+        TestResourcesStatus status,
+        String healthMessage,
+        List<String> containers,
+        List<String> properties,
+        List<String> errors,
+        String message
+    ) {
+        static TestResourcesSnapshot loading() {
+            return new TestResourcesSnapshot(TestResourcesStatus.LOADING, null, List.of(), List.of(), List.of(), "loading test resources insights");
+        }
+
+        static TestResourcesSnapshot running(String healthMessage, List<String> containers, List<String> properties, List<String> errors) {
+            return new TestResourcesSnapshot(TestResourcesStatus.RUNNING, healthMessage, containers, properties, errors, null);
+        }
+
+        static TestResourcesSnapshot authFailed(String message) {
+            return new TestResourcesSnapshot(TestResourcesStatus.AUTH_FAILED, null, List.of(), List.of(), List.of(), message);
+        }
+
+        static TestResourcesSnapshot error(String message) {
+            return new TestResourcesSnapshot(TestResourcesStatus.ERROR, null, List.of(), List.of(), List.of(), message);
+        }
+
+        static TestResourcesSnapshot unavailable(String message) {
+            return new TestResourcesSnapshot(TestResourcesStatus.UNAVAILABLE, null, List.of(), List.of(), List.of(), message);
+        }
     }
 }

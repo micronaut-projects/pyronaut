@@ -37,6 +37,11 @@ import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -46,6 +51,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -62,6 +68,8 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private static final int PRECONDITION_FAILED = 8;
     private static final String EVENTS_REPORT = "events.ndjson";
     private static final long WATCH_DEBOUNCE_MILLIS = 250;
+    private static final long TEST_RESOURCES_POLL_MILLIS = 2000;
+    private static final long TEST_RESOURCES_MAX_BACKOFF_MILLIS = 8000;
     private static final Pattern SERVER_URI = Pattern.compile("Server Running:\\s*(\\S+)");
 
     @Option(names = "--project-dir", required = true, description = "Project directory")
@@ -93,6 +101,8 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
     private final AtomicLong executionGeneration = new AtomicLong();
     private final AtomicReference<WatchLoop> watchLoop = new AtomicReference<>();
+    private final AtomicReference<TestResourcesPoller> testResourcesPoller = new AtomicReference<>();
+    private final HttpClient insightsClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
     private UiController controller;
     private PyronautTui tui;
@@ -118,6 +128,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         controller = tui.getController();
         tui.setMode(initialMode);
         activeMode = initialMode;
+        startTestResourcesPolling(resolvedProject);
 
         tui.setOnQuit(() -> controlExecutor.submit(() -> {
             stopWatcher();
@@ -145,6 +156,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         } finally {
             shuttingDown.set(true);
             stopWatcher();
+            stopTestResourcesPolling();
             controlExecutor.shutdownNow();
             shutdownActiveProcess();
             StreamsCapture.getInstance().restore();
@@ -420,6 +432,232 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         }
     }
 
+    private void startTestResourcesPolling(Path project) {
+        var existing = testResourcesPoller.get();
+        if (existing != null && existing.project.equals(project)) {
+            return;
+        }
+        stopTestResourcesPolling();
+        controller.setTestResourcesLoading();
+        var poller = new TestResourcesPoller(project);
+        testResourcesPoller.set(poller);
+        poller.start();
+    }
+
+    private void stopTestResourcesPolling() {
+        var existing = testResourcesPoller.getAndSet(null);
+        if (existing != null) {
+            existing.stop();
+        }
+    }
+
+    private boolean refreshTestResourcesSnapshot(Path project) {
+        try {
+            var settingsFile = project.resolve(".micronaut/test-resources/test-resources.properties");
+            if (!Files.exists(settingsFile)) {
+                controller.setTestResourcesUnavailable("waiting for .micronaut/test-resources/test-resources.properties");
+                return false;
+            }
+
+            var properties = new Properties();
+            try (var in = Files.newInputStream(settingsFile)) {
+                properties.load(in);
+            }
+            var serverUri = properties.getProperty("server.uri");
+            var token = properties.getProperty("server.access.token");
+            if (serverUri == null || serverUri.isBlank()) {
+                controller.setTestResourcesUnavailable("server.uri missing in test-resources properties");
+                return false;
+            }
+            if (token == null || token.isBlank()) {
+                controller.setTestResourcesUnavailable("server.access.token missing in test-resources properties");
+                return false;
+            }
+
+            var health = fetchInsights(serverUri, "/api/test-resources/health", token);
+            if (health.statusCode() == 401 || health.statusCode() == 403) {
+                controller.setTestResourcesAuthFailed("insights auth failed (" + health.statusCode() + ")");
+                return false;
+            }
+            if (health.statusCode() != 200) {
+                controller.setTestResourcesError("health endpoint failed with status " + health.statusCode());
+                return false;
+            }
+
+            var containers = fetchInsights(serverUri, "/api/test-resources/containers", token);
+            var propertiesResponse = fetchInsights(serverUri, "/api/test-resources/properties", token);
+            var errors = fetchInsights(serverUri, "/api/test-resources/errors", token);
+            if (containers.statusCode() != 200 || propertiesResponse.statusCode() != 200 || errors.statusCode() != 200) {
+                controller.setTestResourcesError(
+                    "insights endpoints failed (containers=" + containers.statusCode()
+                        + ", properties=" + propertiesResponse.statusCode()
+                        + ", errors=" + errors.statusCode() + ")"
+                );
+                return false;
+            }
+
+            var healthStatus = jsonString(health.body(), "status");
+            var healthUri = jsonString(health.body(), "uri");
+            var healthPort = jsonLong(health.body(), "port");
+            String healthMessage = (healthStatus == null ? "UNKNOWN" : healthStatus)
+                + (healthUri == null ? "" : " @ " + healthUri)
+                + (healthPort >= 0 ? " (port " + healthPort + ")" : "");
+
+            controller.setTestResourcesRunning(
+                healthMessage,
+                summarizeArrayPayload(containers.body(), "containers"),
+                summarizeArrayPayload(propertiesResponse.body(), "properties"),
+                summarizeArrayPayload(errors.body(), "errors")
+            );
+            return true;
+        } catch (Exception e) {
+            controller.setTestResourcesError("insights refresh failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private HttpResponse<String> fetchInsights(String serverUri, String path, String token) throws IOException, InterruptedException {
+        var request = HttpRequest.newBuilder(URI.create(serverUri + path))
+            .header("Authorization", "Bearer " + token)
+            .timeout(Duration.ofSeconds(5))
+            .GET()
+            .build();
+        return insightsClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
+    private static List<String> summarizeArrayPayload(String body, String key) {
+        var array = extractArrayContent(body, key);
+        if (array == null || array.isBlank()) {
+            return List.of();
+        }
+        var trimmed = array.trim();
+        if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+            return List.of(trimmed);
+        }
+        var split = trimmed.split("\\},\\{");
+        var rows = new ArrayList<String>(split.length);
+        for (String raw : split) {
+            String object = raw;
+            if (!object.startsWith("{")) {
+                object = "{" + object;
+            }
+            if (!object.endsWith("}")) {
+                object = object + "}";
+            }
+            rows.add(summarizeObject(key, object));
+        }
+        return rows;
+    }
+
+    private static String summarizeObject(String key, String object) {
+        return switch (key) {
+            case "containers" -> {
+                String name = firstNonBlank(jsonString(object, "name"), "<unknown>");
+                String status = firstNonBlank(jsonString(object, "status"), "unknown");
+                String image = firstNonBlank(jsonString(object, "image"), "unknown-image");
+                String scope = firstNonBlank(jsonString(object, "scope"), "default");
+                yield name + " [" + status + "] image=" + image + " scope=" + scope;
+            }
+            case "properties" -> {
+                String keyName = firstNonBlank(jsonString(object, "key"), "<key>");
+                String value = firstNonBlank(jsonString(object, "value"), "<value>");
+                String resolver = firstNonBlank(jsonString(object, "resolver"), "resolver");
+                String scope = firstNonBlank(jsonString(object, "scope"), "default");
+                yield keyName + "=" + value + " (" + resolver + "/" + scope + ")";
+            }
+            case "errors" -> {
+                String property = firstNonBlank(jsonString(object, "property"), "<property>");
+                String resolver = firstNonBlank(jsonString(object, "resolver"), "resolver");
+                String message = firstNonBlank(jsonString(object, "message"), "unknown error");
+                yield property + " [" + resolver + "] " + message;
+            }
+            default -> object;
+        };
+    }
+
+    private static String extractArrayContent(String body, String key) {
+        String marker = "\"" + key + "\"";
+        int keyIndex = body.indexOf(marker);
+        if (keyIndex < 0) {
+            return null;
+        }
+        int colon = body.indexOf(':', keyIndex + marker.length());
+        if (colon < 0) {
+            return null;
+        }
+        int start = body.indexOf('[', colon + 1);
+        if (start < 0) {
+            return null;
+        }
+        int depth = 0;
+        for (int i = start; i < body.length(); i++) {
+            char ch = body.charAt(i);
+            if (ch == '[') {
+                depth++;
+            } else if (ch == ']') {
+                depth--;
+                if (depth == 0) {
+                    return body.substring(start + 1, i);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String jsonString(String body, String key) {
+        int keyIndex = body.indexOf('"' + key + '"');
+        if (keyIndex < 0) {
+            return null;
+        }
+        int colon = body.indexOf(':', keyIndex);
+        if (colon < 0) {
+            return null;
+        }
+        int firstQuote = body.indexOf('"', colon + 1);
+        if (firstQuote < 0) {
+            return null;
+        }
+        int secondQuote = body.indexOf('"', firstQuote + 1);
+        if (secondQuote < 0) {
+            return null;
+        }
+        return body.substring(firstQuote + 1, secondQuote);
+    }
+
+    private static long jsonLong(String body, String key) {
+        int keyIndex = body.indexOf('"' + key + '"');
+        if (keyIndex < 0) {
+            return -1;
+        }
+        int colon = body.indexOf(':', keyIndex);
+        if (colon < 0) {
+            return -1;
+        }
+        int i = colon + 1;
+        while (i < body.length() && Character.isWhitespace(body.charAt(i))) {
+            i++;
+        }
+        int start = i;
+        while (i < body.length() && Character.isDigit(body.charAt(i))) {
+            i++;
+        }
+        if (start == i) {
+            return -1;
+        }
+        try {
+            return Long.parseLong(body.substring(start, i));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private static String firstNonBlank(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return value;
+    }
+
     private void onWatchChanges(Mode mode, List<Path> changedFiles) {
         if (shuttingDown.get() || activeMode != mode || changedFiles.isEmpty() || currentProject == null) {
             return;
@@ -629,6 +867,48 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             case "test" -> Mode.TEST;
             default -> throw new IllegalArgumentException("Invalid --mode. Use run|test");
         };
+    }
+
+    private final class TestResourcesPoller {
+        private final Path project;
+        private final AtomicBoolean running = new AtomicBoolean(true);
+        private Thread thread;
+
+        private TestResourcesPoller(Path project) {
+            this.project = project;
+        }
+
+        private void start() {
+            thread = Thread.ofVirtual().name("pyronaut-tui-test-resources").unstarted(this::run);
+            thread.start();
+        }
+
+        private void stop() {
+            running.set(false);
+            if (thread != null) {
+                thread.interrupt();
+            }
+        }
+
+        private void run() {
+            int failures = 0;
+            while (running.get() && !shuttingDown.get()) {
+                boolean ok = refreshTestResourcesSnapshot(project);
+                if (ok) {
+                    failures = 0;
+                } else {
+                    failures = Math.min(failures + 1, 4);
+                }
+                long multiplier = failures == 0 ? 1 : (1L << Math.min(2, failures));
+                long sleepMillis = Math.min(TEST_RESOURCES_MAX_BACKOFF_MILLIS, TEST_RESOURCES_POLL_MILLIS * multiplier);
+                try {
+                    Thread.sleep(sleepMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
     }
 
     private final class WatchLoop {

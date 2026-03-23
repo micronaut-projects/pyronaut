@@ -52,6 +52,7 @@ public final class RootView extends Component<RootView> {
     public static final String SAVE_LOGS = "saveLogs";
     public static final String SELECT_TAB_APP = "tabApp";
     public static final String SELECT_TAB_LOGS = "tabLogs";
+    public static final String SELECT_TAB_RESOURCES = "tabResources";
     public static final String FOCUS_TREE = "focusTree";
     public static final String FOCUS_OUTPUT = "focusOutput";
 
@@ -125,6 +126,7 @@ public final class RootView extends Component<RootView> {
                             .addClass("main-row");
                 }
             }
+            case 2 -> tabContent = testResourcesPanel();
             default -> tabContent = panel("Activity", activityList).addClass("activity");
         }
         return column(
@@ -147,16 +149,26 @@ public final class RootView extends Component<RootView> {
         }
         appStatus = appStatus.addClass("app-status");
 
-        var tabsBar = tabs("[F1] App", "[F2] Logs").divider(" | ")
+        var tabsBar = tabs("[F1] App", "[F2] Logs", "[F3] Test Resources").divider(" | ")
                 .state(tabsState)
                 .addClass("tabs");
+        var keyHints = row(
+                text("[F1] App").addClass("primary"),
+                text(" | ").addClass("dim"),
+                text("[F2] Logs").addClass("primary"),
+                text(" | ").addClass("dim"),
+                text("[F3] Test Resources").addClass("primary")
+        ).addClass("header-hints");
         return panel(
-                row(
-                        row(text("\uD83D\uDD25 Pyronaut").addClass("header-title"),
-                                spacer(1),
-                                tabsBar),
-                        appStatus
-                ).addClass("header-row")
+                column(
+                        keyHints,
+                        row(
+                                row(text("\uD83D\uDD25 Pyronaut").addClass("header-title"),
+                                        spacer(1),
+                                        tabsBar),
+                                appStatus
+                        ).addClass("header-row")
+                )
         ).addClass("header");
     }
 
@@ -292,6 +304,51 @@ public final class RootView extends Component<RootView> {
                 .focusable();
     }
 
+    private Panel testResourcesPanel() {
+        var snapshot = controller.getTestResourcesSnapshot();
+        List<Element> rows = new ArrayList<>();
+
+        rows.add(text("State: " + snapshot.status().name().toLowerCase()).addClass("info"));
+        if (snapshot.healthMessage() != null && !snapshot.healthMessage().isBlank()) {
+            rows.add(text("Health: " + snapshot.healthMessage()));
+        }
+        if (snapshot.message() != null && !snapshot.message().isBlank()) {
+            rows.add(text("Message: " + snapshot.message()).addClass("warning"));
+        }
+
+        rows.add(text("Containers (" + snapshot.containers().size() + ")").addClass("primary"));
+        if (snapshot.containers().isEmpty()) {
+            rows.add(text("  none").addClass("dim"));
+        } else {
+            for (String container : snapshot.containers()) {
+                rows.add(text("  • " + container));
+            }
+        }
+
+        rows.add(text("Properties (" + snapshot.properties().size() + ")").addClass("primary"));
+        if (snapshot.properties().isEmpty()) {
+            rows.add(text("  none").addClass("dim"));
+        } else {
+            for (String property : snapshot.properties()) {
+                rows.add(text("  • " + property));
+            }
+        }
+
+        rows.add(text("Errors (" + snapshot.errors().size() + ")").addClass("primary"));
+        if (snapshot.errors().isEmpty()) {
+            rows.add(text("  none").addClass("dim"));
+        } else {
+            for (String error : snapshot.errors()) {
+                rows.add(text("  • " + error).addClass("error"));
+            }
+        }
+
+        return panel("Test Resources", column(rows.toArray(Element[]::new)))
+            .id("test-resources")
+            .addClass("tests")
+            .focusable();
+    }
+
     // ============ Right column (Activity) ============
 
     private Panel activityPanel() {
@@ -403,6 +460,11 @@ public final class RootView extends Component<RootView> {
     @OnAction(SELECT_TAB_LOGS)
     void onTabLogs(Event e) {
         tabsState.select(1);
+    }
+
+    @OnAction(SELECT_TAB_RESOURCES)
+    void onTabResources(Event e) {
+        tabsState.select(2);
     }
 
     @OnAction(FOCUS_TREE)

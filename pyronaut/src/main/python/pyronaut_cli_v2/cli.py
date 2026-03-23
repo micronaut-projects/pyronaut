@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import shlex
 import shutil
 import subprocess
@@ -112,6 +113,8 @@ def run(
     forwarded_args = _normalize_project_flag(list(argv[1:]))
     forwarded_args = _normalize_no_cache_flag(forwarded_args)
     forwarded_args = _normalize_tests_selection_flag(forwarded_args)
+    no_validate = _extract_no_validate(forwarded_args)
+    forwarded_args = _remove_no_validate(forwarded_args)
     debug_vm = _extract_debug_vm(forwarded_args)
     forwarded_args = _remove_debug_vm(forwarded_args)
 
@@ -140,6 +143,7 @@ def run(
             runner=execute,
             resolver=locate,
             no_cache=no_cache,
+            no_validate=no_validate,
             java_home_provider=effective_java_home_provider,
         )
 
@@ -152,36 +156,61 @@ def run(
             )
             return PRECONDITION_FAILED
 
-    if command == "run" and (process_runner is not None or (runner is None and runner_with_env is None)):
-        return _run_with_auto_restart(
-            project_dir=Path(project_dir),
-            run_args=forwarded_args,
-            no_cache=no_cache,
-            execute=execute,
-            process_runner=process_runner or _spawn_subprocess,
-            resolver=locate,
+    tr_session: _OwnedTestResourcesSession | None = None
+    try:
+        if command in {"run", "test"}:
+            tr_session = _OwnedTestResourcesSession(
+                project_dir=Path(project_dir).resolve(),
+                owner_command=shlex.join(["pyronaut", command, *forwarded_args]),
+            )
+            tr_session.ensure_started(runner=execute, resolver=locate)
+
+        if command == "run" and (process_runner is not None or (runner is None and runner_with_env is None)):
+            return _run_with_auto_restart(
+                project_dir=Path(project_dir),
+                run_args=forwarded_args,
+                no_cache=no_cache,
+                execute=execute,
+                process_runner=process_runner or _spawn_subprocess,
+                resolver=locate,
+                debug_vm=debug_vm,
+                poll_interval=watch_poll_interval,
+                debounce_seconds=watch_debounce_seconds,
+                snapshotter=snapshotter or _snapshot_watched_files,
+                monotonic=monotonic,
+                sleep=sleep,
+                java_home_provider=effective_java_home_provider,
+            )
+
+        if command in {"run", "test"}:
+            if no_validate:
+                sys.stderr.write("[validation] skipped (--no-validate)\n")
+            else:
+                validation_code = _run_lifecycle_validation(
+                    project_dir=project_dir,
+                    scenario=command,
+                    runner=execute,
+                    resolver=locate,
+                    no_cache=no_cache,
+                )
+                if validation_code != SUCCESS:
+                    return validation_code
+
+            preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
+            if preflight_code != SUCCESS:
+                return preflight_code
+
+        return _delegate(
+            command,
+            forwarded_args,
+            execute,
+            locate,
             debug_vm=debug_vm,
-            poll_interval=watch_poll_interval,
-            debounce_seconds=watch_debounce_seconds,
-            snapshotter=snapshotter or _snapshot_watched_files,
-            monotonic=monotonic,
-            sleep=sleep,
             java_home_provider=effective_java_home_provider,
         )
-
-    if command in {"run", "test"}:
-        preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
-        if preflight_code != SUCCESS:
-            return preflight_code
-
-    return _delegate(
-        command,
-        forwarded_args,
-        execute,
-        locate,
-        debug_vm=debug_vm,
-        java_home_provider=effective_java_home_provider,
-    )
+    finally:
+        if tr_session is not None:
+            tr_session.stop_if_owned(runner=execute, resolver=locate)
 
 
 def _delegate(
@@ -237,8 +266,13 @@ def _run_build(
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
     no_cache: bool,
+    no_validate: bool,
     java_home_provider: JavaHomeProvider | None,
 ) -> int:
+    if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
+        _print_build_usage()
+        return SUCCESS
+
     project_dir = Path(_extract_project_dir(args)).resolve()
     verbose = _extract_build_verbose(args)
     try:
@@ -246,6 +280,19 @@ def _run_build(
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
+
+    if no_validate:
+        sys.stderr.write("[validation] skipped (--no-validate)\n")
+    else:
+        validation_code = _run_lifecycle_validation(
+            project_dir=str(project_dir),
+            scenario="production",
+            runner=runner,
+            resolver=resolver,
+            no_cache=no_cache,
+        )
+        if validation_code != SUCCESS:
+            return validation_code
 
     if mode == "native":
         preflight = _run_preflight(str(project_dir), no_cache, runner, resolver)
@@ -315,6 +362,25 @@ def _run_build(
         print(f"Install with: {python_exec} -m pip install {dist_dir}/*.whl")
         print("Run the project with: pyronaut run --project-dir " + str(project_dir))
     return exit_code
+
+
+def _run_lifecycle_validation(
+    *,
+    project_dir: str,
+    scenario: str,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    no_cache: bool = False,
+) -> int:
+    args = ["--project-dir", project_dir, "--scenario", scenario]
+    if no_cache:
+        args.append("--no-cache")
+    return _delegate(
+        "validate-config",
+        args,
+        runner,
+        resolver,
+    )
 
 
 def _resolve_build_mode(project_dir: Path, args: Sequence[str]) -> str:
@@ -993,6 +1059,14 @@ def _extract_no_cache(args: Sequence[str]) -> bool:
     return False
 
 
+def _extract_no_validate(args: Sequence[str]) -> bool:
+    return any(token == "--no-validate" for token in args)
+
+
+def _remove_no_validate(args: Sequence[str]) -> list[str]:
+    return [token for token in args if token != "--no-validate"]
+
+
 def _extract_project_dir(args: Sequence[str]) -> str:
     for index, token in enumerate(args):
         if token == "--project-dir" and index + 1 < len(args):
@@ -1072,8 +1146,18 @@ def _is_supported_platform(platform_name: str) -> bool:
     return platform_name.startswith("linux") or platform_name == "darwin"
 
 
-def _print_usage(stream=sys.stdout) -> None:
+def _print_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
     stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|validate-config|test-resources-server> [args...]\n")
+
+
+def _print_build_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
+        "Usage: pyronaut build [--project-dir <dir>] [--native|--jvm|--mode=<native|jvm>] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
+    )
 
 
 def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Callable[[str], str | None]) -> int:
@@ -1127,6 +1211,125 @@ def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Calla
     )
     app = TuiApp(options=options, delegate=_delegate, report_summary=render_summary_line)
     return app.run()
+
+
+class _OwnedTestResourcesSession:
+    def __init__(self, *, project_dir: Path, owner_command: str) -> None:
+        self._project_dir = project_dir
+        self._session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+        self._owner_pid = os.getpid()
+        self._owner_command = owner_command
+        self._owner_token = self._new_owner_token()
+        self._started = False
+        self._shutdown_registered = False
+
+    @staticmethod
+    def _new_owner_token() -> str:
+        return f"{os.getpid()}-{int(time.time() * 1000)}"
+
+    def ensure_started(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+        cache_dir = self._project_dir / "__pyronaut__"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        sys.stderr.write("[test-resources] start owned server\n")
+        self._delegate_test_resources_server(
+            [
+                "start",
+                "--project-dir",
+                str(self._project_dir),
+                "--owner-token",
+                self._owner_token,
+            ],
+            runner=runner,
+            resolver=resolver,
+        )
+
+        self._persist_session(started_at=time.time())
+        self._started = True
+        self._register_shutdown(runner=runner, resolver=resolver)
+
+    def stop_if_owned(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+        if not self._started:
+            return
+
+        if not self._session_matches_owner():
+            sys.stderr.write("[test-resources] stop skipped (ownership mismatch)\n")
+            return
+
+        sys.stderr.write("[test-resources] stop owned server\n")
+        self._delegate_test_resources_server(
+            [
+                "stop",
+                "--project-dir",
+                str(self._project_dir),
+                "--owner-token",
+                self._owner_token,
+            ],
+            runner=runner,
+            resolver=resolver,
+        )
+
+    def _register_shutdown(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+        if self._shutdown_registered:
+            return
+
+        def _shutdown() -> None:
+            try:
+                self.stop_if_owned(runner=runner, resolver=resolver)
+            except Exception:
+                return
+
+        atexit.register(_shutdown)
+        self._shutdown_registered = True
+
+    def _persist_session(self, *, started_at: float) -> None:
+        data = {
+            "ownerToken": self._owner_token,
+            "ownerPid": self._owner_pid,
+            "ownerCommand": self._owner_command,
+            "startedAt": started_at,
+        }
+        self._session_file.write_text(_json_dumps(data) + "\n", encoding="utf-8")
+
+    def _session_matches_owner(self) -> bool:
+        try:
+            data = _json_loads(self._session_file.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if not isinstance(data, dict):
+            return False
+        return (
+            data.get("ownerToken") == self._owner_token
+            and data.get("ownerPid") == self._owner_pid
+            and data.get("ownerCommand") == self._owner_command
+        )
+
+    def _delegate_test_resources_server(
+        self,
+        args: list[str],
+        *,
+        runner: RunnerWithEnv,
+        resolver: Callable[[str], str | None],
+    ) -> int:
+        executable_path = resolver(COMMAND_TO_EXECUTABLE["test-resources-server"])
+        if executable_path is None:
+            raise RuntimeError("Missing delegated executable: pyronaut-test-resources-server")
+        command_line = [executable_path, *args]
+        if _delegation_trace_enabled():
+            print(shlex.join(command_line), file=sys.stderr)
+        return int(runner(command_line, None))
+
+
+def _json_dumps(data: object) -> str:
+    import json
+
+    return json.dumps(data, indent=2, sort_keys=True)
+
+
+def _json_loads(data: str):
+    import json
+
+    return json.loads(data)
 
 
 def _run_tamboui_tui(

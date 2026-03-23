@@ -8,7 +8,14 @@
     "action": "status",
     "state": "running",
     "uri": "http://localhost:18080",
-    "settingsFile": ".micronaut/test-resources/test-resources.properties"
+    "settingsFile": ".micronaut/test-resources/test-resources.properties",
+    "insightsApi": {
+      "health": "/api/test-resources/health",
+      "containers": "/api/test-resources/containers",
+      "properties": "/api/test-resources/properties",
+      "errors": "/api/test-resources/errors",
+      "auth": "Authorization: Bearer <token>"
+    }
   },
   "warnings": []
 }

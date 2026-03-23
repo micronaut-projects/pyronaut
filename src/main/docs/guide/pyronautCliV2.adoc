@@ -79,9 +79,11 @@ Common options:
 
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
+- `--no-validate`: explicitly bypasses lifecycle config validation
 
 Behavior:
 
+- Runs `pyronaut-validate-config --scenario run` before preflight by default.
 - Automatically performs install/process preflight before launching.
 - Uses runtime classpath manifests plus processed classes.
 - Includes `config/` on classpath if present.
@@ -95,9 +97,11 @@ Common options:
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
 - `--tests <selector>`: repeatable Gradle-like test selector filter
+- `--no-validate`: explicitly bypasses lifecycle config validation
 
 Behavior:
 
+- Runs `pyronaut-validate-config --scenario test` before preflight by default.
 - Automatically performs install/process preflight.
 - Uses test classpath manifest and processed test classes when available.
 - Writes reports under `__pyronaut__/reports/tests`.
@@ -125,14 +129,17 @@ Common options:
 - `--project-dir <dir>`
 - `--main-class <fqcn>` (native mode)
 - `--verbose` (native mode, forwarded to `native-image`)
+- `--no-validate`: explicitly bypasses lifecycle config validation
 
 JVM mode:
 
+- Runs `pyronaut-validate-config --scenario production` by default.
 - Builds a wheel using `pip wheel`.
 - Outputs artifacts to `dist/`.
 
 Native mode:
 
+- Runs `pyronaut-validate-config --scenario production` before install/process preflight by default.
 - Runs install/process preflight.
 - Delegates to `pyronaut-native-build`.
 - Produces `__pyronaut__/native/application` by default.
