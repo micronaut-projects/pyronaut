@@ -60,6 +60,24 @@ class PyronautTestResourcesServerMainTest {
         assertTrue(manager.lastStartRequest.cdsDir().toString().contains("__pyronaut__/test-resources-cds"));
     }
 
+    @Test
+    void ownerTokenOptionIsAcceptedForOrchestratorCompatibility() throws Exception {
+        Path project = prepareProject("");
+        RecordingServerManager manager = new RecordingServerManager();
+        PyronautTestResourcesServerMain command = new PyronautTestResourcesServerMain(new PyprojectModelReader(), manager);
+
+        int exit = new CommandLine(command).execute(
+            "start",
+            "--project-dir",
+            project.toString(),
+            "--owner-token",
+            "owner-123"
+        );
+
+        assertEquals(0, exit);
+        assertTrue(manager.lastStartRequest != null);
+    }
+
     private Path prepareProject(String additionalPyprojectContent) throws Exception {
         Path project = tempDir.resolve("app");
         Files.createDirectories(project);

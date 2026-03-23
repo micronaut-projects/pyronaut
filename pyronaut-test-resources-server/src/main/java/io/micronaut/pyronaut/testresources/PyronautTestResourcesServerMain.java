@@ -6,6 +6,12 @@
  * You may obtain a copy of the License at
  *
  * https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package io.micronaut.pyronaut.testresources;
 
@@ -39,6 +45,9 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
 
     @CommandLine.Parameters(index = "0", arity = "0..1", defaultValue = "start", description = "Action: start|stop|status")
     String action = "start";
+
+    @CommandLine.Option(names = "--owner-token", hidden = true, description = "Internal orchestration ownership token")
+    String ownerToken;
 
     private final PyprojectModelReader modelReader;
     private final ServerManager serverManager;

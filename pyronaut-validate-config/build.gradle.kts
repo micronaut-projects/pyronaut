@@ -10,7 +10,8 @@ dependencies {
 
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mnPicocli.picocli)
-    implementation("io.micronaut.jsonschema:micronaut-json-schema-configuration-validator:2.0.0-M4")
+    implementation(libs.micronaut.json.schema.configuration.validator)
+    runtimeOnly(libs.slf4j.simple)
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

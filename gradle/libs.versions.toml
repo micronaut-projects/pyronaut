@@ -14,6 +14,7 @@ maven-resolver = "2.0.16"
 maven = "3.9.9"
 slf4j = "2.0.17"
 micronaut-test-resources = "2.9.0"
+micronaut-json-schema = "2.0.0-M5"
 
 [libraries]
 micronaut-core = { module = 'io.micronaut:micronaut-core-bom', version.ref = 'micronaut' }
@@ -45,6 +46,7 @@ maven-resolver-supplier-mvn3 = { module = "org.apache.maven.resolver:maven-resol
 maven-resolver-provider = { module = "org.apache.maven:maven-resolver-provider", version.ref = "maven" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 micronaut-test-resources-build-tools = { module = "io.micronaut.testresources:micronaut-test-resources-build-tools", version.ref = "micronaut-test-resources" }
+micronaut-json-schema-configuration-validator = { module = "io.micronaut.jsonschema:micronaut-json-schema-configuration-validator", version.ref = "micronaut-json-schema" }
 
 [bundles]
 

@@ -82,6 +82,9 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     @CommandLine.Option(names = "--resources-dirs", split = "[,;]", description = "Resource directories")
     List<String> resourcesDirs = new ArrayList<>();
 
+    @CommandLine.Option(names = "--no-cache", description = "Disable configuration validation cache")
+    boolean noCache;
+
     private final PyprojectModelReader modelReader;
     private final ConfigurationValidatorExecutor validatorExecutor;
 
@@ -120,24 +123,28 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             String resourcesFingerprint = ConfigurationValidationCache.fingerprintResources(settings.resourcesDirs(), DEFAULT_CACHE_IGNORE);
             String inputsFingerprint = settings.inputsFingerprint(classpathFingerprint);
 
-            ConfigurationValidationCache.CacheEntry cache = ConfigurationValidationCache.readIfUpToDate(cacheFile, inputsFingerprint, resourcesFingerprint);
-            if (cache != null) {
-                if (cache.lastResult() == ConfigurationValidationCache.LastResult.FAILURE) {
-                    System.err.println("Configuration validation failed (cached). Report directory: " + settings.outputDir());
-                    return VALIDATION_ERROR;
+            if (!noCache) {
+                ConfigurationValidationCache.CacheEntry cache = ConfigurationValidationCache.readIfUpToDate(cacheFile, inputsFingerprint, resourcesFingerprint);
+                if (cache != null) {
+                    if (cache.lastResult() == ConfigurationValidationCache.LastResult.FAILURE) {
+                        System.err.println("Configuration validation failed (cached). Report directory: " + settings.outputDir());
+                        return VALIDATION_ERROR;
+                    }
+                    System.out.println("Configuration validation up to date (cache hit). Reports in " + settings.outputDir());
+                    return SUCCESS;
                 }
-                System.out.println("Configuration validation up to date (cache hit). Reports in " + settings.outputDir());
-                return SUCCESS;
             }
 
             cleanupStaleReports(settings.outputDir(), settings.format());
             ValidationExecutionResult result = validatorExecutor.validate(settings);
-            ConfigurationValidationCache.write(
-                cacheFile,
-                inputsFingerprint,
-                resourcesFingerprint,
-                result.hasErrors() ? ConfigurationValidationCache.LastResult.FAILURE : ConfigurationValidationCache.LastResult.SUCCESS
-            );
+            if (!noCache) {
+                ConfigurationValidationCache.write(
+                    cacheFile,
+                    inputsFingerprint,
+                    resourcesFingerprint,
+                    result.hasErrors() ? ConfigurationValidationCache.LastResult.FAILURE : ConfigurationValidationCache.LastResult.SUCCESS
+                );
+            }
 
             if (result.hasErrors()) {
                 System.err.println("Configuration validation failed. See reports in " + settings.outputDir());
