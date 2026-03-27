@@ -85,6 +85,9 @@ Behavior:
 
 - Runs `pyronaut-validate-config --scenario run` before preflight by default.
 - Automatically performs install/process preflight before launching.
+- Starts an owned test-resources server when test resources are enabled and no reusable external server settings are present.
+- Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
+- Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
 - Uses runtime classpath manifests plus processed classes.
 - Includes `config/` on classpath if present.
 
@@ -103,6 +106,9 @@ Behavior:
 
 - Runs `pyronaut-validate-config --scenario test` before preflight by default.
 - Automatically performs install/process preflight.
+- Starts an owned test-resources server when test resources are enabled and no reusable external server settings are present.
+- Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
+- Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
 - Uses test classpath manifest and processed test classes when available.
 - Writes reports under `__pyronaut__/reports/tests`.
 
@@ -152,16 +158,35 @@ Common options:
 
 - `--project-dir <dir>`
 - `--scenario <run|test|production>` (default `production`)
+- `--env <name>`: repeatable environment entry
+- `--environments <a,b,...>`: comma-separated environments
 - `--validate-dependency-injection`
+- `--no-validate-dependency-injection`: explicitly disable dependency-injection validation
 - `--dependency-injection-validation-strategy <reachable|application-beans|all-beans>`
 - `--format <json|html|both>`
 - `--out <dir>`
+- `--classpath <path[,;path...]>`: repeatable classpath override
+- `--resources-dirs <path[,;path...]>`: repeatable resource directory override
+- `--project-base-dir <dir>`
+- `--deduce-environments` / `--no-deduce-environments`
+- `--fail-on-not-present` / `--no-fail-on-not-present`
+- `--no-cache`: disable config validation cache
+- `--suppress <pattern>`: repeatable suppression entry
+- `--suppressions <a,b,...>`: suppression list
+- `--suppress-inject-errors <id[,id...]>`: suppress DI error identifiers
 
 Report artifacts (default):
 
 - `__pyronaut__/reports/config-validation/<scenario>/configuration-errors.json`
 - `__pyronaut__/reports/config-validation/<scenario>/configuration-errors.html`
 - `__pyronaut__/.config-validation-cache.properties` (input/resource/classpath fingerprint cache)
+
+Behavior:
+
+- `run`, `test`, and native `build` delegate to `validate-config` with scenario-specific defaults (`run`, `test`, or `production`).
+- Standalone `pyronaut validate-config` defaults to `production` unless `--scenario` is provided.
+- Non-run/test commands strip stale `micronaut.test.resources.*` entries from inherited `JAVA_TOOL_OPTIONS` before validation.
+- When configuration errors are present, the CLI prints a copy-pasteable `[tool.pyronaut.validation] suppressions = [...]` snippet below the rendered error table.
 
 Example `pyproject.toml` validation settings:
 
@@ -211,6 +236,20 @@ sharedServer = false
 startupOptimization = "auto" # auto|leyden|cds|none
 leydenJvmArgs = ["--enable-preview"]
 ----
+
+Lifecycle behavior:
+
+- `pyronaut run` and `pyronaut test` automatically orchestrate test resources when enabled.
+- Owned servers are started on demand and stopped when the owning run/test session exits.
+- Shared servers (`sharedServer = true`) are intentionally left running across command invocations.
+- Externally started servers are attached to when project-local settings already exist, but are not claimed or stopped by `run`/`test`.
+- `pyronaut test-resources-server start` remains the way to keep a reusable server running until you explicitly stop it.
+
+Integration behavior:
+
+- `run`/`test` propagate `micronaut.test.resources.*` client settings to delegated JVMs via `JAVA_TOOL_OPTIONS`.
+- `validate-config`, `install`, `process`, and JVM `build` do not start or own test-resources orchestration.
+- `validate-config` removes stale inherited test-resources client settings for non-run/test scenarios to avoid pointing at dead servers.
 
 Fallback semantics:
 
@@ -285,6 +324,7 @@ In smoke/non-interactive paths, the TUI delegates through the same orchestrator 
 == Environment variables
 
 - `PYRONAUT_TRACE_DELEGATION=true`: prints delegated command lines.
+- `PYRONAUT_TEST_RESOURCES_DISABLED=true`: disables automatic test-resources orchestration for `run` and `test`.
 - `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.
 - `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_VALIDATE_CONFIG_EXECUTABLE`, `PYRONAUT_TEST_RESOURCES_SERVER_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.
