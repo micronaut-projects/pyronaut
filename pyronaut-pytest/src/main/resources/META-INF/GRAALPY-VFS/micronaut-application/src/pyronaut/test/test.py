@@ -75,7 +75,8 @@ def micronaut_test_fixture(request,
     try:
         extension.beforeClass(request.node.__module__, PytestMicronautExtension, test_value)
     except BaseException as e:
-        raise Exception(f"Micronaut Fixture Setup Failed: {e}")
+        pytest = __import__("pytest")
+        pytest.fail(f"Micronaut Fixture Setup Failed: {e}", pytrace=False)
     return ApplicationContextWrapper(extension.getContext())
 
 

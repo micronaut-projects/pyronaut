@@ -15,10 +15,17 @@
  */
 package io.micronaut.test.pytest;
 
+import java.util.Arrays;
+import java.util.regex.Pattern;
+
 /**
  * Represent python originating assertion errors.
  */
 public class PythonAssertionError extends AssertionError {
+    private static final Pattern INTERNAL_STACK_FRAME = Pattern.compile(
+        "^(com\\.oracle\\.truffle\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|java\\.base/).*"
+    );
+
     public PythonAssertionError(String message, Throwable cause) {
         super(message, cause);
     }
@@ -29,7 +36,13 @@ public class PythonAssertionError extends AssertionError {
 
     @Override
     public synchronized Throwable fillInStackTrace() {
-        // none of the stack is useful
-        return this;
+        Throwable self = super.fillInStackTrace();
+        StackTraceElement[] filtered = Arrays.stream(getStackTrace())
+            .filter(frame -> !INTERNAL_STACK_FRAME.matcher(frame.getClassName()).matches())
+            .toArray(StackTraceElement[]::new);
+        if (filtered.length > 0) {
+            setStackTrace(filtered);
+        }
+        return self;
     }
 }

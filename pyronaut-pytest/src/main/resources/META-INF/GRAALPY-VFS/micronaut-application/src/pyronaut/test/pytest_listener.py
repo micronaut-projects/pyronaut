@@ -13,6 +13,29 @@ import java
 import inspect
 from typing import get_origin, get_args
 
+
+_INTERNAL_TRACE_MARKERS = (
+    "com.oracle.truffle.",
+    "com.oracle.graal.python.",
+    "org.graalvm.polyglot.",
+    "org.graalvm.python.embedding.",
+    "at java.base/",
+)
+
+
+def _filter_internal_traceback_frames(text: str) -> str:
+    if not text:
+        return text
+
+    filtered = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("at ") and any(marker in stripped for marker in _INTERNAL_TRACE_MARKERS):
+            continue
+        filtered.append(line)
+
+    return "\n".join(filtered)
+
 class MicronautPytestPlugin:
     """
     Pytest plugin that communicates with Java PytestTestListener.
@@ -51,7 +74,7 @@ class MicronautPytestPlugin:
                 name = getattr(exc, '__class__', type(exc)).__name__
                 if name == 'ForeignException' or 'Foreign' in name:
                     outcome.force_result(None)
-                    pytest.fail(f"{exc}", pytrace=True)
+                    pytest.fail(f"{exc}", pytrace=False)
 
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_runtest_call(self, item):
@@ -70,7 +93,7 @@ class MicronautPytestPlugin:
                 name = getattr(exc, '__class__', type(exc)).__name__
                 if name == 'ForeignException' or 'Foreign' in name:
                     outcome.force_result(None)
-                    pytest.fail(f"{exc}", pytrace=True)
+                    pytest.fail(f"{exc}", pytrace=False)
 
     def pytest_sessionfinish(self, session, exitstatus):
         """Called when pytest session finishes."""
@@ -180,6 +203,8 @@ class MicronautPytestPlugin:
                     failure_text = None
             if not failure_text:
                 failure_text = ""
+            else:
+                failure_text = _filter_internal_traceback_frames(failure_text)
             sections = getattr(report, "sections", []) or []
             parts = []
             sep = "_" * 53

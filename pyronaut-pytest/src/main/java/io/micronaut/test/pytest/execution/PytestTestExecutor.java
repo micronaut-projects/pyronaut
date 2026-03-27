@@ -17,6 +17,7 @@ package io.micronaut.test.pytest.execution;
 
 import io.micronaut.test.pytest.PytestFileDescriptor;
 import io.micronaut.test.pytest.PytestTestDescriptor;
+import io.micronaut.test.pytest.PythonAssertionError;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Value;
 import org.junit.platform.engine.EngineExecutionListener;
@@ -29,6 +30,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 
 /**
@@ -36,6 +38,7 @@ import java.util.Set;
  */
 public class PytestTestExecutor {
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestExecutor.class);
+    private static final Pattern INTERNAL_STACK_FRAME = Pattern.compile("\\s+at (com\\.oracle\\.truffle\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|java\\.base/).*");
     private static final String DEFAULT_REPORTS_DIR = "__pyronaut__/reports/tests";
     private static final String DEFAULT_JUNIT_XML_REPORT = "junit.xml";
     private static final String DEFAULT_HTML_REPORT = "index.html";
@@ -101,8 +104,8 @@ public class PytestTestExecutor {
             listener.executionFinished(descriptor, TestExecutionResult.successful());
 
         } catch (Exception e) {
-            LOG.error("Error executing test descriptor: {}", descriptor.getDisplayName(), e);
-            listener.executionFinished(descriptor, TestExecutionResult.failed(e));
+            LOG.error("Error executing test descriptor {}: {}", descriptor.getDisplayName(), e.getMessage());
+            listener.executionFinished(descriptor, TestExecutionResult.failed(compactFailure(e)));
         }
     }
 
@@ -113,12 +116,12 @@ public class PytestTestExecutor {
             // Run pytest on this file with our custom plugin
             runPytestForFile(fileDescriptor);
         } catch (Exception e) {
-            LOG.error("Error running pytest for file: {}", fileDescriptor.getDisplayName(), e);
+            LOG.error("Error running pytest for file {}: {}", fileDescriptor.getDisplayName(), e.getMessage());
             // Mark all child tests as failed
             for (TestDescriptor child : fileDescriptor.getChildren()) {
                 if (child instanceof PytestTestDescriptor testDescriptor) {
                     listener.executionStarted(testDescriptor);
-                    listener.executionFinished(testDescriptor, TestExecutionResult.failed(e));
+                    listener.executionFinished(testDescriptor, TestExecutionResult.failed(compactFailure(e)));
                 }
             }
         }
@@ -150,7 +153,7 @@ run_pytest
             LOG.debug("Pytest execution completed for file: {}", fileDescriptor.getDisplayName());
 
         } catch (Exception e) {
-            LOG.error("Error running pytest for file: {}", fileDescriptor.getDisplayName(), e);
+            LOG.error("Error running pytest for file {}: {}", fileDescriptor.getDisplayName(), e.getMessage());
             throw e;
         }
     }
@@ -206,7 +209,7 @@ run_pytest
             LOG.debug("Pytest execution completed for all tests");
 
         } catch (Exception e) {
-            LOG.error("Error running pytest for all tests", e);
+            LOG.error("Error running pytest for all tests: {}", e.getMessage());
             throw e;
         }
     }
@@ -236,10 +239,27 @@ run_pytest
             LOG.debug("Test {} executed via pytest for file {}", testDescriptor.getDisplayName(), filePath);
 
         } catch (Exception e) {
-            LOG.error("Test {} failed", testDescriptor.getDisplayName(), e);
+            LOG.error("Test {} failed: {}", testDescriptor.getDisplayName(), e.getMessage());
             // If pytest invocation fails at the process level, still notify JUnit about the failure
             listener.executionStarted(testDescriptor);
-            listener.executionFinished(testDescriptor, TestExecutionResult.failed(e));
+            listener.executionFinished(testDescriptor, TestExecutionResult.failed(compactFailure(e)));
         }
+    }
+
+    private static PythonAssertionError compactFailure(Exception e) {
+        String text = e.toString();
+        StringBuilder compact = new StringBuilder();
+        for (String line : text.split("\\R")) {
+            if (INTERNAL_STACK_FRAME.matcher(line).matches()) {
+                continue;
+            }
+            if (!compact.isEmpty()) {
+                compact.append(System.lineSeparator());
+            }
+            compact.append(line);
+        }
+        String message = compact.isEmpty() ? e.getMessage() : compact.toString();
+        String finalMessage = message == null || message.isBlank() ? "Pytest execution failed" : message;
+        return new PythonAssertionError(finalMessage);
     }
 }

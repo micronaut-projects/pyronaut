@@ -19,6 +19,7 @@ import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.annotation.Property;
 import io.micronaut.core.annotation.Nullable;
+import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.extensions.AbstractMicronautExtension;
 import org.graalvm.polyglot.Value;
@@ -46,7 +47,6 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
 
     @Override
     protected void resolveTestProperties(Value context, MicronautTestValue testAnnotationValue, Map<String, Object> testProperties) {
-        // no-op
     }
 
     @Override
@@ -59,8 +59,8 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         try {
             super.beforeClass(context, testClass, testAnnotationValue);
         } catch (RuntimeException e) {
-            LOG.error("Error PytestMicronautExtension beforeClass: " + e.getMessage(), e);
-            throw e;
+            LOG.error("Error PytestMicronautExtension beforeClass: {}", e.getMessage());
+            throw new PythonAssertionError(e.getMessage());
         }
     }
 
