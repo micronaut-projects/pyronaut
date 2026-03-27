@@ -33,7 +33,9 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
 
         ConfigurationJsonSchemaValidator validator = new ConfigurationJsonSchemaValidator();
         validator.setFailOnNotPresent(settings.failOnNotPresent());
-        validator.setSuppressionPatterns(settings.suppressions());
+        if (!settings.suppressions().isEmpty()) {
+            validator.setSuppressionPatterns(settings.suppressions());
+        }
 
         JsonSchemaConfigurationValidator facade = JsonSchemaConfigurationValidator.forClasspath(
             settings.classpath(),

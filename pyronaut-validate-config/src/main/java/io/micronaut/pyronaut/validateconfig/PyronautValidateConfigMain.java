@@ -284,11 +284,19 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     }
 
     private List<String> mergeSuppressions(PyprojectModel.Validation validation) {
-        List<String> merged = new ArrayList<>();
-        merged.addAll(validation.suppressions());
-        merged.addAll(suppressions);
-        merged.addAll(suppress);
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        addNonBlank(merged, validation.suppressions());
+        addNonBlank(merged, suppressions);
+        addNonBlank(merged, suppress);
         return List.copyOf(merged);
+    }
+
+    private static void addNonBlank(Set<String> target, List<String> values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                target.add(value);
+            }
+        }
     }
 
     private List<String> mergeSuppressInjectErrors(PyprojectModel.Validation validation) {

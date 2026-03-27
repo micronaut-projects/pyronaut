@@ -6,7 +6,9 @@ import picocli.CommandLine;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -95,18 +97,59 @@ class PyronautValidateConfigMainTest {
         assertEquals(2, calls.get());
     }
 
+    @Test
+    void validateConfigMergesSuppressionsWithoutBlanksOrDuplicates() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.validation]
+            suppressions = ["datasources.*.db-type", "", "datasources.*.db-type"]
+            """);
+
+        AtomicReference<List<String>> effectiveSuppressions = new AtomicReference<>(List.of());
+        PyronautValidateConfigMain command = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                effectiveSuppressions.set(settings.suppressions());
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        int exit = new CommandLine(command).execute(
+            "--project-dir", project.toString(),
+            "--no-cache",
+            "--suppressions", "datasources.*.x-protocol-url,datasources.*.db-type",
+            "--suppress", "micronaut.http.*"
+        );
+
+        assertEquals(0, exit);
+        assertEquals(List.of("datasources.*.db-type", "datasources.*.x-protocol-url", "micronaut.http.*"), effectiveSuppressions.get());
+    }
+
     private Path prepareProject() throws Exception {
-        Path project = tempDir.resolve("app");
-        Files.createDirectories(project.resolve("__pyronaut__"));
-        Files.createDirectories(project.resolve("__pyronaut__/classes"));
-        Files.createDirectories(project.resolve("src/main/resources"));
-        Files.writeString(project.resolve("pyproject.toml"), """
+        return prepareProject("""
             [project]
             name = "demo"
 
             [tool.pyronaut]
             version = "5.0.0-SNAPSHOT"
             """);
+    }
+
+    private Path prepareProject(String pyprojectToml) throws Exception {
+        Path project = tempDir.resolve("app");
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Files.createDirectories(project.resolve("src/main/resources"));
+        Files.writeString(project.resolve("pyproject.toml"), pyprojectToml);
         return project;
     }
 }
