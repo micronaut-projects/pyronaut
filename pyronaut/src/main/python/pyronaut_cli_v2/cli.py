@@ -204,6 +204,14 @@ def run(
             )
 
         if command in {"run", "test"}:
+            preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
+            if preflight_code != SUCCESS:
+                return preflight_code
+
+            if tr_session is not None:
+                tr_session.ensure_started(runner=execute, resolver=locate)
+                test_resources_env_overrides = tr_session.client_env_overrides()
+
             if no_validate:
                 sys.stderr.write("[validation] skipped (--no-validate)\n")
             else:
@@ -213,17 +221,10 @@ def run(
                     runner=execute,
                     resolver=locate,
                     no_cache=no_cache,
+                    env_overrides=test_resources_env_overrides,
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-
-            preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
-            if preflight_code != SUCCESS:
-                return preflight_code
-
-            if tr_session is not None:
-                tr_session.ensure_started(runner=execute, resolver=locate)
-                test_resources_env_overrides = tr_session.client_env_overrides()
 
         return _delegate(
             command,
@@ -260,7 +261,10 @@ def _delegate(
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
     try:
-        env = _build_java_home_env(command, java_home_provider)
+        if command in {"install", "process", "validate-config"}:
+            env = _build_non_test_resources_env(command, java_home_provider)
+        else:
+            env = _build_java_home_env(command, java_home_provider)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -328,7 +332,7 @@ def _run_build(
             return preflight
 
         try:
-            env = _build_java_home_env("build", java_home_provider)
+            env = _build_non_test_resources_env("build", java_home_provider)
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return PRECONDITION_FAILED
@@ -399,15 +403,23 @@ def _run_lifecycle_validation(
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
     no_cache: bool = False,
+    env_overrides: dict[str, str] | None = None,
 ) -> int:
     args = ["--project-dir", project_dir, "--scenario", scenario]
     if no_cache:
         args.append("--no-cache")
+    effective_env_overrides = env_overrides
+    if env_overrides is not None:
+        effective_env_overrides = _merge_env_overrides(
+            _build_non_test_resources_env("validate-config", None),
+            env_overrides,
+        )
     return _delegate(
         "validate-config",
         args,
         runner,
         resolver,
+        env_overrides=effective_env_overrides,
     )
 
 
@@ -553,6 +565,31 @@ def _merge_env_overrides(base_env: dict[str, str] | None, env_overrides: dict[st
     merged = dict(base_env or {})
     merged.update(env_overrides)
     return merged
+
+
+def _strip_test_resources_java_tool_options(env: dict[str, str] | None) -> dict[str, str] | None:
+    if env is None:
+        return None
+
+    sanitized = dict(env)
+    java_tool_options = sanitized.get("JAVA_TOOL_OPTIONS")
+    if java_tool_options is None:
+        return sanitized
+
+    filtered_tokens = [
+        token
+        for token in shlex.split(java_tool_options)
+        if not token.startswith("-Dmicronaut.test.resources.")
+    ]
+    if filtered_tokens:
+        sanitized["JAVA_TOOL_OPTIONS"] = " ".join(filtered_tokens)
+    else:
+        sanitized.pop("JAVA_TOOL_OPTIONS", None)
+    return sanitized
+
+
+def _build_non_test_resources_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
+    return _strip_test_resources_java_tool_options(_build_java_home_env(command, java_home_provider))
 
 
 def _escape_java_tool_option_value(value: str) -> str:
@@ -798,13 +835,11 @@ def _default_java_home_provider(
     runner_with_env: RunnerWithEnv | None,
     process_runner: ProcessRunner | None,
 ) -> JavaHomeProvider | None:
-    if runner is None and runner_with_env is None and process_runner is None:
-        return _ensure_graalvm_java_home
     return None
 
 
 def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
-    if command not in {"run", "test", "build", "tui"}:
+    if command not in {"run", "test", "build", "tui", "validate-config", "install", "process"}:
         return None
     env = dict(os.environ)
     if java_home_provider is None:

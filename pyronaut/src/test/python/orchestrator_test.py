@@ -343,6 +343,50 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(["/tmp/pyronaut-test", "--project-dir", "/tmp/demo"], executed[4])
         self._assert_test_resources_stop(executed[5], "/tmp/demo")
 
+    def test_test_starts_test_resources_before_validation_and_reuses_fresh_env(self):
+        executed: list[tuple[list[str], dict[str, str] | None]] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            settings_dir = project_dir / ".micronaut" / "test-resources"
+            settings_dir.mkdir(parents=True, exist_ok=True)
+            settings_file = settings_dir / "test-resources.properties"
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                    settings_file.write_text(
+                        "server.uri=http\\://localhost\\:61234\n"
+                        "server.access.token=fresh-token\n",
+                        encoding="utf-8",
+                    )
+                return 0
+
+            exit_code = cli.run(
+                ["test", "--project-dir", str(project_dir)],
+                runner_with_env=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["/tmp/pyronaut-install", "--project-dir", str(project_dir)],
+            executed[0][0],
+        )
+        self.assertEqual(
+            ["/tmp/pyronaut-processor", "--project-dir", str(project_dir)],
+            executed[1][0],
+        )
+        self._assert_test_resources_start(executed[2][0], str(project_dir))
+        self.assertEqual(
+            ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"],
+            executed[3][0],
+        )
+        validate_env = executed[3][1] or {}
+        self.assertIn("micronaut.test.resources.server.uri=http://localhost:61234", validate_env.get("JAVA_TOOL_OPTIONS", ""))
+        self.assertEqual(["/tmp/pyronaut-test", "--project-dir", str(project_dir)], executed[4][0])
+        self._assert_test_resources_stop(executed[5][0], str(project_dir))
+
     def test_shared_server_mode_does_not_stop_on_session_exit(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2099,6 +2143,39 @@ sharedServer = true
             [["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "production"]],
             executed,
         )
+
+    def test_validate_config_strips_stale_test_resources_java_tool_options(self):
+        executed: list[tuple[list[str], dict[str, str] | None]] = []
+        original = os.environ.get("JAVA_TOOL_OPTIONS")
+        os.environ["JAVA_TOOL_OPTIONS"] = (
+            "-Dmicronaut.test.resources.server.uri=http://localhost:61247 "
+            "-Dmicronaut.test.resources.server.access.token=stale-token "
+            "-Duser.timezone=UTC"
+        )
+        try:
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                return 0
+
+            exit_code = cli.run(
+                ["validate-config", "--project-dir", "/tmp/demo", "--scenario", "production"],
+                runner_with_env=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+        finally:
+            if original is None:
+                os.environ.pop("JAVA_TOOL_OPTIONS", None)
+            else:
+                os.environ["JAVA_TOOL_OPTIONS"] = original
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, len(executed))
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "production"], executed[0][0])
+        run_env = executed[0][1] or {}
+        options = run_env.get("JAVA_TOOL_OPTIONS", "")
+        self.assertNotIn("micronaut.test.resources.server.uri", options)
+        self.assertNotIn("micronaut.test.resources.server.access.token", options)
 
     def test_validate_config_returns_precondition_when_executable_missing(self):
         stderr = io.StringIO()
