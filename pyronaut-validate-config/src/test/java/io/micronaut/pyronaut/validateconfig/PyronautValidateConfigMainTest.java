@@ -4,13 +4,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautValidateConfigMainTest {
@@ -132,6 +136,62 @@ class PyronautValidateConfigMainTest {
 
         assertEquals(0, exit);
         assertEquals(List.of("datasources.*.db-type", "datasources.*.x-protocol-url", "micronaut.http.*"), effectiveSuppressions.get());
+    }
+
+    @Test
+    void executorPrintsCopyPasteablePyprojectSuppressionsForConfigurationErrors() throws Exception {
+        var err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        System.setErr(new PrintStream(err));
+        try {
+            Class<?> executorType = Class.forName("io.micronaut.pyronaut.validateconfig.MicronautConfigurationValidatorExecutor");
+            var method = executorType.getDeclaredMethod("printSuppressionSnippet", PrintStream.class, List.class);
+            method.setAccessible(true);
+            method.invoke(null, System.err, List.of("datasources.*.db-type", "datasources.*.x-protocol-url"));
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        String output = err.toString();
+        assertTrue(output.contains("Add the following to pyproject.toml to suppress these validation errors:"));
+        assertTrue(output.contains("[tool.pyronaut.validation]"));
+        assertTrue(output.contains("\"datasources.*.db-type\""));
+        assertTrue(output.contains("\"datasources.*.x-protocol-url\""));
+    }
+
+    @Test
+    void executorPrintsIndexedPropertiesAsWildcardSuppressions() {
+        String suppressionPattern = invokeSuppressionPattern("micronaut.server.netty.listeners.0.port");
+
+        assertEquals("micronaut.server.netty.listeners.*.port", suppressionPattern);
+    }
+
+    @Test
+    void executorDoesNotPrintSuppressionSnippetWhenThereAreNoConfigurationErrors() throws Exception {
+        var err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        System.setErr(new PrintStream(err));
+        try {
+            Class<?> executorType = Class.forName("io.micronaut.pyronaut.validateconfig.MicronautConfigurationValidatorExecutor");
+            var method = executorType.getDeclaredMethod("printSuppressionSnippet", PrintStream.class, List.class);
+            method.setAccessible(true);
+            method.invoke(null, System.err, List.of());
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        assertFalse(err.toString().contains("[tool.pyronaut.validation]"));
+    }
+
+    private static String invokeSuppressionPattern(String property) {
+        try {
+            Class<?> executorType = Class.forName("io.micronaut.pyronaut.validateconfig.MicronautConfigurationValidatorExecutor");
+            var method = executorType.getDeclaredMethod("toSuppressionPattern", String.class);
+            method.setAccessible(true);
+            return (String) method.invoke(null, property);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private Path prepareProject() throws Exception {

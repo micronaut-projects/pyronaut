@@ -21,8 +21,12 @@ import io.micronaut.jsonschema.configuration.validator.report.JsonConfigurationE
 import io.micronaut.jsonschema.configuration.validator.report.SystemErrConfigurationErrorReporter;
 
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 final class MicronautConfigurationValidatorExecutor implements PyronautValidateConfigMain.ConfigurationValidatorExecutor {
@@ -75,8 +79,42 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
         new SystemErrConfigurationErrorReporter(System.err, htmlFile, jsonFile, settings.projectBaseDir(), settings.resourcesDirs())
             .report(errors, dependencyInjectionErrors);
 
+        printSuppressionSnippet(System.err, suppressionPatterns(errors));
+
         boolean hasErrors = errors.stream().anyMatch(e -> e.type() == ConfigurationError.Type.ERROR) || !dependencyInjectionErrors.isEmpty();
         return new PyronautValidateConfigMain.ValidationExecutionResult(hasErrors);
+    }
+
+    private static List<String> suppressionPatterns(Set<ConfigurationError> errors) {
+        return errors.stream()
+            .filter(error -> error.type() == ConfigurationError.Type.ERROR)
+            .map(ConfigurationError::property)
+            .filter(property -> property != null && !property.isBlank())
+            .map(MicronautConfigurationValidatorExecutor::toSuppressionPattern)
+            .sorted(Comparator.naturalOrder())
+            .toList();
+    }
+
+    private static void printSuppressionSnippet(PrintStream err, List<String> suppressionPatterns) {
+        if (suppressionPatterns.isEmpty()) {
+            return;
+        }
+
+        LinkedHashSet<String> deduplicatedPatterns = new LinkedHashSet<>(suppressionPatterns);
+        err.println();
+        err.println("Add the following to pyproject.toml to suppress these validation errors:");
+        err.println();
+        err.println("[tool.pyronaut.validation]");
+        err.println("suppressions = [");
+        for (String pattern : deduplicatedPatterns) {
+            err.println("  \"" + pattern + "\",");
+        }
+        err.println("]");
+        err.println();
+    }
+
+    private static String toSuppressionPattern(String property) {
+        return property.replaceAll("\\.[0-9]+(?=\\.|$)", ".*");
     }
 
     private static DependencyInjectionValidationStrategy strategy(String value) {
