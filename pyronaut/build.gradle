@@ -5,7 +5,8 @@ plugins {
 def wheelStagingDir = layout.buildDirectory.dir("wheel/staging")
 def wheelDistDir = layout.buildDirectory.dir("wheel/dist")
 def wheelVersion = providers.provider {
-    project.version.toString().replace("-SNAPSHOT", ".dev0")
+    def configuredVersion = project.findProperty("projectVersion")?.toString() ?: project.version.toString()
+    configuredVersion.replace("-SNAPSHOT", ".dev0")
 }
 def defaultGraalVmHome = "/Users/graemerocher/dev/oracle/graalvm-25.1.0-dev+10.1/Contents/Home"
 def graalVmHomeProvider = providers.gradleProperty("pyronautGraalVmHome").orElse(defaultGraalVmHome)
@@ -75,6 +76,34 @@ package-dir = {"" = "src"}
 [tool.setuptools.package-data]
 pyronaut_cli_v2 = ["tools/**"]
 """.trim() + System.lineSeparator()
+
+        def setupCfgFile = wheelStagingDir.get().file("setup.cfg").asFile
+        setupCfgFile.text = """
+[metadata]
+name = pyronaut
+version = ${wheelVersion.get()}
+description = Pyronaut v2 SDK orchestrator
+
+[options]
+package_dir =
+    = src
+packages = find:
+include_package_data = True
+
+[options.packages.find]
+where = src
+
+[options.package_data]
+pyronaut_cli_v2 =
+    tools/*
+    tools/*/*
+    tools/*/*/*
+    tools/*/*/*/*
+
+[options.entry_points]
+console_scripts =
+    pyronaut = pyronaut_cli_v2.cli:main
+""".trim() + System.lineSeparator()
     }
 }
 
@@ -104,7 +133,7 @@ tasks.register("testPythonOrchestrator", Exec) {
 
 tasks.register("testPythonOrchestratorE2E", Exec) {
     group = "verification"
-    description = "Runs end-to-end orchestrator flow and migration gate checks"
+    description = "Runs fast smoke orchestrator e2e checks"
 
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
@@ -116,6 +145,8 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "e2e_flow_test.py")
     environment("PYTHONPATH", file("src/main/python").absolutePath)
     environment("PYRONAUT_E2E", "true")
+    environment("PYRONAUT_E2E_FULL", "false")
+    environment("PYRONAUT_E2E_MYSQL", "false")
     environment("PYRONAUT_E2E_PYTHON", "python3")
     environment("PYRONAUT_E2E_FIXTURE_DIR", file("src/test/resources/e2e-app").absolutePath)
     environment(
@@ -151,11 +182,88 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     }
 }
 
+tasks.register("testPythonOrchestratorE2EFull", Exec) {
+    group = "verification"
+    description = "Runs full Docker-backed orchestrator e2e integration checks"
+
+    dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-validate-config").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"))
+
+    commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "e2e_flow_test.py")
+    environment("PYTHONPATH", file("src/main/python").absolutePath)
+    environment("PYRONAUT_E2E", "true")
+    environment("PYRONAUT_E2E_FULL", "true")
+    environment("PYRONAUT_E2E_MYSQL", "true")
+    environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment("PYRONAUT_E2E_FIXTURE_DIR", file("src/test/resources/e2e-app").absolutePath)
+    environment(
+        "PYRONAUT_INSTALL_EXECUTABLE",
+        project(":micronaut-pyronaut-install").layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_PROCESSOR_EXECUTABLE",
+        project(":micronaut-pyronaut-processor").layout.buildDirectory.file("install/micronaut-pyronaut-processor/bin/pyronaut-processor").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_RUN_EXECUTABLE",
+        project(":micronaut-pyronaut-run").layout.buildDirectory.file("install/micronaut-pyronaut-run/bin/pyronaut-run").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_TEST_EXECUTABLE",
+        project(":micronaut-pyronaut-test").layout.buildDirectory.file("install/micronaut-pyronaut-test/bin/pyronaut-test").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_VALIDATE_CONFIG_EXECUTABLE",
+        project(":micronaut-pyronaut-validate-config").layout.buildDirectory.file("install/micronaut-pyronaut-validate-config/bin/pyronaut-validate-config").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_TEST_RESOURCES_SERVER_EXECUTABLE",
+        project(":micronaut-pyronaut-test-resources-server").layout.buildDirectory.file("install/micronaut-pyronaut-test-resources-server/bin/pyronaut-test-resources-server").get().asFile.absolutePath
+    )
+    doFirst {
+        Process dockerProcess
+        try {
+            dockerProcess = new ProcessBuilder("docker", "info")
+                .redirectErrorStream(true)
+                .start()
+        } catch (IOException e) {
+            throw new GradleException(
+                "Docker CLI is required for testPythonOrchestratorE2EFull (PYRONAUT_E2E_MYSQL=true). " +
+                    "Ensure Docker is installed and available on PATH. Diagnostic: ${e.message}",
+                e
+            )
+        }
+
+        def dockerOutput = dockerProcess.inputStream.getText("UTF-8")
+        def dockerExit = dockerProcess.waitFor()
+
+        if (dockerExit != 0) {
+            def dockerDiagnostic = dockerOutput.trim()
+            if (dockerDiagnostic.isEmpty()) {
+                dockerDiagnostic = "docker info exited with code ${dockerExit}"
+            }
+            throw new GradleException(
+                "Docker daemon is required for testPythonOrchestratorE2EFull (PYRONAUT_E2E_MYSQL=true). " +
+                    "Run 'docker info' and ensure Docker Desktop/daemon is running. " +
+                    "Diagnostic: ${dockerDiagnostic}"
+            )
+        }
+
+        def graalVmHome = graalVmHomeProvider.get()
+        if (file(graalVmHome).exists()) {
+            environment("JAVA_HOME", graalVmHome)
+            environment("PATH", graalVmHome + "/bin" + File.pathSeparator + System.getenv("PATH"))
+        }
+    }
+}
+
 tasks.named("check") {
     dependsOn(tasks.named("testPythonOrchestrator"))
-    if (project.findProperty("pyronautE2E") == "true") {
-        dependsOn(tasks.named("testPythonOrchestratorE2E"))
-    }
+    dependsOn(tasks.named("testPythonOrchestratorE2E"))
 }
 
 tasks.named("checkstyleMain") {
