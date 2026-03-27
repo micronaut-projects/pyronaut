@@ -30,6 +30,7 @@ public final class UiController {
 
     // Static constants first (DeclarationOrder)
     private static final int MAX_ACTIVITY_LINES = 10000;
+    private static final int MAX_TEST_RESOURCES_LOG_LINES = 4000;
     private static final int MAX_NOTIFICATIONS = 500;
 
     // Incremental test tree kinds
@@ -47,6 +48,7 @@ public final class UiController {
     private List<UiModel.FileUpdate> updatedFiles = List.of();
     // Unified activity log buffer (kept across state changes)
     private final List<String> activityLogLines = new ArrayList<>();
+    private final List<String> testResourcesLogLines = new ArrayList<>();
     private final List<UiModel.Notification> notificationHistory = new ArrayList<>();
     private final AtomicBoolean compiling = new AtomicBoolean();
     private final AtomicBoolean testing = new AtomicBoolean();
@@ -174,6 +176,15 @@ public final class UiController {
         }
     }
 
+    public List<String> getTestResourcesLogLines() {
+        readLock.lock();
+        try {
+            return List.copyOf(testResourcesLogLines);
+        } finally {
+            readLock.unlock();
+        }
+    }
+
     /**
      * Returns whether compilation is in progress.
      *
@@ -242,6 +253,7 @@ public final class UiController {
         writeLock.lock();
         try {
             activityLogLines.clear();
+            testResourcesLogLines.clear();
         } finally {
             writeLock.unlock();
         }
@@ -418,16 +430,29 @@ public final class UiController {
     public void addActivityOutput(String line) {
         writeLock.lock();
         try {
-            for (String l : line.split("\\r?\\n")) {
-                if (!l.isEmpty()) {
-                    activityLogLines.add(l);
-                    if (activityLogLines.size() > MAX_ACTIVITY_LINES) {
-                        activityLogLines.remove(0);
-                    }
-                }
-            }
+            appendLines(activityLogLines, line, MAX_ACTIVITY_LINES);
         } finally {
             writeLock.unlock();
+        }
+    }
+
+    public void addTestResourcesOutput(String line) {
+        writeLock.lock();
+        try {
+            appendLines(testResourcesLogLines, line, MAX_TEST_RESOURCES_LOG_LINES);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    private static void appendLines(List<String> target, String line, int maxLines) {
+        for (String l : line.split("\\r?\\n")) {
+            if (!l.isEmpty()) {
+                target.add(l);
+                if (target.size() > maxLines) {
+                    target.remove(0);
+                }
+            }
         }
     }
 

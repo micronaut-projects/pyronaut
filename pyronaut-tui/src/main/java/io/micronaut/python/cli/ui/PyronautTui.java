@@ -105,11 +105,11 @@ public final class PyronautTui {
         if (initialLogStart >= 0) {
             long end = cap.tailIndex();
             for (String line : cap.readRange(initialLogStart, end)) {
-                controller.addActivityOutput(line);
+                routeCapturedLine(controller, line);
             }
         }
-        cap.getStdOutThread().addConsumer(controller::addActivityOutput);
-        cap.getStdErrThread().addConsumer(controller::addActivityOutput);
+        cap.getStdOutThread().addConsumer(line -> routeCapturedLine(controller, line));
+        cap.getStdErrThread().addConsumer(line -> routeCapturedLine(controller, line));
 
         var actions = new GlobalActions();
 
@@ -241,6 +241,14 @@ public final class PyronautTui {
             case SKIPPED -> 2;
             case PASSED -> 1;
         };
+    }
+
+    private static void routeCapturedLine(UiController controller, String line) {
+        if (line != null && line.startsWith("[test-resources-service]")) {
+            controller.addTestResourcesOutput(line);
+            return;
+        }
+        controller.addActivityOutput(line);
     }
 
     private Element render() {

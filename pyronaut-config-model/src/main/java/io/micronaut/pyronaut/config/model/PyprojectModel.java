@@ -161,6 +161,7 @@ public record PyprojectModel(Project project,
     /**
      * tool.pyronaut.testResources table.
      *
+     * @param configured whether the testResources table is explicitly present in pyproject.toml
      * @param enabled whether standalone test resources server support is enabled
      * @param version requested test-resources tooling version
      * @param explicitPort explicit server port (otherwise ephemeral)
@@ -177,7 +178,8 @@ public record PyprojectModel(Project project,
      * @param startupOptimization startup optimization mode (auto/leyden/cds/none)
      * @param leydenJvmArgs Leyden JVM args used for best-effort startup optimization
      */
-    public record TestResources(Boolean enabled,
+    public record TestResources(boolean configured,
+                                Boolean enabled,
                                 String version,
                                 Integer explicitPort,
                                 Boolean inferClasspath,

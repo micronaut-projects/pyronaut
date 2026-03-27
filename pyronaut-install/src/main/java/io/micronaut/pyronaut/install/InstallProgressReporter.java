@@ -30,14 +30,14 @@ final class InstallProgressReporter implements AutoCloseable {
     private volatile int frameIndex;
     private Thread spinnerThread;
 
-    static InstallProgressReporter create(String mode) {
-        return new InstallProgressReporter(System.err, ProgressMode.fromCliValue(mode), System.console() != null);
-    }
-
     InstallProgressReporter(PrintStream output, ProgressMode mode, boolean tty) {
         this.output = output;
         this.enabled = mode != ProgressMode.OFF;
         this.interactive = mode == ProgressMode.ON || (mode == ProgressMode.AUTO && tty);
+    }
+
+    static InstallProgressReporter create(String mode) {
+        return new InstallProgressReporter(System.err, ProgressMode.fromCliValue(mode), System.console() != null);
     }
 
     void cacheHit() {

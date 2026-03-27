@@ -17,6 +17,11 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
+import io.micronaut.testresources.buildtools.KnownModules;
+import io.micronaut.testresources.buildtools.MavenDependency;
+import io.micronaut.testresources.buildtools.ModuleIdentifier;
+import io.micronaut.testresources.buildtools.TestResourcesClasspath;
+import io.micronaut.testresources.buildtools.VersionInfo;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession.CloseableSession;
 import org.eclipse.aether.RepositorySystemSession.SessionBuilder;
@@ -49,25 +54,49 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Resolves classpaths using Apache Maven Resolver.
  */
 final class MavenClasspathResolver {
+    private static final String TEST_RESOURCES_CLIENT_MODULE = "io.micronaut.testresources:micronaut-test-resources-client";
+    private static final String TEST_RESOURCES_SERVER_MODULE = "io.micronaut.testresources:micronaut-test-resources-server";
+    private static final String MYSQL_CONNECTOR_J_MODULE = "mysql:mysql-connector-j";
+    private static final String MYSQL_CONNECTOR_J_MODULE_MODERN = "com.mysql:mysql-connector-j";
+    private static final Set<String> EXTRA_FORBIDDEN_SERVER_MODULES = Set.of(
+        "io.micronaut.testresources:micronaut-test-resources-build-tools",
+        "io.micronaut.testresources:micronaut-test-resources-client"
+    );
+
     private final RepositorySystem repositorySystem;
     private final ProxyConfigurationLoader proxyConfigurationLoader;
+    private final Function<String, String> envReader;
 
     MavenClasspathResolver() {
-        this(newRepositorySystem(), new ProxyConfigurationLoader());
+        this(newRepositorySystem(), new ProxyConfigurationLoader(), System::getenv);
     }
 
     MavenClasspathResolver(ProxyConfigurationLoader proxyConfigurationLoader) {
-        this(newRepositorySystem(), proxyConfigurationLoader);
+        this(newRepositorySystem(), proxyConfigurationLoader, System::getenv);
+    }
+
+    MavenClasspathResolver(ProxyConfigurationLoader proxyConfigurationLoader,
+                          Function<String, String> envReader) {
+        this(newRepositorySystem(), proxyConfigurationLoader, envReader);
     }
 
     MavenClasspathResolver(RepositorySystem repositorySystem, ProxyConfigurationLoader proxyConfigurationLoader) {
+        this(repositorySystem, proxyConfigurationLoader, System::getenv);
+    }
+
+    MavenClasspathResolver(RepositorySystem repositorySystem,
+                           ProxyConfigurationLoader proxyConfigurationLoader,
+                           Function<String, String> envReader) {
         this.repositorySystem = repositorySystem;
         this.proxyConfigurationLoader = proxyConfigurationLoader;
+        this.envReader = envReader;
     }
 
     List<Path> resolveScope(PyprojectModel model,
@@ -81,18 +110,10 @@ final class MavenClasspathResolver {
                                              InstallScope scope,
                                              Path localRepositoryPath,
                                              boolean offline) {
-        List<String> coordinates = coordinatesForScope(model, scope);
-        if (coordinates.isEmpty()) {
-            return new ResolvedScopeDetails(List.of(), null);
-        }
-
         List<RemoteRepository> repositories = toRepositories(model.pyronaut() == null ? List.of() : model.pyronaut().repositories());
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration)) {
-            CollectRequest collectRequest = new CollectRequest();
-            collectRequest.setRepositories(repositories);
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
-            managedDependencies.forEach(collectRequest::addManagedDependency);
             Map<String, String> managedVersions = new LinkedHashMap<>();
             for (Dependency dependency : managedDependencies) {
                 Artifact artifact = dependency.getArtifact();
@@ -100,6 +121,17 @@ final class MavenClasspathResolver {
                     continue;
                 }
                 managedVersions.putIfAbsent(artifact.getGroupId() + ":" + artifact.getArtifactId(), artifact.getVersion());
+            }
+
+            List<String> coordinates = coordinatesForScope(model, scope, managedVersions);
+            if (coordinates.isEmpty()) {
+                return new ResolvedScopeDetails(List.of(), null);
+            }
+
+            CollectRequest collectRequest = new CollectRequest();
+            collectRequest.setRepositories(repositories);
+            if (scope != InstallScope.TEST_RESOURCES_SERVER) {
+                managedDependencies.forEach(collectRequest::addManagedDependency);
             }
 
             for (String coordinate : coordinates) {
@@ -131,10 +163,9 @@ final class MavenClasspathResolver {
         }
     }
 
-    record ResolvedScopeDetails(List<Path> classpath, DependencyNode root) {
-    }
-
-    private static List<String> coordinatesForScope(PyprojectModel model, InstallScope scope) {
+    private List<String> coordinatesForScope(PyprojectModel model,
+                                             InstallScope scope,
+                                             Map<String, String> managedVersions) {
         if (model.pyronaut() == null || model.pyronaut().dependencies() == null) {
             return List.of();
         }
@@ -143,16 +174,235 @@ final class MavenClasspathResolver {
             return dependencies.build() == null ? List.of() : dependencies.build();
         }
         if (scope == InstallScope.RUNTIME) {
-            return dependencies.runtime() == null ? List.of() : dependencies.runtime();
+            LinkedHashSet<String> runtime = new LinkedHashSet<>();
+            if (dependencies.runtime() != null) {
+                runtime.addAll(dependencies.runtime());
+            }
+            String testResourcesClient = testResourcesClientCoordinate(model, managedVersions);
+            if (testResourcesClient != null) {
+                runtime.add(testResourcesClient);
+            }
+            return List.copyOf(runtime);
+        }
+        if (scope == InstallScope.TEST_RESOURCES_SERVER) {
+            return testResourcesServerCoordinates(model, managedVersions);
         }
         LinkedHashSet<String> merged = new LinkedHashSet<>();
-        if (dependencies.runtime() != null) {
-            merged.addAll(dependencies.runtime());
-        }
+        merged.addAll(coordinatesForScope(model, InstallScope.RUNTIME, managedVersions));
         if (dependencies.test() != null) {
             merged.addAll(dependencies.test());
         }
         return List.copyOf(merged);
+    }
+
+    private List<String> testResourcesServerCoordinates(PyprojectModel model,
+                                                        Map<String, String> managedVersions) {
+        if (isTestResourcesDisabledViaEnvironment()) {
+            return List.of();
+        }
+        if (model.pyronaut() == null || model.pyronaut().testResources() == null) {
+            return List.of();
+        }
+        PyprojectModel.TestResources testResources = model.pyronaut().testResources();
+        if (!Boolean.TRUE.equals(testResources.enabled())) {
+            return List.of();
+        }
+        if (!testResources.configured() && !supportsDefaultTestResourcesResolution(model, testResources)) {
+            return List.of();
+        }
+
+        String version = defaultTestResourcesVersion(testResources, managedVersions);
+        LinkedHashSet<MavenDependency> coordinates = new LinkedHashSet<>();
+        List<MavenDependency> appDependencies = appDependenciesForServerInference(model);
+        List<MavenDependency> inferred = version == null
+            ? TestResourcesClasspath.inferTestResourcesClasspath(appDependencies)
+            : TestResourcesClasspath.inferTestResourcesClasspath(appDependencies, version);
+        coordinates.addAll(inferred);
+        if (coordinates.stream().noneMatch(this::isServerModule)) {
+            coordinates.add(new MavenDependency("io.micronaut.testresources", "micronaut-test-resources-server", version));
+        }
+        if (appDependencies.stream().anyMatch(this::isMysqlConnectorJCoordinate)) {
+            coordinates.add(testResourcesModule(KnownModules.JDBC_MYSQL, version));
+            appDependencies.stream()
+                .filter(this::isMysqlConnectorJCoordinate)
+                .forEach(coordinates::add);
+        }
+
+        List<String> additionalModules = testResources.additionalModules() == null ? List.of() : testResources.additionalModules();
+        for (String additionalModule : additionalModules) {
+            MavenDependency normalized = normalizeAdditionalModuleCoordinate(additionalModule, version);
+            if (normalized != null) {
+                coordinates.add(normalized);
+            }
+        }
+
+        return coordinates.stream()
+            .filter(this::isDependencyAllowedOnServerClasspath)
+            .map(MavenClasspathResolver::coordinate)
+            .toList();
+    }
+
+    private List<MavenDependency> appDependenciesForServerInference(PyprojectModel model) {
+        if (model.pyronaut() == null || model.pyronaut().dependencies() == null) {
+            return List.of();
+        }
+        PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
+        LinkedHashSet<MavenDependency> appCoordinates = new LinkedHashSet<>();
+        if (dependencies.runtime() != null) {
+            dependencies.runtime().stream()
+                .map(this::toMavenDependency)
+                .filter(Objects::nonNull)
+                .forEach(appCoordinates::add);
+        }
+        if (dependencies.test() != null) {
+            dependencies.test().stream()
+                .map(this::toMavenDependency)
+                .filter(Objects::nonNull)
+                .forEach(appCoordinates::add);
+        }
+        return List.copyOf(appCoordinates);
+    }
+
+    private boolean isMysqlConnectorJCoordinate(MavenDependency dependency) {
+        String module = dependency.getModule();
+        return MYSQL_CONNECTOR_J_MODULE.equals(module) || MYSQL_CONNECTOR_J_MODULE_MODERN.equals(module);
+    }
+
+    private boolean isServerModule(MavenDependency dependency) {
+        return TEST_RESOURCES_SERVER_MODULE.equals(moduleKey(dependency));
+    }
+
+    private MavenDependency normalizeAdditionalModuleCoordinate(String value, String testResourcesVersion) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (trimmed.contains(":")) {
+            String[] parts = trimmed.split(":");
+            if (parts.length == 2) {
+                return new MavenDependency(parts[0], parts[1], testResourcesVersion);
+            }
+            if (parts.length == 3) {
+                return new MavenDependency(parts[0], parts[1], parts[2]);
+            }
+            throw new PyprojectModelException("Invalid dependency coordinate: '" + trimmed + "'. Expected group:artifact[:version]");
+        }
+
+        String artifactId = trimmed.startsWith("micronaut-test-resources-")
+            ? trimmed
+            : "micronaut-test-resources-" + trimmed;
+        return new MavenDependency("io.micronaut.testresources", artifactId, testResourcesVersion);
+    }
+
+    private static MavenDependency testResourcesModule(String module, String version) {
+        return new MavenDependency("io.micronaut.testresources", "micronaut-test-resources-" + module, version);
+    }
+
+    private boolean isDependencyAllowedOnServerClasspath(MavenDependency dependency) {
+        if (EXTRA_FORBIDDEN_SERVER_MODULES.contains(moduleKey(dependency))) {
+            return false;
+        }
+        return TestResourcesClasspath.isDependencyAllowedOnServerClasspath(
+            new ModuleIdentifier(dependency.getGroup(), dependency.getArtifact())
+        );
+    }
+
+    private static String coordinate(MavenDependency dependency) {
+        if (dependency.getVersion() == null || dependency.getVersion().isBlank()) {
+            return dependency.getGroup() + ":" + dependency.getArtifact();
+        }
+        return dependency.getGroup() + ":" + dependency.getArtifact() + ":" + dependency.getVersion();
+    }
+
+    private MavenDependency toMavenDependency(String coordinate) {
+        if (coordinate == null) {
+            return null;
+        }
+        String trimmed = coordinate.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        String[] parts = trimmed.split(":");
+        if (parts.length == 2) {
+            return new MavenDependency(parts[0], parts[1], null);
+        }
+        if (parts.length == 3) {
+            return new MavenDependency(parts[0], parts[1], parts[2]);
+        }
+        throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate + "'. Expected group:artifact[:version]");
+    }
+
+    private static String moduleKey(MavenDependency dependency) {
+        return dependency.getGroup() + ":" + dependency.getArtifact();
+    }
+
+    private static String normalizedVersion(String version) {
+        if (version == null) {
+            return null;
+        }
+        String trimmed = version.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String testResourcesClientCoordinate(PyprojectModel model,
+                                                 Map<String, String> managedVersions) {
+        if (isTestResourcesDisabledViaEnvironment()) {
+            return null;
+        }
+        if (model.pyronaut() == null || model.pyronaut().testResources() == null) {
+            return null;
+        }
+        PyprojectModel.TestResources testResources = model.pyronaut().testResources();
+        if (!Boolean.TRUE.equals(testResources.enabled())) {
+            return null;
+        }
+        if (!testResources.configured() && !supportsDefaultTestResourcesResolution(model, testResources)) {
+            return null;
+        }
+        return TEST_RESOURCES_CLIENT_MODULE + ":" + defaultTestResourcesVersion(testResources, managedVersions);
+    }
+
+    private boolean supportsDefaultTestResourcesResolution(PyprojectModel model,
+                                                           PyprojectModel.TestResources testResources) {
+        if (testResources.version() != null && !testResources.version().isBlank()) {
+            return true;
+        }
+        if (model.pyronaut() == null || model.pyronaut().version() == null) {
+            return false;
+        }
+        return !model.pyronaut().version().isBlank();
+    }
+
+    private static String defaultTestResourcesVersion(PyprojectModel.TestResources testResources,
+                                                      Map<String, String> managedVersions) {
+        String configured = normalizedVersion(testResources.version());
+        if (configured != null) {
+            return configured;
+        }
+        String managedServer = normalizedVersion(managedVersions.get(TEST_RESOURCES_SERVER_MODULE));
+        if (managedServer != null) {
+            return managedServer;
+        }
+        String managedClient = normalizedVersion(managedVersions.get(TEST_RESOURCES_CLIENT_MODULE));
+        if (managedClient != null) {
+            return managedClient;
+        }
+        return normalizedVersion(VersionInfo.getVersion());
+    }
+
+    private boolean isTestResourcesDisabledViaEnvironment() {
+        String value = envReader.apply("PYRONAUT_TEST_RESOURCES_DISABLED");
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("1")
+            || normalized.equals("true")
+            || normalized.equals("yes")
+            || normalized.equals("on");
     }
 
     private List<Dependency> managedDependencies(PyprojectModel model,
@@ -296,5 +546,8 @@ final class MavenClasspathResolver {
             }
         }
         return List.copyOf(resolved.values());
+    }
+
+    record ResolvedScopeDetails(List<Path> classpath, DependencyNode root) {
     }
 }

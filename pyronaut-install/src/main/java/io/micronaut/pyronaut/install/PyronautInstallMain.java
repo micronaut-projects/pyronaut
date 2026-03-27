@@ -46,7 +46,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory containing pyproject.toml")
     Path projectDir = Path.of(".");
 
-    @CommandLine.Option(names = "--scope", description = "Scope to resolve: build|runtime|test|all")
+    @CommandLine.Option(names = "--scope", description = "Scope to resolve: build|runtime|test|test-resources-server|all")
     String scope;
 
     @CommandLine.Option(names = "--dependencies", description = "Render dependency output instead of install-focused progress")
@@ -141,7 +141,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
             if (dependencies) {
                 return List.of(InstallScope.RUNTIME);
             }
-            return List.of(InstallScope.BUILD, InstallScope.RUNTIME, InstallScope.TEST);
+            return List.of(InstallScope.BUILD, InstallScope.RUNTIME, InstallScope.TEST, InstallScope.TEST_RESOURCES_SERVER);
         }
         if ("all".equals(scope)) {
             return Arrays.asList(InstallScope.values());

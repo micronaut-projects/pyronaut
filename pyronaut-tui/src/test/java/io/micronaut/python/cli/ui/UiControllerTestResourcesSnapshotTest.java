@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class UiControllerTestResourcesSnapshotTest {
 
@@ -33,5 +34,21 @@ class UiControllerTestResourcesSnapshotTest {
         var authFailed = controller.getTestResourcesSnapshot();
         assertEquals(UiController.TestResourcesStatus.AUTH_FAILED, authFailed.status());
         assertEquals("invalid bearer token", authFailed.message());
+    }
+
+    @Test
+    void storesDedicatedTestResourcesLogsSeparatelyFromActivityLog() {
+        UiController controller = new UiController();
+
+        controller.addActivityOutput("app line");
+        controller.addTestResourcesOutput("[test-resources-service] booting");
+        controller.addTestResourcesOutput("[test-resources-service] started");
+
+        assertEquals(List.of("app line"), controller.getActivityLogLines());
+        assertEquals(
+            List.of("[test-resources-service] booting", "[test-resources-service] started"),
+            controller.getTestResourcesLogLines()
+        );
+        assertTrue(controller.getNotificationHistory().isEmpty());
     }
 }

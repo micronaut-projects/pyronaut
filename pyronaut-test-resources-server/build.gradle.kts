@@ -9,7 +9,9 @@ dependencies {
 
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mnPicocli.picocli)
+    implementation(mn.micronaut.http.server)
     implementation(libs.micronaut.test.resources.build.tools)
+    runtimeOnly(mn.micronaut.http.server.netty)
     runtimeOnly(libs.slf4j.simple)
 
     testImplementation(mnTest.junit.jupiter.api)

@@ -15,6 +15,10 @@ repositories = [
   "https://repo.gradle.org/gradle/libs-releases"
 ]
 
+[tool.pyronaut.testResources]
+enabled = true
+version = "2.9.0"
+
 [tool.pyronaut.dependencies]
 runtime = [
   "io.micronaut:micronaut-inject-python",
@@ -22,7 +26,7 @@ runtime = [
   "io.micronaut:micronaut-http-server-netty",
   "io.micronaut:micronaut-json-core",
   "io.micronaut:micronaut-jackson-databind",
-  "org.bouncycastle:bcprov-jdk18on",
+  "org.bouncycastle:bcprov-jdk18on:1.82",
   "org.apache.commons:commons-lang3:3.20.0",
   "ch.qos.logback:logback-classic"
 ]
@@ -32,7 +36,7 @@ build = [
 ]
 test = [
   "org.junit.platform:junit-platform-launcher",
-  "io.micronaut:micronaut-pytest-engine",
+  "io.micronaut:micronaut-pytest-engine:5.0.0-SNAPSHOT",
   "io.micronaut.test:micronaut-test-junit5",
   "org.junit.jupiter:junit-jupiter-engine"
 ]

@@ -33,6 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
@@ -67,9 +68,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
     private static final int PRECONDITION_FAILED = 8;
     private static final String EVENTS_REPORT = "events.ndjson";
+    private static final String TUI_LOG = "pyronaut-tui.log";
+    private static final String TEST_RESOURCES_PROPERTIES = ".micronaut/test-resources/test-resources.properties";
     private static final long WATCH_DEBOUNCE_MILLIS = 250;
     private static final long TEST_RESOURCES_POLL_MILLIS = 2000;
     private static final long TEST_RESOURCES_MAX_BACKOFF_MILLIS = 8000;
+    private static final Duration TEST_RESOURCES_SETTINGS_TIMEOUT = Duration.ofSeconds(15);
     private static final Pattern SERVER_URI = Pattern.compile("Server Running:\\s*(\\S+)");
 
     @Option(names = "--project-dir", required = true, description = "Project directory")
@@ -102,6 +106,8 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private final AtomicLong executionGeneration = new AtomicLong();
     private final AtomicReference<WatchLoop> watchLoop = new AtomicReference<>();
     private final AtomicReference<TestResourcesPoller> testResourcesPoller = new AtomicReference<>();
+    private final AtomicReference<TestResourcesConnection> activeTestResourcesConnection = new AtomicReference<>();
+    private final AtomicBoolean testResourcesRunningNotified = new AtomicBoolean(false);
     private final HttpClient insightsClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
     private UiController controller;
@@ -109,6 +115,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private volatile Mode activeMode;
     private Path currentProject;
     private Path currentReportDir;
+    private Path currentLogFile;
 
     @Override
     public Integer call() throws Exception {
@@ -122,6 +129,8 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 ? resolvedProject.resolve("__pyronaut__/reports/tests")
                 : reportDir.toAbsolutePath().normalize();
         var initialMode = parseMode(mode);
+        currentLogFile = resolvedProject.resolve("__pyronaut__/logs").resolve(TUI_LOG);
+        Files.createDirectories(currentLogFile.getParent());
 
         StreamsCapture.installGlobal();
         tui = new PyronautTui();
@@ -333,7 +342,112 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         var builder = new ProcessBuilder(command);
         builder.directory(project.toFile());
         builder.redirectErrorStream(true);
+        var testResourcesConnection = applyTestResourcesEnvironment(project, builder);
+        if (testResourcesConnection.isPresent()) {
+            activeTestResourcesConnection.set(testResourcesConnection.get());
+        }
         return builder.start();
+    }
+
+    Optional<TestResourcesConnection> applyTestResourcesEnvironment(Path project, ProcessBuilder builder) throws IOException {
+        var connection = resolveTestResourcesConnection(project);
+        if (connection.isEmpty()) {
+            return Optional.empty();
+        }
+        var env = builder.environment();
+        connection.get().applyToEnvironment(env);
+        return connection;
+    }
+
+    private static void mergeJavaToolOption(Map<String, String> env, String key, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        String option = "-D" + key + "=" + escapeJavaToolOptionValue(value);
+        String existing = env.getOrDefault("JAVA_TOOL_OPTIONS", "").trim();
+        env.put("JAVA_TOOL_OPTIONS", existing.isEmpty() ? option : existing + " " + option);
+    }
+
+    private static String escapeJavaToolOptionValue(String value) {
+        return value.replace("\\", "\\\\").replace(" ", "\\ ");
+    }
+
+    boolean hasReachableTestResourcesServer(Path settingsFile) {
+        try {
+            if (!Files.exists(settingsFile)) {
+                return false;
+            }
+            Properties properties = new Properties();
+            try (var in = Files.newInputStream(settingsFile)) {
+                properties.load(in);
+            }
+            var serverUri = properties.getProperty("server.uri");
+            var token = properties.getProperty("server.access.token");
+            if (serverUri == null || serverUri.isBlank() || token == null || token.isBlank()) {
+                return false;
+            }
+            var response = fetchInsights(serverUri, "/api/test-resources/health", token);
+            return response.statusCode() == 200;
+        } catch (Exception e) {
+            appendLog("[test-resources] stale or unreachable settings ignored: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private Optional<TestResourcesConnection> resolveTestResourcesConnection(Path project) {
+        var active = activeTestResourcesConnection.get();
+        if (active != null && active.isUsable()) {
+            return Optional.of(active);
+        }
+        var fromProperties = loadTestResourcesConnection(project.resolve(TEST_RESOURCES_PROPERTIES));
+        if (fromProperties.isPresent() && isReachableTestResourcesConnection(fromProperties.get())) {
+            return fromProperties;
+        }
+        return Optional.empty();
+    }
+
+    private Optional<TestResourcesConnection> loadTestResourcesConnection(Path settingsFile) {
+        try {
+            if (!Files.exists(settingsFile)) {
+                return Optional.empty();
+            }
+            Properties properties = new Properties();
+            try (var in = Files.newInputStream(settingsFile)) {
+                properties.load(in);
+            }
+            var connection = TestResourcesConnection.fromProperties(properties);
+            return connection.isUsable() ? Optional.of(connection) : Optional.empty();
+        } catch (IOException e) {
+            appendLog("[test-resources] failed reading settings: " + e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private boolean isReachableTestResourcesConnection(TestResourcesConnection connection) {
+        try {
+            var response = fetchInsights(connection.serverUri(), "/api/test-resources/health", connection.token());
+            return response.statusCode() == 200;
+        } catch (Exception e) {
+            appendLog("[test-resources] stale or unreachable settings ignored: " + e.getMessage());
+            return false;
+        }
+    }
+
+    void appendLog(String line) {
+        if (currentLogFile == null) {
+            return;
+        }
+        try {
+            Files.writeString(
+                currentLogFile,
+                line + System.lineSeparator(),
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.APPEND
+            );
+        } catch (IOException ignored) {
+        }
     }
 
     private void attachOutputReaders(Process process, boolean parseServerUri) {
@@ -344,7 +458,8 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         try (var reader = new BufferedReader(process.inputReader())) {
             String line;
             while ((line = reader.readLine()) != null) {
-                controller.addActivityOutput(line);
+                routeOutputLine(process, line);
+                appendLog(line);
                 if (parseServerUri) {
                     var matcher = SERVER_URI.matcher(line);
                     if (matcher.find()) {
@@ -354,6 +469,27 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             }
         } catch (IOException e) {
             controller.notify("Failed reading command output: " + e.getMessage(), UiModel.Severity.WARNING);
+        }
+    }
+
+    private void routeOutputLine(Process process, String line) {
+        if (isTestResourcesServiceLine(line)) {
+            controller.addTestResourcesOutput(line);
+            if (line.toLowerCase(Locale.ROOT).contains("server running:")) {
+                notifyTestResourcesRunning();
+            }
+            return;
+        }
+        controller.addActivityOutput(line);
+    }
+
+    private boolean isTestResourcesServiceLine(String line) {
+        return line.startsWith("[test-resources-service]");
+    }
+
+    private void notifyTestResourcesRunning() {
+        if (testResourcesRunningNotified.compareAndSet(false, true)) {
+            controller.notify("Test resources service started", UiModel.Severity.INFO);
         }
     }
 
@@ -438,6 +574,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             return;
         }
         stopTestResourcesPolling();
+        testResourcesRunningNotified.set(false);
         controller.setTestResourcesLoading();
         var poller = new TestResourcesPoller(project);
         testResourcesPoller.set(poller);
@@ -453,26 +590,14 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
     private boolean refreshTestResourcesSnapshot(Path project) {
         try {
-            var settingsFile = project.resolve(".micronaut/test-resources/test-resources.properties");
-            if (!Files.exists(settingsFile)) {
-                controller.setTestResourcesUnavailable("waiting for .micronaut/test-resources/test-resources.properties");
+            var connection = resolveTestResourcesConnection(project);
+            if (connection.isEmpty()) {
+                controller.setTestResourcesUnavailable("waiting for active test resources session");
                 return false;
             }
-
-            var properties = new Properties();
-            try (var in = Files.newInputStream(settingsFile)) {
-                properties.load(in);
-            }
-            var serverUri = properties.getProperty("server.uri");
-            var token = properties.getProperty("server.access.token");
-            if (serverUri == null || serverUri.isBlank()) {
-                controller.setTestResourcesUnavailable("server.uri missing in test-resources properties");
-                return false;
-            }
-            if (token == null || token.isBlank()) {
-                controller.setTestResourcesUnavailable("server.access.token missing in test-resources properties");
-                return false;
-            }
+            var session = connection.get();
+            var serverUri = session.serverUri();
+            var token = session.token();
 
             var health = fetchInsights(serverUri, "/api/test-resources/health", token);
             if (health.statusCode() == 401 || health.statusCode() == 403) {
@@ -480,20 +605,20 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 return false;
             }
             if (health.statusCode() != 200) {
-                controller.setTestResourcesError("health endpoint failed with status " + health.statusCode());
-                return false;
+                return refreshControlPanelSnapshot(serverUri, token, "health endpoint failed with status " + health.statusCode());
             }
 
             var containers = fetchInsights(serverUri, "/api/test-resources/containers", token);
             var propertiesResponse = fetchInsights(serverUri, "/api/test-resources/properties", token);
             var errors = fetchInsights(serverUri, "/api/test-resources/errors", token);
             if (containers.statusCode() != 200 || propertiesResponse.statusCode() != 200 || errors.statusCode() != 200) {
-                controller.setTestResourcesError(
+                return refreshControlPanelSnapshot(
+                    serverUri,
+                    token,
                     "insights endpoints failed (containers=" + containers.statusCode()
                         + ", properties=" + propertiesResponse.statusCode()
                         + ", errors=" + errors.statusCode() + ")"
                 );
-                return false;
             }
 
             var healthStatus = jsonString(health.body(), "status");
@@ -514,6 +639,31 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             controller.setTestResourcesError("insights refresh failed: " + e.getMessage());
             return false;
         }
+    }
+
+    private boolean refreshControlPanelSnapshot(String serverUri, String token, String fallbackReason) throws IOException, InterruptedException {
+        var docker = fetchInsights(serverUri, "/control-panel/docker", token);
+        var panels = fetchInsights(serverUri, "/control-panel", token);
+        if (docker.statusCode() == 401 || docker.statusCode() == 403 || panels.statusCode() == 401 || panels.statusCode() == 403) {
+            controller.setTestResourcesAuthFailed("insights auth failed (control-panel)");
+            return false;
+        }
+        if (docker.statusCode() != 200) {
+            controller.setTestResourcesError(fallbackReason + "; control-panel docker status " + docker.statusCode());
+            return false;
+        }
+
+        String dockerStatus = firstNonBlank(jsonString(docker.body(), "dockerStatus"), "UNKNOWN");
+        long running = jsonLong(docker.body(), "runningContainers");
+        String healthMessage = dockerStatus + (running >= 0 ? " (running containers: " + running + ")" : "");
+
+        controller.setTestResourcesRunning(
+            healthMessage,
+            summarizeArrayPayload(docker.body(), "managedContainers"),
+            summarizeArrayPayload(panels.body(), "resolvedProperties"),
+            summarizeArrayPayload(panels.body(), "errors")
+        );
+        return true;
     }
 
     private HttpResponse<String> fetchInsights(String serverUri, String path, String token) throws IOException, InterruptedException {
@@ -558,12 +708,24 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 String scope = firstNonBlank(jsonString(object, "scope"), "default");
                 yield name + " [" + status + "] image=" + image + " scope=" + scope;
             }
+            case "managedContainers" -> {
+                String name = firstNonBlank(jsonString(object, "name"), "<unknown>");
+                String id = firstNonBlank(jsonString(object, "id"), "unknown");
+                String image = firstNonBlank(jsonString(object, "imageName"), "unknown-image");
+                String scope = firstNonBlank(jsonString(object, "scope"), "default");
+                yield name + " [running] image=" + image + " scope=" + scope + " id=" + id;
+            }
             case "properties" -> {
                 String keyName = firstNonBlank(jsonString(object, "key"), "<key>");
                 String value = firstNonBlank(jsonString(object, "value"), "<value>");
                 String resolver = firstNonBlank(jsonString(object, "resolver"), "resolver");
                 String scope = firstNonBlank(jsonString(object, "scope"), "default");
                 yield keyName + "=" + value + " (" + resolver + "/" + scope + ")";
+            }
+            case "resolvedProperties" -> {
+                String keyName = firstNonBlank(jsonString(object, "property"), "<key>");
+                String value = firstNonBlank(jsonString(object, "resolvedValue"), "<value>");
+                yield keyName + "=" + value;
             }
             case "errors" -> {
                 String property = firstNonBlank(jsonString(object, "property"), "<property>");
@@ -1376,6 +1538,70 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             this.skipped = skipped;
             this.cases = cases;
             this.lastNodeId = lastNodeId;
+        }
+    }
+
+    private record TestResourcesConnection(String serverUri, String token, String readTimeout) {
+        private static final String SERVER_URI_KEY = "micronaut.test.resources.server.uri";
+        private static final String TOKEN_KEY = "micronaut.test.resources.server.access.token";
+        private static final String READ_TIMEOUT_KEY = "micronaut.test.resources.server.client.read.timeout";
+
+        private boolean isUsable() {
+            return serverUri != null && !serverUri.isBlank() && token != null && !token.isBlank();
+        }
+
+        private void applyToEnvironment(Map<String, String> env) {
+            mergeJavaToolOption(env, SERVER_URI_KEY, serverUri);
+            mergeJavaToolOption(env, TOKEN_KEY, token);
+            mergeJavaToolOption(env, READ_TIMEOUT_KEY, readTimeout);
+        }
+
+        private static TestResourcesConnection fromProperties(Properties properties) {
+            return new TestResourcesConnection(
+                properties.getProperty("server.uri"),
+                properties.getProperty("server.access.token"),
+                properties.getProperty("server.client.read.timeout")
+            );
+        }
+
+        private static TestResourcesConnection fromEnvironment(Map<String, String> environment) {
+            String javaToolOptions = environment.getOrDefault("JAVA_TOOL_OPTIONS", "");
+            return new TestResourcesConnection(
+                firstNonBlank(readSystemProperty(javaToolOptions, SERVER_URI_KEY), environment.get("MICRONAUT_TEST_RESOURCES_SERVER_URI")),
+                firstNonBlank(readSystemProperty(javaToolOptions, TOKEN_KEY), environment.get("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN")),
+                firstNonBlank(readSystemProperty(javaToolOptions, READ_TIMEOUT_KEY), environment.get("MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT"))
+            );
+        }
+
+        private static String readSystemProperty(String options, String key) {
+            if (options == null || options.isBlank()) {
+                return null;
+            }
+            String marker = "-D" + key + "=";
+            int start = options.indexOf(marker);
+            if (start < 0) {
+                return null;
+            }
+            int index = start + marker.length();
+            StringBuilder value = new StringBuilder();
+            boolean escaping = false;
+            while (index < options.length()) {
+                char ch = options.charAt(index++);
+                if (escaping) {
+                    value.append(ch);
+                    escaping = false;
+                    continue;
+                }
+                if (ch == '\\') {
+                    escaping = true;
+                    continue;
+                }
+                if (Character.isWhitespace(ch)) {
+                    break;
+                }
+                value.append(ch);
+            }
+            return value.toString();
         }
     }
 }

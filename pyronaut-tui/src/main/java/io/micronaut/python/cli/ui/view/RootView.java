@@ -71,6 +71,14 @@ public final class RootView extends Component<RootView> {
             .scrollbar(AS_NEEDED)
             .displayOnly()
             .stickyScroll();
+    private final ListElement<?> testResourcesSummaryList = list()
+            .scrollbar(AS_NEEDED)
+            .displayOnly()
+            .stickyScroll();
+    private final ListElement<?> testResourcesLogsList = list()
+            .scrollbar(AS_NEEDED)
+            .displayOnly()
+            .stickyScroll();
 
     private final TabsState tabsState = new TabsState(0);
     private Mode mode = Mode.RUN;
@@ -306,7 +314,7 @@ public final class RootView extends Component<RootView> {
 
     private Panel testResourcesPanel() {
         var snapshot = controller.getTestResourcesSnapshot();
-        List<Element> rows = new ArrayList<>();
+        List<StyledElement<?>> rows = new ArrayList<>();
 
         rows.add(text("State: " + snapshot.status().name().toLowerCase()).addClass("info"));
         if (snapshot.healthMessage() != null && !snapshot.healthMessage().isBlank()) {
@@ -343,7 +351,19 @@ public final class RootView extends Component<RootView> {
             }
         }
 
-        return panel("Test Resources", column(rows.toArray(Element[]::new)))
+        testResourcesSummaryList.elements(rows.toArray(new StyledElement[0]));
+        var logRows = controller.getTestResourcesLogLines().stream()
+            .map(line -> text(line).addClass("log-item"))
+            .toArray(StyledElement[]::new);
+        testResourcesLogsList.elements(logRows);
+
+        return panel(
+            "Test Resources",
+            dock()
+                .left(panel("Summary", testResourcesSummaryList))
+                .right(panel("Test Resources Logs", testResourcesLogsList))
+                .fill()
+        )
             .id("test-resources")
             .addClass("tests")
             .focusable();

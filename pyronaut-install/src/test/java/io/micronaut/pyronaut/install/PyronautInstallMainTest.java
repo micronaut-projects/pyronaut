@@ -42,9 +42,11 @@ class PyronautInstallMainTest {
         Path buildManifest = cacheDir.resolve("resolved-build-dependencies");
         Path runtimeManifest = cacheDir.resolve("resolved-runtime-dependencies");
         Path testManifest = cacheDir.resolve("resolved-test-dependencies");
+        Path testResourcesServerManifest = cacheDir.resolve("resolved-test-resources-server-dependencies");
         assertTrue(Files.exists(buildManifest));
         assertTrue(Files.exists(runtimeManifest));
         assertTrue(Files.exists(testManifest));
+        assertTrue(Files.exists(testResourcesServerManifest));
 
         List<String> buildEntries = Files.readAllLines(buildManifest, StandardCharsets.UTF_8);
         List<String> runtimeEntries = Files.readAllLines(runtimeManifest, StandardCharsets.UTF_8);
@@ -56,6 +58,146 @@ class PyronautInstallMainTest {
         assertTrue(runtimeEntries.getFirst().contains("runtime-dep"));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
+    }
+
+    @Test
+    void injectsTestResourcesClientOnlyForRunAndTestWhenConfiguredAndEnabled() throws Exception {
+        Path repository = tempDir.resolve("repo-test-resources-enabled");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
+
+        Path project = tempDir.resolve("project-test-resources-enabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyprojectWithTestResources(repository, true));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> buildEntries = Files.readAllLines(cacheDir.resolve("resolved-build-dependencies"), StandardCharsets.UTF_8);
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+        List<String> serverEntries = Files.readAllLines(cacheDir.resolve("resolved-test-resources-server-dependencies"), StandardCharsets.UTF_8);
+
+        assertTrue(buildEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-client")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-testcontainers")));
+    }
+
+    @Test
+    void testResourcesServerManifestIncludesInferredAndAdditionalModulesWithFiltering() throws Exception {
+        Path repository = tempDir.resolve("repo-test-resources-server-manifest");
+        writeArtifact(repository, "mysql", "mysql-connector-j", "8.3.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-jdbc-mysql", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-jdbc-postgresql", "2.9.0");
+
+        Path project = tempDir.resolve("project-test-resources-server-manifest");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["mysql:mysql-connector-j:8.3.0"]
+            build = []
+            test = []
+
+            [tool.pyronaut.testResources]
+            enabled = true
+            version = "2.9.0"
+            additionalModules = [
+              "jdbc-postgresql",
+              "io.micronaut.testresources:micronaut-test-resources-build-tools"
+            ]
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+        command.scope = "test-resources-server";
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        List<String> serverEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-test-resources-server-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-testcontainers")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-jdbc-mysql")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-jdbc-postgresql")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("mysql-connector-j")));
+        assertTrue(serverEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-build-tools")));
+    }
+
+    @Test
+    void doesNotInjectTestResourcesClientWhenConfiguredButDisabled() throws Exception {
+        Path repository = tempDir.resolve("repo-test-resources-disabled");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
+
+        Path project = tempDir.resolve("project-test-resources-disabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyprojectWithTestResources(repository, false));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+        assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-client")));
+        assertTrue(testEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-client")));
+    }
+
+    @Test
+    void envKillSwitchDisablesTestResourcesClientInjection() throws Exception {
+        Path repository = tempDir.resolve("repo-test-resources-env-disabled");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
+
+        Path project = tempDir.resolve("project-test-resources-env-disabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyprojectWithTestResources(repository, true));
+
+        MavenClasspathResolver resolver = new MavenClasspathResolver(
+            new ProxyConfigurationLoader(),
+            name -> "PYRONAUT_TEST_RESOURCES_DISABLED".equals(name) ? "true" : null
+        );
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), resolver);
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+        assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-client")));
+        assertTrue(testEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-client")));
     }
 
     @Test
@@ -201,6 +343,10 @@ class PyronautInstallMainTest {
         writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0");
         writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0");
         writeArtifact(repository, "io.micronaut.test", "micronaut-test-junit5", "5.0.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
 
         Path project = tempDir.resolve("project-managed");
         Files.createDirectories(project);
@@ -231,13 +377,15 @@ class PyronautInstallMainTest {
         assertEquals(1, buildEntries.size());
         assertTrue(buildEntries.getFirst().contains("micronaut-context-python"));
 
-        assertEquals(1, runtimeEntries.size());
+        assertEquals(2, runtimeEntries.size());
         assertTrue(runtimeEntries.getFirst().contains("micronaut-inject-python"));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
 
-        assertEquals(2, testEntries.size());
+        assertEquals(3, testEntries.size());
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
     }
 
     @Test
@@ -262,6 +410,10 @@ class PyronautInstallMainTest {
 
         writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT");
         writeArtifact(repository, "io.micronaut.test", "micronaut-test-junit5", "5.0.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
 
         Path project = tempDir.resolve("project-managed-snapshot");
         Files.createDirectories(project);
@@ -290,6 +442,66 @@ class PyronautInstallMainTest {
 
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python") && entry.contains("5.0.0-SNAPSHOT")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0-SNAPSHOT")));
+    }
+
+    @Test
+    void prefersPlatformManagedTestResourcesVersionOverBuildToolsFallback() throws Exception {
+        Path repository = tempDir.resolve("repo-managed-test-resources-version");
+        writeBom(
+            repository,
+            "io.micronaut",
+            "micronaut-core-bom",
+            "5.0.0",
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.0.0")
+            )
+        );
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "5.0.0",
+            List.of(
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "4.0.0-M1")
+            )
+        );
+
+        writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "4.0.0-M1");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "4.0.0-M1");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "4.0.0-M1");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "4.0.0-M1");
+
+        Path project = tempDir.resolve("project-managed-test-resources-version");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "managed-test-resources-version"
+
+            [tool.pyronaut]
+            version = "5.0.0"
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.micronaut:micronaut-inject-python"]
+            build = []
+            test = []
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("4.0.0-M1")));
+        assertFalse(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("2.9.0")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("4.0.0-M1")));
+        assertFalse(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("2.9.0")));
     }
 
     @Test
@@ -325,6 +537,7 @@ class PyronautInstallMainTest {
         assertFalse(Files.exists(cacheDir.resolve("resolved-build-dependencies")));
         assertFalse(Files.exists(cacheDir.resolve("resolved-runtime-dependencies")));
         assertFalse(Files.exists(cacheDir.resolve("resolved-test-dependencies")));
+        assertFalse(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
     }
 
     @Test
@@ -348,6 +561,7 @@ class PyronautInstallMainTest {
         assertTrue(Files.exists(cacheDir.resolve("resolved-build-dependencies")));
         assertTrue(Files.exists(cacheDir.resolve("resolved-runtime-dependencies")));
         assertTrue(Files.exists(cacheDir.resolve("resolved-test-dependencies")));
+        assertTrue(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
     }
 
     @Test
@@ -415,6 +629,7 @@ class PyronautInstallMainTest {
         assertFalse(Files.exists(cacheDir.resolve("resolved-build-dependencies")));
         assertFalse(Files.exists(cacheDir.resolve("resolved-runtime-dependencies")));
         assertFalse(Files.exists(cacheDir.resolve("resolved-test-dependencies")));
+        assertFalse(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
     }
 
     @Test
@@ -532,6 +747,7 @@ class PyronautInstallMainTest {
         assertTrue(Files.exists(cacheDir.resolve("resolved-build-dependencies")));
         assertTrue(Files.exists(cacheDir.resolve("resolved-runtime-dependencies")));
         assertTrue(Files.exists(cacheDir.resolve("resolved-test-dependencies")));
+        assertTrue(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
     }
 
     private static String pyproject(Path repository) {
@@ -548,6 +764,12 @@ class PyronautInstallMainTest {
             build = ["com.example:build-dep:1.0.0"]
             test = ["com.example:test-dep:1.0.0"]
             """.formatted(repository.toUri());
+    }
+
+    private static String pyprojectWithTestResources(Path repository, boolean enabled) {
+        return pyproject(repository) + "\n" + "[tool.pyronaut.testResources]\n"
+            + "enabled = " + enabled + "\n"
+            + "version = \"2.9.0\"\n";
     }
 
     private static void writeArtifact(Path repository, String groupId, String artifactId, String version) throws IOException {

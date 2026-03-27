@@ -47,6 +47,7 @@ class PyprojectModelReaderTest {
         assertEquals(List.of("test"), model.pyronaut().validation().test().environments());
         assertEquals(List.of(), model.pyronaut().validation().production().environments());
         assertNotNull(model.pyronaut().testResources());
+        assertEquals(false, model.pyronaut().testResources().configured());
         assertEquals(Boolean.TRUE, model.pyronaut().testResources().enabled());
         assertEquals(Boolean.TRUE, model.pyronaut().testResources().inferClasspath());
         assertEquals(Integer.valueOf(60), model.pyronaut().testResources().clientTimeout());
@@ -312,6 +313,7 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         PyprojectModel.TestResources testResources = model.pyronaut().testResources();
+        assertEquals(true, testResources.configured());
         assertEquals(Boolean.TRUE, testResources.enabled());
         assertEquals("2.9.0", testResources.version());
         assertEquals(Integer.valueOf(18081), testResources.explicitPort());

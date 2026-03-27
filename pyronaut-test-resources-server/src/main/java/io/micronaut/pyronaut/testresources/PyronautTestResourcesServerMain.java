@@ -18,27 +18,33 @@ package io.micronaut.pyronaut.testresources;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.testresources.buildtools.ServerFactory;
 import io.micronaut.testresources.buildtools.ServerSettings;
 import io.micronaut.testresources.buildtools.ServerUtils;
 import picocli.CommandLine;
 
+import java.io.File;
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @CommandLine.Command(name = "pyronaut-test-resources-server", mixinStandardHelpOptions = true, description = "Manage standalone Micronaut test resources server")
 public final class PyronautTestResourcesServerMain implements Callable<Integer> {
     private static final int SUCCESS = 0;
     private static final int PRECONDITION_FAILED = 8;
     private static final int INTERNAL_ERROR = 10;
+    private static final String SERVER_CLASSPATH_MANIFEST = "__pyronaut__/resolved-test-resources-server-dependencies";
+    private static final String OWNED_SESSION_FILE = "__pyronaut__/test-resources-session.json";
+    private static final Pattern OWNER_TOKEN_PATTERN = Pattern.compile("\\\"ownerToken\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -51,14 +57,22 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
 
     private final PyprojectModelReader modelReader;
     private final ServerManager serverManager;
+    private final Function<String, String> envReader;
 
     public PyronautTestResourcesServerMain() {
-        this(new PyprojectModelReader(), new DefaultServerManager());
+        this(new PyprojectModelReader(), new DefaultServerManager(), System::getenv);
     }
 
     PyronautTestResourcesServerMain(PyprojectModelReader modelReader, ServerManager serverManager) {
+        this(modelReader, serverManager, System::getenv);
+    }
+
+    PyronautTestResourcesServerMain(PyprojectModelReader modelReader,
+                                    ServerManager serverManager,
+                                    Function<String, String> envReader) {
         this.modelReader = modelReader;
         this.serverManager = serverManager;
+        this.envReader = envReader;
     }
 
     public static void main(String[] args) {
@@ -76,11 +90,12 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             PyprojectModel.TestResources config = model.pyronaut().testResources();
             Path settingsDir = resolveSettingsDir(root, config);
             Path portFile = settingsDir.resolve("server.port");
+            Path sessionFile = root.resolve(OWNED_SESSION_FILE).toAbsolutePath().normalize();
 
             return switch (normalizeAction(action)) {
                 case START -> start(root, settingsDir, portFile, config);
                 case STATUS -> status(settingsDir);
-                case STOP -> stop(settingsDir);
+                case STOP -> stop(settingsDir, sessionFile);
             };
         } catch (PyprojectModelException e) {
             System.err.println(e.getMessage());
@@ -95,6 +110,10 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
     }
 
     private Integer start(Path root, Path settingsDir, Path portFile, PyprojectModel.TestResources config) throws IOException {
+        if (isTestResourcesDisabledViaEnvironment()) {
+            System.out.println("Test resources server startup skipped (PYRONAUT_TEST_RESOURCES_DISABLED=true).");
+            return SUCCESS;
+        }
         if (config.enabled() != null && !config.enabled()) {
             System.out.println("Test resources server is disabled by configuration.");
             return SUCCESS;
@@ -105,6 +124,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
         ServerStartRequest request = new ServerStartRequest(
             settingsDir,
             portFile,
+            root.resolve(SERVER_CLASSPATH_MANIFEST).toAbsolutePath().normalize(),
             config.explicitPort(),
             accessToken(config),
             optimization.cdsDirectory().orElse(null),
@@ -130,10 +150,56 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
         return SUCCESS;
     }
 
-    private Integer stop(Path settingsDir) throws IOException {
+    private Integer stop(Path settingsDir, Path sessionFile) throws IOException {
+        if (!matchesOwningSession(sessionFile)) {
+            System.out.println("stop-skipped-ownership-mismatch");
+            return SUCCESS;
+        }
         boolean stopped = serverManager.stop(settingsDir);
+        Files.deleteIfExists(sessionFile);
+        deleteServerSettings(settingsDir);
         System.out.println(stopped ? "stopped" : "already-stopped");
         return SUCCESS;
+    }
+
+    private boolean matchesOwningSession(Path sessionFile) {
+        String configuredToken = ownerToken == null ? "" : ownerToken.trim();
+        if (configuredToken.isEmpty()) {
+            return true;
+        }
+        if (!Files.exists(sessionFile)) {
+            return false;
+        }
+        String persistedToken = readOwnerToken(sessionFile).orElse("");
+        return !persistedToken.isBlank() && configuredToken.equals(persistedToken);
+    }
+
+    private static void deleteServerSettings(Path settingsDir) {
+        try {
+            Files.deleteIfExists(settingsDir.resolve("server.port"));
+            Files.deleteIfExists(settingsDir.resolve("test-resources.properties"));
+            if (Files.exists(settingsDir) && Files.isDirectory(settingsDir)) {
+                try (var entries = Files.list(settingsDir)) {
+                    if (!entries.findAny().isPresent()) {
+                        Files.deleteIfExists(settingsDir);
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static Optional<String> readOwnerToken(Path sessionFile) {
+        try {
+            String content = Files.readString(sessionFile);
+            Matcher matcher = OWNER_TOKEN_PATTERN.matcher(content);
+            if (matcher.find()) {
+                return Optional.ofNullable(matcher.group(1));
+            }
+        } catch (IOException ignored) {
+            return Optional.empty();
+        }
+        return Optional.empty();
     }
 
     private static Path resolveSettingsDir(Path root, PyprojectModel.TestResources config) {
@@ -152,8 +218,23 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
         return UUID.randomUUID().toString();
     }
 
+    private boolean isTestResourcesDisabledViaEnvironment() {
+        String value = envReader.apply("PYRONAUT_TEST_RESOURCES_DISABLED");
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("1")
+            || normalized.equals("true")
+            || normalized.equals("yes")
+            || normalized.equals("on");
+    }
+
     private static OptimizationResolution resolveOptimization(Path root, PyprojectModel.TestResources config) {
         String mode = config.startupOptimization() == null ? "auto" : config.startupOptimization().trim().toLowerCase(java.util.Locale.ROOT);
+        if (!config.configured()) {
+            mode = "none";
+        }
         Path cdsDir = root.resolve("__pyronaut__/test-resources-cds").normalize();
         List<String> leydenArgs = config.leydenJvmArgs() == null ? List.of() : config.leydenJvmArgs();
         return switch (mode) {
@@ -198,6 +279,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
 
     record ServerStartRequest(Path settingsDir,
                               Path portFile,
+                              Path classpathManifest,
                               Integer explicitPort,
                               String accessToken,
                               Path cdsDir,
@@ -216,29 +298,32 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
     }
 
     static final class DefaultServerManager implements ServerManager {
+        private final Function<ServerStartRequest, ServerFactory> serverFactoryFactory;
+
+        DefaultServerManager() {
+            this(RealTestResourcesServerFactory::new);
+        }
+
+        DefaultServerManager(Function<ServerStartRequest, ServerFactory> serverFactoryFactory) {
+            this.serverFactoryFactory = serverFactoryFactory;
+        }
+
         @Override
         public ServerStatus start(ServerStartRequest request) throws IOException {
             Files.createDirectories(request.settingsDir());
-            Optional<ServerSettings> existing = ServerUtils.readServerSettings(request.settingsDir());
-            if (existing.isPresent() && ServerUtils.isServerStarted(existing.get().getPort())) {
-                int port = existing.get().getPort();
-                return new ServerStatus(true, port, "http://localhost:" + port);
-            }
-            if (existing.isPresent()) {
-                Files.deleteIfExists(request.settingsDir().resolve(ServerUtils.PROPERTIES_FILE_NAME));
-            }
-            Files.deleteIfExists(request.portFile());
-
-            int port = request.explicitPort() != null ? request.explicitPort() : findRandomPort();
-            FallbackTestResourcesServerLauncher.launch(request, port);
-            waitForServerPort(port, Duration.ofSeconds(15));
-            ServerUtils.writeServerSettings(request.settingsDir(), new ServerSettings(
-                port,
+            ServerFactory serverFactory = serverFactoryFactory.apply(request);
+            ServerSettings settings = ServerUtils.startOrConnectToExistingServer(
+                request.explicitPort(),
+                request.portFile(),
+                request.settingsDir(),
                 request.accessToken(),
+                request.cdsDir(),
+                classpathEntries(request.classpathManifest()),
                 request.clientTimeout(),
-                request.idleTimeoutMinutes()
-            ));
-            return new ServerStatus(true, port, "http://localhost:" + port);
+                request.idleTimeoutMinutes(),
+                serverFactory
+            );
+            return new ServerStatus(true, settings.getPort(), "http://localhost:" + settings.getPort());
         }
 
         @Override
@@ -262,29 +347,27 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             return true;
         }
 
-        private static int findRandomPort() throws IOException {
-            try (ServerSocket socket = new ServerSocket()) {
-                socket.bind(new InetSocketAddress("127.0.0.1", 0));
-                return socket.getLocalPort();
+        private static List<File> classpathEntries(Path manifestPath) throws IOException {
+            if (manifestPath == null || !Files.exists(manifestPath)) {
+                throw new IllegalStateException(
+                    "Missing test resources server classpath manifest: " + (manifestPath == null ? "<null>" : manifestPath.toAbsolutePath())
+                );
             }
-        }
-
-        private static void waitForServerPort(int port, Duration timeout) {
-            long endNanos = System.nanoTime() + timeout.toNanos();
-            while (System.nanoTime() < endNanos) {
-                try (Socket socket = new Socket()) {
-                    socket.connect(new InetSocketAddress("127.0.0.1", port), 200);
-                    return;
-                } catch (IOException ignored) {
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
+            LinkedHashSet<File> entries = new LinkedHashSet<>();
+            for (String line : Files.readAllLines(manifestPath, java.nio.charset.StandardCharsets.UTF_8)) {
+                String value = line == null ? "" : line.trim();
+                if (value.isEmpty()) {
+                    continue;
                 }
+                entries.add(Path.of(value).toAbsolutePath().normalize().toFile());
             }
-            throw new IllegalStateException("Port file not created. Server probably failed to start.");
+            for (String value : RealTestResourcesServerFactory.selfModuleClasspathEntries()) {
+                if (value == null || value.isBlank()) {
+                    continue;
+                }
+                entries.add(Path.of(value).toAbsolutePath().normalize().toFile());
+            }
+            return List.copyOf(entries);
         }
     }
 }

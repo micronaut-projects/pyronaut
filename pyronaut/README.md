@@ -88,30 +88,44 @@ Delegation tracing is disabled by default. To print delegated tool command lines
 PYRONAUT_TRACE_DELEGATION=true pyronaut install --project-dir /path/to/app
 ```
 
-## Run real E2E tests
+## Run orchestrator E2E tests
 
-The E2E suite is guarded by `PYRONAUT_E2E=true` and executes real CLI apps:
+The orchestrator E2E suite is split into a **fast smoke gate** and a **full integration gate**.
+
+### Fast smoke E2E (default in `check`)
+
+This path is designed to be stable and quick for day-to-day development/CI.
+
+```bash
+./gradlew :micronaut-pyronaut:testPythonOrchestratorE2E
+./gradlew :micronaut-pyronaut:check
+```
+
+Behavior:
+
+- Runs `e2e_flow_test.py` with `PYRONAUT_E2E=true`.
+- Keeps heavy full-flow checks disabled (`PYRONAUT_E2E_FULL=false`).
+- Does **not** require Docker/MySQL (`PYRONAUT_E2E_MYSQL=false`).
+
+### Full E2E integration (opt-in)
+
+Run this when validating end-to-end Docker-backed integration flows (for example, nightly or pre-release verification):
+
+```bash
+./gradlew :micronaut-pyronaut:testPythonOrchestratorE2EFull
+```
+
+Behavior:
+
+- Enables full-flow tests (`PYRONAUT_E2E_FULL=true`).
+- Enables Docker/MySQL-backed checks (`PYRONAUT_E2E_MYSQL=true`).
+- Includes slow scenarios such as run/test lifecycle and MySQL test-resources integration.
+
+### What E2E covers
+
+Depending on mode, E2E validates real delegated CLI behavior across:
 
 - `pyronaut-install`
 - `pyronaut-processor`
 - `pyronaut-run`
 - `pyronaut-test`
-
-Run only E2E:
-
-```bash
-PYRONAUT_E2E=true ./gradlew :micronaut-pyronaut:testPythonOrchestratorE2E
-```
-
-Run module checks with E2E included:
-
-```bash
-PYRONAUT_E2E=true ./gradlew :micronaut-pyronaut:check
-```
-
-The E2E test validates:
-
-1. `install` writes all scoped cache manifests
-2. `process` generates `__pyronaut__/classes` and `__pyronaut__/test-classes`
-3. `run` starts the real Micronaut server and serves HTTP on `localhost:8080`
-4. `test` executes real pytest-backed tests through `micronaut-pytest-engine`

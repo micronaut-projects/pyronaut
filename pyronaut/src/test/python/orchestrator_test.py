@@ -70,10 +70,10 @@ class OrchestratorTest(unittest.TestCase):
 
             self.assertEqual(0, exit_code)
             self.assertEqual(6, len(executed))
-            self._assert_test_resources_start(executed[0], str(project_dir))
-            self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"], executed[1])
-            self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[2])
-            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[3])
+            self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"], executed[0])
+            self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[1])
+            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[2])
+            self._assert_test_resources_start(executed[3], str(project_dir))
             self.assertEqual(
                 ["/tmp/pyronaut-run", "--project-dir", str(project_dir), "--main-class", "example.Main"],
                 executed[4],
@@ -108,10 +108,10 @@ class OrchestratorTest(unittest.TestCase):
 
             self.assertEqual(0, exit_code)
             self.assertEqual(6, len(executed))
-            self._assert_test_resources_start(executed[0], str(project_dir))
-            self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"], executed[1])
-            self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[2])
-            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[3])
+            self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"], executed[0])
+            self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[1])
+            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[2])
+            self._assert_test_resources_start(executed[3], str(project_dir))
             self.assertEqual(
                 ["/tmp/pyronaut-run", "--project-dir", str(project_dir), "--main-class", "example.Main"],
                 executed[4],
@@ -138,10 +138,9 @@ class OrchestratorTest(unittest.TestCase):
             )
 
             self.assertEqual(4, exit_code)
-            self.assertEqual(4, len(executed))
-            self.assertIn("pyronaut-test-resources-server", executed[0][0])
-            self.assertIn("pyronaut-validate-config", executed[1][0])
-            self.assertIn("pyronaut-install", executed[2][0])
+            self.assertEqual(2, len(executed))
+            self.assertIn("pyronaut-validate-config", executed[0][0])
+            self.assertIn("pyronaut-install", executed[1][0])
 
     def test_platform_guardrail(self):
         exit_code = cli.run(["install"], runner=self._runner_ok(), resolver=self._resolver(), platform_name="win32")
@@ -229,10 +228,10 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
-        self._assert_test_resources_start(executed[0], str(project_dir))
-        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"], executed[1])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[2])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[3])
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[2])
+        self._assert_test_resources_start(executed[3], str(project_dir))
         self.assertEqual(["/tmp/pyronaut-test", "--project-dir", str(project_dir)], executed[4])
         self._assert_test_resources_stop(executed[5], str(project_dir))
 
@@ -291,10 +290,10 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
-        self._assert_test_resources_start(executed[0], str(project_dir))
-        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"], executed[1])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[2])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[3])
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[2])
+        self._assert_test_resources_start(executed[3], str(project_dir))
         self.assertEqual(["/tmp/pyronaut-test", "--project-dir", str(project_dir)], executed[4])
         self._assert_test_resources_stop(executed[5], str(project_dir))
 
@@ -314,11 +313,11 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
-        self._assert_test_resources_start(executed[0], "/tmp/demo")
-        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run", "--no-cache"], executed[1])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--refresh"], executed[2])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--no-cache"], executed[3])
-        self.assertEqual(["/tmp/pyronaut-run", "--project-dir", "/tmp/demo", "--no-cache"], executed[4])
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run", "--no-cache"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--refresh"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--no-cache"], executed[2])
+        self._assert_test_resources_start(executed[3], "/tmp/demo")
+        self.assertEqual(["/tmp/pyronaut-run", "--project-dir", "/tmp/demo"], executed[4])
         self._assert_test_resources_stop(executed[5], "/tmp/demo")
 
     def test_test_forwards_no_cache_to_install_and_processor(self):
@@ -337,12 +336,209 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
-        self._assert_test_resources_start(executed[0], "/tmp/demo")
-        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test", "--no-cache"], executed[1])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--refresh"], executed[2])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--no-cache"], executed[3])
-        self.assertEqual(["/tmp/pyronaut-test", "--project-dir", "/tmp/demo", "--no-cache"], executed[4])
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test", "--no-cache"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--refresh"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--no-cache"], executed[2])
+        self._assert_test_resources_start(executed[3], "/tmp/demo")
+        self.assertEqual(["/tmp/pyronaut-test", "--project-dir", "/tmp/demo"], executed[4])
         self._assert_test_resources_stop(executed[5], "/tmp/demo")
+
+    def test_shared_server_mode_does_not_stop_on_session_exit(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "shared"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "shared"
+
+[tool.pyronaut.testResources]
+sharedServer = true
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            exit_code = cli.run(
+                ["run", "--project-dir", str(project_dir)],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
+
+    def test_test_resources_settings_are_propagated_to_run_via_java_tool_options(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "with-settings"
+            settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+
+            def runner_with_env(command_line, env):
+                executed.append((command_line, env))
+                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                    settings_file.parent.mkdir(parents=True, exist_ok=True)
+                    settings_file.write_text(
+                        "server.uri=http\\://localhost\\:18900\n"
+                        "server.access.token=token-abc\n",
+                        encoding="utf-8",
+                    )
+                return 0
+
+            exit_code = cli.run(
+                ["run", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        run_invocation = next((item for item in executed if item[0][:2] == ["/tmp/pyronaut-run", "--project-dir"]), None)
+        if run_invocation is None:
+            self.fail("Expected delegated pyronaut-run invocation")
+        _, run_env = run_invocation
+        self.assertIsInstance(run_env, dict)
+        assert isinstance(run_env, dict)
+        options = run_env.get("JAVA_TOOL_OPTIONS", "")
+        self.assertIn("-Dmicronaut.test.resources.server.uri=http://localhost:18900", options)
+        self.assertIn("-Dmicronaut.test.resources.server.access.token=token-abc", options)
+
+    def test_test_resources_start_isolated_from_micronaut_server_port_env(self):
+        seen_server_port: str | None = None
+        seen_server_host: str | None = None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "isolate-env"
+            settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+
+            def runner_with_env(command_line, env):
+                nonlocal seen_server_port, seen_server_host
+                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                    seen_server_port = os.environ.get("MICRONAUT_SERVER_PORT")
+                    seen_server_host = os.environ.get("MICRONAUT_SERVER_HOST")
+                    settings_file.parent.mkdir(parents=True, exist_ok=True)
+                    settings_file.write_text(
+                        "server.uri=http\\://localhost\\:18900\n"
+                        "server.access.token=token-abc\n",
+                        encoding="utf-8",
+                    )
+                return 0
+
+            previous_port = os.environ.get("MICRONAUT_SERVER_PORT")
+            previous_host = os.environ.get("MICRONAUT_SERVER_HOST")
+            os.environ["MICRONAUT_SERVER_PORT"] = "8181"
+            os.environ["MICRONAUT_SERVER_HOST"] = "127.0.0.2"
+            try:
+                exit_code = cli.run(
+                    ["run", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+            finally:
+                if previous_port is None:
+                    os.environ.pop("MICRONAUT_SERVER_PORT", None)
+                else:
+                    os.environ["MICRONAUT_SERVER_PORT"] = previous_port
+                if previous_host is None:
+                    os.environ.pop("MICRONAUT_SERVER_HOST", None)
+                else:
+                    os.environ["MICRONAUT_SERVER_HOST"] = previous_host
+
+        self.assertEqual(0, exit_code)
+        self.assertIsNone(seen_server_port)
+        self.assertIsNone(seen_server_host)
+
+    def test_run_delegation_preserves_server_port_env_without_java_home_provider(self):
+        executed = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "preserve-run-env"
+            settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+
+            def runner_with_env(command_line, env):
+                executed.append((command_line, env))
+                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                    settings_file.parent.mkdir(parents=True, exist_ok=True)
+                    settings_file.write_text(
+                        "server.uri=http\\://localhost\\:18900\n"
+                        "server.access.token=token-abc\n",
+                        encoding="utf-8",
+                    )
+                return 0
+
+            previous_port = os.environ.get("MICRONAUT_SERVER_PORT")
+            os.environ["MICRONAUT_SERVER_PORT"] = "8181"
+            try:
+                exit_code = cli.run(
+                    ["run", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+            finally:
+                if previous_port is None:
+                    os.environ.pop("MICRONAUT_SERVER_PORT", None)
+                else:
+                    os.environ["MICRONAUT_SERVER_PORT"] = previous_port
+
+        self.assertEqual(0, exit_code)
+        run_invocation = next((item for item in executed if item[0][:2] == ["/tmp/pyronaut-run", "--project-dir"]), None)
+        if run_invocation is None:
+            self.fail("Expected delegated pyronaut-run invocation")
+        _, run_env = run_invocation
+        self.assertIsInstance(run_env, dict)
+        assert isinstance(run_env, dict)
+        self.assertEqual("8181", run_env.get("MICRONAUT_SERVER_PORT"))
+
+    def test_build_does_not_orchestrate_test_resources_lifecycle(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["build", "--project-dir", "/tmp/demo"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
+
+    def test_repeated_run_invocations_keep_owned_session_state_consistent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "repeat"
+            session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+
+            for _ in range(2):
+                executed = []
+
+                def runner(command_line):
+                    executed.append(command_line)
+                    return 0
+
+                exit_code = cli.run(
+                    ["run", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+                self.assertEqual(0, exit_code)
+                self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
+                self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
+                self.assertFalse(session_file.exists())
 
     def test_test_forwards_tests_selectors_after_preflight(self):
         executed = []
@@ -368,10 +564,10 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
-        self._assert_test_resources_start(executed[0], "/tmp/demo")
-        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test"], executed[1])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[2])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[3])
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[2])
+        self._assert_test_resources_start(executed[3], "/tmp/demo")
         self.assertEqual(
             [
                 "/tmp/pyronaut-test",
@@ -401,13 +597,13 @@ class OrchestratorTest(unittest.TestCase):
         )
 
         self.assertEqual(0, exit_code)
-        self._assert_test_resources_start(executed[0][0], "/tmp/demo")
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run"], executed[0][0])
         self.assertIsNone(executed[0][1])
-        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run"], executed[1][0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[1][0])
         self.assertIsNone(executed[1][1])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[2][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[2][0])
         self.assertIsNone(executed[2][1])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[3][0])
+        self._assert_test_resources_start(executed[3][0], "/tmp/demo")
         self.assertIsNone(executed[3][1])
         self.assertEqual(
             [
@@ -545,14 +741,20 @@ class OrchestratorTest(unittest.TestCase):
             resolved_project_dir = str(project_dir.resolve())
             self.assertEqual(0, exit_code)
             self.assertEqual(8, len(executed))
-            self.assertEqual("/tmp/pyronaut-test-resources-server", executed[0][0])
-            self.assertEqual("start", executed[0][1])
-            self.assertEqual(["/tmp/pyronaut-install", "--project-dir", resolved_project_dir], executed[1])
-            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir], executed[2])
-            self.assertEqual(["/tmp/pyronaut-install", "--project-dir", resolved_project_dir], executed[3])
-            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir], executed[4])
-            self.assertEqual(["/tmp/pyronaut-install", "--project-dir", resolved_project_dir], executed[5])
-            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir], executed[6])
+            self.assertEqual(["/tmp/pyronaut-install", "--project-dir"], executed[0][:2])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[0][2]))
+            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir"], executed[1][:2])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[1][2]))
+            self.assertEqual("/tmp/pyronaut-test-resources-server", executed[2][0])
+            self.assertEqual("start", executed[2][1])
+            self.assertEqual(["/tmp/pyronaut-install", "--project-dir"], executed[3][:2])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[3][2]))
+            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir"], executed[4][:2])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[4][2]))
+            self.assertEqual(["/tmp/pyronaut-install", "--project-dir"], executed[5][:2])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[5][2]))
+            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir"], executed[6][:2])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[6][2]))
             self.assertEqual("/tmp/pyronaut-test-resources-server", executed[7][0])
             self.assertEqual("stop", executed[7][1])
             self.assertEqual(2, len(started))
@@ -712,7 +914,148 @@ class OrchestratorTest(unittest.TestCase):
             )
 
             self.assertEqual(7, exit_code)
-            self.assertEqual(0, len(started))
+            self.assertEqual(1, len(started))
+
+    def test_run_restart_aborts_when_stop_fails(self):
+        executed = []
+        started = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "watched-stop-fail"
+            src_dir = project_dir / "src"
+            src_dir.mkdir(parents=True, exist_ok=True)
+            source_file = src_dir / "controller.py"
+            source_file.write_text("print('v1')\n", encoding="utf-8")
+
+            class StopFailProcess:
+                def __init__(self, exit_after_polls=100):
+                    self.exit_after_polls = exit_after_polls
+                    self.polls = 0
+
+                def poll(self):
+                    self.polls += 1
+                    if self.polls >= self.exit_after_polls:
+                        return 0
+                    return None
+
+                def terminate(self):
+                    raise TimeoutError("terminate timeout")
+
+                def wait(self, timeout=None):
+                    raise TimeoutError("wait timeout")
+
+                def kill(self):
+                    raise TimeoutError("kill timeout")
+
+            def process_runner(command_line, env):
+                started.append((command_line, env))
+                return StopFailProcess()
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            now = {"value": 0.0}
+            ticks = {"count": 0}
+
+            def monotonic():
+                return now["value"]
+
+            def sleep(seconds):
+                now["value"] += seconds
+                ticks["count"] += 1
+                if ticks["count"] == 1:
+                    source_file.write_text("print('v2')\n", encoding="utf-8")
+
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["run", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    process_runner=process_runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    watch_poll_interval=0.05,
+                    watch_debounce_seconds=0.05,
+                    monotonic=monotonic,
+                    sleep=sleep,
+                )
+
+            self.assertEqual(cli.INTERNAL_ERROR, exit_code)
+            self.assertEqual(1, len(started))
+            self.assertIn("Failed to stop running process for restart", stderr.getvalue())
+
+    def test_run_restart_aborts_when_refresh_fails_after_initial_start(self):
+        executed = []
+        started = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "watched-refresh-fail-after-start"
+            src_dir = project_dir / "src"
+            src_dir.mkdir(parents=True, exist_ok=True)
+            source_file = src_dir / "controller.py"
+            source_file.write_text("print('v1')\n", encoding="utf-8")
+
+            class FakeProcess:
+                def __init__(self):
+                    self.terminated = False
+                    self.polls = 0
+
+                def poll(self):
+                    self.polls += 1
+                    return 0 if self.terminated else None
+
+                def terminate(self):
+                    self.terminated = True
+
+                def wait(self, timeout=None):
+                    return 0
+
+                def kill(self):
+                    self.terminated = True
+
+            processes = [FakeProcess(), FakeProcess()]
+            processor_calls = {"count": 0}
+
+            def process_runner(command_line, env):
+                started.append((command_line, env))
+                return processes.pop(0)
+
+            def runner(command_line):
+                executed.append(command_line)
+                if "pyronaut-processor" in command_line[0]:
+                    processor_calls["count"] += 1
+                    if processor_calls["count"] >= 2:
+                        return 7
+                return 0
+
+            now = {"value": 0.0}
+            ticks = {"count": 0}
+
+            def monotonic():
+                return now["value"]
+
+            def sleep(seconds):
+                now["value"] += seconds
+                ticks["count"] += 1
+                if ticks["count"] == 1:
+                    source_file.write_text("print('v2')\n", encoding="utf-8")
+
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["run", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    process_runner=process_runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    watch_poll_interval=0.05,
+                    watch_debounce_seconds=0.05,
+                    monotonic=monotonic,
+                    sleep=sleep,
+                )
+
+            self.assertEqual(7, exit_code)
+            self.assertEqual(1, len(started))
+            self.assertIn("Failed to refresh artifacts for restart (exit code 7)", stderr.getvalue())
 
     def test_run_ignores_generated_output_changes_for_restart(self):
         executed = []
@@ -783,29 +1126,17 @@ class OrchestratorTest(unittest.TestCase):
             resolved_project_dir = str(project_dir.resolve())
             self.assertEqual(0, exit_code)
             self.assertEqual(1, len(started))
-            self.assertEqual(
-                [
-                    [
-                        "/tmp/pyronaut-test-resources-server",
-                        "start",
-                        "--project-dir",
-                        resolved_project_dir,
-                        "--owner-token",
-                        ANY,
-                    ],
-                    ["/tmp/pyronaut-install", "--project-dir", resolved_project_dir],
-                    ["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir],
-                    [
-                        "/tmp/pyronaut-test-resources-server",
-                        "stop",
-                        "--project-dir",
-                        resolved_project_dir,
-                        "--owner-token",
-                        ANY,
-                    ],
-                ],
-                executed,
-            )
+            self.assertEqual(4, len(executed))
+            self.assertEqual(["/tmp/pyronaut-install", "--project-dir"], executed[0][:2])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[0][2]))
+            self.assertEqual(["/tmp/pyronaut-processor", "--project-dir"], executed[1][:2])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[1][2]))
+            self.assertEqual(["/tmp/pyronaut-test-resources-server", "start", "--project-dir"], executed[2][:3])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[2][3]))
+            self.assertEqual(ANY, executed[2][5])
+            self.assertEqual(["/tmp/pyronaut-test-resources-server", "stop", "--project-dir"], executed[3][:3])
+            self.assertEqual(self._normalized_project_dir(resolved_project_dir), self._normalized_project_dir(executed[3][3]))
+            self.assertEqual(ANY, executed[3][5])
 
     def test_run_uses_provided_java_home_for_run_delegation(self):
         executed = []
@@ -823,13 +1154,13 @@ class OrchestratorTest(unittest.TestCase):
         )
 
         self.assertEqual(0, exit_code)
-        self._assert_test_resources_start(executed[0][0], "/tmp/demo")
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run"], executed[0][0])
         self.assertIsNone(executed[0][1])
-        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run"], executed[1][0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[1][0])
         self.assertIsNone(executed[1][1])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[2][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[2][0])
         self.assertIsNone(executed[2][1])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[3][0])
+        self._assert_test_resources_start(executed[3][0], "/tmp/demo")
         self.assertIsNone(executed[3][1])
         self.assertEqual(["/tmp/pyronaut-run", "--project-dir", "/tmp/demo"], executed[4][0])
         self.assertEqual("/tmp/graalvm-jdk-25", executed[4][1]["JAVA_HOME"])
@@ -1333,15 +1664,26 @@ class OrchestratorTest(unittest.TestCase):
 
     def test_tui_interactive_delegates_to_tamboui_command(self):
         executed = []
+        settings_file: Path | None = None
 
         def runner_with_env(command_line, env):
-            executed.append(command_line)
+            nonlocal settings_file
+            executed.append((command_line, env))
+            if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                assert settings_file is not None
+                settings_file.parent.mkdir(parents=True, exist_ok=True)
+                settings_file.write_text(
+                    "server.uri=http\\://localhost\\:18900\n"
+                    "server.access.token=token-abc\n",
+                    encoding="utf-8",
+                )
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             project_dir.mkdir(parents=True, exist_ok=True)
             expected_project_dir = project_dir.resolve()
+            settings_file = expected_project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
 
             exit_code = cli.run(
                 ["--tui", "--project-dir", str(project_dir)],
@@ -1351,7 +1693,8 @@ class OrchestratorTest(unittest.TestCase):
             )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(1, len(executed))
+        self.assertEqual(3, len(executed))
+        self._assert_test_resources_start(executed[0][0], str(expected_project_dir))
         self.assertEqual(
             [
                 "/tmp/pyronaut-tui",
@@ -1371,14 +1714,29 @@ class OrchestratorTest(unittest.TestCase):
                 "--test-executable",
                 "/tmp/pyronaut-test",
             ],
-            executed[0],
+            executed[1][0],
         )
+        self._assert_test_resources_stop(executed[2][0], str(expected_project_dir))
+        self.assertIsInstance(executed[1][1], dict)
+        assert isinstance(executed[1][1], dict)
+        self.assertIn("JAVA_HOME", executed[1][1])
+        self.assertIn("-Dmicronaut.test.resources.server.uri=http://localhost:18900", executed[1][1].get("JAVA_TOOL_OPTIONS", ""))
 
     def test_tui_interactive_test_mode_delegates_to_tamboui_command(self):
         executed = []
+        settings_file: Path | None = None
 
         def runner_with_env(command_line, env):
-            executed.append(command_line)
+            nonlocal settings_file
+            executed.append((command_line, env))
+            if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                assert settings_file is not None
+                settings_file.parent.mkdir(parents=True, exist_ok=True)
+                settings_file.write_text(
+                    "server.uri=http\\://localhost\\:18900\n"
+                    "server.access.token=token-abc\n",
+                    encoding="utf-8",
+                )
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1387,6 +1745,7 @@ class OrchestratorTest(unittest.TestCase):
             reports_dir = project_dir / "custom-reports"
             expected_project_dir = project_dir.resolve()
             expected_reports_dir = reports_dir.resolve()
+            settings_file = expected_project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
 
             exit_code = cli.run(
                 [
@@ -1403,7 +1762,8 @@ class OrchestratorTest(unittest.TestCase):
             )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(1, len(executed))
+        self.assertEqual(3, len(executed))
+        self._assert_test_resources_start(executed[0][0], str(expected_project_dir))
         self.assertEqual(
             [
                 "/tmp/pyronaut-tui",
@@ -1423,20 +1783,36 @@ class OrchestratorTest(unittest.TestCase):
                 "--test-executable",
                 "/tmp/pyronaut-test",
             ],
-            executed[0],
+            executed[1][0],
         )
+        self._assert_test_resources_stop(executed[2][0], str(expected_project_dir))
+        self.assertIsInstance(executed[1][1], dict)
+        assert isinstance(executed[1][1], dict)
+        self.assertIn("JAVA_HOME", executed[1][1])
+        self.assertIn("-Dmicronaut.test.resources.server.uri=http://localhost:18900", executed[1][1].get("JAVA_TOOL_OPTIONS", ""))
 
     def test_tui_interactive_without_project_dir_defaults_to_cwd(self):
         executed = []
+        settings_file: Path | None = None
 
         def runner_with_env(command_line, env):
-            executed.append(command_line)
+            nonlocal settings_file
+            executed.append((command_line, env))
+            if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                assert settings_file is not None
+                settings_file.parent.mkdir(parents=True, exist_ok=True)
+                settings_file.write_text(
+                    "server.uri=http\\://localhost\\:18900\n"
+                    "server.access.token=token-abc\n",
+                    encoding="utf-8",
+                )
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             project_dir.mkdir(parents=True, exist_ok=True)
             expected_project_dir = project_dir.resolve()
+            settings_file = expected_project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
             previous_cwd = Path.cwd()
             try:
                 os.chdir(project_dir)
@@ -1450,7 +1826,8 @@ class OrchestratorTest(unittest.TestCase):
                 os.chdir(previous_cwd)
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(1, len(executed))
+        self.assertEqual(3, len(executed))
+        self._assert_test_resources_start(executed[0][0], str(expected_project_dir))
         self.assertEqual(
             [
                 "/tmp/pyronaut-tui",
@@ -1470,8 +1847,13 @@ class OrchestratorTest(unittest.TestCase):
                 "--test-executable",
                 "/tmp/pyronaut-test",
             ],
-            executed[0],
+            executed[1][0],
         )
+        self._assert_test_resources_stop(executed[2][0], str(expected_project_dir))
+        self.assertIsInstance(executed[1][1], dict)
+        assert isinstance(executed[1][1], dict)
+        self.assertIn("JAVA_HOME", executed[1][1])
+        self.assertIn("-Dmicronaut.test.resources.server.uri=http://localhost:18900", executed[1][1].get("JAVA_TOOL_OPTIONS", ""))
 
     def test_tui_help_delegates_to_tui_executable_help(self):
         executed = []
@@ -1558,13 +1940,13 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
-        self._assert_test_resources_start(executed[0], str(expected_project_dir))
         self.assertEqual(
             ["/tmp/pyronaut-validate-config", "--project-dir", str(expected_project_dir), "--scenario", "test"],
-            executed[1],
+            executed[0],
         )
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(expected_project_dir)], executed[2])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(expected_project_dir)], executed[3])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(expected_project_dir)], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(expected_project_dir)], executed[2])
+        self._assert_test_resources_start(executed[3], str(expected_project_dir))
         self.assertEqual(["/tmp/pyronaut-test", "--project-dir", str(expected_project_dir)], executed[4])
         self._assert_test_resources_stop(executed[5], str(expected_project_dir))
         self.assertIn("tests: 1 passed, 1 failed, 0 skipped", stderr.getvalue())
@@ -1585,13 +1967,13 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
-        self._assert_test_resources_start(executed[0], "/tmp/demo")
         self.assertEqual(
             ["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run"],
-            executed[1],
+            executed[0],
         )
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[2])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[3])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[2])
+        self._assert_test_resources_start(executed[3], "/tmp/demo")
         self.assertEqual(["/tmp/pyronaut-run", "--project-dir", "/tmp/demo"], executed[4])
         self._assert_test_resources_stop(executed[5], "/tmp/demo")
 
@@ -1611,13 +1993,13 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
-        self._assert_test_resources_start(executed[0], "/tmp/demo")
         self.assertEqual(
             ["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test"],
-            executed[1],
+            executed[0],
         )
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[2])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[3])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[2])
+        self._assert_test_resources_start(executed[3], "/tmp/demo")
         self.assertEqual(["/tmp/pyronaut-test", "--project-dir", "/tmp/demo"], executed[4])
         self._assert_test_resources_stop(executed[5], "/tmp/demo")
 
@@ -1664,6 +2046,39 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertFalse(any("pyronaut-validate-config" in cmd[0] for cmd in executed))
         self.assertIn("[validation] skipped (--no-validate)", stderr.getvalue())
+
+    def test_test_resources_disabled_env_skips_server_orchestration(self):
+        executed = []
+        stderr = io.StringIO()
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        original = os.environ.get("PYRONAUT_TEST_RESOURCES_DISABLED")
+        os.environ["PYRONAUT_TEST_RESOURCES_DISABLED"] = "true"
+        try:
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["run", "--project-dir", "/tmp/demo"],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+        finally:
+            if original is None:
+                os.environ.pop("PYRONAUT_TEST_RESOURCES_DISABLED", None)
+            else:
+                os.environ["PYRONAUT_TEST_RESOURCES_DISABLED"] = original
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(4, len(executed))
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[2])
+        self.assertEqual(["/tmp/pyronaut-run", "--project-dir", "/tmp/demo"], executed[3])
+        self.assertFalse(any("pyronaut-test-resources-server" in cmd[0] for cmd in executed))
+        self.assertIn("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)", stderr.getvalue())
 
     def test_validate_config_delegates_to_validate_config_executable(self):
         executed = []
@@ -1720,7 +2135,10 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [["/tmp/pyronaut-test-resources-server", "start", "--project-dir", "/tmp/demo"]],
+            [
+                ["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"],
+                ["/tmp/pyronaut-test-resources-server", "start", "--project-dir", "/tmp/demo"],
+            ],
             executed,
         )
 

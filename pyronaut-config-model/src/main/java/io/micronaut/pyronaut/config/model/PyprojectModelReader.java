@@ -316,6 +316,7 @@ public final class PyprojectModelReader {
     }
 
     private static PyprojectModel.TestResources resolveTestResources(TomlParseResult parsed) {
+        boolean configured = parsed.getTable("tool.pyronaut.testResources") != null;
         Boolean enabled = readBoolean(parsed, "tool.pyronaut.testResources.enabled", true);
         String version = readString(parsed, "tool.pyronaut.testResources.version");
         Integer explicitPort = readInteger(parsed, "tool.pyronaut.testResources.explicitPort");
@@ -341,6 +342,7 @@ public final class PyprojectModelReader {
         List<String> leydenJvmArgs = readStringList(parsed, "tool.pyronaut.testResources.leydenJvmArgs");
 
         return new PyprojectModel.TestResources(
+            configured,
             enabled,
             version,
             explicitPort,

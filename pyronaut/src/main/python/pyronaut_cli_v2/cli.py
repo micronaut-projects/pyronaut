@@ -130,6 +130,8 @@ def run(
     project_dir = _extract_project_dir(forwarded_args)
 
     no_cache = _extract_no_cache(forwarded_args)
+    delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"run", "test"} else forwarded_args
+    auto_restart_mode = command == "run" and (process_runner is not None or (runner is None and runner_with_env is None))
 
     effective_java_home_provider = java_home_provider or _default_java_home_provider(
         runner=runner,
@@ -147,6 +149,14 @@ def run(
             java_home_provider=effective_java_home_provider,
         )
 
+    if command == "test-resources-server" and _is_test_resources_start(forwarded_args):
+        install_args = ["--project-dir", project_dir]
+        if no_cache:
+            install_args.append("--refresh")
+        install_code = _delegate("install", install_args, execute, locate)
+        if install_code != SUCCESS:
+            return install_code
+
     if debug_vm:
         port_ok, error = _check_port_available(5005)
         if not port_ok:
@@ -157,23 +167,34 @@ def run(
             return PRECONDITION_FAILED
 
     tr_session: _OwnedTestResourcesSession | None = None
+    test_resources_env_overrides: dict[str, str] | None = None
     try:
-        if command in {"run", "test"}:
+        test_resources_disabled = _test_resources_disabled()
+        if command in {"run", "test"} and not test_resources_disabled:
             tr_session = _OwnedTestResourcesSession(
                 project_dir=Path(project_dir).resolve(),
                 owner_command=shlex.join(["pyronaut", command, *forwarded_args]),
             )
-            tr_session.ensure_started(runner=execute, resolver=locate)
+        elif command in {"run", "test"} and test_resources_disabled:
+            sys.stderr.write("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)\n")
 
-        if command == "run" and (process_runner is not None or (runner is None and runner_with_env is None)):
+        if auto_restart_mode:
+            preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
+            if preflight_code != SUCCESS:
+                return preflight_code
+            if tr_session is not None:
+                tr_session.ensure_started(runner=execute, resolver=locate)
+                test_resources_env_overrides = tr_session.client_env_overrides()
             return _run_with_auto_restart(
                 project_dir=Path(project_dir),
-                run_args=forwarded_args,
+                run_args=delegated_args,
                 no_cache=no_cache,
                 execute=execute,
                 process_runner=process_runner or _spawn_subprocess,
                 resolver=locate,
                 debug_vm=debug_vm,
+                env_overrides=test_resources_env_overrides,
+                initial_preflight_done=True,
                 poll_interval=watch_poll_interval,
                 debounce_seconds=watch_debounce_seconds,
                 snapshotter=snapshotter or _snapshot_watched_files,
@@ -200,12 +221,17 @@ def run(
             if preflight_code != SUCCESS:
                 return preflight_code
 
+            if tr_session is not None:
+                tr_session.ensure_started(runner=execute, resolver=locate)
+                test_resources_env_overrides = tr_session.client_env_overrides()
+
         return _delegate(
             command,
-            forwarded_args,
+            delegated_args,
             execute,
             locate,
             debug_vm=debug_vm,
+            env_overrides=test_resources_env_overrides if command in {"run", "test"} else None,
             java_home_provider=effective_java_home_provider,
         )
     finally:
@@ -220,6 +246,7 @@ def _delegate(
     resolver: Callable[[str], str | None],
     *,
     debug_vm: bool = False,
+    env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
     executable_name = COMMAND_TO_EXECUTABLE[command]
@@ -237,6 +264,7 @@ def _delegate(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+    env = _merge_env_overrides(env, env_overrides)
     if debug_vm:
         env = _build_debug_vm_env(env)
     return runner(command_line, env)
@@ -450,6 +478,87 @@ def _read_pyproject_build_mode(project_dir: Path) -> str | None:
     raise ValueError("Invalid build mode in pyproject.toml. Use tool.pyronaut.build.mode = 'native' or 'jvm'")
 
 
+def _read_pyproject_test_resources_shared(project_dir: Path) -> bool:
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return False
+    try:
+        import tomllib
+    except Exception:
+        return False
+    try:
+        with pyproject.open("rb") as fp:
+            data = tomllib.load(fp)
+    except Exception:
+        return False
+
+    tool = data.get("tool")
+    if not isinstance(tool, dict):
+        return False
+    pyronaut = tool.get("pyronaut")
+    if not isinstance(pyronaut, dict):
+        return False
+    test_resources = pyronaut.get("testResources")
+    if not isinstance(test_resources, dict):
+        return False
+    shared_server = test_resources.get("sharedServer")
+    return isinstance(shared_server, bool) and shared_server
+
+
+def _parse_properties_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    parsed: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        parsed[key.strip()] = _unescape_properties_value(value.strip())
+    return parsed
+
+
+def _unescape_properties_value(value: str) -> str:
+    return (
+        value.replace("\\:", ":")
+        .replace("\\=", "=")
+        .replace("\\ ", " ")
+        .replace("\\\\", "\\")
+    )
+
+
+def _test_resources_client_env_from_settings(path: Path) -> dict[str, str] | None:
+    settings = _parse_properties_file(path)
+    if not settings:
+        return None
+
+    properties: dict[str, str] = {}
+    for key, value in settings.items():
+        if not key.startswith("server."):
+            continue
+        properties[f"micronaut.test.resources.{key}"] = value
+
+    if not properties:
+        return None
+
+    java_tool_options = " ".join(f"-D{k}={_escape_java_tool_option_value(v)}" for k, v in sorted(properties.items()))
+    existing = os.environ.get("JAVA_TOOL_OPTIONS", "").strip()
+    merged = f"{existing} {java_tool_options}".strip() if existing else java_tool_options
+    return {"JAVA_TOOL_OPTIONS": merged}
+
+
+def _merge_env_overrides(base_env: dict[str, str] | None, env_overrides: dict[str, str] | None) -> dict[str, str] | None:
+    if not env_overrides:
+        return base_env
+    merged = dict(base_env or {})
+    merged.update(env_overrides)
+    return merged
+
+
+def _escape_java_tool_option_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace(" ", "\\ ")
+
+
 def _extract_main_class(args: Sequence[str]) -> str:
     default_main = "pyronaut_application.PyronautMain"
     for index, token in enumerate(args):
@@ -523,6 +632,8 @@ def _run_with_auto_restart(
     resolver: Callable[[str], str | None],
     *,
     debug_vm: bool,
+    env_overrides: dict[str, str] | None,
+    initial_preflight_done: bool,
     poll_interval: float,
     debounce_seconds: float,
     snapshotter: Callable[[Path], tuple[tuple[str, int, int], ...]],
@@ -539,9 +650,12 @@ def _run_with_auto_restart(
     snapshot = snapshotter(project_root)
 
     while True:
-        preflight_code = _run_preflight(str(project_root), no_cache, execute, resolver)
-        if preflight_code != SUCCESS:
-            return preflight_code
+        if initial_preflight_done:
+            initial_preflight_done = False
+        else:
+            preflight_code = _run_preflight(str(project_root), no_cache, execute, resolver)
+            if preflight_code != SUCCESS:
+                return preflight_code
 
         executable_path = resolver(COMMAND_TO_EXECUTABLE["run"])
         if executable_path is None:
@@ -554,6 +668,7 @@ def _run_with_auto_restart(
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return PRECONDITION_FAILED
+        env = _merge_env_overrides(env, env_overrides)
         if debug_vm:
             command_line = [*command_line, "--debug-vm"]
             env = _build_debug_vm_env(env)
@@ -622,6 +737,7 @@ def _run_with_auto_restart(
                     print("Failed to refresh artifacts for restart.", file=sys.stderr)
                     return INTERNAL_ERROR
                 if refresh_code != SUCCESS:
+                    print(f"Failed to refresh artifacts for restart (exit code {refresh_code}).", file=sys.stderr)
                     return int(refresh_code)
                 snapshot = next_snapshot
                 break
@@ -688,16 +804,16 @@ def _default_java_home_provider(
 
 
 def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
-    if command not in {"run", "test", "build"}:
+    if command not in {"run", "test", "build", "tui"}:
         return None
+    env = dict(os.environ)
     if java_home_provider is None:
-        return None
+        return env
 
     java_home = java_home_provider()
     if java_home is None or not java_home.strip():
         raise RuntimeError("Unable to locate or provision compatible GraalVM JDK (requires JDK 25+)")
 
-    env = dict(os.environ)
     env["JAVA_HOME"] = java_home
     java_bin = str(Path(java_home) / "bin")
     path_value = env.get("PATH", "")
@@ -1059,6 +1175,19 @@ def _extract_no_cache(args: Sequence[str]) -> bool:
     return False
 
 
+def _is_test_resources_start(args: Sequence[str]) -> bool:
+    return len(args) > 0 and args[0].strip().lower() == "start"
+
+
+def _strip_no_cache_flag(args: Sequence[str]) -> list[str]:
+    filtered: list[str] = []
+    for token in args:
+        if token == "--no-cache" or token.startswith("--no-cache="):
+            continue
+        filtered.append(token)
+    return filtered
+
+
 def _extract_no_validate(args: Sequence[str]) -> bool:
     return any(token == "--no-validate" for token in args)
 
@@ -1142,6 +1271,13 @@ def _delegation_trace_enabled() -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _test_resources_disabled() -> bool:
+    value = _read_env("PYRONAUT_TEST_RESOURCES_DISABLED")
+    if value is None:
+        return False
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
 def _is_supported_platform(platform_name: str) -> bool:
     return platform_name.startswith("linux") or platform_name == "darwin"
 
@@ -1217,11 +1353,14 @@ class _OwnedTestResourcesSession:
     def __init__(self, *, project_dir: Path, owner_command: str) -> None:
         self._project_dir = project_dir
         self._session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+        self._settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
         self._owner_pid = os.getpid()
         self._owner_command = owner_command
         self._owner_token = self._new_owner_token()
+        self._shared_server = _read_pyproject_test_resources_shared(project_dir)
         self._started = False
         self._shutdown_registered = False
+        self._client_env_overrides: dict[str, str] | None = None
 
     @staticmethod
     def _new_owner_token() -> str:
@@ -1230,6 +1369,7 @@ class _OwnedTestResourcesSession:
     def ensure_started(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
         cache_dir = self._project_dir / "__pyronaut__"
         cache_dir.mkdir(parents=True, exist_ok=True)
+        self._remove_session_file()
 
         sys.stderr.write("[test-resources] start owned server\n")
         self._delegate_test_resources_server(
@@ -1244,12 +1384,21 @@ class _OwnedTestResourcesSession:
             resolver=resolver,
         )
 
-        self._persist_session(started_at=time.time())
+        if self._shared_server:
+            sys.stderr.write("[test-resources] shared-server mode: will not stop server on session exit\n")
+        else:
+            self._persist_session(started_at=time.time())
         self._started = True
+        self._client_env_overrides = _test_resources_client_env_from_settings(self._settings_file)
         self._register_shutdown(runner=runner, resolver=resolver)
 
     def stop_if_owned(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
         if not self._started:
+            return
+
+        if self._shared_server:
+            sys.stderr.write("[test-resources] stop skipped (shared server mode)\n")
+            self._remove_session_file()
             return
 
         if not self._session_matches_owner():
@@ -1268,6 +1417,12 @@ class _OwnedTestResourcesSession:
             runner=runner,
             resolver=resolver,
         )
+        self._remove_session_file()
+
+    def client_env_overrides(self) -> dict[str, str] | None:
+        if self._client_env_overrides is None:
+            return None
+        return dict(self._client_env_overrides)
 
     def _register_shutdown(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
         if self._shutdown_registered:
@@ -1304,6 +1459,12 @@ class _OwnedTestResourcesSession:
             and data.get("ownerCommand") == self._owner_command
         )
 
+    def _remove_session_file(self) -> None:
+        try:
+            self._session_file.unlink(missing_ok=True)
+        except Exception:
+            return
+
     def _delegate_test_resources_server(
         self,
         args: list[str],
@@ -1317,7 +1478,15 @@ class _OwnedTestResourcesSession:
         command_line = [executable_path, *args]
         if _delegation_trace_enabled():
             print(shlex.join(command_line), file=sys.stderr)
-        return int(runner(command_line, None))
+        removed_server_port = os.environ.pop("MICRONAUT_SERVER_PORT", None)
+        removed_server_host = os.environ.pop("MICRONAUT_SERVER_HOST", None)
+        try:
+            return int(runner(command_line, None))
+        finally:
+            if removed_server_port is not None:
+                os.environ["MICRONAUT_SERVER_PORT"] = removed_server_port
+            if removed_server_host is not None:
+                os.environ["MICRONAUT_SERVER_HOST"] = removed_server_host
 
 
 def _json_dumps(data: object) -> str:
@@ -1344,6 +1513,24 @@ def _run_tamboui_tui(
     tui_executable = _resolve_required_tui_executable(resolver)
     if tui_executable is None:
         return PRECONDITION_FAILED
+
+    try:
+        base_env = _build_java_home_env("tui", _ensure_graalvm_java_home)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+
+    tr_session: _OwnedTestResourcesSession | None = None
+    test_resources_env_overrides: dict[str, str] | None = None
+    if initial_mode in {"run", "test"} and not _test_resources_disabled():
+        tr_session = _OwnedTestResourcesSession(
+            project_dir=project_dir.resolve(),
+            owner_command=shlex.join(["pyronaut", "--tui", f"--{initial_mode}", "--project-dir", str(project_dir)]),
+        )
+        tr_session.ensure_started(runner=runner, resolver=resolver)
+        test_resources_env_overrides = tr_session.client_env_overrides()
+    elif initial_mode in {"run", "test"} and _test_resources_disabled():
+        sys.stderr.write("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)\n")
 
     delegated = {
         "install": resolver("pyronaut-install"),
@@ -1378,7 +1565,11 @@ def _run_tamboui_tui(
         command_line.append("--trace-delegation")
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
-    return runner(command_line, None)
+    try:
+        return runner(command_line, _merge_env_overrides(base_env, test_resources_env_overrides))
+    finally:
+        if tr_session is not None:
+            tr_session.stop_if_owned(runner=runner, resolver=resolver)
 
 
 def _delegate_to_tui_binary(
