@@ -419,6 +419,37 @@ sharedServer = true
         self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
 
+    def test_external_test_resources_server_is_not_claimed_or_stopped(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "external"
+            settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            settings_file.write_text(
+                "server.uri=http\\://localhost\\:61234\n"
+                "server.access.token=external-token\n",
+                encoding="utf-8",
+            )
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            exit_code = cli.run(
+                ["run", "--project-dir", str(project_dir)],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir)], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[2])
+        self.assertEqual(["/tmp/pyronaut-run", "--project-dir", str(project_dir)], executed[3])
+
     def test_test_resources_settings_are_propagated_to_run_via_java_tool_options(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:

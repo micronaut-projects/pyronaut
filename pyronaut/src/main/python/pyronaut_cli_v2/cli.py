@@ -204,14 +204,6 @@ def run(
             )
 
         if command in {"run", "test"}:
-            preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
-            if preflight_code != SUCCESS:
-                return preflight_code
-
-            if tr_session is not None:
-                tr_session.ensure_started(runner=execute, resolver=locate)
-                test_resources_env_overrides = tr_session.client_env_overrides()
-
             if no_validate:
                 sys.stderr.write("[validation] skipped (--no-validate)\n")
             else:
@@ -225,6 +217,14 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
+
+            preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
+            if preflight_code != SUCCESS:
+                return preflight_code
+
+            if tr_session is not None:
+                tr_session.ensure_started(runner=execute, resolver=locate)
+                test_resources_env_overrides = tr_session.client_env_overrides()
 
         return _delegate(
             command,
@@ -1404,6 +1404,13 @@ class _OwnedTestResourcesSession:
     def ensure_started(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
         cache_dir = self._project_dir / "__pyronaut__"
         cache_dir.mkdir(parents=True, exist_ok=True)
+
+        if self._should_attach_to_external_server():
+            sys.stderr.write("[test-resources] attach external server\n")
+            self._started = True
+            self._client_env_overrides = _test_resources_client_env_from_settings(self._settings_file)
+            return
+
         self._remove_session_file()
 
         sys.stderr.write("[test-resources] start owned server\n")
@@ -1499,6 +1506,16 @@ class _OwnedTestResourcesSession:
             self._session_file.unlink(missing_ok=True)
         except Exception:
             return
+
+    def _should_attach_to_external_server(self) -> bool:
+        if self._shared_server:
+            return False
+        if self._session_file.exists():
+            return False
+        if not self._settings_file.exists():
+            return False
+        env = _test_resources_client_env_from_settings(self._settings_file)
+        return env is not None
 
     def _delegate_test_resources_server(
         self,
