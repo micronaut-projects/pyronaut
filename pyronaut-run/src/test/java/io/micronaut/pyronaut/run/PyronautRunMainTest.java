@@ -8,7 +8,6 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -25,18 +24,18 @@ class PyronautRunMainTest {
     void invokesConfiguredMainClass() throws Exception {
         Path project = tempDir.resolve("project");
         Path classes = project.resolve("__pyronaut__/classes");
-        Path cache = project.resolve("__pyronaut__");
         Files.createDirectories(classes);
-        Files.createDirectories(cache);
-        String classpath = System.getProperty("java.class.path", "");
-        Files.write(
-            cache.resolve("resolved-runtime-dependencies"),
-            Arrays.stream(classpath.split(System.getProperty("path.separator"))).toList(),
-            StandardCharsets.UTF_8
-        );
 
         Path output = project.resolve("invocation.txt");
-        PyronautRunMain runMain = new PyronautRunMain();
+        PyronautRunMain runMain = new PyronautRunMain(
+            className -> {
+                if (SampleApp.class.getName().equals(className)) {
+                    return SampleApp.class;
+                }
+                return Class.forName(className);
+            },
+            (loadedClass, resolvedClassesDir, appArgs) -> false
+        );
         runMain.projectDir = project;
         runMain.mainClass = SampleApp.class.getName();
         runMain.appArgs = java.util.List.of(output.toString());
@@ -46,9 +45,10 @@ class PyronautRunMainTest {
     }
 
     @Test
-    void failsWhenRuntimeManifestMissing() throws Exception {
-        Path project = tempDir.resolve("project-missing-manifest");
+    void failsWhenProcessedClassesDirectoryMissing() throws Exception {
+        Path project = tempDir.resolve("project-missing-classes");
         Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Files.delete(project.resolve("__pyronaut__/classes"));
 
         PyronautRunMain runMain = new PyronautRunMain();
         runMain.projectDir = project;
@@ -66,19 +66,14 @@ class PyronautRunMainTest {
     void missingDefaultMainClassWithoutFallbackReturnsActionableErrorWithoutStacktraceNoise() throws Exception {
         Path project = tempDir.resolve("project-missing-default-main");
         Path classes = project.resolve("__pyronaut__/classes");
-        Path cache = project.resolve("__pyronaut__");
         Files.createDirectories(classes);
-        Files.createDirectories(cache);
 
-        Path fakeRuntimePath = tempDir.resolve("fake-runtime");
-        Files.createDirectories(fakeRuntimePath);
-        Files.writeString(
-            cache.resolve("resolved-runtime-dependencies"),
-            fakeRuntimePath.toString() + System.lineSeparator(),
-            StandardCharsets.UTF_8
+        PyronautRunMain runMain = new PyronautRunMain(
+            className -> {
+                throw new ClassNotFoundException(className);
+            },
+            (loadedClass, resolvedClassesDir, appArgs) -> false
         );
-
-        PyronautRunMain runMain = new PyronautRunMain();
         runMain.projectDir = project;
         runMain.mainClass = "pyronaut_application.PyronautMain";
 
@@ -92,7 +87,7 @@ class PyronautRunMainTest {
             System.setErr(originalErr);
         }
 
-        String stderr = errBuffer.toString(StandardCharsets.UTF_8);
+        String stderr = errBuffer.toString();
         assertTrue(stderr.contains("Missing generated main class"));
         assertTrue(stderr.contains("reflective Micronaut startup is unavailable"));
         assertFalse(stderr.contains("ClassNotFoundException"));

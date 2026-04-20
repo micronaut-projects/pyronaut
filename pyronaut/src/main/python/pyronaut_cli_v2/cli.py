@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import shlex
 import shutil
 import subprocess
@@ -8,10 +9,12 @@ import sys
 import socket
 import os
 import platform
+import re
 import tarfile
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Callable, Protocol, Sequence
@@ -30,6 +33,15 @@ COMMAND_TO_EXECUTABLE = {
     "test": "pyronaut-test",
     "validate-config": "pyronaut-validate-config",
     "test-resources-server": "pyronaut-test-resources-server",
+}
+
+JAVA_MAIN_BY_COMMAND = {
+    "run": "io.micronaut.pyronaut.run.PyronautRunMain",
+    "test": "io.micronaut.pyronaut.test.PyronautTestMain",
+}
+JAVA_DELEGATE_JAR_ENV = {
+    "run": "PYRONAUT_RUN_JAR",
+    "test": "PYRONAUT_TEST_JAR",
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
 
@@ -250,6 +262,17 @@ def _delegate(
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    if command in {"run", "test"}:
+        return _delegate_via_java(
+            command,
+            args,
+            runner,
+            resolver,
+            debug_vm=debug_vm,
+            env_overrides=env_overrides,
+            java_home_provider=java_home_provider,
+        )
+
     executable_name = COMMAND_TO_EXECUTABLE[command]
     executable_path = resolver(executable_name)
     if executable_path is None:
@@ -272,6 +295,135 @@ def _delegate(
     if debug_vm:
         env = _build_debug_vm_env(env)
     return runner(command_line, env)
+
+
+def _delegate_via_java(
+    command: str,
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool = False,
+    env_overrides: dict[str, str] | None = None,
+    java_home_provider: JavaHomeProvider | None = None,
+) -> int:
+    try:
+        command_line, env = _build_java_delegate_invocation(
+            command,
+            args,
+            resolver,
+            debug_vm=debug_vm,
+            env_overrides=env_overrides,
+            java_home_provider=java_home_provider,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    return runner(command_line, env)
+
+
+def _build_java_delegate_invocation(
+    command: str,
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool = False,
+    env_overrides: dict[str, str] | None = None,
+    java_home_provider: JavaHomeProvider | None = None,
+) -> tuple[list[str], dict[str, str] | None]:
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    env = _build_java_home_env(command, java_home_provider)
+    java_exec = _resolve_java_executable(env)
+    classpath = _build_delegate_classpath(command, project_dir, resolver)
+
+    command_line = [java_exec, "-cp", classpath, JAVA_MAIN_BY_COMMAND[command], *args]
+    env = _merge_env_overrides(env, env_overrides)
+    if debug_vm:
+        command_line = [*command_line, "--debug-vm"]
+        env = _build_debug_vm_env(env)
+    return command_line, env
+
+
+def _resolve_java_executable(env: dict[str, str] | None) -> str:
+    if env is not None:
+        java_home = env.get("JAVA_HOME")
+        if java_home:
+            java_bin = Path(java_home) / "bin" / "java"
+            if java_bin.exists():
+                return str(java_bin)
+    resolved = shutil.which("java", path=(env or os.environ).get("PATH"))
+    if resolved is None:
+        raise RuntimeError("Unable to locate java executable for delegated run/test launch")
+    return resolved
+
+
+def _read_manifest_entries(file: Path) -> list[str]:
+    if not file.exists():
+        raise RuntimeError(f"Missing classpath manifest: {file}. Run pyronaut install first.")
+    entries: list[str] = []
+    for line in file.read_text(encoding="utf-8").splitlines():
+        value = line.strip()
+        if value:
+            entries.append(value)
+    return entries
+
+
+def _delegate_lib_entries(executable_path: str) -> list[str]:
+    path = Path(executable_path).resolve()
+    if path.suffix == ".jar":
+        return [str(path)]
+    lib_dir = path.parent.parent / "lib"
+    jars = sorted(lib_dir.glob("*.jar"))
+    if jars:
+        return [str(jar) for jar in jars]
+    command_name = path.name
+    raise RuntimeError(f"Unable to resolve delegate jars for {command_name} from {lib_dir}")
+
+
+def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
+    cache_dir = project_dir / "__pyronaut__"
+    if command == "run":
+        entries = _read_manifest_entries(cache_dir / "resolved-runtime-dependencies")
+        classes_dir = cache_dir / "classes"
+        if not classes_dir.is_dir():
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+        entries.append(str(classes_dir))
+    else:
+        entries = _read_manifest_entries(cache_dir / "resolved-test-dependencies")
+        for extra in (cache_dir / "resolved-runtime-dependencies", cache_dir / "resolved-build-dependencies"):
+            if extra.exists():
+                entries.extend(_read_manifest_entries(extra))
+        test_classes_dir = cache_dir / "test-classes"
+        classes_dir = cache_dir / "classes"
+        if test_classes_dir.is_dir():
+            entries.append(str(test_classes_dir))
+        elif classes_dir.is_dir():
+            entries.append(str(classes_dir))
+        else:
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+
+    config_dir = project_dir / "config"
+    if config_dir.is_dir():
+        entries.append(str(config_dir.resolve()))
+
+    override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
+    if override_jar:
+        entries.extend([value for value in override_jar.split(os.pathsep) if value])
+    else:
+        delegate_executable = resolver(COMMAND_TO_EXECUTABLE[command])
+        if delegate_executable is None:
+            raise RuntimeError(f"Missing delegated executable: {COMMAND_TO_EXECUTABLE[command]}")
+        entries.extend(_delegate_lib_entries(delegate_executable))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if entry not in seen:
+            deduped.append(entry)
+            seen.add(entry)
+    return os.pathsep.join(deduped)
 
 
 def _run_preflight(
@@ -312,6 +464,12 @@ def _run_build(
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
+    try:
+        project_name, project_version = _read_pyproject_project_metadata(project_dir)
+        main_class = _extract_main_class(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
 
     if no_validate:
         sys.stderr.write("[validation] skipped (--no-validate)\n")
@@ -326,11 +484,16 @@ def _run_build(
         if validation_code != SUCCESS:
             return validation_code
 
-    if mode == "native":
-        preflight = _run_preflight(str(project_dir), no_cache, runner, resolver)
-        if preflight != SUCCESS:
-            return preflight
+    preflight = _run_preflight(str(project_dir), no_cache, runner, resolver)
+    if preflight != SUCCESS:
+        return preflight
 
+    dist_dir = project_dir / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    _remove_existing_built_wheels(dist_dir, project_name)
+    python_exec = _read_env("PYRONAUT_PYTHON_EXECUTABLE") or sys.executable or "python3"
+
+    if mode == "native":
         try:
             env = _build_non_test_resources_env("build", java_home_provider)
         except RuntimeError as exc:
@@ -339,16 +502,12 @@ def _run_build(
 
         try:
             _build_native_classpath(project_dir)
-            main_class = _extract_main_class(args)
-        except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            return USAGE_ERROR
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return PRECONDITION_FAILED
         output_dir = project_dir / "__pyronaut__" / "native"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_binary = output_dir / "application"
+        output_binary = output_dir / project_name
         delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
         if delegate_executable is None:
             print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
@@ -368,32 +527,292 @@ def _run_build(
         if _delegation_trace_enabled():
             print(shlex.join(native_command), file=sys.stderr)
         exit_code = runner(native_command, env)
-        if exit_code == SUCCESS:
-            print(f"Native build complete: {output_binary}")
-            print(f"Run it with: {output_binary}")
-        return exit_code
+        if exit_code != SUCCESS:
+            return exit_code
+        if not output_binary.exists():
+            print(f"Native build reported success but no binary was produced at: {output_binary}", file=sys.stderr)
+            return PRECONDITION_FAILED
+        with tempfile.TemporaryDirectory(prefix="pyronaut-build-native-") as staging_root:
+            staging_dir = Path(staging_root) / "stage"
+            _prepare_build_wheel_staging(
+                project_dir=project_dir,
+                staging_dir=staging_dir,
+                project_name=project_name,
+                project_version=project_version,
+                mode="native",
+                main_class=main_class,
+            )
+            wheel_command = [
+                python_exec,
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "--wheel-dir",
+                str(dist_dir),
+                str(staging_dir),
+            ]
+            if _delegation_trace_enabled():
+                print(shlex.join(wheel_command), file=sys.stderr)
+            wheel_exit = runner(wheel_command, None)
+        if wheel_exit == SUCCESS:
+            print(f"Native wheel build complete. Artifacts are in: {dist_dir}")
+            print(f"Install with: {python_exec} -m pip install {dist_dir}/*.whl")
+            print(f"Native binary staged from: {output_binary}")
+        return wheel_exit
 
-    dist_dir = project_dir / "dist"
-    dist_dir.mkdir(parents=True, exist_ok=True)
-    python_exec = _read_env("PYRONAUT_PYTHON_EXECUTABLE") or sys.executable or "python3"
-    wheel_command = [
-        python_exec,
-        "-m",
-        "pip",
-        "wheel",
-        "--no-deps",
-        "--wheel-dir",
-        str(dist_dir),
-        str(project_dir),
-    ]
-    if _delegation_trace_enabled():
-        print(shlex.join(wheel_command), file=sys.stderr)
-    exit_code = runner(wheel_command, None)
+    with tempfile.TemporaryDirectory(prefix="pyronaut-build-jvm-") as staging_root:
+        staging_dir = Path(staging_root) / "stage"
+        _prepare_build_wheel_staging(
+            project_dir=project_dir,
+            staging_dir=staging_dir,
+            project_name=project_name,
+            project_version=project_version,
+            mode="jvm",
+            main_class=main_class,
+        )
+        wheel_command = [
+            python_exec,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--wheel-dir",
+            str(dist_dir),
+            str(staging_dir),
+        ]
+        if _delegation_trace_enabled():
+            print(shlex.join(wheel_command), file=sys.stderr)
+        exit_code = runner(wheel_command, None)
     if exit_code == SUCCESS:
         print(f"Wheel build complete. Artifacts are in: {dist_dir}")
         print(f"Install with: {python_exec} -m pip install {dist_dir}/*.whl")
-        print("Run the project with: pyronaut run --project-dir " + str(project_dir))
+        print(f"Run the project with: {project_name}")
     return exit_code
+
+
+def _read_pyproject_project_metadata(project_dir: Path) -> tuple[str, str]:
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return project_dir.name, "0.1.0"
+    try:
+        import tomllib
+    except Exception:
+        return project_dir.name, "0.1.0"
+    try:
+        with pyproject.open("rb") as fp:
+            data = tomllib.load(fp)
+    except Exception:
+        return project_dir.name, "0.1.0"
+
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return project_dir.name, "0.1.0"
+    name = project.get("name")
+    version = project.get("version")
+    resolved_name = name.strip() if isinstance(name, str) and name.strip() else project_dir.name
+    resolved_version = version.strip() if isinstance(version, str) and version.strip() else "0.1.0"
+    return resolved_name, resolved_version
+
+
+def _prepare_build_wheel_staging(
+    *,
+    project_dir: Path,
+    staging_dir: Path,
+    project_name: str,
+    project_version: str,
+    mode: str,
+    main_class: str,
+) -> None:
+    if mode not in {"jvm", "native"}:
+        raise ValueError(f"Unsupported build wheel staging mode: {mode}")
+
+    launcher_package = _launcher_package_name(project_name)
+    launcher_dir = staging_dir / launcher_package
+    app_dir = launcher_dir / "app"
+    pyronaut_dir = app_dir / "__pyronaut__"
+
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+    pyronaut_dir.mkdir(parents=True, exist_ok=True)
+
+    (launcher_dir / "__init__.py").write_text("", encoding="utf-8")
+    _write_build_setup_files(
+        staging_dir=staging_dir,
+        launcher_package=launcher_package,
+        project_name=project_name,
+        project_version=project_version,
+        native=(mode == "native"),
+    )
+    _copytree_if_exists(project_dir / "config", app_dir / "config")
+
+    if mode == "native":
+        binary_name = project_name
+        binary_path = project_dir / "__pyronaut__" / "native" / binary_name
+        if not binary_path.exists():
+            raise RuntimeError(f"Missing native binary for packaging: {binary_path}")
+        (pyronaut_dir / "native").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary_path, pyronaut_dir / "native" / binary_name)
+        (pyronaut_dir / "native" / binary_name).chmod(0o755)
+        launcher_code = _native_build_launcher_code(binary_name)
+    else:
+        classes_dir = project_dir / "__pyronaut__" / "classes"
+        runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+        if not classes_dir.is_dir():
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+        if not runtime_manifest.exists():
+            raise RuntimeError(f"Missing classpath manifest: {runtime_manifest}. Run pyronaut install first.")
+        _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+        _copytree_if_exists(project_dir / "__pyronaut__" / "m2-repository", pyronaut_dir / "m2-repository")
+        _write_relative_manifest(
+            source=runtime_manifest,
+            target=pyronaut_dir / "resolved-runtime-dependencies",
+            project_dir=project_dir,
+        )
+        launcher_code = _jvm_build_launcher_code(main_class)
+
+    (launcher_dir / "launcher.py").write_text(launcher_code, encoding="utf-8")
+
+
+def _write_build_setup_files(
+    *,
+    staging_dir: Path,
+    launcher_package: str,
+    project_name: str,
+    project_version: str,
+    native: bool,
+) -> None:
+    pyproject = """\
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+"""
+    setup_lines = [
+        "from setuptools import setup",
+    ]
+    if native:
+        setup_lines.extend(
+            [
+                "from wheel.bdist_wheel import bdist_wheel as _bdist_wheel",
+                "",
+                "class bdist_wheel(_bdist_wheel):",
+                "    def finalize_options(self):",
+                "        super().finalize_options()",
+                "        self.root_is_pure = False",
+                "",
+            ]
+        )
+    setup_lines.extend(
+        [
+            "setup(",
+            f"    name={project_name!r},",
+            f"    version={project_version!r},",
+            f"    packages=[{launcher_package!r}],",
+            "    include_package_data=True,",
+            "    zip_safe=False,",
+            f"    entry_points={{'console_scripts': [{project_name!r} + '=' + {launcher_package!r} + '.launcher:main']}},",
+            *(["    cmdclass={'bdist_wheel': bdist_wheel},"] if native else []),
+            ")",
+            "",
+        ]
+    )
+    manifest = f"recursive-include {launcher_package}/app *\n"
+
+    (staging_dir / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    (staging_dir / "setup.py").write_text("\n".join(setup_lines), encoding="utf-8")
+    (staging_dir / "MANIFEST.in").write_text(manifest, encoding="utf-8")
+
+
+def _copytree_if_exists(source: Path, target: Path) -> None:
+    if source.exists():
+        shutil.copytree(source, target, dirs_exist_ok=True)
+
+
+def _write_relative_manifest(*, source: Path, target: Path, project_dir: Path) -> None:
+    project_root = project_dir.resolve()
+    rewritten: list[str] = []
+    for entry in _read_manifest_entries(source):
+        path = Path(entry)
+        resolved = path.resolve() if path.is_absolute() else (project_root / path).resolve()
+        with contextlib.suppress(ValueError):
+            rewritten.append(str(resolved.relative_to(project_root)))
+            continue
+        rewritten.append(entry)
+    target.write_text("".join(f"{entry}\n" for entry in rewritten), encoding="utf-8")
+
+
+def _launcher_package_name(project_name: str) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z_]", "_", project_name.strip().replace("-", "_"))
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if not normalized:
+        normalized = "pyronaut_app"
+    if normalized[0].isdigit():
+        normalized = f"pyronaut_{normalized}"
+    return f"{normalized}_launcher"
+
+
+def _remove_existing_built_wheels(dist_dir: Path, project_name: str) -> None:
+    prefix = re.sub(r"[-_.]+", "_", project_name.strip()).strip("_")
+    if not prefix:
+        return
+    for wheel in dist_dir.glob(f"{prefix}-*.whl"):
+        with contextlib.suppress(OSError):
+            wheel.unlink()
+
+
+def _jvm_build_launcher_code(main_class: str) -> str:
+    return f"""\
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).resolve().parent / "app"
+MAIN_CLASS = {main_class!r}
+
+
+def main() -> None:
+    try:
+        from pyronaut_cli_v2 import cli as pyronaut_cli
+    except Exception as exc:
+        raise SystemExit("Pyronaut runtime is required to launch this JVM build: " + str(exc))
+
+    os.chdir(PROJECT_DIR)
+    try:
+        command_line, env = pyronaut_cli._build_java_delegate_invocation(
+            "run",
+            ["--project-dir", str(PROJECT_DIR), "--main-class", MAIN_CLASS, *sys.argv[1:]],
+            pyronaut_cli._resolve_executable,
+            java_home_provider=pyronaut_cli._ensure_graalvm_java_home,
+        )
+    except RuntimeError as exc:
+        raise SystemExit(str(exc))
+
+    merged_env = pyronaut_cli._strip_test_resources_java_tool_options(dict(os.environ)) or dict(os.environ)
+    if env:
+        merged_env.update(env)
+    raise SystemExit(subprocess.run(command_line, env=merged_env).returncode)
+"""
+
+
+def _native_build_launcher_code(binary_name: str) -> str:
+    return f"""\
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).resolve().parent / "app"
+BINARY = PROJECT_DIR / "__pyronaut__" / "native" / {binary_name!r}
+
+
+def main() -> None:
+    if not BINARY.exists():
+        raise SystemExit(f"Error: binary '{{BINARY.name}}' not found")
+    raise SystemExit(subprocess.run([str(BINARY), *sys.argv[1:]]).returncode)
+"""
 
 
 def _run_lifecycle_validation(
@@ -694,21 +1113,18 @@ def _run_with_auto_restart(
             if preflight_code != SUCCESS:
                 return preflight_code
 
-        executable_path = resolver(COMMAND_TO_EXECUTABLE["run"])
-        if executable_path is None:
-            print("Missing delegated executable: pyronaut-run", file=sys.stderr)
-            return PRECONDITION_FAILED
-
-        command_line = [executable_path, *run_args]
         try:
-            env = _build_java_home_env("run", java_home_provider)
+            command_line, env = _build_java_delegate_invocation(
+                "run",
+                run_args,
+                resolver,
+                debug_vm=debug_vm,
+                env_overrides=env_overrides,
+                java_home_provider=java_home_provider,
+            )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return PRECONDITION_FAILED
-        env = _merge_env_overrides(env, env_overrides)
-        if debug_vm:
-            command_line = [*command_line, "--debug-vm"]
-            env = _build_debug_vm_env(env)
 
         if _delegation_trace_enabled():
             print(shlex.join(command_line), file=sys.stderr)
@@ -1515,7 +1931,12 @@ class _OwnedTestResourcesSession:
         if not self._settings_file.exists():
             return False
         env = _test_resources_client_env_from_settings(self._settings_file)
-        return env is not None
+        if env is None:
+            return False
+        if _test_resources_server_available(self._settings_file):
+            return True
+        sys.stderr.write("[test-resources] stale external settings detected; starting owned server instead\n")
+        return False
 
     def _delegate_test_resources_server(
         self,
@@ -1551,6 +1972,28 @@ def _json_loads(data: str):
     import json
 
     return json.loads(data)
+
+
+def _test_resources_server_available(settings_path: Path) -> bool:
+    settings = _parse_properties_file(settings_path)
+    server_uri = settings.get("server.uri")
+    if not server_uri:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(server_uri)
+    except Exception:
+        return False
+    host = parsed.hostname
+    port = parsed.port
+    if host is None:
+        return False
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 def _run_tamboui_tui(

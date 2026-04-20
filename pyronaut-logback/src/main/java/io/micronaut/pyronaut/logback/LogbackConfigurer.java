@@ -133,6 +133,28 @@ public final class LogbackConfigurer {
     }
 
     /**
+     * Initialize logback with a minimal fallback root logger level for bootstrap phases.
+     * Later explicit {@link #configure(Map)} calls are expected to replace this configuration.
+     *
+     * @param rootLevel the temporary root logger level to apply
+     * @return The logback context.
+     */
+    public static @NonNull LoggerContext initializeFallback(@NonNull Level rootLevel) {
+        LoggerContext lc = initialize();
+        APPENDERS.clear();
+        FORMATTERS.clear();
+
+        addDefaultConsoleAppender(lc);
+
+        Logger rootLogger = lc.getLogger(Logger.ROOT_LOGGER_NAME);
+        rootLogger.setLevel(rootLevel);
+        for (Appender<ILoggingEvent> appender : APPENDERS.values()) {
+            rootLogger.addAppender(appender);
+        }
+        return lc;
+    }
+
+    /**
      * Add a formatter configuration.
      */
     private static void addFormatter(String name, Map<String, Object> config) {

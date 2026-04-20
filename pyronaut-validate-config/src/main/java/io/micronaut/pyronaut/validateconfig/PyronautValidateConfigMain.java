@@ -31,6 +31,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     private static final int PRECONDITION_FAILED = 8;
     private static final int INTERNAL_ERROR = 10;
     private static final List<String> DEFAULT_CACHE_IGNORE = List.of("META-INF/*", "logback.xml", "logback-test.xml");
+    private static final String TEST_RESOURCES_CLIENT_ARTIFACT = "micronaut-test-resources-client";
 
     private static final String DEFAULT_SCENARIO = "production";
 
@@ -313,11 +314,19 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         List<String> values = new ArrayList<>();
         for (String line : Files.readAllLines(manifest)) {
             String trimmed = line.trim();
-            if (!trimmed.isEmpty()) {
+            if (!trimmed.isEmpty() && !isForbiddenClasspathEntry(trimmed)) {
                 values.add(Path.of(trimmed).toAbsolutePath().normalize().toString());
             }
         }
         return List.copyOf(values);
+    }
+
+    private static boolean isForbiddenClasspathEntry(String entry) {
+        String normalized = entry.replace('\\', '/').toLowerCase(Locale.ROOT);
+        return normalized.contains("/" + TEST_RESOURCES_CLIENT_ARTIFACT + "-")
+            || normalized.endsWith("/" + TEST_RESOURCES_CLIENT_ARTIFACT + ".jar")
+            || normalized.equals(TEST_RESOURCES_CLIENT_ARTIFACT)
+            || normalized.contains(":" + TEST_RESOURCES_CLIENT_ARTIFACT + ":");
     }
 
     private static void cleanupStaleReports(Path outputDir, ReportFormat format) throws IOException {

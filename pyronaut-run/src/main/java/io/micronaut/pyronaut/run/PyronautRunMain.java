@@ -17,14 +17,9 @@ package io.micronaut.pyronaut.run;
 
 import picocli.CommandLine;
 
-import java.lang.reflect.Method;
 import java.lang.reflect.InvocationTargetException;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.stream.Stream;
@@ -35,11 +30,9 @@ import java.util.concurrent.Callable;
  */
 @CommandLine.Command(name = "pyronaut-run", mixinStandardHelpOptions = true, description = "Run a processed Pyronaut application")
 public final class PyronautRunMain implements Callable<Integer> {
-    private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
-    private static final List<URLClassLoader> ACTIVE_CLASSLOADERS = new ArrayList<>();
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -49,9 +42,6 @@ public final class PyronautRunMain implements Callable<Integer> {
 
     @CommandLine.Option(names = "--config-dir", defaultValue = DEFAULT_CONFIG_DIR, description = "Configuration directory")
     Path configDir = Path.of(DEFAULT_CONFIG_DIR);
-
-    @CommandLine.Option(names = "--classpath", split = "${sys:path.separator}", description = "Override runtime classpath")
-    List<Path> classpath;
 
     @CommandLine.Option(names = "--main-class", defaultValue = DEFAULT_MAIN_CLASS, description = "Main class to invoke")
     String mainClass = DEFAULT_MAIN_CLASS;
@@ -65,38 +55,32 @@ public final class PyronautRunMain implements Callable<Integer> {
     @CommandLine.Parameters
     List<String> appArgs = List.of();
 
+    private final ClassResolver classResolver;
+    private final MicronautStarter micronautStarter;
+
+    public PyronautRunMain() {
+        this(Class::forName, PyronautRunMain::startMicronautApplication);
+    }
+
+    PyronautRunMain(ClassResolver classResolver, MicronautStarter micronautStarter) {
+        this.classResolver = classResolver;
+        this.micronautStarter = micronautStarter;
+    }
+
     @Override
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
-            List<Path> runtimeClasspath = classpath == null || classpath.isEmpty()
-                ? readManifest(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"))
-                : classpath;
-
             Path resolvedClassesDir = root.resolve(classesDir).normalize();
             if (!Files.isDirectory(resolvedClassesDir)) {
                 System.err.println("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
                 return 8;
             }
 
-            List<URL> urls = new ArrayList<>();
-            for (Path path : runtimeClasspath) {
-                urls.add(path.toUri().toURL());
-            }
-            urls.add(resolvedClassesDir.toUri().toURL());
-
-            Path resolvedConfigDir = root.resolve(configDir).normalize();
-            if (Files.isDirectory(resolvedConfigDir)) {
-                urls.add(resolvedConfigDir.toUri().toURL());
-            }
-
-            URLClassLoader classLoader = new URLClassLoader(urls.toArray(URL[]::new), ClassLoader.getPlatformClassLoader());
-            ACTIVE_CLASSLOADERS.add(classLoader);
-            Thread.currentThread().setContextClassLoader(classLoader);
             Class<?> loadedClass;
             if (DEFAULT_MAIN_CLASS.equals(mainClass)) {
-                loadedClass = loadDefaultMainClass(classLoader);
-                if (tryStartMicronautApplication(classLoader, loadedClass, resolvedClassesDir)) {
+                loadedClass = loadDefaultMainClass();
+                if (micronautStarter.start(loadedClass, resolvedClassesDir, appArgs)) {
                     blockUntilInterrupted();
                     return 0;
                 }
@@ -106,7 +90,7 @@ public final class PyronautRunMain implements Callable<Integer> {
                     return 6;
                 }
             } else {
-                loadedClass = classLoader.loadClass(mainClass);
+                loadedClass = Class.forName(mainClass);
             }
             var method = loadedClass.getDeclaredMethod("main", String[].class);
             method.setAccessible(true);
@@ -125,23 +109,23 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    private boolean tryStartMicronautApplication(URLClassLoader classLoader,
-                                                 Class<?> loadedClass,
-                                                 Path resolvedClassesDir) throws Exception {
+    private static boolean startMicronautApplication(Class<?> loadedClass,
+                                                     Path resolvedClassesDir,
+                                                     List<String> appArgs) throws Exception {
         try {
-            Class<?> micronautClass = classLoader.loadClass("io.micronaut.runtime.Micronaut");
-            Method buildMethod = micronautClass.getDeclaredMethod("build", String[].class);
+            Class<?> micronautClass = Class.forName("io.micronaut.runtime.Micronaut");
+            java.lang.reflect.Method buildMethod = micronautClass.getDeclaredMethod("build", String[].class);
             buildMethod.setAccessible(true);
             Object micronaut = buildMethod.invoke(null, (Object) appArgs.toArray(String[]::new));
 
             if (loadedClass != null) {
-                Method mainClassMethod = micronautClass.getDeclaredMethod("mainClass", Class.class);
+                java.lang.reflect.Method mainClassMethod = micronautClass.getDeclaredMethod("mainClass", Class.class);
                 mainClassMethod.setAccessible(true);
                 mainClassMethod.invoke(micronaut, loadedClass);
             }
 
             try {
-                Method keepAliveMethod = micronautClass.getDeclaredMethod("keepAlive", boolean.class);
+                java.lang.reflect.Method keepAliveMethod = micronautClass.getDeclaredMethod("keepAlive", boolean.class);
                 keepAliveMethod.setAccessible(true);
                 keepAliveMethod.invoke(micronaut, true);
             } catch (NoSuchMethodException ignored) {
@@ -149,12 +133,12 @@ public final class PyronautRunMain implements Callable<Integer> {
 
             List<String> packages = discoverApplicationPackages(resolvedClassesDir);
             if (!packages.isEmpty()) {
-                Method packagesMethod = micronautClass.getDeclaredMethod("packages", String[].class);
+                java.lang.reflect.Method packagesMethod = micronautClass.getDeclaredMethod("packages", String[].class);
                 packagesMethod.setAccessible(true);
                 packagesMethod.invoke(micronaut, (Object) packages.toArray(String[]::new));
             }
 
-            Method startMethod = micronautClass.getDeclaredMethod("start");
+            java.lang.reflect.Method startMethod = micronautClass.getDeclaredMethod("start");
             startMethod.setAccessible(true);
             startMethod.invoke(micronaut);
             return true;
@@ -163,12 +147,22 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    private Class<?> loadDefaultMainClass(URLClassLoader classLoader) throws Exception {
+    private Class<?> loadDefaultMainClass() throws Exception {
         try {
-            return classLoader.loadClass(mainClass);
+            return classResolver.load(mainClass);
         } catch (ClassNotFoundException ignored) {
             return null;
         }
+    }
+
+    @FunctionalInterface
+    interface ClassResolver {
+        Class<?> load(String className) throws Exception;
+    }
+
+    @FunctionalInterface
+    interface MicronautStarter {
+        boolean start(Class<?> loadedClass, Path resolvedClassesDir, List<String> appArgs) throws Exception;
     }
 
     private static void blockUntilInterrupted() {
@@ -190,21 +184,6 @@ public final class PyronautRunMain implements Callable<Integer> {
                 .toList();
         } catch (Exception ignored) {
             return List.of();
-        }
-    }
-
-    private static List<Path> readManifest(Path file) {
-        if (!Files.exists(file)) {
-            throw new IllegalStateException("Missing runtime scope cache. Run pyronaut install first. (missing: " + file + ")");
-        }
-        try {
-            return Files.readAllLines(file, StandardCharsets.UTF_8).stream()
-                .map(String::trim)
-                .filter(line -> !line.isEmpty())
-                .map(Path::of)
-                .toList();
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed reading runtime classpath manifest: " + file, e);
         }
     }
 

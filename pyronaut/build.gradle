@@ -111,7 +111,11 @@ tasks.register("buildSdkWheel", Exec) {
     group = "build"
     description = "Builds the Pyronaut SDK wheel"
     dependsOn(tasks.named("prepareWheelSources"))
+    inputs.dir(wheelStagingDir)
     outputs.dir(wheelDistDir)
+    doFirst {
+        delete(wheelDistDir)
+    }
     commandLine(
         "python3",
         "-m",

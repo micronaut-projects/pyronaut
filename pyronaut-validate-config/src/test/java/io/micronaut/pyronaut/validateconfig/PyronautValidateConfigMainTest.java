@@ -139,6 +139,61 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void validateConfigFiltersTestResourcesClientFromManifestClasspath() throws Exception {
+        Path project = prepareProject();
+        Path runtimeJar = project.resolve("libs/runtime.jar");
+        Path buildJar = project.resolve("libs/build.jar");
+        Path testJar = project.resolve("libs/test.jar");
+        Path testResourcesClientJar = project.resolve("libs/micronaut-test-resources-client-2.9.0.jar");
+        Files.createDirectories(runtimeJar.getParent());
+        Files.writeString(runtimeJar, "runtime");
+        Files.writeString(buildJar, "build");
+        Files.writeString(testJar, "test");
+        Files.writeString(testResourcesClientJar, "client");
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), runtimeJar + "\n" + testResourcesClientJar + "\n");
+        Files.writeString(project.resolve("__pyronaut__/resolved-build-dependencies"), buildJar + "\n");
+        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), testJar + "\n" + testResourcesClientJar + "\n");
+
+        AtomicReference<List<String>> productionClasspath = new AtomicReference<>(List.of());
+        PyronautValidateConfigMain productionCommand = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                productionClasspath.set(settings.classpathElements());
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        AtomicReference<List<String>> testClasspath = new AtomicReference<>(List.of());
+        PyronautValidateConfigMain testCommand = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                testClasspath.set(settings.classpathElements());
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        int productionExit = new CommandLine(productionCommand).execute("--project-dir", project.toString(), "--no-cache");
+        int testExit = new CommandLine(testCommand).execute("--project-dir", project.toString(), "--scenario", "test", "--no-cache");
+
+        assertEquals(0, productionExit);
+        assertEquals(0, testExit);
+        assertFalse(productionClasspath.get().stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
+        assertFalse(testClasspath.get().stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
+        assertTrue(productionClasspath.get().stream().anyMatch(entry -> entry.endsWith("runtime.jar")));
+        assertTrue(testClasspath.get().stream().anyMatch(entry -> entry.endsWith("runtime.jar")));
+        assertTrue(testClasspath.get().stream().anyMatch(entry -> entry.endsWith("test.jar")));
+        assertTrue(testClasspath.get().stream().anyMatch(entry -> entry.endsWith("build.jar")));
+    }
+
+    @Test
     void executorPrintsCopyPasteablePyprojectSuppressionsForConfigurationErrors() throws Exception {
         var err = new ByteArrayOutputStream();
         PrintStream originalErr = System.err;
@@ -201,6 +256,9 @@ class PyronautValidateConfigMainTest {
 
             [tool.pyronaut]
             version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.validation]
+            suppressions = ["micronaut.home"]
             """);
     }
 

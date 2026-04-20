@@ -8,7 +8,6 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
@@ -45,9 +44,10 @@ class PyronautTestMainTest {
     }
 
     @Test
-    void failsWhenTestManifestMissing() throws Exception {
-        Path project = tempDir.resolve("project-missing-manifest");
+    void failsWhenProcessedClassesDirectoryMissing() throws Exception {
+        Path project = tempDir.resolve("project-missing-classes");
         Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Files.delete(project.resolve("__pyronaut__/classes"));
         PyronautTestMain command = new PyronautTestMain();
         command.projectDir = project;
         command.selectClasses = java.util.List.of(PassingTest.class.getName());
@@ -56,7 +56,7 @@ class PyronautTestMainTest {
     }
 
     @Test
-    void executesSelectedClassFromTestClassesDirectoryWhenPresent() throws Exception {
+    void returnsFailureWhenSelectedClassIsNotOnProcessClasspathEvenIfGeneratedUnderTestClasses() throws Exception {
         Path project = setupProject();
         Path testClasses = project.resolve("__pyronaut__/test-classes");
         Files.createDirectories(testClasses);
@@ -66,11 +66,11 @@ class PyronautTestMainTest {
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
-        assertEquals(0, command.call());
+        assertEquals(7, command.call());
     }
 
     @Test
-    void executesSelectedClassFromClassesDirectoryWhenTestClassesDirectoryIsMissing() throws Exception {
+    void returnsFailureWhenSelectedClassIsNotOnProcessClasspathEvenIfGeneratedUnderClasses() throws Exception {
         Path project = setupProject();
         compileGeneratedTestClass(project.resolve("__pyronaut__/classes"));
 
@@ -78,7 +78,7 @@ class PyronautTestMainTest {
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
-        assertEquals(0, command.call());
+        assertEquals(7, command.call());
     }
 
     @Test
@@ -214,15 +214,7 @@ class PyronautTestMainTest {
     private Path setupProject() throws Exception {
         Path project = tempDir.resolve("project");
         Path classes = project.resolve("__pyronaut__/classes");
-        Path cache = project.resolve("__pyronaut__");
         Files.createDirectories(classes);
-        Files.createDirectories(cache);
-        String classpath = System.getProperty("java.class.path", "");
-        Files.write(
-            cache.resolve("resolved-test-dependencies"),
-            Arrays.stream(classpath.split(System.getProperty("path.separator"))).toList(),
-            StandardCharsets.UTF_8
-        );
         return project;
     }
 

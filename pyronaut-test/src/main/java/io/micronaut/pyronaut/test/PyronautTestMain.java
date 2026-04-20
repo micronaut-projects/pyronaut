@@ -23,9 +23,6 @@ import org.junit.platform.launcher.core.LauncherFactory;
 import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
 import picocli.CommandLine;
 
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -80,9 +77,6 @@ public final class PyronautTestMain implements Callable<Integer> {
     @CommandLine.Option(names = "--tests-dir", defaultValue = DEFAULT_TESTS_DIR, description = "Python tests directory")
     Path testsDir = Path.of(DEFAULT_TESTS_DIR);
 
-    @CommandLine.Option(names = "--classpath", split = "${sys:path.separator}", description = "Override test classpath")
-    List<Path> classpath;
-
     @CommandLine.Option(names = "--select-class", description = "Select class to execute")
     List<String> selectClasses = List.of();
 
@@ -99,18 +93,6 @@ public final class PyronautTestMain implements Callable<Integer> {
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
-            List<Path> testClasspath = classpath == null || classpath.isEmpty()
-                ? readManifest(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-dependencies"))
-                : classpath;
-            List<Path> runtimeClasspath = readManifestIfPresent(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"));
-            List<Path> buildClasspath = readManifestIfPresent(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-build-dependencies"));
-            if (!runtimeClasspath.isEmpty() || !buildClasspath.isEmpty()) {
-                LinkedHashSet<Path> mergedClasspath = new LinkedHashSet<>(testClasspath);
-                mergedClasspath.addAll(runtimeClasspath);
-                mergedClasspath.addAll(buildClasspath);
-                testClasspath = List.copyOf(mergedClasspath);
-            }
-
             Path resolvedTestClassesDir = root.resolve(testClassesDir).normalize();
             boolean hasTestClassesDir = Files.isDirectory(resolvedTestClassesDir);
             Path resolvedClassesDir = root.resolve(classesDir).normalize();
@@ -124,72 +106,63 @@ public final class PyronautTestMain implements Callable<Integer> {
                 return 8;
             }
 
-            List<URL> urls = new ArrayList<>();
-            for (Path path : testClasspath) {
-                urls.add(path.toUri().toURL());
-            }
-            urls.add(processedClassesRoot.toUri().toURL());
-
             Path resolvedConfigDir = root.resolve(configDir).normalize();
-            if (Files.isDirectory(resolvedConfigDir)) {
-                urls.add(resolvedConfigDir.toUri().toURL());
+            if (!Files.isDirectory(resolvedConfigDir)) {
+                resolvedConfigDir = null;
             }
 
-            try (URLClassLoader classLoader = new URLClassLoader(urls.toArray(URL[]::new), Thread.currentThread().getContextClassLoader())) {
-                Thread.currentThread().setContextClassLoader(classLoader);
-                LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
-                boolean publishReports = false;
-                if (selectClasses == null || selectClasses.isEmpty()) {
-                    requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(processedClassesRoot)));
-                    Path resolvedTestsDir = root.resolve(testsDir).normalize();
-                    Optional<String> pytestTests = buildPytestTestsParameter(tests);
-                    if (Files.isDirectory(resolvedTestsDir)) {
-                        List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
-                        boolean onlyDirectSelectors = hasOnlyDirectFileSelectors(tests);
-                        if (explicitFiles.isEmpty() || !onlyDirectSelectors) {
-                            requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedTestsDir.toString()));
-                            requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedTestsDir.toString());
-                        } else {
-                            for (Path file : explicitFiles) {
-                                requestBuilder.selectors(DiscoverySelectors.selectFile(file.toString()));
-                            }
+            LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
+            boolean publishReports = false;
+            if (selectClasses == null || selectClasses.isEmpty()) {
+                requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(processedClassesRoot)));
+                Path resolvedTestsDir = root.resolve(testsDir).normalize();
+                Optional<String> pytestTests = buildPytestTestsParameter(tests);
+                if (Files.isDirectory(resolvedTestsDir)) {
+                    List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
+                    boolean onlyDirectSelectors = hasOnlyDirectFileSelectors(tests);
+                    if (explicitFiles.isEmpty() || !onlyDirectSelectors) {
+                        requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedTestsDir.toString()));
+                        requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedTestsDir.toString());
+                    } else {
+                        for (Path file : explicitFiles) {
+                            requestBuilder.selectors(DiscoverySelectors.selectFile(file.toString()));
                         }
                     }
-
-                    Path reportsDir = root.resolve(DEFAULT_REPORTS_DIR).normalize();
-                    Path junitReport = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
-                    Path htmlReport = reportsDir.resolve(DEFAULT_HTML_REPORT);
-                    Path nodeIdReport = reportsDir.resolve(DEFAULT_NODEID_REPORT);
-                    Path eventsReport = reportsDir.resolve(DEFAULT_EVENTS_REPORT);
-                    Files.createDirectories(reportsDir);
-                    clearLegacyReportAliases(root);
-                    requestBuilder.configurationParameter(PYTEST_REPORT_DIR, reportsDir.toString());
-                    requestBuilder.configurationParameter(PYTEST_JUNIT_XML_REPORT, junitReport.toString());
-                    requestBuilder.configurationParameter(PYTEST_HTML_REPORT, htmlReport.toString());
-                    requestBuilder.configurationParameter(PYTEST_LAST_NODEID_REPORT, nodeIdReport.toString());
-                    requestBuilder.configurationParameter(PYTEST_EVENTS_REPORT, eventsReport.toString());
-                    publishReports = true;
-
-                    pytestTests.ifPresent(value -> requestBuilder.configurationParameter(PYTEST_TESTS, value));
-                } else {
-                    for (String className : selectClasses) {
-                        requestBuilder.selectors(DiscoverySelectors.selectClass(className));
-                    }
                 }
-                LauncherDiscoveryRequest request = requestBuilder.build();
-                Launcher launcher = LauncherFactory.create();
-                SummaryGeneratingListener listener = new SummaryGeneratingListener();
-                launcher.registerTestExecutionListeners(listener);
-                try {
-                    launcher.execute(request);
-                } finally {
-                    if (publishReports) {
-                        publishReportLocations(root);
-                    }
+
+                Path reportsDir = root.resolve(DEFAULT_REPORTS_DIR).normalize();
+                Path junitReport = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
+                Path htmlReport = reportsDir.resolve(DEFAULT_HTML_REPORT);
+                Path nodeIdReport = reportsDir.resolve(DEFAULT_NODEID_REPORT);
+                Path eventsReport = reportsDir.resolve(DEFAULT_EVENTS_REPORT);
+                Files.createDirectories(reportsDir);
+                clearLegacyReportAliases(root);
+                requestBuilder.configurationParameter(PYTEST_REPORT_DIR, reportsDir.toString());
+                requestBuilder.configurationParameter(PYTEST_JUNIT_XML_REPORT, junitReport.toString());
+                requestBuilder.configurationParameter(PYTEST_HTML_REPORT, htmlReport.toString());
+                requestBuilder.configurationParameter(PYTEST_LAST_NODEID_REPORT, nodeIdReport.toString());
+                requestBuilder.configurationParameter(PYTEST_EVENTS_REPORT, eventsReport.toString());
+                publishReports = true;
+
+                pytestTests.ifPresent(value -> requestBuilder.configurationParameter(PYTEST_TESTS, value));
+            } else {
+                for (String className : selectClasses) {
+                    requestBuilder.selectors(DiscoverySelectors.selectClass(className));
                 }
-                long failures = listener.getSummary().getTotalFailureCount();
-                return failures == 0 ? 0 : 7;
             }
+            LauncherDiscoveryRequest request = requestBuilder.build();
+            Launcher launcher = LauncherFactory.create();
+            SummaryGeneratingListener listener = new SummaryGeneratingListener();
+            launcher.registerTestExecutionListeners(listener);
+            try {
+                launcher.execute(request);
+            } finally {
+                if (publishReports) {
+                    publishReportLocations(root);
+                }
+            }
+            long failures = listener.getSummary().getTotalFailureCount();
+            return failures == 0 ? 0 : 7;
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -368,28 +341,6 @@ public final class PyronautTestMain implements Callable<Integer> {
         } catch (Exception e) {
             System.err.println("Unable to mirror report to project root: " + target + " (" + e.getMessage() + ")");
         }
-    }
-
-    private static List<Path> readManifest(Path file) {
-        if (!Files.exists(file)) {
-            throw new IllegalStateException("Missing test scope cache. Run pyronaut install first. (missing: " + file + ")");
-        }
-        try {
-            return Files.readAllLines(file, StandardCharsets.UTF_8).stream()
-                .map(String::trim)
-                .filter(line -> !line.isEmpty())
-                .map(Path::of)
-                .toList();
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed reading test classpath manifest: " + file, e);
-        }
-    }
-
-    private static List<Path> readManifestIfPresent(Path file) {
-        if (!Files.exists(file)) {
-            return List.of();
-        }
-        return readManifest(file);
     }
 
     public static void main(String[] args) {
