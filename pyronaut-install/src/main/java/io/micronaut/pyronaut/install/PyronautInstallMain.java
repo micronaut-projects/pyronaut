@@ -22,6 +22,10 @@ import picocli.CommandLine;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.FileVisitResult;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
@@ -58,10 +62,10 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @CommandLine.Option(names = "--color", defaultValue = "auto", description = "Color output mode: auto|always|never")
     String color = "auto";
 
-    @CommandLine.Option(names = "--refresh", description = "Force dependency re-resolution and cache rewrite")
+    @CommandLine.Option(names = "--refresh", description = "Force dependency re-resolution and manifest rewrite without clearing the local dependency cache")
     boolean refresh;
 
-    @CommandLine.Option(names = "--no-cache", description = "Bypass cache reads/writes (alias for --refresh)")
+    @CommandLine.Option(names = "--no-cache", description = "Bypass cache reads/writes and clear the local dependency cache before resolving")
     boolean noCache;
 
     @CommandLine.Option(names = "--offline", description = "Use offline mode for repository access")
@@ -94,17 +98,20 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 if (dependencies) {
                     return renderDependencyTrees(root, scopes, progressReporter);
                 }
-                boolean refreshRequested = refresh || noCache;
-                if (!refreshRequested && ResolutionCache.cacheHit(cacheDir, hash, scopes)) {
+                boolean bypassRequested = refresh || noCache;
+                if (!bypassRequested && ResolutionCache.cacheHit(cacheDir, hash, scopes)) {
                     progressReporter.cacheHit();
                     return InstallExitCode.SUCCESS.code();
                 }
-                if (refreshRequested) {
+                if (bypassRequested) {
                     progressReporter.cacheBypass();
                 }
 
                 PyprojectModel model = modelReader.readFile(pyproject);
                 Path localRepo = cacheDir.resolve("m2-repository");
+                if (noCache) {
+                    deleteDirectoryIfExists(localRepo);
+                }
                 Map<InstallScope, List<String>> resolved = new EnumMap<>(InstallScope.class);
                 for (InstallScope installScope : scopes) {
                     progressReporter.startScope(installScope);
@@ -182,5 +189,24 @@ public final class PyronautInstallMain implements Callable<Integer> {
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautInstallMain()).execute(args);
         System.exit(exitCode);
+    }
+
+    private static void deleteDirectoryIfExists(Path directory) throws IOException {
+        if (directory == null || !Files.exists(directory)) {
+            return;
+        }
+        Files.walkFileTree(directory, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.deleteIfExists(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                Files.deleteIfExists(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 }

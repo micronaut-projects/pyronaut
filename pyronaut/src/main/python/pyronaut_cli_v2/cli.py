@@ -434,7 +434,7 @@ def _run_preflight(
 ) -> int:
     install_args = ["--project-dir", project_dir]
     if no_cache:
-        install_args.append("--refresh")
+        install_args.append("--no-cache")
     install_code = _delegate("install", install_args, runner, resolver)
     if install_code != SUCCESS:
         return install_code
@@ -1043,7 +1043,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token == "--":
             passthrough.extend(args[index + 1:])
             break
-        if token in {"--native", "--jvm", "--verbose"}:
+        if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate"}:
             index += 1
             continue
         if token in {"--mode", "--main-class", "--project-dir"}:
@@ -1055,6 +1055,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
             token.startswith("--mode=")
             or token.startswith("--main-class=")
             or token.startswith("--project-dir=")
+            or token.startswith("--no-cache=")
         ):
             index += 1
             continue

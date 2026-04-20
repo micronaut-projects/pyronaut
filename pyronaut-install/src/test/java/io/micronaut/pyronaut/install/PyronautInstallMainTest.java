@@ -256,6 +256,74 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void refreshPreservesLocalRepositoryContents() throws Exception {
+        Path repository = tempDir.resolve("repo-refresh-local-repo");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0", new byte[]{1});
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-refresh-local-repo");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain firstRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        firstRun.projectDir = project;
+        assertEquals(InstallExitCode.SUCCESS.code(), firstRun.call());
+
+        Path cachedRuntimeJar = project.resolve("__pyronaut__")
+            .resolve("m2-repository")
+            .resolve("com/example/runtime-dep/1.0.0/runtime-dep-1.0.0.jar");
+        assertTrue(Files.exists(cachedRuntimeJar));
+        assertEquals((byte) 1, Files.readAllBytes(cachedRuntimeJar)[0]);
+
+        Path sentinel = project.resolve("__pyronaut__").resolve("m2-repository").resolve("sentinel.txt");
+        Files.writeString(sentinel, "keep");
+
+        PyronautInstallMain refreshRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        refreshRun.projectDir = project;
+        refreshRun.refresh = true;
+        assertEquals(InstallExitCode.SUCCESS.code(), refreshRun.call());
+
+        assertTrue(Files.exists(cachedRuntimeJar));
+        assertTrue(Files.exists(sentinel));
+        assertEquals((byte) 1, Files.readAllBytes(cachedRuntimeJar)[0]);
+    }
+
+    @Test
+    void noCacheClearsLocalRepositoryAndRehydratesSameVersionArtifacts() throws Exception {
+        Path repository = tempDir.resolve("repo-no-cache-local-repo");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0", new byte[]{1});
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-no-cache-local-repo");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain firstRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        firstRun.projectDir = project;
+        assertEquals(InstallExitCode.SUCCESS.code(), firstRun.call());
+
+        Path cachedRuntimeJar = project.resolve("__pyronaut__")
+            .resolve("m2-repository")
+            .resolve("com/example/runtime-dep/1.0.0/runtime-dep-1.0.0.jar");
+        assertTrue(Files.exists(cachedRuntimeJar));
+        assertEquals((byte) 1, Files.readAllBytes(cachedRuntimeJar)[0]);
+
+        Path sentinel = project.resolve("__pyronaut__").resolve("m2-repository").resolve("sentinel.txt");
+        Files.writeString(sentinel, "delete");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0", new byte[]{2});
+
+        PyronautInstallMain noCacheRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        noCacheRun.projectDir = project;
+        noCacheRun.noCache = true;
+        assertEquals(InstallExitCode.SUCCESS.code(), noCacheRun.call());
+
+        assertFalse(Files.exists(sentinel));
+        assertEquals((byte) 2, Files.readAllBytes(cachedRuntimeJar)[0]);
+    }
+
+    @Test
     void unresolvedDependencyReturnsResolutionError() throws Exception {
         Path project = tempDir.resolve("project-failure");
         Files.createDirectories(project);
@@ -773,6 +841,10 @@ class PyronautInstallMainTest {
     }
 
     private static void writeArtifact(Path repository, String groupId, String artifactId, String version) throws IOException {
+        writeArtifact(repository, groupId, artifactId, version, new byte[]{0});
+    }
+
+    private static void writeArtifact(Path repository, String groupId, String artifactId, String version, byte[] jarBytes) throws IOException {
         Path artifactDir = repository
             .resolve(groupId.replace('.', '/'))
             .resolve(artifactId)
@@ -792,7 +864,7 @@ class PyronautInstallMainTest {
             """.formatted(groupId, artifactId, version));
 
         Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
-        Files.write(jarFile, new byte[]{0});
+        Files.write(jarFile, jarBytes);
     }
 
     private static void writeArtifactWithDependencies(Path repository,

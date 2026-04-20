@@ -1,0 +1,104 @@
+{
+  "reflection": [
+    {
+      "type": "io.micronaut.pyronaut.logback.LogbackConfigurer",
+      "methods": [
+        {
+          "name": "configure",
+          "parameterTypes": [
+            "java.util.Map"
+          ]
+        },
+        {
+          "name": "log",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "getLogger",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "org.slf4j.Logger",
+      "methods": [
+        {
+          "name": "error",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "warn",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "info",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "debug",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "trace",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "ch.qos.logback.classic.Logger",
+      "methods": [
+        {
+          "name": "error",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "warn",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "info",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "debug",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "trace",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "glob": "META-INF/GRAALPY-VFS/**"
+    }
+  ]
+}

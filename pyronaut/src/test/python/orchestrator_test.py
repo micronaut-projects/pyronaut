@@ -363,7 +363,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run", "--no-cache"], executed[0])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--refresh"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--no-cache"], executed[1])
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--no-cache"], executed[2])
         self._assert_test_resources_start(executed[3], "/tmp/demo")
         self._assert_run_delegate(executed[4], "/tmp/demo")
@@ -389,7 +389,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(6, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test", "--no-cache"], executed[0])
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--refresh"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--no-cache"], executed[1])
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--no-cache"], executed[2])
         self._assert_test_resources_start(executed[3], "/tmp/demo")
         self._assert_test_delegate(executed[4], "/tmp/demo")
@@ -1535,7 +1535,7 @@ sharedServer = true
             ],
             executed[0][0],
         )
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir.resolve()), "--refresh"], executed[1][0])
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir.resolve()), "--no-cache"], executed[1][0])
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir.resolve()), "--no-cache"], executed[2][0])
 
     def test_build_native_runs_preflight_then_native_delegate_with_java_home(self):
@@ -1584,6 +1584,44 @@ sharedServer = true
         self.assertEqual("pip", executed[4][0][2])
         self.assertEqual("wheel", executed[4][0][3])
         self.assertIn("Native wheel build complete", stdout.getvalue())
+
+    def test_build_native_no_cache_not_forwarded_to_native_build_delegate(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if command_line and command_line[0] == "/tmp/pyronaut-native-build":
+                output = Path(command_line[command_line.index("--output") + 1])
+                output.write_text("binary", encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-demo"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            classes_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+            (cache_dir / "native" / "native-demo").parent.mkdir(parents=True, exist_ok=True)
+
+            exit_code = cli.run(
+                ["build", "--native", "--project-dir", str(project_dir), "--no-cache", "--verbose"],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        resolved_project_dir = str(project_dir.resolve())
+        self.assertEqual(
+            ["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "production", "--no-cache"],
+            executed[0][0],
+        )
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", resolved_project_dir, "--no-cache"], executed[1][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--no-cache"], executed[2][0])
+        self.assertEqual("/tmp/pyronaut-native-build", executed[3][0][0])
+        self.assertNotIn("--no-cache", executed[3][0])
+        self.assertIn("--verbose", executed[3][0])
 
     def test_stop_managed_process_kills_when_terminate_times_out(self):
         class HungProcess:

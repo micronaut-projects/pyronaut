@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
@@ -55,6 +56,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_RUNTIME_MANIFEST = "__pyronaut__/resolved-runtime-dependencies";
+    private static final String DEFAULT_CONFIG_DIR = "config";
+    private static final String GENERATED_NATIVE_IMAGE_CONFIG_DIR = "__pyronaut__/native-image-config";
     private static final String DEFAULT_METADATA_VERSION = "0.11.5";
     private static final String DEFAULT_METADATA_URL = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/" + DEFAULT_METADATA_VERSION + "/graalvm-reachability-metadata-" + DEFAULT_METADATA_VERSION + "-repository.zip";
     private static final String VERSIONED_METADATA_URL_TEMPLATE = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/%s/graalvm-reachability-metadata-%s-repository.zip";
@@ -113,6 +116,10 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             List<Path> runtimeClasspath = readManifest(runtimeManifest);
             List<Path> nativeClasspath = new ArrayList<>(runtimeClasspath);
             nativeClasspath.add(classesDir);
+            Path configDir = root.resolve(DEFAULT_CONFIG_DIR).normalize();
+            if (Files.isDirectory(configDir)) {
+                nativeClasspath.add(configDir);
+            }
 
             Path outputPath = root.resolve(output).normalize();
             Path outputParent = outputPath.getParent();
@@ -122,14 +129,22 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
             PyprojectModel model = modelReader.readProjectDirectory(root);
             MetadataOptions metadataOptions = metadataOptions(model);
-            List<Path> metadataDirs = resolveMetadataDirectories(root, model, runtimeClasspath, metadataOptions);
+            MetadataSelection metadataSelection = resolveMetadataDirectories(root, model, runtimeClasspath, metadataOptions);
+            List<Path> configurationDirs = new ArrayList<>();
+            Path projectResourceConfigDir = generateProjectResourceConfig(root, classesDir, configDir, runtimeClasspath);
+            if (projectResourceConfigDir != null) {
+                configurationDirs.add(projectResourceConfigDir);
+            }
+            configurationDirs.addAll(metadataSelection.directories());
 
             List<String> command = new ArrayList<>();
             command.add(nativeImageExecutable);
+            addBundledConfigurationExclusions(command, runtimeClasspath, metadataSelection.modules());
             command.add("-cp");
             command.add(joinClasspath(nativeClasspath));
-            if (!metadataDirs.isEmpty()) {
-                command.add("-H:ConfigurationFileDirectories=" + joinMetadataDirs(metadataDirs));
+            command.add("--no-fallback");
+            if (!configurationDirs.isEmpty()) {
+                command.add("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
             }
             if (verbose) {
                 command.add("--verbose");
@@ -156,13 +171,13 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
     }
 
-    private List<Path> resolveMetadataDirectories(Path root,
-                                                  PyprojectModel model,
-                                                  List<Path> runtimeClasspath,
-                                                  MetadataOptions metadataOptions) throws IOException {
+    private MetadataSelection resolveMetadataDirectories(Path root,
+                                                         PyprojectModel model,
+                                                         List<Path> runtimeClasspath,
+                                                         MetadataOptions metadataOptions) throws IOException {
         if (!metadataOptions.enabled) {
             System.err.println("Reachability metadata repository: disabled");
-            return List.of();
+            return new MetadataSelection(List.of(), Set.of());
         }
 
         URI sourceUri = metadataSource(metadataOptions);
@@ -192,12 +207,182 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             query.forArtifacts(gavs);
             query.useLatestConfigWhenVersionIsUntested();
         }).stream().map(configuration -> configuration.getDirectory().toAbsolutePath().normalize()).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        Set<String> selectedModules = selected.stream()
+            .map(path -> moduleFromMetadataDirectory(repositoryRoot, path))
+            .filter(module -> module != null && !module.isBlank())
+            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
 
         String source = downloaded ? "download" : "cache";
         String versionText = metadataOptions.version == null || metadataOptions.version.isBlank() ? "default" : metadataOptions.version;
         System.err.println("Reachability metadata repository: source=" + source + ", uri=" + sourceUri + ", version=" + versionText);
         System.err.println("Reachability metadata directories applied: " + selected.size());
-        return List.copyOf(selected);
+        return new MetadataSelection(List.copyOf(selected), Set.copyOf(selectedModules));
+    }
+
+    private static void addBundledConfigurationExclusions(List<String> command,
+                                                          List<Path> runtimeClasspath,
+                                                          Set<String> selectedModules) {
+        for (Path entry : runtimeClasspath) {
+            String gav = gavFromClasspathEntry(entry);
+            if (gav == null) {
+                continue;
+            }
+            String module = gav.substring(0, gav.lastIndexOf(':'));
+            if (!selectedModules.contains(module)) {
+                continue;
+            }
+            if (!hasBundledNativeImageConfiguration(entry)) {
+                continue;
+            }
+            String normalized = entry.toAbsolutePath().normalize().toString();
+            command.add("--exclude-config");
+            command.add("\\Q" + normalized + "\\E");
+            command.add("^/META-INF/native-image/.*");
+        }
+    }
+
+    private static boolean hasBundledNativeImageConfiguration(Path entry) {
+        if (entry == null) {
+            return false;
+        }
+        Path normalized = entry.toAbsolutePath().normalize();
+        if (!Files.isRegularFile(normalized) || !normalized.getFileName().toString().endsWith(".jar")) {
+            return false;
+        }
+        try (var zip = new ZipInputStream(Files.newInputStream(normalized))) {
+            ZipEntry zipEntry;
+            while ((zipEntry = zip.getNextEntry()) != null) {
+                if (!zipEntry.isDirectory() && zipEntry.getName().startsWith("META-INF/native-image/")) {
+                    return true;
+                }
+            }
+        } catch (IOException ignored) {
+            return false;
+        }
+        return false;
+    }
+
+    private static String moduleFromMetadataDirectory(Path repositoryRoot, Path metadataDir) {
+        try {
+            Path relative = repositoryRoot.relativize(metadataDir.toAbsolutePath().normalize());
+            int groupIndex = 0;
+            if (relative.getNameCount() >= 4 && "metadata".equals(relative.getName(0).toString())) {
+                groupIndex = 1;
+            }
+            if (relative.getNameCount() < groupIndex + 3) {
+                return null;
+            }
+            return relative.getName(groupIndex) + ":" + relative.getName(groupIndex + 1);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static Path generateProjectResourceConfig(Path root,
+                                                      Path classesDir,
+                                                      Path configDir,
+                                                      List<Path> runtimeClasspath) throws IOException {
+        Set<String> resources = new LinkedHashSet<>();
+        collectClasspathResources(resources, classesDir, true);
+        collectClasspathResources(resources, configDir, false);
+        collectJarResources(resources, runtimeClasspath, "META-INF/GRAALPY-VFS/");
+        if (resources.isEmpty()) {
+            return null;
+        }
+        Path generatedDir = root.resolve(GENERATED_NATIVE_IMAGE_CONFIG_DIR).normalize();
+        Files.createDirectories(generatedDir);
+        Files.writeString(generatedDir.resolve("resource-config.json"), buildResourceConfig(List.copyOf(resources)), StandardCharsets.UTF_8);
+        return generatedDir;
+    }
+
+    private static void collectClasspathResources(Set<String> resources, Path root, boolean excludeCompiledArtifacts) throws IOException {
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try (var stream = Files.walk(root)) {
+            stream
+                .filter(Files::isRegularFile)
+                .map(path -> root.relativize(path).toString().replace('\\', '/'))
+                .filter(path -> !path.isBlank())
+                .filter(path -> !excludeCompiledArtifacts || (!path.endsWith(".class") && !path.endsWith(".java")))
+                .sorted()
+                .forEach(resources::add);
+        }
+    }
+
+    private static void collectJarResources(Set<String> resources, List<Path> classpath, String prefix) {
+        for (Path entry : classpath) {
+            if (entry == null) {
+                continue;
+            }
+            Path normalized = entry.toAbsolutePath().normalize();
+            if (!Files.isRegularFile(normalized) || !normalized.getFileName().toString().endsWith(".jar")) {
+                continue;
+            }
+            try (var zip = new ZipInputStream(Files.newInputStream(normalized))) {
+                ZipEntry zipEntry;
+                while ((zipEntry = zip.getNextEntry()) != null) {
+                    if (zipEntry.isDirectory()) {
+                        continue;
+                    }
+                    String name = zipEntry.getName();
+                    if (name.startsWith(prefix)) {
+                        resources.add(name);
+                    }
+                }
+            } catch (IOException ignored) {
+                // Skip unreadable jars; native-image will surface real classpath issues separately.
+            }
+        }
+    }
+
+    private static String buildResourceConfig(List<String> resources) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("{\n");
+        builder.append("  \"resources\": {\n");
+        builder.append("    \"includes\": [\n");
+        for (int i = 0; i < resources.size(); i++) {
+            String resource = resources.get(i);
+            builder.append("      {\n");
+            builder.append("        \"pattern\": \"\\\\Q");
+            builder.append(escapeJson(resource));
+            builder.append("\\\\E\"\n");
+            builder.append("      }");
+            if (i + 1 < resources.size()) {
+                builder.append(',');
+            }
+            builder.append('\n');
+        }
+        builder.append("    ],\n");
+        builder.append("    \"excludes\": []\n");
+        builder.append("  },\n");
+        builder.append("  \"bundles\": []\n");
+        builder.append("}\n");
+        return builder.toString();
+    }
+
+    private static String escapeJson(String value) {
+        StringBuilder builder = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char current = value.charAt(i);
+            switch (current) {
+                case '\\' -> builder.append("\\\\");
+                case '"' -> builder.append("\\\"");
+                case '\b' -> builder.append("\\b");
+                case '\f' -> builder.append("\\f");
+                case '\n' -> builder.append("\\n");
+                case '\r' -> builder.append("\\r");
+                case '\t' -> builder.append("\\t");
+                default -> {
+                    if (current < 0x20) {
+                        builder.append(String.format(Locale.ROOT, "\\u%04x", (int) current));
+                    } else {
+                        builder.append(current);
+                    }
+                }
+            }
+        }
+        return builder.toString();
     }
 
     private static MetadataOptions metadataOptions(PyprojectModel model) {
@@ -446,5 +631,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     }
 
     record MetadataOptions(boolean enabled, String version, String repositoryUrl, List<String> excludedModules) {
+    }
+
+    record MetadataSelection(List<Path> directories, Set<String> modules) {
     }
 }
