@@ -23,10 +23,14 @@ class PyronautTestMainTest {
     @TempDir
     Path tempDir;
 
+    private PyronautTestMain newCommand() {
+        return new PyronautTestMain(classLoader -> { });
+    }
+
     @Test
     void executesPassingSelectedClass() throws Exception {
         Path project = setupProject();
-        PyronautTestMain command = new PyronautTestMain();
+        PyronautTestMain command = newCommand();
         command.projectDir = project;
         command.selectClasses = java.util.List.of(PassingTest.class.getName());
 
@@ -36,7 +40,7 @@ class PyronautTestMainTest {
     @Test
     void returnsFailureCodeForFailingClass() throws Exception {
         Path project = setupProject();
-        PyronautTestMain command = new PyronautTestMain();
+        PyronautTestMain command = newCommand();
         command.projectDir = project;
         command.selectClasses = java.util.List.of("io.micronaut.pyronaut.test.DoesNotExist");
 
@@ -48,7 +52,7 @@ class PyronautTestMainTest {
         Path project = tempDir.resolve("project-missing-classes");
         Files.createDirectories(project.resolve("__pyronaut__/classes"));
         Files.delete(project.resolve("__pyronaut__/classes"));
-        PyronautTestMain command = new PyronautTestMain();
+        PyronautTestMain command = newCommand();
         command.projectDir = project;
         command.selectClasses = java.util.List.of(PassingTest.class.getName());
 
@@ -62,7 +66,7 @@ class PyronautTestMainTest {
         Files.createDirectories(testClasses);
         compileGeneratedTestClass(testClasses);
 
-        PyronautTestMain command = new PyronautTestMain();
+        PyronautTestMain command = newCommand();
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
@@ -74,7 +78,7 @@ class PyronautTestMainTest {
         Path project = setupProject();
         compileGeneratedTestClass(project.resolve("__pyronaut__/classes"));
 
-        PyronautTestMain command = new PyronautTestMain();
+        PyronautTestMain command = newCommand();
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
@@ -87,7 +91,7 @@ class PyronautTestMainTest {
         compileGeneratedTestClass(project.resolve("__pyronaut__/classes"));
         Files.createDirectories(project.resolve("__pyronaut__/test-classes"));
 
-        PyronautTestMain command = new PyronautTestMain();
+        PyronautTestMain command = newCommand();
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 

@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.test;
 
+import io.micronaut.context.python.GraalPyContextFactory;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
@@ -89,6 +90,16 @@ public final class PyronautTestMain implements Callable<Integer> {
     )
     boolean debugVm;
 
+    private final ContextBootstrapper contextBootstrapper;
+
+    public PyronautTestMain() {
+        this(GraalPyContextFactory::bootstrapReusableContext);
+    }
+
+    PyronautTestMain(ContextBootstrapper contextBootstrapper) {
+        this.contextBootstrapper = contextBootstrapper;
+    }
+
     @Override
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();
@@ -105,6 +116,8 @@ public final class PyronautTestMain implements Callable<Integer> {
                 System.err.println("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
                 return 8;
             }
+
+            contextBootstrapper.bootstrap(resolveApplicationClassLoader());
 
             Path resolvedConfigDir = root.resolve(configDir).normalize();
             if (!Files.isDirectory(resolvedConfigDir)) {
@@ -170,6 +183,16 @@ public final class PyronautTestMain implements Callable<Integer> {
             System.err.println("Test execution failed: " + e.getMessage());
             return 7;
         }
+    }
+
+    private static ClassLoader resolveApplicationClassLoader() {
+        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+        return contextClassLoader != null ? contextClassLoader : PyronautTestMain.class.getClassLoader();
+    }
+
+    @FunctionalInterface
+    interface ContextBootstrapper {
+        void bootstrap(ClassLoader classLoader) throws Exception;
     }
 
     static Optional<String> buildPytestTestsParameter(List<String> rawSelectors) {

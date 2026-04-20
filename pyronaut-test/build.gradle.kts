@@ -7,6 +7,7 @@ dependencies {
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)
 
+    implementation(mn.micronaut.context.python)
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
 

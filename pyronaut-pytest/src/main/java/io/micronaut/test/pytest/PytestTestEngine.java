@@ -21,9 +21,6 @@ import io.micronaut.core.util.StringUtils;
 import io.micronaut.test.pytest.discovery.PytestDiscoverySelectorResolver;
 import io.micronaut.test.pytest.execution.PytestTestExecutor;
 import org.graalvm.polyglot.Context;
-import org.graalvm.polyglot.HostAccess;
-import org.graalvm.python.embedding.GraalPyResources;
-import org.graalvm.python.embedding.VirtualFileSystem;
 import org.junit.platform.engine.*;
 import org.junit.platform.engine.discovery.ClassNameFilter;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
@@ -37,6 +34,8 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 
@@ -124,28 +123,20 @@ public class PytestTestEngine implements TestEngine {
     private void createGraalPyContext(ConfigurationParameters configurationParameters) {
         System.setProperty("org.graalvm.python.vfs.allow_multiple", StringUtils.TRUE);
         System.setProperty("org.graalvm.python.vfs.multiple_vfs_checks_as_warning", StringUtils.TRUE);
-
-        var pyEnv = System.getenv("PYENV_VERSION");
-        var venv = System.getenv("VIRTUAL_ENV");
-        var builder = GraalPyResources.contextBuilder(VirtualFileSystem.newBuilder()
-                        .resourceDirectory(GraalPyContextFactory.APPLICATION_PATH)
-                        .resourceLoadingClass(PytestTestEngine.class)
-                        .build())
-                .allowHostAccess(HostAccess.ALL)
-                .allowHostClassLookup(name -> true);
-        if (pyEnv != null && venv != null && pyEnv.startsWith("graalpy")) {
-            builder.option("python.Executable", Path.of(venv).resolve("bin/python").toString());
-        }
+        Map<String, String> pythonOptions = new LinkedHashMap<>();
         configurationParameters.keySet().forEach(key -> {
             if (key.startsWith("python.")) {
-                configurationParameters.get(key).ifPresent(value ->
-                        builder.option(key, value)
-                );
+                configurationParameters.get(key).ifPresent(value -> pythonOptions.put(key, value));
             }
         });
-        this.context = builder.build();
-        ContextHolder.setContext(context);
-        ContextHolder.setReuseContext(true);
+        try {
+            this.context = GraalPyContextFactory.bootstrapReusableContext(
+                PytestTestEngine.class.getClassLoader(),
+                pythonOptions
+            );
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to initialize GraalPy context: " + e.getMessage(), e);
+        }
     }
 
     @Override

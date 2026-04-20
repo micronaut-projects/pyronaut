@@ -15,15 +15,16 @@
  */
 package io.micronaut.pyronaut.run;
 
+import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
-import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.stream.Stream;
 import java.util.concurrent.Callable;
+import java.util.stream.Stream;
 
 /**
  * Entry point for {@code pyronaut-run}.
@@ -56,15 +57,19 @@ public final class PyronautRunMain implements Callable<Integer> {
     List<String> appArgs = List.of();
 
     private final ClassResolver classResolver;
-    private final MicronautStarter micronautStarter;
+    private final ContextBootstrapper contextBootstrapper;
+    private final ApplicationStarter applicationStarter;
 
     public PyronautRunMain() {
-        this(Class::forName, PyronautRunMain::startMicronautApplication);
+        this(Class::forName, GraalPyContextFactory::bootstrapReusableContext, PyronautRunMain::startMicronautApplication);
     }
 
-    PyronautRunMain(ClassResolver classResolver, MicronautStarter micronautStarter) {
+    PyronautRunMain(ClassResolver classResolver,
+                    ContextBootstrapper contextBootstrapper,
+                    ApplicationStarter applicationStarter) {
         this.classResolver = classResolver;
-        this.micronautStarter = micronautStarter;
+        this.contextBootstrapper = contextBootstrapper;
+        this.applicationStarter = applicationStarter;
     }
 
     @Override
@@ -77,29 +82,12 @@ public final class PyronautRunMain implements Callable<Integer> {
                 return 8;
             }
 
-            Class<?> loadedClass;
-            if (DEFAULT_MAIN_CLASS.equals(mainClass)) {
-                loadedClass = loadDefaultMainClass();
-                if (micronautStarter.start(loadedClass, resolvedClassesDir, appArgs)) {
-                    blockUntilInterrupted();
-                    return 0;
-                }
-                if (loadedClass == null) {
-                    System.err.println("Run failed: Missing generated main class '" + DEFAULT_MAIN_CLASS
-                        + "' and reflective Micronaut startup is unavailable.");
-                    return 6;
-                }
-            } else {
-                loadedClass = Class.forName(mainClass);
+            Class<?> loadedClass = loadConfiguredMainClass();
+            contextBootstrapper.bootstrap(resolveApplicationClassLoader(loadedClass));
+            if (applicationStarter.start(loadedClass, resolvedClassesDir, appArgs)) {
+                blockUntilInterrupted();
             }
-            var method = loadedClass.getDeclaredMethod("main", String[].class);
-            method.setAccessible(true);
-            method.invoke(null, (Object) appArgs.toArray(String[]::new));
             return 0;
-        } catch (InvocationTargetException e) {
-            Throwable cause = e.getCause() == null ? e : e.getCause();
-            System.err.println("Run failed: " + cause.getMessage());
-            return 6;
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -111,48 +99,37 @@ public final class PyronautRunMain implements Callable<Integer> {
 
     private static boolean startMicronautApplication(Class<?> loadedClass,
                                                      Path resolvedClassesDir,
-                                                     List<String> appArgs) throws Exception {
-        try {
-            Class<?> micronautClass = Class.forName("io.micronaut.runtime.Micronaut");
-            java.lang.reflect.Method buildMethod = micronautClass.getDeclaredMethod("build", String[].class);
-            buildMethod.setAccessible(true);
-            Object micronaut = buildMethod.invoke(null, (Object) appArgs.toArray(String[]::new));
-
-            if (loadedClass != null) {
-                java.lang.reflect.Method mainClassMethod = micronautClass.getDeclaredMethod("mainClass", Class.class);
-                mainClassMethod.setAccessible(true);
-                mainClassMethod.invoke(micronaut, loadedClass);
-            }
-
-            try {
-                java.lang.reflect.Method keepAliveMethod = micronautClass.getDeclaredMethod("keepAlive", boolean.class);
-                keepAliveMethod.setAccessible(true);
-                keepAliveMethod.invoke(micronaut, true);
-            } catch (NoSuchMethodException ignored) {
-            }
-
-            List<String> packages = discoverApplicationPackages(resolvedClassesDir);
-            if (!packages.isEmpty()) {
-                java.lang.reflect.Method packagesMethod = micronautClass.getDeclaredMethod("packages", String[].class);
-                packagesMethod.setAccessible(true);
-                packagesMethod.invoke(micronaut, (Object) packages.toArray(String[]::new));
-            }
-
-            java.lang.reflect.Method startMethod = micronautClass.getDeclaredMethod("start");
-            startMethod.setAccessible(true);
-            startMethod.invoke(micronaut);
-            return true;
-        } catch (ClassNotFoundException | NoSuchMethodException e) {
-            return false;
+                                                     List<String> appArgs) {
+        Micronaut micronaut = Micronaut.build(appArgs.toArray(String[]::new));
+        if (loadedClass != null) {
+            micronaut.mainClass(loadedClass);
         }
+
+        List<String> packages = discoverApplicationPackages(resolvedClassesDir);
+        if (!packages.isEmpty()) {
+            micronaut.packages(packages.toArray(String[]::new));
+        }
+        micronaut.start();
+        return true;
     }
 
-    private Class<?> loadDefaultMainClass() throws Exception {
+    private Class<?> loadConfiguredMainClass() throws Exception {
+        if (!DEFAULT_MAIN_CLASS.equals(mainClass)) {
+            return classResolver.load(mainClass);
+        }
         try {
             return classResolver.load(mainClass);
         } catch (ClassNotFoundException ignored) {
             return null;
         }
+    }
+
+    private static ClassLoader resolveApplicationClassLoader(Class<?> loadedClass) {
+        if (loadedClass != null) {
+            return loadedClass.getClassLoader();
+        }
+        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+        return contextClassLoader != null ? contextClassLoader : PyronautRunMain.class.getClassLoader();
     }
 
     @FunctionalInterface
@@ -161,7 +138,12 @@ public final class PyronautRunMain implements Callable<Integer> {
     }
 
     @FunctionalInterface
-    interface MicronautStarter {
+    interface ContextBootstrapper {
+        void bootstrap(ClassLoader classLoader) throws Exception;
+    }
+
+    @FunctionalInterface
+    interface ApplicationStarter {
         boolean start(Class<?> loadedClass, Path resolvedClassesDir, List<String> appArgs) throws Exception;
     }
 
