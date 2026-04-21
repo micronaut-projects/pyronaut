@@ -11,8 +11,9 @@ dependencies {
     implementation(mnPicocli.picocli)
     implementation(mn.micronaut.http.server)
     implementation(libs.micronaut.test.resources.build.tools)
+    implementation(mnLogging.logback.classic)
+    runtimeOnly(libs.slf4j.jul.to.slf4j)
     runtimeOnly(mn.micronaut.http.server.netty)
-    runtimeOnly(libs.slf4j.simple)
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

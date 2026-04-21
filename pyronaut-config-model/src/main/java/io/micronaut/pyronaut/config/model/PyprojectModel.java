@@ -170,6 +170,7 @@ public record PyprojectModel(Project project,
      * @param clientTimeout client timeout in seconds
      * @param sharedServer use shared server settings path under user home
      * @param sharedServerNamespace namespace suffix for shared server settings directory
+     * @param logsDir directory for test resources server logs
      * @param serverIdleTimeoutMinutes idle timeout before server self-shutdown
      * @param serverSystemProperties JVM system properties passed to server process
      * @param serverEnvironment environment variables passed to server process
@@ -187,6 +188,7 @@ public record PyprojectModel(Project project,
                                 Integer clientTimeout,
                                 Boolean sharedServer,
                                 String sharedServerNamespace,
+                                String logsDir,
                                 Integer serverIdleTimeoutMinutes,
                                 Map<String, String> serverSystemProperties,
                                 Map<String, String> serverEnvironment,

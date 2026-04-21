@@ -328,6 +328,7 @@ public final class PyprojectModelReader {
         }
         Boolean sharedServer = readBoolean(parsed, "tool.pyronaut.testResources.sharedServer", false);
         String sharedServerNamespace = readString(parsed, "tool.pyronaut.testResources.sharedServerNamespace");
+        String logsDir = readString(parsed, "tool.pyronaut.testResources.logsDir");
         Integer serverIdleTimeoutMinutes = readInteger(parsed, "tool.pyronaut.testResources.serverIdleTimeoutMinutes");
         Map<String, String> serverSystemProperties = readStringMap(parsed, "tool.pyronaut.testResources.serverSystemProperties");
         Map<String, String> serverEnvironment = readStringMap(parsed, "tool.pyronaut.testResources.serverEnvironment");
@@ -351,6 +352,7 @@ public final class PyprojectModelReader {
             clientTimeout,
             sharedServer,
             sharedServerNamespace,
+            logsDir,
             serverIdleTimeoutMinutes,
             serverSystemProperties,
             serverEnvironment,

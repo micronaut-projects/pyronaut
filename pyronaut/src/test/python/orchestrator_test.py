@@ -30,6 +30,11 @@ _CLI_SPEC.loader.exec_module(cli)
 class OrchestratorTest(unittest.TestCase):
     _RUN_MAIN = "io.micronaut.pyronaut.run.PyronautRunMain"
     _TEST_MAIN = "io.micronaut.pyronaut.test.PyronautTestMain"
+    _DELEGATE_JVM_FLAGS = [
+        "--sun-misc-unsafe-memory-access=allow",
+        "--enable-native-access=ALL-UNNAMED",
+    ]
+    _JDWP_FLAG = "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
 
     def setUp(self):
         self._previous_run_jar = os.environ.get("PYRONAUT_RUN_JAR")
@@ -53,29 +58,32 @@ class OrchestratorTest(unittest.TestCase):
 
     def _assert_java_delegate(self, command_line, main_class: str, project_dir: str, manifest: str, extra_args: list[str] | None = None) -> None:
         self.assertEqual("/tmp/java-home/bin/java", command_line[0])
-        self.assertEqual("-cp", command_line[1])
-        classpath = command_line[2].split(os.pathsep)
+        cp_index = command_line.index("-cp")
+        self.assertEqual(self._DELEGATE_JVM_FLAGS, command_line[1:3])
+        classpath = command_line[cp_index + 1].split(os.pathsep)
         project_root = self._normalized_project_dir(project_dir)
         self.assertIn(str(Path(project_root) / "__pyronaut__" / manifest), "\n".join(classpath) if False else "")
         self.assertIn(str(Path(project_root) / "config"), classpath if Path(project_root, "config").is_dir() else classpath)
-        self.assertEqual(main_class, command_line[3])
-        self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[4:])
+        self.assertEqual(main_class, command_line[cp_index + 2])
+        self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
 
     def _assert_run_delegate(self, command_line, project_dir: str, extra_args: list[str] | None = None) -> None:
         self.assertTrue(command_line[0].endswith("/bin/java") or command_line[0] == "java")
-        self.assertEqual("-cp", command_line[1])
-        classpath = command_line[2].split(os.pathsep)
+        cp_index = command_line.index("-cp")
+        self.assertEqual(self._DELEGATE_JVM_FLAGS, command_line[1:3])
+        classpath = command_line[cp_index + 1].split(os.pathsep)
         project_root = self._normalized_project_dir(project_dir)
         self.assertIn(str(Path(project_root) / "__pyronaut__" / "classes"), classpath)
         self.assertIn("/tmp/runtime.jar", classpath)
         self.assertIn("/tmp/pyronaut-run.jar", classpath)
-        self.assertEqual(self._RUN_MAIN, command_line[3])
-        self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[4:])
+        self.assertEqual(self._RUN_MAIN, command_line[cp_index + 2])
+        self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
 
     def _assert_test_delegate(self, command_line, project_dir: str, extra_args: list[str] | None = None) -> None:
         self.assertTrue(command_line[0].endswith("/bin/java") or command_line[0] == "java")
-        self.assertEqual("-cp", command_line[1])
-        classpath = command_line[2].split(os.pathsep)
+        cp_index = command_line.index("-cp")
+        self.assertEqual(self._DELEGATE_JVM_FLAGS, command_line[1:3])
+        classpath = command_line[cp_index + 1].split(os.pathsep)
         project_root = self._normalized_project_dir(project_dir)
         self.assertIn("/tmp/test.jar", classpath)
         self.assertIn("/tmp/runtime.jar", classpath)
@@ -85,8 +93,19 @@ class OrchestratorTest(unittest.TestCase):
             str(Path(project_root) / "__pyronaut__" / "test-classes") in classpath
             or str(Path(project_root) / "__pyronaut__" / "classes") in classpath
         )
-        self.assertEqual(self._TEST_MAIN, command_line[3])
-        self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[4:])
+        self.assertEqual(self._TEST_MAIN, command_line[cp_index + 2])
+        self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
+
+    @staticmethod
+    def _extract_system_properties(command_line) -> dict[str, str | None]:
+        cp_index = command_line.index("-cp")
+        properties: dict[str, str | None] = {}
+        for token in command_line[1:cp_index]:
+            if not token.startswith("-D"):
+                continue
+            name, has_value, value = token[2:].partition("=")
+            properties[name] = value if has_value else None
+        return properties
 
     @staticmethod
     def _write_manifests(project_dir: Path, *, runtime: bool = True, test: bool = True, build: bool = True) -> None:
@@ -437,7 +456,7 @@ class OrchestratorTest(unittest.TestCase):
         )
         self._assert_test_resources_start(executed[3][0], str(project_dir))
         validate_env = executed[4][1] or {}
-        self.assertIn("micronaut.test.resources.server.uri=http://localhost:61234", validate_env.get("JAVA_TOOL_OPTIONS", ""))
+        self.assertEqual("http://localhost:61234", validate_env.get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
         self._assert_test_delegate(executed[4][0], str(project_dir))
         self._assert_test_resources_stop(executed[5][0], str(project_dir))
 
@@ -542,7 +561,34 @@ sharedServer = true
         self._assert_run_delegate(executed[4], str(project_dir))
         self._assert_test_resources_stop(executed[5], str(project_dir))
 
-    def test_test_resources_settings_are_propagated_to_run_via_java_tool_options(self):
+    def test_test_resources_start_failure_aborts_run_before_delegate(self):
+        executed = []
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "start-failure"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+
+            def runner(command_line):
+                executed.append(command_line)
+                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                    return 10
+                return 0
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["run", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Test resources server failed to start", stderr.getvalue())
+        self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
+        self.assertFalse(any(self._RUN_MAIN in cmd for cmd in executed))
+
+    def test_test_resources_settings_are_propagated_to_run_via_environment(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "with-settings"
@@ -569,15 +615,41 @@ sharedServer = true
             )
 
         self.assertEqual(0, exit_code)
-        run_invocation = next((item for item in executed if len(item[0]) > 3 and item[0][3] == self._RUN_MAIN), None)
+        run_invocation = next((item for item in executed if self._RUN_MAIN in item[0]), None)
         if run_invocation is None:
             self.fail("Expected delegated pyronaut-run invocation")
         _, run_env = run_invocation
         self.assertIsInstance(run_env, dict)
         assert isinstance(run_env, dict)
-        options = run_env.get("JAVA_TOOL_OPTIONS", "")
-        self.assertIn("-Dmicronaut.test.resources.server.uri=http://localhost:18900", options)
-        self.assertIn("-Dmicronaut.test.resources.server.access.token=token-abc", options)
+        self.assertEqual("http://localhost:18900", run_env.get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
+        self.assertEqual("token-abc", run_env.get("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN"))
+        system_properties = self._extract_system_properties(run_invocation[0])
+        self.assertEqual("http://localhost:18900", system_properties.get("micronaut.test.resources.server.uri"))
+        self.assertEqual("token-abc", system_properties.get("micronaut.test.resources.server.access.token"))
+
+    def test_resolve_test_resources_logs_dir_honors_pyproject_configuration(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+
+[tool.pyronaut.testResources]
+logsDir = "var/custom-test-resources-logs"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            resolved = cli._resolve_test_resources_logs_dir(  # noqa: SLF001 - internal helper coverage
+                project_dir.resolve(),
+                settings_file.resolve(),
+            )
+
+        self.assertEqual((project_dir / "var" / "custom-test-resources-logs").resolve(), resolved)
 
     def test_test_resources_start_isolated_from_micronaut_server_port_env(self):
         seen_server_port: str | None = None
@@ -696,7 +768,7 @@ sharedServer = true
                     os.environ["MICRONAUT_SERVER_PORT"] = previous_port
 
         self.assertEqual(0, exit_code)
-        run_invocation = next((item for item in executed if len(item[0]) > 3 and item[0][3] == self._RUN_MAIN), None)
+        run_invocation = next((item for item in executed if self._RUN_MAIN in item[0]), None)
         if run_invocation is None:
             self.fail("Expected delegated pyronaut-run invocation")
         _, run_env = run_invocation
@@ -779,7 +851,7 @@ sharedServer = true
         self._assert_test_delegate(executed[4], "/tmp/demo", ["--tests", "tests/test_math.py::test_add", "--tests", "*test_add*"])
         self._assert_test_resources_stop(executed[5], "/tmp/demo")
 
-    def test_run_debug_vm_sets_java_tool_options_and_forwards_flag(self):
+    def test_run_debug_vm_sets_jvm_arg_and_forwards_flag(self):
         executed = []
         project_dir = Path("/tmp/demo")
         (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
@@ -789,12 +861,13 @@ sharedServer = true
             executed.append((command_line, env))
             return 0
 
-        exit_code = cli.run(
-            ["run", "--project-dir", "/tmp/demo", "--debug-vm"],
-            runner_with_env=runner_with_env,
-            resolver=self._resolver(),
-            platform_name="linux",
-        )
+        with patch.object(cli, "_check_port_available", return_value=(True, None)):
+            exit_code = cli.run(
+                ["run", "--project-dir", "/tmp/demo", "--debug-vm"],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
 
         self.assertEqual(0, exit_code)
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run"], executed[0][0])
@@ -806,12 +879,9 @@ sharedServer = true
         self._assert_test_resources_start(executed[3][0], "/tmp/demo")
         self.assertIsNone(executed[3][1])
         self._assert_run_delegate(executed[4][0], "/tmp/demo", ["--debug-vm"])
-        self.assertEqual(
-            "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005",
-            executed[4][1]["JAVA_TOOL_OPTIONS"],
-        )
+        self.assertEqual(self._JDWP_FLAG, executed[4][0][3])
 
-    def test_test_debug_vm_sets_java_tool_options(self):
+    def test_test_debug_vm_sets_jvm_arg(self):
         executed = []
         project_dir = Path("/tmp/demo")
         (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
@@ -821,25 +891,21 @@ sharedServer = true
             executed.append((command_line, env))
             return 0
 
-        exit_code = cli.run(
-            ["test", "--project-dir", "/tmp/demo", "--debug-vm"],
-            runner_with_env=runner_with_env,
-            resolver=self._resolver(),
-            platform_name="linux",
-        )
+        with patch.object(cli, "_check_port_available", return_value=(True, None)):
+            exit_code = cli.run(
+                ["test", "--project-dir", "/tmp/demo", "--debug-vm"],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
 
         self.assertEqual(0, exit_code)
         self._assert_test_delegate(executed[4][0], "/tmp/demo", ["--debug-vm"])
-        self.assertEqual(
-            "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005",
-            executed[4][1]["JAVA_TOOL_OPTIONS"],
-        )
+        self.assertEqual(self._JDWP_FLAG, executed[4][0][3])
 
     def test_debug_vm_fails_fast_when_port_busy(self):
         stderr = io.StringIO()
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("127.0.0.1", 5005))
-        try:
+        with patch.object(cli, "_check_port_available", return_value=(False, "already in use")):
             with redirect_stderr(stderr):
                 exit_code = cli.run(
                     ["run", "--project-dir", "/tmp/demo", "--debug-vm"],
@@ -847,8 +913,6 @@ sharedServer = true
                     resolver=self._resolver(),
                     platform_name="linux",
                 )
-        finally:
-            sock.close()
 
         self.assertNotEqual(0, exit_code)
         self.assertIn("port 5005", stderr.getvalue().lower())
@@ -2054,7 +2118,7 @@ sharedServer = true
         self.assertIsInstance(executed[1][1], dict)
         assert isinstance(executed[1][1], dict)
         self.assertIn("JAVA_HOME", executed[1][1])
-        self.assertIn("-Dmicronaut.test.resources.server.uri=http://localhost:18900", executed[1][1].get("JAVA_TOOL_OPTIONS", ""))
+        self.assertEqual("http://localhost:18900", executed[1][1].get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
 
     def test_tui_interactive_test_mode_delegates_to_tamboui_command(self):
         executed = []
@@ -2123,7 +2187,7 @@ sharedServer = true
         self.assertIsInstance(executed[1][1], dict)
         assert isinstance(executed[1][1], dict)
         self.assertIn("JAVA_HOME", executed[1][1])
-        self.assertIn("-Dmicronaut.test.resources.server.uri=http://localhost:18900", executed[1][1].get("JAVA_TOOL_OPTIONS", ""))
+        self.assertEqual("http://localhost:18900", executed[1][1].get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
 
     def test_tui_interactive_without_project_dir_defaults_to_cwd(self):
         executed = []
@@ -2187,7 +2251,7 @@ sharedServer = true
         self.assertIsInstance(executed[1][1], dict)
         assert isinstance(executed[1][1], dict)
         self.assertIn("JAVA_HOME", executed[1][1])
-        self.assertIn("-Dmicronaut.test.resources.server.uri=http://localhost:18900", executed[1][1].get("JAVA_TOOL_OPTIONS", ""))
+        self.assertEqual("http://localhost:18900", executed[1][1].get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
 
     def test_tui_help_delegates_to_tui_executable_help(self):
         executed = []
@@ -2352,6 +2416,8 @@ sharedServer = true
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "build-app"
             project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
             exit_code = cli.run(
                 ["build", "--project-dir", str(project_dir)],
                 runner=runner,
@@ -2454,11 +2520,15 @@ sharedServer = true
     def test_validate_config_strips_stale_test_resources_java_tool_options(self):
         executed: list[tuple[list[str], dict[str, str] | None]] = []
         original = os.environ.get("JAVA_TOOL_OPTIONS")
+        original_uri = os.environ.get("MICRONAUT_TEST_RESOURCES_SERVER_URI")
+        original_token = os.environ.get("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN")
         os.environ["JAVA_TOOL_OPTIONS"] = (
             "-Dmicronaut.test.resources.server.uri=http://localhost:61247 "
             "-Dmicronaut.test.resources.server.access.token=stale-token "
             "-Duser.timezone=UTC"
         )
+        os.environ["MICRONAUT_TEST_RESOURCES_SERVER_URI"] = "http://localhost:61247"
+        os.environ["MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN"] = "stale-token"
         try:
             def runner(command_line, env=None):
                 executed.append((command_line, env))
@@ -2475,6 +2545,14 @@ sharedServer = true
                 os.environ.pop("JAVA_TOOL_OPTIONS", None)
             else:
                 os.environ["JAVA_TOOL_OPTIONS"] = original
+            if original_uri is None:
+                os.environ.pop("MICRONAUT_TEST_RESOURCES_SERVER_URI", None)
+            else:
+                os.environ["MICRONAUT_TEST_RESOURCES_SERVER_URI"] = original_uri
+            if original_token is None:
+                os.environ.pop("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", None)
+            else:
+                os.environ["MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN"] = original_token
 
         self.assertEqual(0, exit_code)
         self.assertEqual(1, len(executed))
@@ -2483,6 +2561,8 @@ sharedServer = true
         options = run_env.get("JAVA_TOOL_OPTIONS", "")
         self.assertNotIn("micronaut.test.resources.server.uri", options)
         self.assertNotIn("micronaut.test.resources.server.access.token", options)
+        self.assertNotIn("MICRONAUT_TEST_RESOURCES_SERVER_URI", run_env)
+        self.assertNotIn("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", run_env)
 
     def test_validate_config_returns_precondition_when_executable_missing(self):
         stderr = io.StringIO()

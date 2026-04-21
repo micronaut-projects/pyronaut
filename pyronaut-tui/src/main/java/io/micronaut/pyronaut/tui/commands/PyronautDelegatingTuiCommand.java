@@ -359,17 +359,11 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         return connection;
     }
 
-    private static void mergeJavaToolOption(Map<String, String> env, String key, String value) {
+    private static void setEnvironmentValue(Map<String, String> env, String key, String value) {
         if (value == null || value.isBlank()) {
             return;
         }
-        String option = "-D" + key + "=" + escapeJavaToolOptionValue(value);
-        String existing = env.getOrDefault("JAVA_TOOL_OPTIONS", "").trim();
-        env.put("JAVA_TOOL_OPTIONS", existing.isEmpty() ? option : existing + " " + option);
-    }
-
-    private static String escapeJavaToolOptionValue(String value) {
-        return value.replace("\\", "\\\\").replace(" ", "\\ ");
+        env.put(key, value);
     }
 
     boolean hasReachableTestResourcesServer(Path settingsFile) {
@@ -1551,9 +1545,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         }
 
         private void applyToEnvironment(Map<String, String> env) {
-            mergeJavaToolOption(env, SERVER_URI_KEY, serverUri);
-            mergeJavaToolOption(env, TOKEN_KEY, token);
-            mergeJavaToolOption(env, READ_TIMEOUT_KEY, readTimeout);
+            setEnvironmentValue(env, "MICRONAUT_TEST_RESOURCES_SERVER_URI", serverUri);
+            setEnvironmentValue(env, "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", token);
+            setEnvironmentValue(env, "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", readTimeout);
         }
 
         private static TestResourcesConnection fromProperties(Properties properties) {
@@ -1567,9 +1561,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         private static TestResourcesConnection fromEnvironment(Map<String, String> environment) {
             String javaToolOptions = environment.getOrDefault("JAVA_TOOL_OPTIONS", "");
             return new TestResourcesConnection(
-                firstNonBlank(readSystemProperty(javaToolOptions, SERVER_URI_KEY), environment.get("MICRONAUT_TEST_RESOURCES_SERVER_URI")),
-                firstNonBlank(readSystemProperty(javaToolOptions, TOKEN_KEY), environment.get("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN")),
-                firstNonBlank(readSystemProperty(javaToolOptions, READ_TIMEOUT_KEY), environment.get("MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT"))
+                firstNonBlank(environment.get("MICRONAUT_TEST_RESOURCES_SERVER_URI"), readSystemProperty(javaToolOptions, SERVER_URI_KEY)),
+                firstNonBlank(environment.get("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN"), readSystemProperty(javaToolOptions, TOKEN_KEY)),
+                firstNonBlank(environment.get("MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT"), readSystemProperty(javaToolOptions, READ_TIMEOUT_KEY))
             );
         }
 

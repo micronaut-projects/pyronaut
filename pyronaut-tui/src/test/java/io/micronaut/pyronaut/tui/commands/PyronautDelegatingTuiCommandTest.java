@@ -42,7 +42,7 @@ class PyronautDelegatingTuiCommandTest {
     }
 
     @Test
-    void startProcessAddsJavaToolOptionsWhenReachableSettingsExist() throws Exception {
+    void startProcessAddsTestResourcesEnvironmentWhenReachableSettingsExist() throws Exception {
         Path project = tempDir.resolve("demo");
         Path settingsDir = project.resolve(".micronaut/test-resources");
         Files.createDirectories(settingsDir);
@@ -57,7 +57,7 @@ class PyronautDelegatingTuiCommandTest {
         Path output = project.resolve("env.txt");
         Files.writeString(
             script,
-            "#!/bin/sh\nprintf '%s' \"$JAVA_TOOL_OPTIONS\" > \"$1\"\n",
+            "#!/bin/sh\nprintf '%s\\n%s\\n%s' \"$MICRONAUT_TEST_RESOURCES_SERVER_URI\" \"$MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN\" \"$MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT\" > \"$1\"\n",
             StandardCharsets.UTF_8
         );
         script.toFile().setExecutable(true);
@@ -66,10 +66,8 @@ class PyronautDelegatingTuiCommandTest {
 
         Process process = command.start(project, List.of(script.toString(), output.toString()));
         assertEquals(0, process.waitFor());
-        String javaToolOptions = Files.readString(output, StandardCharsets.UTF_8);
-        assertTrue(javaToolOptions.contains("-Dmicronaut.test.resources.server.uri=http://localhost:18080"));
-        assertTrue(javaToolOptions.contains("-Dmicronaut.test.resources.server.access.token=token-123"));
-        assertTrue(javaToolOptions.contains("-Dmicronaut.test.resources.server.client.read.timeout=60"));
+        List<String> environmentLines = Files.readAllLines(output, StandardCharsets.UTF_8);
+        assertEquals(List.of("http://localhost:18080", "token-123", "60"), environmentLines);
     }
 
     @Test
@@ -92,10 +90,9 @@ class PyronautDelegatingTuiCommandTest {
                 "fromEnvironment",
                 new Class<?>[]{java.util.Map.class},
                 java.util.Map.of(
-                    "JAVA_TOOL_OPTIONS",
-                    "-Dmicronaut.test.resources.server.uri=http://localhost:19090 "
-                        + "-Dmicronaut.test.resources.server.access.token=token-456 "
-                        + "-Dmicronaut.test.resources.server.client.read.timeout=45"
+                    "MICRONAUT_TEST_RESOURCES_SERVER_URI", "http://localhost:19090",
+                    "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "token-456",
+                    "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", "45"
                 )
             )
         ));
@@ -103,11 +100,10 @@ class PyronautDelegatingTuiCommandTest {
         ProcessBuilder builder = new ProcessBuilder("echo");
         command.applyTestResourcesEnvironment(project, builder);
 
-        String javaToolOptions = builder.environment().get("JAVA_TOOL_OPTIONS");
-        assertTrue(javaToolOptions.contains("-Dmicronaut.test.resources.server.uri=http://localhost:19090"));
-        assertTrue(javaToolOptions.contains("-Dmicronaut.test.resources.server.access.token=token-456"));
-        assertTrue(javaToolOptions.contains("-Dmicronaut.test.resources.server.client.read.timeout=45"));
-        assertFalse(javaToolOptions.contains("stale-token"));
+        assertEquals("http://localhost:19090", builder.environment().get("MICRONAUT_TEST_RESOURCES_SERVER_URI"));
+        assertEquals("token-456", builder.environment().get("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN"));
+        assertEquals("45", builder.environment().get("MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT"));
+        assertFalse("stale-token".equals(builder.environment().get("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN")));
     }
 
     @Test
@@ -186,12 +182,9 @@ class PyronautDelegatingTuiCommandTest {
                 try (var in = Files.newInputStream(settingsFile)) {
                     properties.load(in);
                 }
-                String options = String.join(" ", List.of(
-                    "-Dmicronaut.test.resources.server.uri=" + properties.getProperty("server.uri"),
-                    "-Dmicronaut.test.resources.server.access.token=" + properties.getProperty("server.access.token"),
-                    "-Dmicronaut.test.resources.server.client.read.timeout=" + properties.getProperty("server.client.read.timeout")
-                ));
-                builder.environment().put("JAVA_TOOL_OPTIONS", options);
+                builder.environment().put("MICRONAUT_TEST_RESOURCES_SERVER_URI", properties.getProperty("server.uri"));
+                builder.environment().put("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", properties.getProperty("server.access.token"));
+                builder.environment().put("MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", properties.getProperty("server.client.read.timeout"));
             }
             return builder.start();
         }

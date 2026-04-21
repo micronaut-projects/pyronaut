@@ -298,6 +298,7 @@ class PyprojectModelReaderTest {
             clientTimeout = 90
             sharedServer = true
             sharedServerNamespace = "demo"
+            logsDir = "var/test-resources-logs"
             serverIdleTimeoutMinutes = 15
             debugServer = true
             javaExecutable = "/opt/jdk/bin/java"
@@ -322,6 +323,7 @@ class PyprojectModelReaderTest {
         assertEquals(Integer.valueOf(90), testResources.clientTimeout());
         assertEquals(Boolean.TRUE, testResources.sharedServer());
         assertEquals("demo", testResources.sharedServerNamespace());
+        assertEquals("var/test-resources-logs", testResources.logsDir());
         assertEquals(Integer.valueOf(15), testResources.serverIdleTimeoutMinutes());
         assertEquals(Map.of("micronaut.server.host", "127.0.0.1"), testResources.serverSystemProperties());
         assertEquals(Map.of("TEST_RESOURCES_MODE", "standalone"), testResources.serverEnvironment());

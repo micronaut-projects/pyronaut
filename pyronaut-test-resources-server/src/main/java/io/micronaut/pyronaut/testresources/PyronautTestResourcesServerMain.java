@@ -25,6 +25,7 @@ import picocli.CommandLine;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
@@ -44,6 +45,11 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
     private static final int INTERNAL_ERROR = 10;
     private static final String SERVER_CLASSPATH_MANIFEST = "__pyronaut__/resolved-test-resources-server-dependencies";
     private static final String OWNED_SESSION_FILE = "__pyronaut__/test-resources-session.json";
+    private static final String LOGS_DIRECTORY = "logs";
+    private static final String SERVER_LOG_FILE = "test-resources.log";
+    private static final String LOGS_DIR_SYSTEM_PROPERTY = "pyronaut.test-resources.logs-dir";
+    private static final String LOGBACK_CONFIGURATION_SYSTEM_PROPERTY = "logback.configurationFile";
+    private static final String LOGBACK_CONFIGURATION_RESOURCE = "pyronaut-test-resources-logback.xml";
     private static final Pattern OWNER_TOKEN_PATTERN = Pattern.compile("\\\"ownerToken\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
@@ -76,6 +82,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
     }
 
     public static void main(String[] args) {
+        initializeLogging(args);
         int exit = new CommandLine(new PyronautTestResourcesServerMain()).execute(args);
         if (exit != 0) {
             System.exit(exit);
@@ -89,11 +96,12 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             PyprojectModel model = modelReader.readProjectDirectory(root);
             PyprojectModel.TestResources config = model.pyronaut().testResources();
             Path settingsDir = resolveSettingsDir(root, config);
+            Path logsDir = resolveLogsDir(root, settingsDir, config);
             Path portFile = settingsDir.resolve("server.port");
             Path sessionFile = root.resolve(OWNED_SESSION_FILE).toAbsolutePath().normalize();
 
             return switch (normalizeAction(action)) {
-                case START -> start(root, settingsDir, portFile, config);
+                case START -> start(root, settingsDir, logsDir, portFile, config);
                 case STATUS -> status(settingsDir);
                 case STOP -> stop(settingsDir, sessionFile);
             };
@@ -109,7 +117,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
         }
     }
 
-    private Integer start(Path root, Path settingsDir, Path portFile, PyprojectModel.TestResources config) throws IOException {
+    private Integer start(Path root, Path settingsDir, Path logsDir, Path portFile, PyprojectModel.TestResources config) throws IOException {
         if (isTestResourcesDisabledViaEnvironment()) {
             System.out.println("Test resources server startup skipped (PYRONAUT_TEST_RESOURCES_DISABLED=true).");
             return SUCCESS;
@@ -123,6 +131,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
 
         ServerStartRequest request = new ServerStartRequest(
             settingsDir,
+            logsDir,
             portFile,
             root.resolve(SERVER_CLASSPATH_MANIFEST).toAbsolutePath().normalize(),
             config.explicitPort(),
@@ -135,8 +144,13 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             config.debugServer() != null && config.debugServer(),
             config.javaExecutable()
         );
+        Path serverLogFile = logsDir.resolve(SERVER_LOG_FILE);
+        int startupLogLineCount = currentLineCount(serverLogFile);
         ServerStatus started = serverManager.start(request);
-        System.out.println("running uri=" + started.uri() + " port=" + started.port());
+        emitStartupProgress(serverLogFile, startupLogLineCount);
+        if (!isOrchestratedRequest()) {
+            System.out.println("running uri=" + started.uri() + " port=" + started.port());
+        }
         return SUCCESS;
     }
 
@@ -152,13 +166,17 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
 
     private Integer stop(Path settingsDir, Path sessionFile) throws IOException {
         if (!matchesOwningSession(sessionFile)) {
-            System.out.println("stop-skipped-ownership-mismatch");
+            if (!isOrchestratedRequest()) {
+                System.out.println("stop-skipped-ownership-mismatch");
+            }
             return SUCCESS;
         }
         boolean stopped = serverManager.stop(settingsDir);
         Files.deleteIfExists(sessionFile);
         deleteServerSettings(settingsDir);
-        System.out.println(stopped ? "stopped" : "already-stopped");
+        if (!isOrchestratedRequest()) {
+            System.out.println(stopped ? "stopped" : "already-stopped");
+        }
         return SUCCESS;
     }
 
@@ -210,6 +228,92 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
         return root.resolve(".micronaut/test-resources").normalize();
     }
 
+    private static Path resolveLogsDir(Path root, Path settingsDir, PyprojectModel.TestResources config) {
+        String configured = config.logsDir();
+        if (configured != null && !configured.isBlank()) {
+            Path configuredPath = Path.of(configured.trim());
+            return (configuredPath.isAbsolute() ? configuredPath : root.resolve(configuredPath)).toAbsolutePath().normalize();
+        }
+        return settingsDir.resolve(LOGS_DIRECTORY).normalize();
+    }
+
+    private static void initializeLogging(String[] args) {
+        if (System.getProperty(LOGS_DIR_SYSTEM_PROPERTY) == null) {
+            Path projectDir = extractProjectDir(args);
+            Path defaultLogsDir = projectDir.resolve(".micronaut/test-resources").resolve(LOGS_DIRECTORY).toAbsolutePath().normalize();
+            try {
+                Files.createDirectories(defaultLogsDir);
+                System.setProperty(LOGS_DIR_SYSTEM_PROPERTY, defaultLogsDir.toString());
+            } catch (IOException ignored) {
+                return;
+            }
+        }
+        if (System.getProperty(LOGBACK_CONFIGURATION_SYSTEM_PROPERTY) == null) {
+            URL config = resolveLogbackConfiguration();
+            if (config != null) {
+                System.setProperty(LOGBACK_CONFIGURATION_SYSTEM_PROPERTY, config.toString());
+            }
+        }
+    }
+
+    private static int currentLineCount(Path path) {
+        try {
+            if (!Files.exists(path)) {
+                return 0;
+            }
+            return Files.readAllLines(path).size();
+        } catch (IOException ignored) {
+            return 0;
+        }
+    }
+
+    private static void emitStartupProgress(Path serverLogFile, int previousLineCount) {
+        if (!Files.exists(serverLogFile)) {
+            return;
+        }
+        try {
+            List<String> lines = Files.readAllLines(serverLogFile);
+            for (int i = Math.max(0, previousLineCount); i < lines.size(); i++) {
+                String line = lines.get(i).trim();
+                if (!line.isEmpty() && shouldMirrorStartupLogLine(line)) {
+                    System.err.println(line);
+                }
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static boolean shouldMirrorStartupLogLine(String line) {
+        return line.contains("Pulling docker image: ")
+            || line.contains("Creating container for image: ")
+            || (line.contains("Container ") && line.contains(" started in "));
+    }
+
+    private static Path extractProjectDir(String[] args) {
+        if (args == null) {
+            return Path.of(".").toAbsolutePath().normalize();
+        }
+        for (int i = 0; i < args.length; i++) {
+            String token = args[i];
+            if ("--project-dir".equals(token) && i + 1 < args.length) {
+                return Path.of(args[i + 1]).toAbsolutePath().normalize();
+            }
+            if (token != null && token.startsWith("--project-dir=")) {
+                return Path.of(token.substring("--project-dir=".length())).toAbsolutePath().normalize();
+            }
+        }
+        return Path.of(".").toAbsolutePath().normalize();
+    }
+
+    static String resolveLogbackConfigurationLocation() {
+        URL resource = resolveLogbackConfiguration();
+        return resource == null ? null : resource.toString();
+    }
+
+    private static URL resolveLogbackConfiguration() {
+        return PyronautTestResourcesServerMain.class.getClassLoader().getResource(LOGBACK_CONFIGURATION_RESOURCE);
+    }
+
     private static String accessToken(PyprojectModel.TestResources config) {
         boolean shared = config.sharedServer() != null && config.sharedServer();
         if (shared && config.explicitPort() != null) {
@@ -228,6 +332,10 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             || normalized.equals("true")
             || normalized.equals("yes")
             || normalized.equals("on");
+    }
+
+    private boolean isOrchestratedRequest() {
+        return ownerToken != null && !ownerToken.isBlank();
     }
 
     private static OptimizationResolution resolveOptimization(Path root, PyprojectModel.TestResources config) {
@@ -278,6 +386,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
     }
 
     record ServerStartRequest(Path settingsDir,
+                              Path logsDir,
                               Path portFile,
                               Path classpathManifest,
                               Integer explicitPort,

@@ -45,7 +45,16 @@ JAVA_DELEGATE_JAR_ENV = {
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
 
+_DELEGATE_JVM_FLAGS = [
+    "--sun-misc-unsafe-memory-access=allow",
+    "--enable-native-access=ALL-UNNAMED",
+]
 _JDWP_FLAGS = "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
+_TEST_RESOURCES_ENV_TO_PROPERTY = {
+    "MICRONAUT_TEST_RESOURCES_SERVER_URI": "micronaut.test.resources.server.uri",
+    "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN": "micronaut.test.resources.server.access.token",
+    "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT": "micronaut.test.resources.server.client.read.timeout",
+}
 
 Runner = Callable[[list[str]], int]
 RunnerWithEnv = Callable[[list[str], dict[str, str] | None], int]
@@ -247,6 +256,9 @@ def run(
             env_overrides=test_resources_env_overrides if command in {"run", "test"} else None,
             java_home_provider=effective_java_home_provider,
         )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
     finally:
         if tr_session is not None:
             tr_session.stop_if_owned(runner=execute, resolver=locate)
@@ -292,8 +304,6 @@ def _delegate(
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
     env = _merge_env_overrides(env, env_overrides)
-    if debug_vm:
-        env = _build_debug_vm_env(env)
     return runner(command_line, env)
 
 
@@ -334,15 +344,16 @@ def _build_java_delegate_invocation(
     java_home_provider: JavaHomeProvider | None = None,
 ) -> tuple[list[str], dict[str, str] | None]:
     project_dir = Path(_extract_project_dir(args)).resolve()
-    env = _build_java_home_env(command, java_home_provider)
+    env = _build_non_test_resources_env(command, java_home_provider)
+    env = _merge_env_overrides(env, env_overrides)
     java_exec = _resolve_java_executable(env)
     classpath = _build_delegate_classpath(command, project_dir, resolver)
+    jvm_args = _build_delegate_jvm_args(debug_vm)
+    jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
 
-    command_line = [java_exec, "-cp", classpath, JAVA_MAIN_BY_COMMAND[command], *args]
-    env = _merge_env_overrides(env, env_overrides)
+    command_line = [java_exec, *jvm_args, "-cp", classpath, JAVA_MAIN_BY_COMMAND[command], *args]
     if debug_vm:
         command_line = [*command_line, "--debug-vm"]
-        env = _build_debug_vm_env(env)
     return command_line, env
 
 
@@ -909,31 +920,50 @@ def _read_pyproject_build_mode(project_dir: Path) -> str | None:
     raise ValueError("Invalid build mode in pyproject.toml. Use tool.pyronaut.build.mode = 'native' or 'jvm'")
 
 
-def _read_pyproject_test_resources_shared(project_dir: Path) -> bool:
+def _read_pyproject_test_resources_table(project_dir: Path) -> dict[str, object] | None:
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.exists():
-        return False
+        return None
     try:
         import tomllib
     except Exception:
-        return False
+        return None
     try:
         with pyproject.open("rb") as fp:
             data = tomllib.load(fp)
     except Exception:
-        return False
+        return None
 
     tool = data.get("tool")
     if not isinstance(tool, dict):
-        return False
+        return None
     pyronaut = tool.get("pyronaut")
     if not isinstance(pyronaut, dict):
-        return False
+        return None
     test_resources = pyronaut.get("testResources")
+    if not isinstance(test_resources, dict):
+        return None
+    return test_resources
+
+
+def _read_pyproject_test_resources_shared(project_dir: Path) -> bool:
+    test_resources = _read_pyproject_test_resources_table(project_dir)
     if not isinstance(test_resources, dict):
         return False
     shared_server = test_resources.get("sharedServer")
     return isinstance(shared_server, bool) and shared_server
+
+
+def _resolve_test_resources_logs_dir(project_dir: Path, settings_file: Path) -> Path:
+    test_resources = _read_pyproject_test_resources_table(project_dir)
+    if isinstance(test_resources, dict):
+        configured = test_resources.get("logsDir")
+        if isinstance(configured, str):
+            stripped = configured.strip()
+            if stripped:
+                configured_path = Path(stripped)
+                return (configured_path if configured_path.is_absolute() else project_dir / configured_path).resolve()
+    return (settings_file.parent / "logs").resolve()
 
 
 def _parse_properties_file(path: Path) -> dict[str, str]:
@@ -963,19 +993,16 @@ def _test_resources_client_env_from_settings(path: Path) -> dict[str, str] | Non
     if not settings:
         return None
 
-    properties: dict[str, str] = {}
-    for key, value in settings.items():
-        if not key.startswith("server."):
-            continue
-        properties[f"micronaut.test.resources.{key}"] = value
+    env: dict[str, str] = {}
+    for env_name, property_name in _TEST_RESOURCES_ENV_TO_PROPERTY.items():
+        settings_key = property_name.removeprefix("micronaut.test.resources.")
+        value = settings.get(settings_key)
+        if value:
+            env[env_name] = value
 
-    if not properties:
+    if not env:
         return None
-
-    java_tool_options = " ".join(f"-D{k}={_escape_java_tool_option_value(v)}" for k, v in sorted(properties.items()))
-    existing = os.environ.get("JAVA_TOOL_OPTIONS", "").strip()
-    merged = f"{existing} {java_tool_options}".strip() if existing else java_tool_options
-    return {"JAVA_TOOL_OPTIONS": merged}
+    return env
 
 
 def _merge_env_overrides(base_env: dict[str, str] | None, env_overrides: dict[str, str] | None) -> dict[str, str] | None:
@@ -1004,15 +1031,13 @@ def _strip_test_resources_java_tool_options(env: dict[str, str] | None) -> dict[
         sanitized["JAVA_TOOL_OPTIONS"] = " ".join(filtered_tokens)
     else:
         sanitized.pop("JAVA_TOOL_OPTIONS", None)
+    for env_name in _TEST_RESOURCES_ENV_TO_PROPERTY:
+        sanitized.pop(env_name, None)
     return sanitized
 
 
 def _build_non_test_resources_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
     return _strip_test_resources_java_tool_options(_build_java_home_env(command, java_home_provider))
-
-
-def _escape_java_tool_option_value(value: str) -> str:
-    return value.replace("\\", "\\\\").replace(" ", "\\ ")
 
 
 def _extract_main_class(args: Sequence[str]) -> str:
@@ -1277,10 +1302,26 @@ def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | No
     return env
 
 
-def _build_debug_vm_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
-    env = dict(base_env) if base_env is not None else dict(os.environ)
-    env["JAVA_TOOL_OPTIONS"] = _merge_java_tool_options(env.get("JAVA_TOOL_OPTIONS"), _JDWP_FLAGS)
-    return env
+def _build_delegate_jvm_args(debug_vm: bool) -> list[str]:
+    jvm_args = list(_DELEGATE_JVM_FLAGS)
+    if debug_vm:
+        jvm_args.append(_JDWP_FLAGS)
+    return jvm_args
+
+
+def _build_test_resources_jvm_args(env_overrides: dict[str, str] | None) -> list[str]:
+    if not env_overrides:
+        return []
+    jvm_args: list[str] = []
+    for env_name, property_name in _TEST_RESOURCES_ENV_TO_PROPERTY.items():
+        value = env_overrides.get(env_name)
+        if value is None:
+            continue
+        stripped = value.strip()
+        if not stripped:
+            continue
+        jvm_args.append(f"-D{property_name}={stripped}")
+    return jvm_args
 
 
 def _ensure_graalvm_java_home() -> str | None:
@@ -1507,15 +1548,6 @@ def _resolve_graalvm_archive_url() -> str | None:
 
     base = f"graalvm-community-jdk-25.0.2_{os_segment}-{arch}_bin.{ext}"
     return f"https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.2/{base}"
-
-
-def _merge_java_tool_options(existing: str | None, addition: str) -> str:
-    if existing is None or not existing.strip():
-        return addition
-    existing_value = existing.strip()
-    if addition in existing_value:
-        return existing_value
-    return existing_value + " " + addition
 
 
 def _extract_debug_vm(args: Sequence[str]) -> bool:
@@ -1831,7 +1863,7 @@ class _OwnedTestResourcesSession:
         self._remove_session_file()
 
         sys.stderr.write("[test-resources] start owned server\n")
-        self._delegate_test_resources_server(
+        exit_code = self._delegate_test_resources_server(
             [
                 "start",
                 "--project-dir",
@@ -1842,6 +1874,9 @@ class _OwnedTestResourcesSession:
             runner=runner,
             resolver=resolver,
         )
+        if exit_code != SUCCESS:
+            raise RuntimeError(f"Test resources server failed to start (exit code {exit_code})")
+        self._report_started_server()
 
         if self._shared_server:
             sys.stderr.write("[test-resources] shared-server mode: will not stop server on session exit\n")
@@ -1882,6 +1917,23 @@ class _OwnedTestResourcesSession:
         if self._client_env_overrides is None:
             return None
         return dict(self._client_env_overrides)
+
+    def _report_started_server(self) -> None:
+        settings = _parse_properties_file(self._settings_file)
+        server_uri = settings.get("server.uri", "").strip()
+        logs_dir = _resolve_test_resources_logs_dir(self._project_dir, self._settings_file)
+        logs_hint = f"; logs: {logs_dir}"
+        if not server_uri:
+            return
+        try:
+            parsed = urllib.parse.urlparse(server_uri)
+        except Exception:
+            sys.stderr.write(f"[test-resources] server running: {server_uri}{logs_hint}\n")
+            return
+        port = parsed.port
+        if port is None:
+            port = 443 if parsed.scheme == "https" else 80
+        sys.stderr.write(f"[test-resources] server running on port {port} ({server_uri}){logs_hint}\n")
 
     def _register_shutdown(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
         if self._shutdown_registered:
@@ -2018,15 +2070,19 @@ def _run_tamboui_tui(
 
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
-    if initial_mode in {"run", "test"} and not _test_resources_disabled():
-        tr_session = _OwnedTestResourcesSession(
-            project_dir=project_dir.resolve(),
-            owner_command=shlex.join(["pyronaut", "--tui", f"--{initial_mode}", "--project-dir", str(project_dir)]),
-        )
-        tr_session.ensure_started(runner=runner, resolver=resolver)
-        test_resources_env_overrides = tr_session.client_env_overrides()
-    elif initial_mode in {"run", "test"} and _test_resources_disabled():
-        sys.stderr.write("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)\n")
+    try:
+        if initial_mode in {"run", "test"} and not _test_resources_disabled():
+            tr_session = _OwnedTestResourcesSession(
+                project_dir=project_dir.resolve(),
+                owner_command=shlex.join(["pyronaut", "--tui", f"--{initial_mode}", "--project-dir", str(project_dir)]),
+            )
+            tr_session.ensure_started(runner=runner, resolver=resolver)
+            test_resources_env_overrides = tr_session.client_env_overrides()
+        elif initial_mode in {"run", "test"} and _test_resources_disabled():
+            sys.stderr.write("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)\n")
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
 
     delegated = {
         "install": resolver("pyronaut-install"),

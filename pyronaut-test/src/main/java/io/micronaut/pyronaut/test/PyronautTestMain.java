@@ -62,6 +62,11 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String PYTEST_HTML_REPORT = "pytest.report.html";
     private static final String PYTEST_LAST_NODEID_REPORT = "pytest.report.nodeid";
     private static final String PYTEST_EVENTS_REPORT = "pytest.report.events";
+    private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
+        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
+        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
+        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", "micronaut.test.resources.server.client.read.timeout")
+    );
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -104,6 +109,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
+            applyTestResourcesProperties(System.getenv());
             Path resolvedTestClassesDir = root.resolve(testClassesDir).normalize();
             boolean hasTestClassesDir = Files.isDirectory(resolvedTestClassesDir);
             Path resolvedClassesDir = root.resolve(classesDir).normalize();
@@ -163,6 +169,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                     requestBuilder.selectors(DiscoverySelectors.selectClass(className));
                 }
             }
+
             LauncherDiscoveryRequest request = requestBuilder.build();
             Launcher launcher = LauncherFactory.create();
             SummaryGeneratingListener listener = new SummaryGeneratingListener();
@@ -193,6 +200,19 @@ public final class PyronautTestMain implements Callable<Integer> {
     @FunctionalInterface
     interface ContextBootstrapper {
         void bootstrap(ClassLoader classLoader) throws Exception;
+    }
+
+    static void applyTestResourcesProperties(java.util.Map<String, String> environment) {
+        for (TestResourcesProperty property : TEST_RESOURCES_PROPERTIES) {
+            if (System.getProperty(property.systemProperty()) != null) {
+                continue;
+            }
+            String value = environment.get(property.environmentVariable());
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            System.setProperty(property.systemProperty(), value);
+        }
     }
 
     static Optional<String> buildPytestTestsParameter(List<String> rawSelectors) {
@@ -369,5 +389,8 @@ public final class PyronautTestMain implements Callable<Integer> {
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautTestMain()).execute(args);
         System.exit(exitCode);
+    }
+
+    private record TestResourcesProperty(String environmentVariable, String systemProperty) {
     }
 }

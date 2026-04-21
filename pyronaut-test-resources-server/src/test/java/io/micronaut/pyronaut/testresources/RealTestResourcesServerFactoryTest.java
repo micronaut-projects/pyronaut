@@ -34,6 +34,7 @@ class RealTestResourcesServerFactoryTest {
         CapturingStarter starter = new CapturingStarter();
         PyronautTestResourcesServerMain.ServerStartRequest request = new PyronautTestResourcesServerMain.ServerStartRequest(
             tempDir.resolve(".micronaut/test-resources"),
+            tempDir.resolve(".micronaut/test-resources/logs"),
             tempDir.resolve(".micronaut/test-resources/server.port"),
             tempDir.resolve("manifest-not-used-here"),
             null,
@@ -54,6 +55,8 @@ class RealTestResourcesServerFactoryTest {
         List<String> command = starter.command;
         assertEquals("java", command.getFirst());
         assertTrue(command.contains("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"));
+        assertTrue(command.contains("-Dpyronaut.test-resources.logs-dir=" + tempDir.resolve(".micronaut/test-resources/logs").toAbsolutePath().normalize()));
+        assertTrue(command.stream().anyMatch(token -> token.startsWith("-Dlogback.configurationFile=") && token.contains("pyronaut-test-resources-logback.xml")));
         assertTrue(command.contains("-Dmicronaut.server.port=18080"));
         assertTrue(command.contains("-Dserver.access-token=token-123"));
         assertTrue(command.contains("-Dserver.idle.timeout.minutes=15"));
@@ -71,6 +74,7 @@ class RealTestResourcesServerFactoryTest {
     void deadProcessFailsWait() throws Exception {
         PyronautTestResourcesServerMain.ServerStartRequest request = new PyronautTestResourcesServerMain.ServerStartRequest(
             tempDir.resolve(".micronaut/test-resources"),
+            tempDir.resolve(".micronaut/test-resources/logs"),
             tempDir.resolve(".micronaut/test-resources/server.port"),
             tempDir.resolve("unused"),
             null,

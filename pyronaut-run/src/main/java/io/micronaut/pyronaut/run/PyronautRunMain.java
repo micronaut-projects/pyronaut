@@ -34,6 +34,11 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
+    private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
+        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
+        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
+        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", "micronaut.test.resources.server.client.read.timeout")
+    );
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -76,6 +81,7 @@ public final class PyronautRunMain implements Callable<Integer> {
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
+            applyTestResourcesProperties(System.getenv());
             Path resolvedClassesDir = root.resolve(classesDir).normalize();
             if (!Files.isDirectory(resolvedClassesDir)) {
                 System.err.println("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
@@ -132,6 +138,19 @@ public final class PyronautRunMain implements Callable<Integer> {
         return contextClassLoader != null ? contextClassLoader : PyronautRunMain.class.getClassLoader();
     }
 
+    static void applyTestResourcesProperties(java.util.Map<String, String> environment) {
+        for (TestResourcesProperty property : TEST_RESOURCES_PROPERTIES) {
+            if (System.getProperty(property.systemProperty()) != null) {
+                continue;
+            }
+            String value = environment.get(property.environmentVariable());
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            System.setProperty(property.systemProperty(), value);
+        }
+    }
+
     @FunctionalInterface
     interface ClassResolver {
         Class<?> load(String className) throws Exception;
@@ -145,6 +164,9 @@ public final class PyronautRunMain implements Callable<Integer> {
     @FunctionalInterface
     interface ApplicationStarter {
         boolean start(Class<?> loadedClass, Path resolvedClassesDir, List<String> appArgs) throws Exception;
+    }
+
+    private record TestResourcesProperty(String environmentVariable, String systemProperty) {
     }
 
     private static void blockUntilInterrupted() {

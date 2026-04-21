@@ -8,6 +8,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -97,6 +98,39 @@ class PyronautRunMainTest {
         String stderr = errBuffer.toString();
         assertEquals(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize(), startedClassesDir.get());
         assertFalse(stderr.contains("ClassNotFoundException"));
+    }
+
+    @Test
+    void appliesTestResourcesPropertiesFromEnvironment() {
+        String previousUri = System.getProperty("micronaut.test.resources.server.uri");
+        String previousToken = System.getProperty("micronaut.test.resources.server.access.token");
+        String previousTimeout = System.getProperty("micronaut.test.resources.server.client.read.timeout");
+        System.clearProperty("micronaut.test.resources.server.uri");
+        System.clearProperty("micronaut.test.resources.server.access.token");
+        System.clearProperty("micronaut.test.resources.server.client.read.timeout");
+        try {
+            PyronautRunMain.applyTestResourcesProperties(Map.of(
+                "MICRONAUT_TEST_RESOURCES_SERVER_URI", "http://localhost:18080",
+                "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "token-123",
+                "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", "60"
+            ));
+
+            assertEquals("http://localhost:18080", System.getProperty("micronaut.test.resources.server.uri"));
+            assertEquals("token-123", System.getProperty("micronaut.test.resources.server.access.token"));
+            assertEquals("60", System.getProperty("micronaut.test.resources.server.client.read.timeout"));
+        } finally {
+            restoreProperty("micronaut.test.resources.server.uri", previousUri);
+            restoreProperty("micronaut.test.resources.server.access.token", previousToken);
+            restoreProperty("micronaut.test.resources.server.client.read.timeout", previousTimeout);
+        }
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
+        }
     }
 
     public static final class SampleApp {

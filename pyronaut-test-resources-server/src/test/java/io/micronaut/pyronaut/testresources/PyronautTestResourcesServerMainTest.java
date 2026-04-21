@@ -31,6 +31,7 @@ class PyronautTestResourcesServerMainTest {
 
         assertEquals(0, exit);
         assertEquals(project.resolve(".micronaut/test-resources").toAbsolutePath().normalize(), manager.lastStartRequest.settingsDir());
+        assertEquals(project.resolve(".micronaut/test-resources/logs").toAbsolutePath().normalize(), manager.lastStartRequest.logsDir());
         assertEquals(
             project.resolve("__pyronaut__/resolved-test-resources-server-dependencies").toAbsolutePath().normalize(),
             manager.lastStartRequest.classpathManifest()
@@ -63,6 +64,23 @@ class PyronautTestResourcesServerMainTest {
 
         assertEquals(0, exit);
         assertTrue(manager.lastStartRequest.cdsDir().toString().contains("__pyronaut__/test-resources-cds"));
+    }
+
+    @Test
+    void startUsesConfiguredLogsDirectoryWhenPresent() throws Exception {
+        Path project = prepareProject("""
+            [tool.pyronaut.testResources]
+            startupOptimization = "none"
+            logsDir = "var/custom-test-resources-logs"
+            """);
+
+        RecordingServerManager manager = new RecordingServerManager();
+        PyronautTestResourcesServerMain command = new PyronautTestResourcesServerMain(new PyprojectModelReader(), manager);
+
+        int exit = new CommandLine(command).execute("start", "--project-dir", project.toString());
+
+        assertEquals(0, exit);
+        assertEquals(project.resolve("var/custom-test-resources-logs").toAbsolutePath().normalize(), manager.lastStartRequest.logsDir());
     }
 
     @Test

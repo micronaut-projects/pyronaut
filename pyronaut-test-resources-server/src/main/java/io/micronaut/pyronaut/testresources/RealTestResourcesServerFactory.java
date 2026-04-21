@@ -29,13 +29,17 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 final class RealTestResourcesServerFactory implements ServerFactory {
+    private static final String LOGS_DIR_SYSTEM_PROPERTY = "pyronaut.test-resources.logs-dir";
+    private static final String LOGBACK_CONFIGURATION_SYSTEM_PROPERTY = "logback.configurationFile";
+    private static final String STDIO_LOG_FILE = "launcher-stdio.log";
+    private static final File NULL_DEVICE = new File(isWindows() ? "NUL" : "/dev/null");
 
     private final PyronautTestResourcesServerMain.ServerStartRequest request;
     private final ProcessStarter processStarter;
     private Process process;
 
     RealTestResourcesServerFactory(PyronautTestResourcesServerMain.ServerStartRequest request) {
-        this(request, new ProcessBuilderStarter());
+        this(request, new ProcessBuilderStarter(request.logsDir()));
     }
 
     RealTestResourcesServerFactory(PyronautTestResourcesServerMain.ServerStartRequest request, ProcessStarter processStarter) {
@@ -48,12 +52,18 @@ final class RealTestResourcesServerFactory implements ServerFactory {
         String javaExecutable = request.javaExecutable() == null || request.javaExecutable().isBlank()
             ? "java"
             : request.javaExecutable();
+        java.nio.file.Files.createDirectories(request.logsDir());
 
         List<String> command = new ArrayList<>();
         command.add(javaExecutable);
         command.addAll(processParameters.getJvmArguments());
         if (request.debugServer()) {
             command.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005");
+        }
+        command.add("-D" + LOGS_DIR_SYSTEM_PROPERTY + "=" + request.logsDir().toAbsolutePath().normalize());
+        String logbackConfiguration = PyronautTestResourcesServerMain.resolveLogbackConfigurationLocation();
+        if (logbackConfiguration != null && !logbackConfiguration.isBlank()) {
+            command.add("-D" + LOGBACK_CONFIGURATION_SYSTEM_PROPERTY + "=" + logbackConfiguration);
         }
 
         Map<String, String> systemProperties = new LinkedHashMap<>(processParameters.getSystemProperties());
@@ -108,11 +118,21 @@ final class RealTestResourcesServerFactory implements ServerFactory {
     }
 
     private static final class ProcessBuilderStarter implements ProcessStarter {
+        private final Path logsDir;
+
+        private ProcessBuilderStarter(Path logsDir) {
+            this.logsDir = logsDir;
+        }
+
         @Override
         public Process start(List<String> command, Map<String, String> environment) throws IOException {
             ProcessBuilder processBuilder = new ProcessBuilder(command);
             processBuilder.environment().putAll(environment);
-            processBuilder.inheritIO();
+            processBuilder.redirectInput(ProcessBuilder.Redirect.from(NULL_DEVICE));
+            processBuilder.redirectErrorStream(true);
+            processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(
+                logsDir.resolve(STDIO_LOG_FILE).toFile()
+            ));
             return processBuilder.start();
         }
     }

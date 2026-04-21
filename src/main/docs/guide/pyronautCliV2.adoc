@@ -233,9 +233,14 @@ explicitPort = 18080
 inferClasspath = true
 clientTimeout = 60
 sharedServer = false
+logsDir = ".micronaut/test-resources/logs"
 startupOptimization = "auto" # auto|leyden|cds|none
 leydenJvmArgs = ["--enable-preview"]
 ----
+
+`logsDir` controls where standalone test resources server logs are written.
+If the value is relative, it is resolved against the project directory.
+When omitted, the default is `.micronaut/test-resources/logs`.
 
 Lifecycle behavior:
 
@@ -247,7 +252,7 @@ Lifecycle behavior:
 
 Integration behavior:
 
-- `run`/`test` propagate `micronaut.test.resources.*` client settings to delegated JVMs via `JAVA_TOOL_OPTIONS`.
+- `run`/`test` propagate `micronaut.test.resources.*` client settings to delegated JVMs via dedicated environment variables.
 - `validate-config`, `install`, `process`, and JVM `build` do not start or own test-resources orchestration.
 - `validate-config` removes stale inherited test-resources client settings for non-run/test scenarios to avoid pointing at dead servers.
 

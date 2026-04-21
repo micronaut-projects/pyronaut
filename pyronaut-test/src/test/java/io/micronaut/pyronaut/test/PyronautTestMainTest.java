@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 
@@ -215,6 +216,31 @@ class PyronautTestMainTest {
         assertFalse(output.contains("Last nodeid report:"));
     }
 
+    @Test
+    void appliesTestResourcesPropertiesFromEnvironment() {
+        String previousUri = System.getProperty("micronaut.test.resources.server.uri");
+        String previousToken = System.getProperty("micronaut.test.resources.server.access.token");
+        String previousTimeout = System.getProperty("micronaut.test.resources.server.client.read.timeout");
+        System.clearProperty("micronaut.test.resources.server.uri");
+        System.clearProperty("micronaut.test.resources.server.access.token");
+        System.clearProperty("micronaut.test.resources.server.client.read.timeout");
+        try {
+            PyronautTestMain.applyTestResourcesProperties(Map.of(
+                "MICRONAUT_TEST_RESOURCES_SERVER_URI", "http://localhost:18080",
+                "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "token-123",
+                "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", "60"
+            ));
+
+            assertEquals("http://localhost:18080", System.getProperty("micronaut.test.resources.server.uri"));
+            assertEquals("token-123", System.getProperty("micronaut.test.resources.server.access.token"));
+            assertEquals("60", System.getProperty("micronaut.test.resources.server.client.read.timeout"));
+        } finally {
+            restoreProperty("micronaut.test.resources.server.uri", previousUri);
+            restoreProperty("micronaut.test.resources.server.access.token", previousToken);
+            restoreProperty("micronaut.test.resources.server.client.read.timeout", previousTimeout);
+        }
+    }
+
     private Path setupProject() throws Exception {
         Path project = tempDir.resolve("project");
         Path classes = project.resolve("__pyronaut__/classes");
@@ -250,6 +276,14 @@ class PyronautTestMainTest {
             sourceFile.toString()
         );
         assertEquals(0, exit);
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
+        }
     }
 
     public static final class PassingTest {
