@@ -1722,6 +1722,23 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
         return INTERNAL_ERROR
 
 
+def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:
+    try:
+        completed = subprocess.run(
+            command_line,
+            check=False,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return int(completed.returncode)
+    except KeyboardInterrupt:
+        return 130
+    except OSError as exception:
+        print(f"Failed executing delegated command: {exception}", file=sys.stderr)
+        return INTERNAL_ERROR
+
+
 def _resolve_executable(command_name: str) -> str | None:
     env_key = command_name.upper().replace("-", "_") + "_EXECUTABLE"
     override = _read_env(env_key)
@@ -1838,7 +1855,7 @@ def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Calla
 
 
 class _OwnedTestResourcesSession:
-    def __init__(self, *, project_dir: Path, owner_command: str) -> None:
+    def __init__(self, *, project_dir: Path, owner_command: str, quiet: bool = False) -> None:
         self._project_dir = project_dir
         self._session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
         self._settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
@@ -1846,6 +1863,7 @@ class _OwnedTestResourcesSession:
         self._owner_command = owner_command
         self._owner_token = self._new_owner_token()
         self._shared_server = _read_pyproject_test_resources_shared(project_dir)
+        self._quiet = quiet
         self._started = False
         self._shutdown_registered = False
         self._client_env_overrides: dict[str, str] | None = None
@@ -1861,14 +1879,14 @@ class _OwnedTestResourcesSession:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         if self._should_attach_to_external_server():
-            sys.stderr.write("[test-resources] attach external server\n")
+            self._emit_status("[test-resources] attach external server")
             self._started = True
             self._client_env_overrides = _test_resources_client_env_from_settings(self._settings_file)
             return
 
         self._remove_session_file()
 
-        sys.stderr.write("[test-resources] start owned server\n")
+        self._emit_status("[test-resources] start owned server")
         exit_code = self._delegate_test_resources_server(
             [
                 "start",
@@ -1886,7 +1904,7 @@ class _OwnedTestResourcesSession:
         self._start_log_mirror()
 
         if self._shared_server:
-            sys.stderr.write("[test-resources] shared-server mode: will not stop server on session exit\n")
+            self._emit_status("[test-resources] shared-server mode: will not stop server on session exit")
         else:
             self._persist_session(started_at=time.time())
         self._started = True
@@ -1899,15 +1917,15 @@ class _OwnedTestResourcesSession:
             return
 
         if self._shared_server:
-            sys.stderr.write("[test-resources] stop skipped (shared server mode)\n")
+            self._emit_status("[test-resources] stop skipped (shared server mode)")
             self._remove_session_file()
             return
 
         if not self._session_matches_owner():
-            sys.stderr.write("[test-resources] stop skipped (ownership mismatch)\n")
+            self._emit_status("[test-resources] stop skipped (ownership mismatch)")
             return
 
-        sys.stderr.write("[test-resources] stop owned server\n")
+        self._emit_status("[test-resources] stop owned server")
         self._delegate_test_resources_server(
             [
                 "stop",
@@ -1936,12 +1954,12 @@ class _OwnedTestResourcesSession:
         try:
             parsed = urllib.parse.urlparse(server_uri)
         except Exception:
-            sys.stderr.write(f"[test-resources] server running: {server_uri}{logs_hint}\n")
+            self._emit_status(f"[test-resources] server running: {server_uri}{logs_hint}")
             return
         port = parsed.port
         if port is None:
             port = 443 if parsed.scheme == "https" else 80
-        sys.stderr.write(f"[test-resources] server running on port {port} ({server_uri}){logs_hint}\n")
+        self._emit_status(f"[test-resources] server running on port {port} ({server_uri}){logs_hint}")
 
     def _register_shutdown(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
         if self._shutdown_registered:
@@ -1986,8 +2004,7 @@ class _OwnedTestResourcesSession:
                         for line in chunk.splitlines():
                             stripped = line.strip()
                             if stripped and _should_mirror_test_resources_log_line(stripped):
-                                sys.stderr.write(stripped + "\n")
-                                sys.stderr.flush()
+                                self._emit_status(stripped)
                     stop_event.wait(0.1)
                 except OSError:
                     stop_event.wait(0.1)
@@ -2038,6 +2055,12 @@ class _OwnedTestResourcesSession:
         except Exception:
             return
 
+    def _emit_status(self, line: str) -> None:
+        if self._quiet:
+            return
+        sys.stderr.write(line + "\n")
+        sys.stderr.flush()
+
     def _should_attach_to_external_server(self) -> bool:
         if self._shared_server:
             return False
@@ -2050,7 +2073,7 @@ class _OwnedTestResourcesSession:
             return False
         if _test_resources_server_available(self._settings_file):
             return True
-        sys.stderr.write("[test-resources] stale external settings detected; starting owned server instead\n")
+        self._emit_status("[test-resources] stale external settings detected; starting owned server instead")
         return False
 
     def _delegate_test_resources_server(
@@ -2069,7 +2092,8 @@ class _OwnedTestResourcesSession:
         removed_server_port = os.environ.pop("MICRONAUT_SERVER_PORT", None)
         removed_server_host = os.environ.pop("MICRONAUT_SERVER_HOST", None)
         try:
-            return int(runner(command_line, None))
+            effective_runner = _run_subprocess_quiet if self._quiet and runner is _run_subprocess else runner
+            return int(effective_runner(command_line, None))
         finally:
             if removed_server_port is not None:
                 os.environ["MICRONAUT_SERVER_PORT"] = removed_server_port
@@ -2146,6 +2170,7 @@ def _run_tamboui_tui(
             tr_session = _OwnedTestResourcesSession(
                 project_dir=project_dir.resolve(),
                 owner_command=shlex.join(["pyronaut", "--tui", f"--{initial_mode}", "--project-dir", str(project_dir)]),
+                quiet=True,
             )
             tr_session.ensure_started(runner=runner, resolver=resolver)
             test_resources_env_overrides = tr_session.client_env_overrides()

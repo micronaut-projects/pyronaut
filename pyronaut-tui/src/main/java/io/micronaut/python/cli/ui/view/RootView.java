@@ -157,9 +157,6 @@ public final class RootView extends Component<RootView> {
         }
         appStatus = appStatus.addClass("app-status");
 
-        var tabsBar = tabs("[F1] App", "[F2] Logs", "[F3] Test Resources").divider(" | ")
-                .state(tabsState)
-                .addClass("tabs");
         var keyHints = row(
                 text("[F1] App").addClass("primary"),
                 text(" | ").addClass("dim"),
@@ -170,12 +167,15 @@ public final class RootView extends Component<RootView> {
         return panel(
                 column(
                         keyHints,
-                        row(
-                                row(text("\uD83D\uDD25 Pyronaut").addClass("header-title"),
-                                        spacer(1),
-                                        tabsBar),
-                                appStatus
-                        ).addClass("header-row")
+                        dock()
+                                .left(
+                                    row(
+                                        text("\uD83D\uDD25 Pyronaut").addClass("header-title")
+                                    ).addClass("fit")
+                                )
+                                .right(appStatus)
+                                .fill()
+                                .addClass("header-row")
                 )
         ).addClass("header");
     }

@@ -51,4 +51,22 @@ class UiControllerTestResourcesSnapshotTest {
         );
         assertTrue(controller.getNotificationHistory().isEmpty());
     }
+
+    @Test
+    void resetExecutionStatePreservesTestResourcesSnapshot() {
+        UiController controller = new UiController();
+        controller.setTestResourcesRunning(
+            "UP @ http://localhost:8080",
+            List.of("mysql [running]"),
+            List.of("datasources.default.url=jdbc:mysql://localhost/test"),
+            List.of()
+        );
+        controller.setUrl("http://localhost:8081");
+
+        controller.resetExecutionState();
+
+        assertEquals(UiController.TestResourcesStatus.RUNNING, controller.getTestResourcesSnapshot().status());
+        assertEquals("UP @ http://localhost:8080", controller.getTestResourcesSnapshot().healthMessage());
+        assertEquals(List.of("mysql [running]"), controller.getTestResourcesSnapshot().containers());
+    }
 }

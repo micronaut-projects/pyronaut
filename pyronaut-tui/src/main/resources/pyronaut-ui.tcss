@@ -42,7 +42,7 @@ Text {
     color: $accent;
     text-style: bold;
     border-type: rounded;
-    height: 3;
+    height: 4;
 }
 .header-title {
     color: $highlight;

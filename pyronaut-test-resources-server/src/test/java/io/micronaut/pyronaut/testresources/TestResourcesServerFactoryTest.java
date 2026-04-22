@@ -66,7 +66,9 @@ class TestResourcesServerFactoryTest {
 
         int cpIndex = command.indexOf("-cp");
         assertTrue(cpIndex > 0);
-        assertEquals(firstJar + File.pathSeparator + secondJar, command.get(cpIndex + 1));
+        String classpath = command.get(cpIndex + 1);
+        assertTrue(classpath.contains(firstJar.toString()));
+        assertTrue(classpath.contains(secondJar.toString()));
         assertEquals("true", starter.environment.get("PYRONAUT_TRACE"));
     }
 
@@ -95,6 +97,38 @@ class TestResourcesServerFactoryTest {
             () -> factory.startServer(new StubProcessParameters(tempDir.resolve("port.file"), tempDir.resolve("libs/one.jar").toFile()))
         );
         assertTrue(error.getMessage().contains("terminated"));
+    }
+
+    @Test
+    void selfModuleClasspathEntriesIncludeSiblingJarsFromLauncherLibDirectory() {
+        String originalClasspath = System.getProperty("java.class.path");
+        try {
+            System.setProperty(
+                "java.class.path",
+                String.join(
+                    File.pathSeparator,
+                    "/tmp/launcher/lib/micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar",
+                    "/tmp/launcher/lib/micronaut-test-resources-control-panel-2.9.0.jar",
+                    "/tmp/launcher/lib/micronaut-control-panel-core-1.8.0.jar",
+                    "/tmp/other/location/unrelated.jar"
+                )
+            );
+
+            assertEquals(
+                List.of(
+                    "/tmp/launcher/lib/micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar",
+                    "/tmp/launcher/lib/micronaut-test-resources-control-panel-2.9.0.jar",
+                    "/tmp/launcher/lib/micronaut-control-panel-core-1.8.0.jar"
+                ),
+                TestResourcesServerFactory.selfModuleClasspathEntries()
+            );
+        } finally {
+            if (originalClasspath == null) {
+                System.clearProperty("java.class.path");
+            } else {
+                System.setProperty("java.class.path", originalClasspath);
+            }
+        }
     }
 
     private static final class CapturingStarter implements TestResourcesServerFactory.ProcessStarter {

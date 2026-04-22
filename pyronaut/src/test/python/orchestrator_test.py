@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -855,6 +856,67 @@ logsDir = "var/custom-test-resources-logs"
                 session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
 
             self.assertIn("Creating container for image: mysql:8.4.0", stderr.getvalue())
+
+    def test_owned_test_resources_session_quiet_mode_suppresses_stderr_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            settings_dir = project_dir / ".micronaut" / "test-resources"
+            settings_dir.mkdir(parents=True, exist_ok=True)
+            settings_file = settings_dir / "test-resources.properties"
+            settings_file.write_text(
+                "server.uri=http\\://localhost\\:18900\n"
+                "server.access.token=token-abc\n",
+                encoding="utf-8",
+            )
+            log_dir = settings_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "test-resources.log"
+            log_file.write_text("", encoding="utf-8")
+
+            session = cli._OwnedTestResourcesSession(
+                project_dir=project_dir.resolve(),
+                owner_command="pyronaut --tui --project-dir demo",
+                quiet=True,
+            )
+            stderr = io.StringIO()
+            try:
+                with redirect_stderr(stderr):
+                    session._report_started_server()  # noqa: SLF001 - internal helper coverage
+                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
+                    with log_file.open("a", encoding="utf-8") as handle:
+                        handle.write(
+                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
+                        )
+                        handle.flush()
+                    time.sleep(0.2)
+            finally:
+                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+
+            self.assertEqual("", stderr.getvalue())
+
+    def test_quiet_test_resources_delegate_discards_child_stdio(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            session = cli._OwnedTestResourcesSession(
+                project_dir=project_dir.resolve(),
+                owner_command="pyronaut --tui --project-dir demo",
+                quiet=True,
+            )
+
+            completed = subprocess.CompletedProcess(args=["/tmp/pyronaut-test-resources-server"], returncode=0)
+            with patch.object(cli.subprocess, "run", return_value=completed) as run_mock:
+                exit_code = session._delegate_test_resources_server(  # noqa: SLF001 - internal helper coverage
+                    ["start", "--project-dir", str(project_dir)],
+                    runner=cli._run_subprocess,
+                    resolver=self._resolver(),
+                )
+
+            self.assertEqual(0, exit_code)
+            _, kwargs = run_mock.call_args
+            self.assertIs(kwargs.get("stdout"), cli.subprocess.DEVNULL)
+            self.assertIs(kwargs.get("stderr"), cli.subprocess.DEVNULL)
 
     def test_test_forwards_tests_selectors_after_preflight(self):
         executed = []
@@ -2155,6 +2217,41 @@ logsDir = "var/custom-test-resources-logs"
         assert isinstance(executed[1][1], dict)
         self.assertIn("JAVA_HOME", executed[1][1])
         self.assertEqual("http://localhost:18900", executed[1][1].get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
+
+    def test_tui_interactive_suppresses_test_resources_stderr_chatter(self):
+        executed = []
+        settings_file: Path | None = None
+
+        def runner_with_env(command_line, env):
+            nonlocal settings_file
+            executed.append((command_line, env))
+            if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                assert settings_file is not None
+                settings_file.parent.mkdir(parents=True, exist_ok=True)
+                settings_file.write_text(
+                    "server.uri=http\\://localhost\\:18900\n"
+                    "server.access.token=token-abc\n",
+                    encoding="utf-8",
+                )
+            return 0
+
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            settings_file = project_dir.resolve() / ".micronaut" / "test-resources" / "test-resources.properties"
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["--tui", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(3, len(executed))
+        self.assertEqual("", stderr.getvalue())
 
     def test_tui_interactive_test_mode_delegates_to_tamboui_command(self):
         executed = []

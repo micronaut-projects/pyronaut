@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -112,12 +113,29 @@ final class TestResourcesServerFactory implements ServerFactory {
         if (classpath.isBlank()) {
             return List.of();
         }
-        return Stream.of(classpath.split(File.pathSeparator))
+        List<Path> entries = Stream.of(classpath.split(File.pathSeparator))
             .map(String::trim)
             .filter(entry -> !entry.isEmpty())
-            .filter(entry -> entry.contains("micronaut-pyronaut-test-resources-server"))
-            .map(entry -> Path.of(entry).toAbsolutePath().normalize().toString())
+            .map(entry -> Path.of(entry).toAbsolutePath().normalize())
             .toList();
+        LinkedHashSet<Path> launcherLibDirs = new LinkedHashSet<>();
+        for (Path entry : entries) {
+            String normalized = entry.toString();
+            if (normalized.contains("micronaut-pyronaut-test-resources-server") && entry.getParent() != null) {
+                launcherLibDirs.add(entry.getParent());
+            }
+        }
+        if (launcherLibDirs.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> resolvedEntries = new LinkedHashSet<>();
+        for (Path entry : entries) {
+            Path parent = entry.getParent();
+            if (parent != null && launcherLibDirs.contains(parent)) {
+                resolvedEntries.add(entry.toString());
+            }
+        }
+        return List.copyOf(resolvedEntries);
     }
 
     interface ProcessStarter {

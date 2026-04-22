@@ -324,6 +324,23 @@ public final class UiController {
         }
     }
 
+    /**
+     * Reset execution-specific state while preserving test resources state and logs.
+     */
+    public void resetExecutionState() {
+        writeLock.lock();
+        try {
+            this.url = null;
+            this.endpoints = List.of();
+            this.compiling.set(false);
+            this.testing.set(false);
+            this.lastTestSummary = null;
+            resetTestTree();
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
     public void setTestResourcesLoading() {
         writeLock.lock();
         try {

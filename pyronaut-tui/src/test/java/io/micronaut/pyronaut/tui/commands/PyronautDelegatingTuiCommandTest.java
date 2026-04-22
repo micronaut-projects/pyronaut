@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.ServerSocket;
 import java.util.List;
 import java.util.Properties;
 
@@ -113,14 +114,20 @@ class PyronautDelegatingTuiCommandTest {
 
         setField(command, "controller", controller);
 
+        invoke(command, "routeOutputLine", new Class<?>[]{Process.class, String.class}, null, "[test-resources] server running on port 19090 (http://localhost:19090)");
         invoke(command, "routeOutputLine", new Class<?>[]{Process.class, String.class}, null, "[test-resources-service] Server Running: http://localhost:19090");
+        invoke(command, "routeOutputLine", new Class<?>[]{Process.class, String.class}, null, "tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0");
+        invoke(command, "routeOutputLine", new Class<?>[]{Process.class, String.class}, null, "tc.mysql:8.4.0 - Container mysql:8.4.0 started in PT0.24592S");
         invoke(command, "routeOutputLine", new Class<?>[]{Process.class, String.class}, null, "[test-resources-service] another line");
         invoke(command, "routeOutputLine", new Class<?>[]{Process.class, String.class}, null, "application line");
 
         assertEquals(List.of("application line"), controller.getActivityLogLines());
         assertEquals(
             List.of(
+                "[test-resources] server running on port 19090 (http://localhost:19090)",
                 "[test-resources-service] Server Running: http://localhost:19090",
+                "tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0",
+                "tc.mysql:8.4.0 - Container mysql:8.4.0 started in PT0.24592S",
                 "[test-resources-service] another line"
             ),
             controller.getTestResourcesLogLines()
@@ -130,6 +137,203 @@ class PyronautDelegatingTuiCommandTest {
         assertNotNull(notification);
         assertEquals("Test resources service started", notification.message());
         assertEquals(UiModel.Severity.INFO, notification.severity());
+    }
+
+    @Test
+    void basicTestResourcesSnapshotSuppressesAuthFallbackNoise() throws Exception {
+        UiController controller = new UiController();
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "controller", controller);
+
+        Object connection = invokeConnection(
+            command,
+            "fromEnvironment",
+            new Class<?>[]{java.util.Map.class},
+            java.util.Map.of(
+                "MICRONAUT_TEST_RESOURCES_SERVER_URI", "http://localhost:19090",
+                "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "token-456",
+                "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", "45"
+            )
+        );
+
+        invoke(command, "showBasicTestResourcesSnapshot", new Class<?>[]{connection.getClass()}, connection);
+
+        var snapshot = controller.getTestResourcesSnapshot();
+        assertEquals(UiController.TestResourcesStatus.RUNNING, snapshot.status());
+        assertEquals("CONNECTED @ http://localhost:19090", snapshot.healthMessage());
+        assertTrue(snapshot.errors().isEmpty());
+    }
+
+    @Test
+    void testResourcesLogsAreTailedFromFilesWithoutDuplicatingOldLines() throws Exception {
+        Path project = tempDir.resolve("tail-logs");
+        Path logsDir = project.resolve(".micronaut/test-resources/logs");
+        Files.createDirectories(logsDir);
+        Path logFile = logsDir.resolve("test-resources.log");
+        Files.writeString(logFile, "first line\nsecond line\n", StandardCharsets.UTF_8);
+
+        UiController controller = new UiController();
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "controller", controller);
+        setField(command, "testResourcesLogTail", new java.util.concurrent.atomic.AtomicReference<>(
+            newInner(command, "TestResourcesLogTail", new Class<?>[]{Path.class}, project)
+        ));
+
+        invoke(command, "refreshTestResourcesLogs", new Class<?>[]{Path.class}, project);
+        assertEquals(List.of("first line", "second line"), controller.getTestResourcesLogLines());
+
+        Files.writeString(logFile, "first line\nsecond line\nthird line\n", StandardCharsets.UTF_8);
+        invoke(command, "refreshTestResourcesLogs", new Class<?>[]{Path.class}, project);
+        assertEquals(List.of("first line", "second line", "third line"), controller.getTestResourcesLogLines());
+    }
+
+    @Test
+    void summarizeArrayPayloadParsesControlPanelContainersAndProperties() throws Exception {
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        String dockerBody = """
+            {
+              "managedContainers":[
+                {"scope":"datasources","id":"abc123","name":"mysql:8.4.0","network":"bridge","imageName":"mysql:8.4.0"}
+              ],
+              "startingContainers":["mysql:8.4.0"],
+              "pullingContainers":["testcontainers/ryuk:0.13.0"]
+            }
+            """;
+        String panelBody = """
+            {
+              "resolvedProperties":[
+                {
+                  "property":"datasources.default.url",
+                  "resolvedValue":"jdbc:mysql://localhost:3306/default",
+                  "properties":{"datasources":"default"},
+                  "testResourcesConfig":{"enabled":"true"}
+                }
+              ],
+              "errors":[
+                {
+                  "property":"datasources.default.password",
+                  "stackTrace":"java.lang.IllegalStateException: boom\\n\\tat example.Test.main(Test.java:1)"
+                }
+              ]
+            }
+            """;
+
+        @SuppressWarnings("unchecked")
+        List<String> managedContainers = (List<String>) invoke(
+            command,
+            "summarizeArrayPayload",
+            new Class<?>[]{String.class, String.class},
+            dockerBody,
+            "managedContainers"
+        );
+        @SuppressWarnings("unchecked")
+        List<String> startingContainers = (List<String>) invoke(
+            command,
+            "summarizeArrayPayload",
+            new Class<?>[]{String.class, String.class},
+            dockerBody,
+            "startingContainers"
+        );
+        @SuppressWarnings("unchecked")
+        List<String> pullingContainers = (List<String>) invoke(
+            command,
+            "summarizeArrayPayload",
+            new Class<?>[]{String.class, String.class},
+            dockerBody,
+            "pullingContainers"
+        );
+        @SuppressWarnings("unchecked")
+        List<String> properties = (List<String>) invoke(
+            command,
+            "summarizeArrayPayload",
+            new Class<?>[]{String.class, String.class},
+            panelBody,
+            "resolvedProperties"
+        );
+        @SuppressWarnings("unchecked")
+        List<String> errors = (List<String>) invoke(
+            command,
+            "summarizeArrayPayload",
+            new Class<?>[]{String.class, String.class},
+            panelBody,
+            "errors"
+        );
+
+        assertEquals(List.of("mysql:8.4.0 [running] image=mysql:8.4.0 scope=datasources id=abc123"), managedContainers);
+        assertEquals(List.of("mysql:8.4.0"), startingContainers);
+        assertEquals(List.of("testcontainers/ryuk:0.13.0"), pullingContainers);
+        assertEquals(List.of("datasources.default.url=jdbc:mysql://localhost:3306/default"), properties);
+        assertEquals(List.of("datasources.default.password [resolver] java.lang.IllegalStateException: boom"), errors);
+    }
+
+    @Test
+    void buildManagedRunCommandUsesDirectJavaInvocationAndProjectClasspath() throws Exception {
+        Path project = tempDir.resolve("managed-run");
+        Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Path runtimeJar = project.resolve("deps/runtime-one.jar").toAbsolutePath().normalize();
+        Files.createDirectories(runtimeJar.getParent());
+        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
+            runtimeJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+
+        Path toolRoot = tempDir.resolve("tool/pyronaut-run");
+        Path executable = toolRoot.resolve("bin/pyronaut-run");
+        Path libDir = toolRoot.resolve("lib");
+        Files.createDirectories(executable.getParent());
+        Files.createDirectories(libDir);
+        Files.writeString(executable, "#!/bin/sh\n", StandardCharsets.UTF_8);
+        executable.toFile().setExecutable(true);
+        Path toolJar = libDir.resolve("micronaut-pyronaut-run.jar").toAbsolutePath().normalize();
+        Files.writeString(toolJar, "", StandardCharsets.UTF_8);
+
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "runExecutable", executable);
+        setField(command, "testExecutable", executable);
+
+        Object target = enumConstant(command, "ManagedCommandTarget", "RUN");
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(
+            command,
+            "buildManagedCommand",
+            new Class<?>[]{Path.class, target.getClass()},
+            project,
+            target
+        );
+
+        assertTrue(commandLine.getFirst().endsWith("/bin/java") || "java".equals(commandLine.getFirst()));
+        assertTrue(commandLine.contains("--sun-misc-unsafe-memory-access=allow"));
+        assertTrue(commandLine.contains("--enable-native-access=ALL-UNNAMED"));
+        assertTrue(commandLine.contains("io.micronaut.pyronaut.run.PyronautRunMain"));
+        int cpIndex = commandLine.indexOf("-cp");
+        assertTrue(cpIndex > 0);
+        String classpath = commandLine.get(cpIndex + 1);
+        assertTrue(classpath.contains(runtimeJar.toString()));
+        assertTrue(classpath.contains(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize().toString()));
+        assertTrue(classpath.contains(toolJar.toString()));
+    }
+
+    @Test
+    void hasReachableTestResourcesServerAcceptsLiveSocketBackedSettings() throws Exception {
+        Path project = tempDir.resolve("reachable-settings");
+        Path settingsDir = project.resolve(".micronaut/test-resources");
+        Files.createDirectories(settingsDir);
+
+        try (ServerSocket serverSocket = new ServerSocket(0)) {
+            Files.writeString(
+                settingsDir.resolve("test-resources.properties"),
+                "server.uri=http\\://localhost\\:" + serverSocket.getLocalPort() + "\n"
+                    + "server.access.token=token-123\n",
+                StandardCharsets.UTF_8
+            );
+
+            PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+
+            assertTrue(command.hasReachableTestResourcesServer(settingsDir.resolve("test-resources.properties")));
+        }
     }
 
     private static Object invoke(Object target, String name, Class<?>[] parameterTypes, Object... args) throws Exception {
@@ -147,6 +351,34 @@ class PyronautDelegatingTuiCommandTest {
             }
         }
         throw new NoSuchMethodException(name);
+    }
+
+    private static Object newInner(Object target, String simpleName, Class<?>[] parameterTypes, Object... args) throws Exception {
+        for (Class<?> innerClass : target.getClass().getDeclaredClasses()) {
+            if (innerClass.getSimpleName().equals(simpleName)) {
+                Class<?>[] ctorTypes = new Class<?>[parameterTypes.length + 1];
+                Object[] ctorArgs = new Object[args.length + 1];
+                ctorTypes[0] = target.getClass();
+                ctorArgs[0] = target;
+                System.arraycopy(parameterTypes, 0, ctorTypes, 1, parameterTypes.length);
+                System.arraycopy(args, 0, ctorArgs, 1, args.length);
+                var constructor = innerClass.getDeclaredConstructor(ctorTypes);
+                constructor.setAccessible(true);
+                return constructor.newInstance(ctorArgs);
+            }
+        }
+        throw new NoSuchMethodException(simpleName);
+    }
+
+    private static Object enumConstant(Object target, String simpleName, String constant) {
+        for (Class<?> innerClass : target.getClass().getDeclaredClasses()) {
+            if (innerClass.getSimpleName().equals(simpleName) && innerClass.isEnum()) {
+                @SuppressWarnings({"rawtypes", "unchecked"})
+                Object value = Enum.valueOf((Class<? extends Enum>) innerClass.asSubclass(Enum.class), constant);
+                return value;
+            }
+        }
+        throw new IllegalArgumentException(simpleName);
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {

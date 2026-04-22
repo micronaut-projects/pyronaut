@@ -36,6 +36,10 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 public final class PyronautTui {
+    private static final String TEST_RESOURCES_IMAGE_PULL_MARKER = "Pulling docker image:";
+    private static final String TEST_RESOURCES_CONTAINER_CREATE_MARKER = "Creating container for image:";
+    private static final String TEST_RESOURCES_CONTAINER_STARTED_MARKER = " started in PT";
+
     private final UiController controller;
     private final RootView view;
     private Runnable onQuit;
@@ -244,11 +248,20 @@ public final class PyronautTui {
     }
 
     private static void routeCapturedLine(UiController controller, String line) {
-        if (line != null && line.startsWith("[test-resources-service]")) {
+        if (line != null && isTestResourcesLine(line)) {
             controller.addTestResourcesOutput(line);
             return;
         }
         controller.addActivityOutput(line);
+    }
+
+    private static boolean isTestResourcesLine(String line) {
+        return line.startsWith("[test-resources-service]")
+            || line.startsWith("[test-resources]")
+            || line.startsWith("[STDERR] [test-resources]")
+            || line.contains(TEST_RESOURCES_IMAGE_PULL_MARKER)
+            || line.contains(TEST_RESOURCES_CONTAINER_CREATE_MARKER)
+            || line.contains(TEST_RESOURCES_CONTAINER_STARTED_MARKER);
     }
 
     private Element render() {
