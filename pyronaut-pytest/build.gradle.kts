@@ -6,7 +6,7 @@ plugins {
 dependencies {
     implementation(mn.micronaut.core)
     implementation(mn.micronaut.context.python)
-    implementation(mnTest.micronaut.test.core)
+    implementation(libs.micronaut.test.core)
     implementation(mnTest.junit.platform.engine)
     implementation(mnTest.junit.platform.launcher)
     implementation(mn.graalpy) {

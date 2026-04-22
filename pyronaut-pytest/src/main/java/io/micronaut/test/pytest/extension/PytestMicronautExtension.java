@@ -21,14 +21,15 @@ import io.micronaut.context.annotation.Property;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.annotation.MicronautTestValue;
+import io.micronaut.test.annotation.TransactionMode;
 import io.micronaut.test.extensions.AbstractMicronautExtension;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.AnnotatedElement;
-import java.util.List;
 import java.util.Map;
+import java.util.List;
 
 /**
  * Micronaut Test extension for Pytest.
@@ -43,6 +44,114 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             this.testProperties.putAll(pytestProperties);
         }
         node.putMember(ID, this);
+    }
+
+    /**
+     * Bootstraps a pytest Micronaut fixture without leaking Java exceptions through GraalPy.
+     *
+     * @param pytestProperties The pytest properties.
+     * @param node The pytest node.
+     * @param environments The environments.
+     * @param packages The packages.
+     * @param propertySources The property sources.
+     * @param rollback Whether rollback is enabled.
+     * @param transactional Whether transactional tests are enabled.
+     * @param rebuildContext Whether the context should be rebuilt between tests.
+     * @param startApplication Whether the embedded application should start.
+     * @param resolveParameters Whether test parameters should be resolved.
+     * @return The bootstrap result.
+     */
+    public static FixtureBootstrapResult bootstrapFixture(
+        @Nullable Map<String, Object> pytestProperties,
+        Value node,
+        @Nullable String[] environments,
+        @Nullable String[] packages,
+        @Nullable String[] propertySources,
+        boolean rollback,
+        boolean transactional,
+        boolean rebuildContext,
+        boolean startApplication,
+        boolean resolveParameters
+    ) {
+        try {
+            PytestMicronautExtension extension = new PytestMicronautExtension(pytestProperties, node);
+            String error = extension.start(
+                node,
+                createMicronautTestValue(
+                    environments,
+                    packages,
+                    propertySources,
+                    rollback,
+                    transactional,
+                    rebuildContext,
+                    startApplication,
+                    resolveParameters
+                )
+            );
+            return new FixtureBootstrapResult(extension.getContext(), error);
+        } catch (Throwable e) {
+            LOG.error("Error bootstrapping Micronaut pytest fixture: {}", e.getMessage(), e);
+            return new FixtureBootstrapResult(null, buildFailureMessage(e));
+        }
+    }
+
+    /**
+     * Builds a Micronaut test value from GraalPy-friendly inputs.
+     *
+     * @param environments The environments.
+     * @param packages The packages.
+     * @param propertySources The property sources.
+     * @param rollback Whether rollback is enabled.
+     * @param transactional Whether transactional tests are enabled.
+     * @param rebuildContext Whether the context should be rebuilt between tests.
+     * @param startApplication Whether the embedded application should start.
+     * @param resolveParameters Whether test parameters should be resolved.
+     * @return The Micronaut test value.
+     */
+    public static MicronautTestValue createMicronautTestValue(
+        @Nullable String[] environments,
+        @Nullable String[] packages,
+        @Nullable String[] propertySources,
+        boolean rollback,
+        boolean transactional,
+        boolean rebuildContext,
+        boolean startApplication,
+        boolean resolveParameters
+    ) {
+        @SuppressWarnings("unchecked")
+        Class<? extends ApplicationContextBuilder>[] contextBuilders =
+            (Class<? extends ApplicationContextBuilder>[]) new Class<?>[0];
+        return new MicronautTestValue(
+            void.class,
+            environments == null ? new String[0] : environments,
+            packages == null ? new String[0] : packages,
+            propertySources == null ? new String[0] : propertySources,
+            rollback,
+            transactional,
+            rebuildContext,
+            contextBuilders,
+            TransactionMode.SEPARATE_TRANSACTIONS,
+            startApplication,
+            resolveParameters,
+            true
+        );
+    }
+
+    /**
+     * Starts Micronaut test support for a pytest node.
+     *
+     * @param node The pytest node.
+     * @param testAnnotationValue The Micronaut test value.
+     */
+    @Nullable
+    public String start(Value node, MicronautTestValue testAnnotationValue) {
+        try {
+            beforeClass(node, PytestMicronautExtension.class, testAnnotationValue);
+            return null;
+        } catch (Throwable e) {
+            LOG.error("Error PytestMicronautExtension start: {}", e.getMessage(), e);
+            return buildFailureMessage(e);
+        }
     }
 
     @Override
@@ -95,5 +204,47 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
 
     public ApplicationContext getContext() {
         return this.applicationContext;
+    }
+
+    private static String buildFailureMessage(Throwable e) {
+        String message = e.getMessage();
+        if (message == null || message.isBlank()) {
+            message = e.getClass().getName();
+        }
+        Throwable cause = e.getCause();
+        if (cause == null || cause == e) {
+            return message;
+        }
+        String causeMessage = cause.getMessage();
+        if (causeMessage == null || causeMessage.isBlank()) {
+            causeMessage = cause.getClass().getName();
+        }
+        if (message.equals(causeMessage)) {
+            return message;
+        }
+        return message + System.lineSeparator() + causeMessage;
+    }
+
+    /**
+     * Result wrapper for pytest fixture bootstrap.
+     */
+    public static final class FixtureBootstrapResult {
+        private final ApplicationContext context;
+        private final String error;
+
+        FixtureBootstrapResult(@Nullable ApplicationContext context, @Nullable String error) {
+            this.context = context;
+            this.error = error;
+        }
+
+        @Nullable
+        public ApplicationContext getContext() {
+            return context;
+        }
+
+        @Nullable
+        public String getError() {
+            return error;
+        }
     }
 }

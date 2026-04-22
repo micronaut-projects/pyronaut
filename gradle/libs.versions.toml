@@ -18,6 +18,7 @@ micronaut-json-schema = "2.0.0-M7"
 graalpy = "25.1.0-SNAPSHOT"
 micronaut-control-panel = "1.8.0"
 docker-java = "3.4.1"
+micronaut-test = "5.0.0-M8"
 
 [libraries]
 micronaut-core = { module = 'io.micronaut:micronaut-core-bom', version.ref = 'micronaut' }
@@ -56,6 +57,7 @@ micronaut-test-resources-server = { module = "io.micronaut.testresources:microna
 micronaut-control-panel-core = { module = "io.micronaut.controlpanel:micronaut-control-panel-core", version.ref = "micronaut-control-panel" }
 docker-java-api = { module = "com.github.docker-java:docker-java-api", version.ref = "docker-java" }
 micronaut-json-schema-configuration-validator = { module = "io.micronaut.jsonschema:micronaut-json-schema-configuration-validator", version.ref = "micronaut-json-schema" }
+micronaut-test-core = { module = "io.micronaut.test:micronaut-test-core", version.ref = "micronaut-test" }
 
 [bundles]
 

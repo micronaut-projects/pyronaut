@@ -56,28 +56,24 @@ def micronaut_test_fixture(request,
         micronaut_test = MicronautTest()
 
     PytestMicronautExtension = java.type("io.micronaut.test.pytest.extension.PytestMicronautExtension")
-    MicronautTestValue = java.type("io.micronaut.test.annotation.MicronautTestValue")
-    extension = PytestMicronautExtension(micronaut_test.properties, request.node)
-    test_value = MicronautTestValue(
-        None, # application
+    bootstrap = PytestMicronautExtension.bootstrapFixture(
+        micronaut_test.properties,
+        request.node,
         to_java_array(micronaut_test.environments),
         to_java_array(micronaut_test.packages),
         to_java_array([]), # propertySources
         micronaut_test.rollback,
         micronaut_test.transactional,
         micronaut_test.rebuild_context,
-        None, # contextBuilder
-        None, # transactionMode
         micronaut_test.start_application,
         micronaut_test.resolve_parameters
     )
 
-    try:
-        extension.beforeClass(request.node.__module__, PytestMicronautExtension, test_value)
-    except BaseException as e:
+    start_error = bootstrap.getError()
+    if start_error:
         pytest = __import__("pytest")
-        pytest.fail(f"Micronaut Fixture Setup Failed: {e}", pytrace=False)
-    return ApplicationContextWrapper(extension.getContext())
+        pytest.fail(f"Micronaut Fixture Setup Failed: {start_error}", pytrace=False)
+    return ApplicationContextWrapper(bootstrap.getContext())
 
 
 def to_java_array(list):
