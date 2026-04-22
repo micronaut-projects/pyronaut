@@ -410,7 +410,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
         private final Function<ServerStartRequest, ServerFactory> serverFactoryFactory;
 
         DefaultServerManager() {
-            this(RealTestResourcesServerFactory::new);
+            this(TestResourcesServerFactory::new);
         }
 
         DefaultServerManager(Function<ServerStartRequest, ServerFactory> serverFactoryFactory) {
@@ -470,7 +470,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
                 }
                 entries.add(Path.of(value).toAbsolutePath().normalize().toFile());
             }
-            for (String value : RealTestResourcesServerFactory.selfModuleClasspathEntries()) {
+            for (String value : TestResourcesServerFactory.selfModuleClasspathEntries()) {
                 if (value == null || value.isBlank()) {
                     continue;
                 }

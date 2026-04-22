@@ -29,7 +29,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
 
-final class RealTestResourcesServerFactory implements ServerFactory {
+final class TestResourcesServerFactory implements ServerFactory {
     private static final String LOGS_DIR_SYSTEM_PROPERTY = "pyronaut.test-resources.logs-dir";
     private static final String LOGBACK_CONFIGURATION_SYSTEM_PROPERTY = "logback.configurationFile";
     private static final String STDIO_LOG_FILE = "launcher-stdio.log";
@@ -39,11 +39,11 @@ final class RealTestResourcesServerFactory implements ServerFactory {
     private final ProcessStarter processStarter;
     private Process process;
 
-    RealTestResourcesServerFactory(PyronautTestResourcesServerMain.ServerStartRequest request) {
+    TestResourcesServerFactory(PyronautTestResourcesServerMain.ServerStartRequest request) {
         this(request, new ProcessBuilderStarter(request.logsDir()));
     }
 
-    RealTestResourcesServerFactory(PyronautTestResourcesServerMain.ServerStartRequest request, ProcessStarter processStarter) {
+    TestResourcesServerFactory(PyronautTestResourcesServerMain.ServerStartRequest request, ProcessStarter processStarter) {
         this.request = request;
         this.processStarter = processStarter;
     }

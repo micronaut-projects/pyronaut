@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class RealTestResourcesServerFactoryTest {
+class TestResourcesServerFactoryTest {
 
     @TempDir
     Path tempDir;
@@ -47,7 +47,7 @@ class RealTestResourcesServerFactoryTest {
             true,
             "java"
         );
-        RealTestResourcesServerFactory factory = new RealTestResourcesServerFactory(request, starter);
+        TestResourcesServerFactory factory = new TestResourcesServerFactory(request, starter);
 
         factory.startServer(new StubProcessParameters(tempDir.resolve("port.file"), firstJar.toFile(), secondJar.toFile()));
         factory.waitFor(Duration.ofMillis(1));
@@ -89,7 +89,7 @@ class RealTestResourcesServerFactoryTest {
         );
         CapturingStarter starter = new CapturingStarter();
         starter.returnDeadProcess = true;
-        RealTestResourcesServerFactory factory = new RealTestResourcesServerFactory(request, starter);
+        TestResourcesServerFactory factory = new TestResourcesServerFactory(request, starter);
         IllegalStateException error = assertThrows(
             IllegalStateException.class,
             () -> factory.startServer(new StubProcessParameters(tempDir.resolve("port.file"), tempDir.resolve("libs/one.jar").toFile()))
@@ -97,7 +97,7 @@ class RealTestResourcesServerFactoryTest {
         assertTrue(error.getMessage().contains("terminated"));
     }
 
-    private static final class CapturingStarter implements RealTestResourcesServerFactory.ProcessStarter {
+    private static final class CapturingStarter implements TestResourcesServerFactory.ProcessStarter {
         private List<String> command = new ArrayList<>();
         private Map<String, String> environment = new HashMap<>();
         private boolean returnDeadProcess;
