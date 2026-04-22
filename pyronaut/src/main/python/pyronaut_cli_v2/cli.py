@@ -55,6 +55,10 @@ _TEST_RESOURCES_ENV_TO_PROPERTY = {
     "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN": "micronaut.test.resources.server.access.token",
     "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT": "micronaut.test.resources.server.client.read.timeout",
 }
+_TEST_RESOURCES_LOG_FILE = "test-resources.log"
+_TEST_RESOURCES_IMAGE_PULL_MARKER = "Pulling docker image:"
+_TEST_RESOURCES_CONTAINER_CREATE_MARKER = "Creating container for image:"
+_TEST_RESOURCES_CONTAINER_STARTED_MARKER = " started in PT"
 
 Runner = Callable[[list[str]], int]
 RunnerWithEnv = Callable[[list[str], dict[str, str] | None], int]
@@ -1845,6 +1849,8 @@ class _OwnedTestResourcesSession:
         self._started = False
         self._shutdown_registered = False
         self._client_env_overrides: dict[str, str] | None = None
+        self._log_mirror_stop: threading.Event | None = None
+        self._log_mirror_thread: threading.Thread | None = None
 
     @staticmethod
     def _new_owner_token() -> str:
@@ -1877,6 +1883,7 @@ class _OwnedTestResourcesSession:
         if exit_code != SUCCESS:
             raise RuntimeError(f"Test resources server failed to start (exit code {exit_code})")
         self._report_started_server()
+        self._start_log_mirror()
 
         if self._shared_server:
             sys.stderr.write("[test-resources] shared-server mode: will not stop server on session exit\n")
@@ -1887,6 +1894,7 @@ class _OwnedTestResourcesSession:
         self._register_shutdown(runner=runner, resolver=resolver)
 
     def stop_if_owned(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+        self._stop_log_mirror()
         if not self._started:
             return
 
@@ -1947,6 +1955,60 @@ class _OwnedTestResourcesSession:
 
         atexit.register(_shutdown)
         self._shutdown_registered = True
+
+    def _start_log_mirror(self) -> None:
+        log_file = _resolve_test_resources_logs_dir(self._project_dir, self._settings_file) / _TEST_RESOURCES_LOG_FILE
+        if self._log_mirror_thread is not None and self._log_mirror_thread.is_alive():
+            return
+        stop_event = threading.Event()
+        self._log_mirror_stop = stop_event
+
+        def _tail() -> None:
+            position = 0
+            while not stop_event.is_set() and not log_file.exists():
+                stop_event.wait(0.1)
+            if not log_file.exists():
+                return
+            try:
+                position = log_file.stat().st_size
+            except OSError:
+                position = 0
+            while not stop_event.is_set():
+                try:
+                    current_size = log_file.stat().st_size
+                    if current_size < position:
+                        position = 0
+                    if current_size > position:
+                        with log_file.open("r", encoding="utf-8") as handle:
+                            handle.seek(position)
+                            chunk = handle.read()
+                            position = handle.tell()
+                        for line in chunk.splitlines():
+                            stripped = line.strip()
+                            if stripped and _should_mirror_test_resources_log_line(stripped):
+                                sys.stderr.write(stripped + "\n")
+                                sys.stderr.flush()
+                    stop_event.wait(0.1)
+                except OSError:
+                    stop_event.wait(0.1)
+
+        self._log_mirror_thread = threading.Thread(
+            target=_tail,
+            name="pyronaut-test-resources-log-mirror",
+            daemon=True,
+        )
+        self._log_mirror_thread.start()
+
+    def _stop_log_mirror(self) -> None:
+        stop_event = self._log_mirror_stop
+        thread = self._log_mirror_thread
+        self._log_mirror_stop = None
+        self._log_mirror_thread = None
+        if stop_event is None:
+            return
+        stop_event.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
 
     def _persist_session(self, *, started_at: float) -> None:
         data = {
@@ -2047,6 +2109,15 @@ def _test_resources_server_available(settings_path: Path) -> bool:
             return True
     except OSError:
         return False
+
+
+def _should_mirror_test_resources_log_line(line: str) -> bool:
+    return (
+        " ERROR " in line
+        or _TEST_RESOURCES_IMAGE_PULL_MARKER in line
+        or _TEST_RESOURCES_CONTAINER_CREATE_MARKER in line
+        or _TEST_RESOURCES_CONTAINER_STARTED_MARKER in line
+    )
 
 
 def _run_tamboui_tui(

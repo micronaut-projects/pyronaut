@@ -20,6 +20,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 final class FallbackTestResourcesServerLauncher {
     private static final String LOGS_DIR_SYSTEM_PROPERTY = "pyronaut.test-resources.logs-dir";
@@ -28,6 +29,12 @@ final class FallbackTestResourcesServerLauncher {
     private static final File NULL_DEVICE = new File(isWindows() ? "NUL" : "/dev/null");
 
     private FallbackTestResourcesServerLauncher() {
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "")
+            .toLowerCase(Locale.ROOT)
+            .contains("win");
     }
 
     static void launch(PyronautTestResourcesServerMain.ServerStartRequest request, int port) throws IOException {

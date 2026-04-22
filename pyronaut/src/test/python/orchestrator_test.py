@@ -2,6 +2,7 @@ import importlib.util
 import io
 import os
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -819,6 +820,41 @@ logsDir = "var/custom-test-resources-logs"
                 self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
                 self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
                 self.assertFalse(session_file.exists())
+
+    def test_owned_test_resources_session_mirrors_late_container_logs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            settings_dir = project_dir / ".micronaut" / "test-resources"
+            settings_dir.mkdir(parents=True, exist_ok=True)
+            settings_file = settings_dir / "test-resources.properties"
+            settings_file.write_text(
+                "server.uri=http\\://localhost\\:18900\n"
+                "server.access.token=token-abc\n",
+                encoding="utf-8",
+            )
+            log_dir = settings_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "test-resources.log"
+            log_file.write_text("", encoding="utf-8")
+
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut run")
+            stderr = io.StringIO()
+            try:
+                with redirect_stderr(stderr):
+                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
+                    with log_file.open("a", encoding="utf-8") as handle:
+                        handle.write(
+                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
+                        )
+                        handle.flush()
+                    deadline = time.time() + 2.0
+                    while "Creating container for image: mysql:8.4.0" not in stderr.getvalue() and time.time() < deadline:
+                        time.sleep(0.05)
+            finally:
+                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+
+            self.assertIn("Creating container for image: mysql:8.4.0", stderr.getvalue())
 
     def test_test_forwards_tests_selectors_after_preflight(self):
         executed = []

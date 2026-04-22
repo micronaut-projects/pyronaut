@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
 
@@ -45,6 +46,12 @@ final class RealTestResourcesServerFactory implements ServerFactory {
     RealTestResourcesServerFactory(PyronautTestResourcesServerMain.ServerStartRequest request, ProcessStarter processStarter) {
         this.request = request;
         this.processStarter = processStarter;
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "")
+            .toLowerCase(Locale.ROOT)
+            .contains("win");
     }
 
     @Override
