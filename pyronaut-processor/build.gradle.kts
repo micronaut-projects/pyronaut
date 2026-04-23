@@ -23,6 +23,8 @@ dependencies {
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
+    testImplementation(mn.micronaut.http)
+    testImplementation(mn.micronaut.router)
 }
 
 application {
@@ -85,6 +87,7 @@ graalvmNative {
                     "-H:Preserve=package=javax.lang.model",
                     "-H:Preserve=package=javax.tools",
                     "-H:Preserve=package=java.lang",
+                    "-H:Preserve=package=java.util",
                     "-H:Preserve=package=java.lang.invoke",
                     "-H:Preserve=package=jdk.internal.misc",
                     "-H:Preserve=package=jdk.internal.access",
