@@ -1,2 +1,0 @@
-{"runId":"a02a8368-6ef9-4cd4-841c-c90c53ef8bd0","seq":1,"eventType":"session_started","testId":null,"status":null,"timestamp":"2026-04-20T14:17:55.984512Z","payload":{}}
-{"runId":"a02a8368-6ef9-4cd4-841c-c90c53ef8bd0","seq":2,"eventType":"session_finished","testId":null,"status":"SUCCESSFUL","timestamp":"2026-04-20T14:17:55.985057Z","payload":{"total":"0","passed":"0","failed":"0","skipped":"0"}}
