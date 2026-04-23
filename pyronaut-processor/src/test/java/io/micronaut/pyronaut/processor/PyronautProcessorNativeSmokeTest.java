@@ -9,7 +9,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,7 +26,31 @@ class PyronautProcessorNativeSmokeTest {
     @Test
     void nativeBinaryProcessesDecoratedHelloWorldSources() throws Exception {
         String binaryPath = System.getProperty("pyronaut.processor.native.binary");
-        Path project = tempDir.resolve("project");
+        ProcessResult result = runProcessor(binaryPath, tempDir.resolve("project"), helloWorldProjectFiles());
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), result.exitCode(), result.output());
+        Path classesDir = result.project().resolve("__pyronaut__/classes");
+        assertMainArtifacts(classesDir, result.output());
+
+        Path testClassesDir = result.project().resolve("__pyronaut__/test-classes");
+        assertMainArtifacts(testClassesDir, result.output());
+        assertExists(testClassesDir, "META-INF/GRAALPY-VFS/micronaut-application/src/test_controller.py", result.output());
+    }
+
+    @Test
+    void nativeBinaryProcessesMicronautDataRepositorySources() throws Exception {
+        String binaryPath = System.getProperty("pyronaut.processor.native.binary");
+        ProcessResult result = runProcessor(binaryPath, tempDir.resolve("data-project"), micronautDataProjectFiles());
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), result.exitCode(), result.output());
+        Path classesDir = result.project().resolve("__pyronaut__/classes");
+        assertMicronautDataArtifacts(classesDir, result.output());
+
+        Path testClassesDir = result.project().resolve("__pyronaut__/test-classes");
+        assertMicronautDataArtifacts(testClassesDir, result.output());
+        assertExists(testClassesDir, "META-INF/GRAALPY-VFS/micronaut-application/src/test_repository.py", result.output());
+    }
+
+    private ProcessResult runProcessor(String binaryPath, Path project, Map<String, String> projectFiles) throws Exception {
         Path src = project.resolve("src");
         Path testSrc = project.resolve("tests");
         Path cache = project.resolve("__pyronaut__");
@@ -32,9 +58,11 @@ class PyronautProcessorNativeSmokeTest {
         Files.createDirectories(testSrc);
         Files.createDirectories(cache);
         Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
-        Files.writeString(src.resolve("main.py"), "from app import HelloController\n", StandardCharsets.UTF_8);
-        Files.writeString(src.resolve("app.py"), decoratedApplication(), StandardCharsets.UTF_8);
-        Files.writeString(testSrc.resolve("test_controller.py"), "def test_hello():\n    assert True\n", StandardCharsets.UTF_8);
+        for (Map.Entry<String, String> entry : projectFiles.entrySet()) {
+            Path target = project.resolve(entry.getKey());
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, entry.getValue(), StandardCharsets.UTF_8);
+        }
 
         List<String> classpathEntries = Arrays.stream(System.getProperty("java.class.path", "").split(System.getProperty("path.separator")))
             .map(String::trim)
@@ -49,14 +77,65 @@ class PyronautProcessorNativeSmokeTest {
             .start();
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int exitCode = process.waitFor();
+        return new ProcessResult(project, output, exitCode);
+    }
 
-        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), exitCode, output);
-        Path classesDir = project.resolve("__pyronaut__/classes");
-        assertMainArtifacts(classesDir, output);
+    private static Map<String, String> helloWorldProjectFiles() {
+        Map<String, String> files = new LinkedHashMap<>();
+        files.put("src/main.py", "from app import HelloController\n");
+        files.put("src/app.py", decoratedApplication());
+        files.put("tests/test_controller.py", "def test_hello():\n    assert True\n");
+        return files;
+    }
 
-        Path testClassesDir = project.resolve("__pyronaut__/test-classes");
-        assertMainArtifacts(testClassesDir, output);
-        assertExists(testClassesDir, "META-INF/GRAALPY-VFS/micronaut-application/src/test_controller.py", output);
+    private static Map<String, String> micronautDataProjectFiles() {
+        Map<String, String> files = new LinkedHashMap<>();
+        files.put("src/main.py", """
+            from Book import Book
+            from BookRepository import BookRepository
+            """);
+        files.put("src/Book.py", """
+            from dataclasses import dataclass
+            from micronaut.data.annotation import GeneratedValue, Id, MappedEntity
+            from typing import Annotated
+
+            @dataclass
+            @MappedEntity
+            class Book:
+                id: Annotated[int, Id, GeneratedValue]
+                title: str
+            """);
+        files.put("src/BookRepository.py", """
+            from abc import ABC, abstractmethod
+            from jakarta.data.repository import Save
+            from typing import List
+
+            from micronaut.data.jdbc.annotation import JdbcRepository
+
+            from Book import Book
+
+            @JdbcRepository(dialect = "MYSQL")
+            class BookRepository(ABC):
+
+                @Save
+                @abstractmethod
+                def saveBook(self, book: Book) -> None:
+                    pass
+
+                @abstractmethod
+                def findAll(self) -> List[Book]:
+                    pass
+
+                @abstractmethod
+                def findById(self, id: int) -> Book:
+                    pass
+
+                @abstractmethod
+                def findByTitle(self, title: str) -> Book:
+                    pass
+            """);
+        files.put("tests/test_repository.py", "def test_repository_fixture():\n    assert True\n");
+        return files;
     }
 
     private static void assertMainArtifacts(Path outputDir, String output) throws IOException {
@@ -77,6 +156,22 @@ class PyronautProcessorNativeSmokeTest {
         assertContainsPath(outputDir, "python", "HelloController.class", output);
         assertContainsPath(outputDir, "python", "Person.class", output);
         assertContainsPath(outputDir, "python", "EngineConfiguration.class", output);
+        assertExists(outputDir, "pyronaut_application/PyronautMain.class", output);
+    }
+
+    private static void assertMicronautDataArtifacts(Path outputDir, String output) throws IOException {
+        assertTrue(Files.isDirectory(outputDir), output);
+        assertTrue(containsClassFile(outputDir), output);
+        assertExists(outputDir, "META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt", output);
+        assertExists(outputDir, "META-INF/GRAALPY-VFS/micronaut-application/src/main.py", output);
+        assertExists(outputDir, "META-INF/GRAALPY-VFS/micronaut-application/src/Book.py", output);
+        assertExists(outputDir, "META-INF/GRAALPY-VFS/micronaut-application/src/BookRepository.py", output);
+
+        assertContainsPath(outputDir, "META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference", "BookRepository", output);
+        assertContainsPath(outputDir, "META-INF/micronaut/io.micronaut.core.beans.BeanIntrospectionReference", "Book$Introspection", output);
+        assertContainsPath(outputDir, "python", "Book.class", output);
+        assertContainsPath(outputDir, "python", "Book$Introspection.class", output);
+        assertContainsPath(outputDir, "python", "BookRepository", output);
         assertExists(outputDir, "pyronaut_application/PyronautMain.class", output);
     }
 
@@ -173,5 +268,8 @@ class PyronautProcessorNativeSmokeTest {
                 def index(self) -> Person:
                     return Person("Hello World", 1)
             """;
+    }
+
+    private record ProcessResult(Path project, String output, int exitCode) {
     }
 }

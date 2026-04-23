@@ -1,4 +1,5 @@
 import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask
+import org.gradle.api.attributes.java.TargetJvmVersion
 import org.gradle.api.tasks.SourceSetContainer
 
 plugins {
@@ -11,6 +12,22 @@ val nativeProcessorEnabled = providers
     .gradleProperty("pyronautProcessorNative")
     .map(String::toBoolean)
     .orElse(false)
+
+val micronautCoreNativeImageExclusion = providers.provider {
+    val micronautCoreJar = configurations.runtimeClasspath.get().resolvedConfiguration.resolvedArtifacts
+        .firstOrNull { artifact ->
+            artifact.moduleVersion.id.group == "io.micronaut" &&
+                artifact.name == "micronaut-core" &&
+                artifact.extension == "jar"
+        }
+        ?.file
+        ?: error("Unable to resolve micronaut-core runtime jar for native-image exclusion")
+    listOf(
+        "--exclude-config",
+        "\\Q${micronautCoreJar.toPath().toAbsolutePath().normalize()}\\E",
+        "^/META-INF/native-image/.*"
+    )
+}
 
 dependencies {
     annotationProcessor(mn.micronaut.inject.java)
@@ -25,6 +42,8 @@ dependencies {
     testImplementation(mnTest.junit.jupiter.engine)
     testImplementation(mn.micronaut.http)
     testImplementation(mn.micronaut.router)
+    testRuntimeOnly(libs.micronaut.data.jdbc)
+    testRuntimeOnly(libs.micronaut.data.processor)
 }
 
 application {
@@ -66,6 +85,12 @@ tasks {
     }
 }
 
+configurations.named("testRuntimeClasspath") {
+    attributes {
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 25)
+    }
+}
+
 graalvmNative {
     binaries {
         named("main") {
@@ -83,23 +108,44 @@ graalvmNative {
                     "-H:EnableURLProtocols=jar",
                     "-H:+RuntimeClassLoading",
                     "-H:+AllowJRTFileSystem",
-                    "-H:Preserve=package=javax.annotation.processing",
-                    "-H:Preserve=package=javax.lang.model",
-                    "-H:Preserve=package=javax.tools",
-                    "-H:Preserve=package=java.lang",
-                    "-H:Preserve=package=java.util",
-                    "-H:Preserve=package=java.lang.invoke",
-                    "-H:Preserve=package=jdk.internal.misc",
-                    "-H:Preserve=package=jdk.internal.access",
-                    "-H:Preserve=package=io.micronaut.inject",
-                    "-H:Preserve=package=io.micronaut.inject.visitor",
-                    "-H:Preserve=package=io.micronaut.inject.ast",
-                    "-H:Preserve=package=io.micronaut.context",
+                    "-H:Preserve=package=javax.annotation.processing.*",
+                    "-H:Preserve=package=javax.lang.model.*",
+                    "-H:Preserve=package=javax.tools.*",
+                    "-H:Preserve=package=java.lang.*",
+                    "-H:Preserve=package=java.text.*",
+                    "-H:Preserve=package=java.time.*",
+                    "-H:Preserve=package=java.util.*",
+                    "-H:Preserve=package=jdk.internal.misc.*",
+                    "-H:Preserve=package=jdk.internal.access.*",
+                    "-H:Preserve=package=io.micronaut.core.annotation.*",
+                    "-H:Preserve=package=io.micronaut.core.beans.*",
+                    "-H:Preserve=package=io.micronaut.core.naming.*",
+                    "-H:Preserve=package=io.micronaut.core.reflect.*",
+                    "-H:Preserve=package=io.micronaut.core.util.*",
+                    "-H:Preserve=package=io.micronaut.core.io.service.*",
+                    "-H:Preserve=package=io.micronaut.annotation.processing.*",
+                    "-H:Preserve=package=io.micronaut.inject.*",
+                    "-H:Preserve=package=io.micronaut.context.*",
                     "-H:-PrintRestrictHeapAccessWarnings",
                     "-H:-UnlockExperimentalVMOptions",
                     "--initialize-at-build-time=com.sun.tools.javac.api.JavacTool",
                     "--initialize-at-build-time=io.micronaut.sourcegen.model,org.objectweb.asm",
+                    "--initialize-at-build-time=io.micronaut.core.io",
+                    "--initialize-at-build-time=io.micronaut.core.optim",
+                    "--initialize-at-build-time=io.micronaut.core.util",
+                    "--initialize-at-build-time=io.micronaut.core.bind",
+                    "--initialize-at-build-time=io.micronaut.core.convert",
+                    "--initialize-at-build-time=io.micronaut.core.convert.ConversionContext",
+                    "--initialize-at-build-time=io.micronaut.core.convert.ImmutableArgumentConversionContext",
+                    "--initialize-at-build-time=io.micronaut.core.type",
+                    "--initialize-at-build-time=io.micronaut.core.annotation",
+                    "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValue",
+                    "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValueResolver",
+                    "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
                     "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
+                    "--initialize-at-run-time=io.micronaut.core.io.socket.SocketUtils",
+                    "--initialize-at-run-time=io.micronaut.core.util.KotlinUtils",
+                    "--initialize-at-run-time=io.micronaut.core.type.RuntimeTypeInformation\$LazyTypeInfo",
                     "--initialize-at-run-time=io.micronaut.annotation.processing.TypeElementVisitorProcessor",
                     "--initialize-at-run-time=io.micronaut.annotation.processing.AggregatingTypeElementVisitorProcessor",
                     "--initialize-at-run-time=io.micronaut.annotation.processing.PackageElementVisitorProcessor",
@@ -116,6 +162,7 @@ graalvmNative {
                     "--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm"
                 )
             )
+            buildArgs.addAll(micronautCoreNativeImageExclusion)
         }
     }
 }

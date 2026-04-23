@@ -29,6 +29,17 @@
       }
     },
     {
+      "type": "java.util.function.Function",
+      "methods": [
+        {
+          "name": "apply",
+          "parameterTypes": [
+            "java.lang.Object"
+          ]
+        }
+      ]
+    },
+    {
       "type": "io.micronaut.python.processing.visitor.ArgumentDef",
       "allPublicConstructors": true,
       "allPublicMethods": true
