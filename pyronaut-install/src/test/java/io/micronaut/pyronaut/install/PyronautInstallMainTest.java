@@ -818,6 +818,34 @@ class PyronautInstallMainTest {
         assertTrue(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
     }
 
+    @Test
+    void filtersChecksumStackTraceButKeepsWarningLine() {
+        boolean[] suppressChecksumTrace = new boolean[1];
+
+        String warning = ChecksumWarningFilter.filterLine(
+            "[main] WARN org.eclipse.aether.internal.impl.WarnChecksumPolicy - Could not validate integrity of download from file:///tmp/repo/example.pom",
+            suppressChecksumTrace
+        );
+        String exception = ChecksumWarningFilter.filterLine(
+            "org.eclipse.aether.transfer.ChecksumFailureException: Checksum validation failed, no checksums available",
+            suppressChecksumTrace
+        );
+        String stackFrame = ChecksumWarningFilter.filterLine(
+            "\tat org.eclipse.aether.internal.impl.AbstractChecksumPolicy.onNoMoreChecksums(AbstractChecksumPolicy.java:63)",
+            suppressChecksumTrace
+        );
+        String unrelatedWarning = ChecksumWarningFilter.filterLine(
+            "[main] WARN org.eclipse.aether.internal.impl.DefaultArtifactResolver - Continuing resolution",
+            suppressChecksumTrace
+        );
+
+        assertTrue(suppressChecksumTrace[0] == false);
+        assertTrue(warning.contains("Could not validate integrity of download"));
+        assertEquals(null, exception);
+        assertEquals(null, stackFrame);
+        assertTrue(unrelatedWarning.contains("Continuing resolution"));
+    }
+
     private static String pyproject(Path repository) {
         return """
             [project]

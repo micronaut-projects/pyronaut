@@ -85,7 +85,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        try {
+        try (ChecksumWarningFilter ignored = ChecksumWarningFilter.install()) {
             Path root = projectDir.toAbsolutePath().normalize();
             Path pyproject = root.resolve(PyprojectModelReader.FILE_NAME);
             InstallProgressReporter.ProgressMode.fromCliValue(progress);
