@@ -63,6 +63,7 @@ import java.util.function.Function;
 final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_CLIENT_MODULE = "io.micronaut.testresources:micronaut-test-resources-client";
     private static final String TEST_RESOURCES_SERVER_MODULE = "io.micronaut.testresources:micronaut-test-resources-server";
+    private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
     private static final String MYSQL_CONNECTOR_J_MODULE = "mysql:mysql-connector-j";
     private static final String MYSQL_CONNECTOR_J_MODULE_MODERN = "com.mysql:mysql-connector-j";
     private static final Set<String> EXTRA_FORBIDDEN_SERVER_MODULES = Set.of(
@@ -177,6 +178,10 @@ final class MavenClasspathResolver {
             LinkedHashSet<String> runtime = new LinkedHashSet<>();
             if (dependencies.runtime() != null) {
                 runtime.addAll(dependencies.runtime());
+            }
+            String micronautToml = defaultRuntimeCoordinate(MICRONAUT_TOML_MODULE, managedVersions);
+            if (micronautToml != null) {
+                runtime.add(micronautToml);
             }
             String testResourcesClient = testResourcesClientCoordinate(model, managedVersions);
             if (testResourcesClient != null) {
@@ -391,6 +396,11 @@ final class MavenClasspathResolver {
             return managedClient;
         }
         return normalizedVersion(VersionInfo.getVersion());
+    }
+
+    private static String defaultRuntimeCoordinate(String module, Map<String, String> managedVersions) {
+        String version = normalizedVersion(managedVersions.get(module));
+        return version == null ? null : module + ":" + version;
     }
 
     private boolean isTestResourcesDisabledViaEnvironment() {

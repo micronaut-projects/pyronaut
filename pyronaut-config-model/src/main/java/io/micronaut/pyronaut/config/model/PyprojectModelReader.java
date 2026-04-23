@@ -71,36 +71,26 @@ public final class PyprojectModelReader {
 
     private static PyprojectModel map(TomlParseResult parsed) {
         PyprojectModel.Project project = new PyprojectModel.Project(
-            readString(parsed, "project.name"),
-            readString(parsed, "project.version"),
-            readStringList(parsed, "project.dynamic")
+            readString(parsed, PyprojectConfigSpec.PROJECT_NAME),
+            readString(parsed, PyprojectConfigSpec.PROJECT_VERSION),
+            readStringList(parsed, PyprojectConfigSpec.PROJECT_DYNAMIC)
         );
 
         PyprojectModel.BuildSystem buildSystem = new PyprojectModel.BuildSystem(
-            readStringList(parsed, "build-system.requires"),
-            readString(parsed, "build-system.build-backend")
+            readStringList(parsed, PyprojectConfigSpec.BUILD_SYSTEM_REQUIRES),
+            readString(parsed, PyprojectConfigSpec.BUILD_SYSTEM_BUILD_BACKEND)
         );
 
-        List<String> runtime = readStringList(parsed, "tool.pyronaut.dependencies.runtime");
-        if (runtime.isEmpty()) {
-            runtime = readStringList(parsed, "tool.pyronaut.dependencies.compile");
-        }
-
-        List<String> build = readStringList(parsed, "tool.pyronaut.dependencies.build");
-        if (build.isEmpty()) {
-            build = readStringList(parsed, "tool.pyronaut.dependencies.annotationProcessor");
-        }
-        if (build.isEmpty()) {
-            build = readStringList(parsed, "tool.pyronaut.annotationProcessor");
-        }
+        List<String> runtime = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_RUNTIME);
+        List<String> build = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_BUILD);
 
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
-            readString(parsed, "tool.pyronaut.version"),
-            readStringList(parsed, "tool.pyronaut.repositories"),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_VERSION),
+            readStringList(parsed, PyprojectConfigSpec.PYRONAUT_REPOSITORIES),
             new PyprojectModel.Dependencies(
                 runtime,
                 build,
-                readStringList(parsed, "tool.pyronaut.dependencies.test")
+                readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST)
             ),
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed)),
             resolveValidation(parsed),
@@ -110,33 +100,42 @@ public final class PyprojectModelReader {
         return new PyprojectModel(project, buildSystem, pyronaut);
     }
 
-    private static String readString(TomlParseResult parsed, String key) {
-        try {
-            return parsed.getString(key);
-        } catch (TomlInvalidTypeException e) {
-            throw invalidType(key, "string", e);
+    private static String readString(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+        for (String path : field.allPaths()) {
+            try {
+                String value = parsed.getString(path);
+                if (value != null) {
+                    return value;
+                }
+            } catch (TomlInvalidTypeException e) {
+                throw invalidType(field.canonicalPath(), "string", e);
+            }
         }
+        return null;
     }
 
-    private static List<String> readStringList(TomlParseResult parsed, String key) {
-        TomlArray array;
-        try {
-            array = parsed.getArray(key);
-        } catch (TomlInvalidTypeException e) {
-            throw invalidType(key, "array", e);
-        }
-        if (array == null) {
-            return List.of();
-        }
-        List<String> values = new ArrayList<>(array.size());
-        for (int i = 0; i < array.size(); i++) {
-            Object value = array.get(i);
-            if (!(value instanceof String stringValue)) {
-                throw new PyprojectModelException("Invalid type for '" + key + "[" + i + "]': expected string");
+    private static List<String> readStringList(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+        for (String path : field.allPaths()) {
+            TomlArray array;
+            try {
+                array = parsed.getArray(path);
+            } catch (TomlInvalidTypeException e) {
+                throw invalidType(field.canonicalPath(), "array", e);
             }
-            values.add(stringValue);
+            if (array == null) {
+                continue;
+            }
+            List<String> values = new ArrayList<>(array.size());
+            for (int i = 0; i < array.size(); i++) {
+                Object value = array.get(i);
+                if (!(value instanceof String stringValue)) {
+                    throw new PyprojectModelException("Invalid type for '" + field.canonicalPath() + "[" + i + "]': expected string");
+                }
+                values.add(stringValue);
+            }
+            return List.copyOf(values);
         }
-        return List.copyOf(values);
+        return List.of();
     }
 
     private static PyprojectModelException invalidType(String key, String expected, TomlInvalidTypeException e) {
@@ -144,63 +143,76 @@ public final class PyprojectModelReader {
     }
 
     private static String resolveBuildMode(TomlParseResult parsed) {
-        String mode = readString(parsed, "tool.pyronaut.build.mode");
+        String mode = readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_MODE);
         if (mode == null || mode.isBlank()) {
-            return "jvm";
+            return (String) PyprojectConfigSpec.PYRONAUT_BUILD_MODE.defaultValue();
         }
         String normalized = mode.trim().toLowerCase();
-        if ("jvm".equals(normalized) || "native".equals(normalized)) {
+        if (PyprojectConfigSpec.PYRONAUT_BUILD_MODE.enumValues().contains(normalized)) {
             return normalized;
         }
-        throw new PyprojectModelException("Invalid value for 'tool.pyronaut.build.mode': expected 'jvm' or 'native'");
+        throw new PyprojectModelException(
+            "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_BUILD_MODE.canonicalPath()
+                + "': expected one of " + PyprojectConfigSpec.PYRONAUT_BUILD_MODE.enumValues()
+        );
     }
 
     private static PyprojectModel.Metadata resolveBuildMetadata(TomlParseResult parsed) {
-        Boolean enabled;
-        try {
-            enabled = parsed.getBoolean("tool.pyronaut.build.metadata.enabled");
-        } catch (TomlInvalidTypeException e) {
-            throw invalidType("tool.pyronaut.build.metadata.enabled", "boolean", e);
-        }
-
-        String version = readString(parsed, "tool.pyronaut.build.metadata.version");
-        String repositoryUrl = readString(parsed, "tool.pyronaut.build.metadata.repositoryUrl");
-        List<String> excludedModules = readStringList(parsed, "tool.pyronaut.build.metadata.excludedModules");
+        Boolean enabled = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_ENABLED);
+        String version = readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_VERSION);
+        String repositoryUrl = readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_REPOSITORY_URL);
+        List<String> excludedModules = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_EXCLUDED_MODULES);
         return new PyprojectModel.Metadata(enabled, version, repositoryUrl, excludedModules);
     }
 
     private static PyprojectModel.Validation resolveValidation(TomlParseResult parsed) {
-        Boolean enabled = readBoolean(parsed, "tool.pyronaut.validation.enabled", true);
-        Boolean failOnNotPresent = readBoolean(parsed, "tool.pyronaut.validation.failOnNotPresent", true);
-        Boolean deduceEnvironments = readBoolean(parsed, "tool.pyronaut.validation.deduceEnvironments", false);
-        Boolean validateDependencyInjection = readBoolean(parsed, "tool.pyronaut.validation.validateDependencyInjection", false);
-        String diStrategy = readEnum(
-            parsed,
-            "tool.pyronaut.validation.dependencyInjectionValidationStrategy",
-            List.of("reachable", "application-beans", "all-beans"),
-            "reachable"
-        );
-        String format = readEnum(parsed, "tool.pyronaut.validation.format", List.of("json", "html", "both"), "both");
-        List<String> suppressions = readStringList(parsed, "tool.pyronaut.validation.suppressions");
-        List<String> suppressInjectErrors = readStringList(parsed, "tool.pyronaut.validation.suppressInjectErrors");
-        String projectBaseDir = readString(parsed, "tool.pyronaut.validation.projectBaseDir");
-        List<String> resourcesDirs = readStringList(parsed, "tool.pyronaut.validation.resourcesDirs");
+        Boolean enabled = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_ENABLED);
+        Boolean failOnNotPresent = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_FAIL_ON_NOT_PRESENT);
+        Boolean deduceEnvironments = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_DEDUCE_ENVIRONMENTS);
+        Boolean validateDependencyInjection = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_VALIDATE_DEPENDENCY_INJECTION);
+        String diStrategy = readEnum(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_STRATEGY);
+        String format = readEnum(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_FORMAT);
+        List<String> suppressions = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_SUPPRESSIONS);
+        List<String> suppressInjectErrors = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_SUPPRESS_INJECT_ERRORS);
+        String projectBaseDir = readString(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_PROJECT_BASE_DIR);
+        List<String> resourcesDirs = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_RESOURCES_DIRS);
 
         PyprojectModel.ValidationScenario run = resolveValidationScenario(
             parsed,
-            "tool.pyronaut.validation.run",
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_ENABLED,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_ENVIRONMENTS,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_INCLUDE_DEFAULT_ENVIRONMENT,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_OVERRIDE_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_ADDITIONAL_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_RESOURCES_DIRS,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_OUTPUT_DIR,
             List.of("dev"),
             List.of("src/main/resources")
         );
         PyprojectModel.ValidationScenario test = resolveValidationScenario(
             parsed,
-            "tool.pyronaut.validation.test",
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_ENABLED,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_ENVIRONMENTS,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_INCLUDE_DEFAULT_ENVIRONMENT,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_OVERRIDE_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_ADDITIONAL_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_RESOURCES_DIRS,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_OUTPUT_DIR,
             List.of("test"),
             List.of("src/main/resources", "src/test/resources")
         );
         PyprojectModel.ValidationScenario production = resolveValidationScenario(
             parsed,
-            "tool.pyronaut.validation.production",
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_ENABLED,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_ENVIRONMENTS,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_INCLUDE_DEFAULT_ENVIRONMENT,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_OVERRIDE_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_ADDITIONAL_CLASSPATH,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_RESOURCES_DIRS,
+            PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_OUTPUT_DIR,
             List.of(),
             List.of("src/main/resources")
         );
@@ -224,24 +236,31 @@ public final class PyprojectModelReader {
 
     private static PyprojectModel.ValidationScenario resolveValidationScenario(
         TomlParseResult parsed,
-        String prefix,
+        PyprojectConfigSpec.FieldSpec enabledField,
+        PyprojectConfigSpec.FieldSpec environmentsField,
+        PyprojectConfigSpec.FieldSpec includeDefaultEnvironmentField,
+        PyprojectConfigSpec.FieldSpec overrideClasspathField,
+        PyprojectConfigSpec.FieldSpec classpathField,
+        PyprojectConfigSpec.FieldSpec additionalClasspathField,
+        PyprojectConfigSpec.FieldSpec resourcesDirsField,
+        PyprojectConfigSpec.FieldSpec outputDirField,
         List<String> defaultEnvironments,
         List<String> defaultResourcesDirs
     ) {
-        Boolean enabled = readBoolean(parsed, prefix + ".enabled", true);
-        List<String> environments = readStringList(parsed, prefix + ".environments");
+        Boolean enabled = readBoolean(parsed, enabledField);
+        List<String> environments = readStringList(parsed, environmentsField);
         if (environments.isEmpty()) {
             environments = defaultEnvironments;
         }
-        Boolean includeDefaultEnvironment = readBoolean(parsed, prefix + ".includeDefaultEnvironment", true);
-        Boolean overrideClasspath = readBoolean(parsed, prefix + ".overrideClasspath", false);
-        List<String> classpath = readStringList(parsed, prefix + ".classpath");
-        List<String> additionalClasspath = readStringList(parsed, prefix + ".additionalClasspath");
-        List<String> resourcesDirs = readStringList(parsed, prefix + ".resourcesDirs");
+        Boolean includeDefaultEnvironment = readBoolean(parsed, includeDefaultEnvironmentField);
+        Boolean overrideClasspath = readBoolean(parsed, overrideClasspathField);
+        List<String> classpath = readStringList(parsed, classpathField);
+        List<String> additionalClasspath = readStringList(parsed, additionalClasspathField);
+        List<String> resourcesDirs = readStringList(parsed, resourcesDirsField);
         if (resourcesDirs.isEmpty()) {
             resourcesDirs = defaultResourcesDirs;
         }
-        String outputDir = readString(parsed, prefix + ".outputDir");
+        String outputDir = readString(parsed, outputDirField);
         return new PyprojectModel.ValidationScenario(
             enabled,
             environments,
@@ -254,93 +273,99 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static Boolean readBoolean(TomlParseResult parsed, String key, boolean defaultValue) {
-        try {
-            Boolean value = parsed.getBoolean(key);
-            return value == null ? defaultValue : value;
-        } catch (TomlInvalidTypeException e) {
-            throw invalidType(key, "boolean", e);
+    private static Boolean readBoolean(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+        for (String path : field.allPaths()) {
+            try {
+                Boolean value = parsed.getBoolean(path);
+                if (value != null) {
+                    return value;
+                }
+            } catch (TomlInvalidTypeException e) {
+                throw invalidType(field.canonicalPath(), "boolean", e);
+            }
         }
+        return (Boolean) field.defaultValue();
     }
 
-    private static String readEnum(TomlParseResult parsed, String key, List<String> accepted, String defaultValue) {
-        String raw = readString(parsed, key);
+    private static String readEnum(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+        String raw = readString(parsed, field);
         if (raw == null || raw.isBlank()) {
-            return defaultValue;
+            return (String) field.defaultValue();
         }
         String normalized = raw.trim();
-        if (!accepted.contains(normalized)) {
-            throw new PyprojectModelException("Invalid value for '" + key + "': expected one of " + accepted);
+        if (!field.enumValues().contains(normalized)) {
+            throw new PyprojectModelException("Invalid value for '" + field.canonicalPath() + "': expected one of " + field.enumValues());
         }
         return normalized;
     }
 
-    private static Integer readInteger(TomlParseResult parsed, String key) {
-        Long raw;
-        try {
-            raw = parsed.getLong(key);
-        } catch (TomlInvalidTypeException e) {
-            throw invalidType(key, "integer", e);
+    private static Integer readInteger(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+        for (String path : field.allPaths()) {
+            Long raw;
+            try {
+                raw = parsed.getLong(path);
+            } catch (TomlInvalidTypeException e) {
+                throw invalidType(field.canonicalPath(), "integer", e);
+            }
+            if (raw == null) {
+                continue;
+            }
+            if (raw > Integer.MAX_VALUE || raw < Integer.MIN_VALUE) {
+                throw new PyprojectModelException("Invalid value for '" + field.canonicalPath() + "': integer out of range");
+            }
+            return raw.intValue();
         }
-        if (raw == null) {
-            return null;
+        if (field.defaultValue() instanceof Integer defaultValue) {
+            return defaultValue;
         }
-        if (raw > Integer.MAX_VALUE || raw < Integer.MIN_VALUE) {
-            throw new PyprojectModelException("Invalid value for '" + key + "': integer out of range");
-        }
-        return raw.intValue();
+        return null;
     }
 
-    private static Map<String, String> readStringMap(TomlParseResult parsed, String key) {
-        TomlTable table;
-        try {
-            table = parsed.getTable(key);
-        } catch (TomlInvalidTypeException e) {
-            throw invalidType(key, "table", e);
-        }
-        if (table == null) {
-            return Map.of();
-        }
-        Map<String, Object> raw = table.toMap();
-        if (raw.isEmpty()) {
-            return Map.of();
-        }
-        var out = new java.util.LinkedHashMap<String, String>(raw.size());
-        for (Map.Entry<String, Object> entry : raw.entrySet()) {
-            if (!(entry.getValue() instanceof String value)) {
-                throw new PyprojectModelException("Invalid type for '" + key + "." + entry.getKey() + "': expected string");
+    private static Map<String, String> readStringMap(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+        for (String path : field.allPaths()) {
+            TomlTable table;
+            try {
+                table = parsed.getTable(path);
+            } catch (TomlInvalidTypeException e) {
+                throw invalidType(field.canonicalPath(), "table", e);
             }
-            out.put(entry.getKey(), value);
+            if (table == null) {
+                continue;
+            }
+            Map<String, Object> raw = table.toMap();
+            if (raw.isEmpty()) {
+                return Map.of();
+            }
+            var out = new java.util.LinkedHashMap<String, String>(raw.size());
+            for (Map.Entry<String, Object> entry : raw.entrySet()) {
+                if (!(entry.getValue() instanceof String value)) {
+                    throw new PyprojectModelException("Invalid type for '" + field.canonicalPath() + "." + entry.getKey() + "': expected string");
+                }
+                out.put(entry.getKey(), value);
+            }
+            return Map.copyOf(out);
         }
-        return Map.copyOf(out);
+        return Map.of();
     }
 
     private static PyprojectModel.TestResources resolveTestResources(TomlParseResult parsed) {
-        boolean configured = parsed.getTable("tool.pyronaut.testResources") != null;
-        Boolean enabled = readBoolean(parsed, "tool.pyronaut.testResources.enabled", true);
-        String version = readString(parsed, "tool.pyronaut.testResources.version");
-        Integer explicitPort = readInteger(parsed, "tool.pyronaut.testResources.explicitPort");
-        Boolean inferClasspath = readBoolean(parsed, "tool.pyronaut.testResources.inferClasspath", true);
-        List<String> additionalModules = readStringList(parsed, "tool.pyronaut.testResources.additionalModules");
-        Integer clientTimeout = readInteger(parsed, "tool.pyronaut.testResources.clientTimeout");
-        if (clientTimeout == null) {
-            clientTimeout = 60;
-        }
-        Boolean sharedServer = readBoolean(parsed, "tool.pyronaut.testResources.sharedServer", false);
-        String sharedServerNamespace = readString(parsed, "tool.pyronaut.testResources.sharedServerNamespace");
-        String logsDir = readString(parsed, "tool.pyronaut.testResources.logsDir");
-        Integer serverIdleTimeoutMinutes = readInteger(parsed, "tool.pyronaut.testResources.serverIdleTimeoutMinutes");
-        Map<String, String> serverSystemProperties = readStringMap(parsed, "tool.pyronaut.testResources.serverSystemProperties");
-        Map<String, String> serverEnvironment = readStringMap(parsed, "tool.pyronaut.testResources.serverEnvironment");
-        Boolean debugServer = readBoolean(parsed, "tool.pyronaut.testResources.debugServer", false);
-        String javaExecutable = readString(parsed, "tool.pyronaut.testResources.javaExecutable");
-        String startupOptimization = readEnum(
-            parsed,
-            "tool.pyronaut.testResources.startupOptimization",
-            List.of("auto", "leyden", "cds", "none"),
-            "auto"
-        );
-        List<String> leydenJvmArgs = readStringList(parsed, "tool.pyronaut.testResources.leydenJvmArgs");
+        boolean configured = hasSection(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_SECTION);
+        Boolean enabled = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_ENABLED);
+        String version = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_VERSION);
+        Integer explicitPort = readInteger(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_EXPLICIT_PORT);
+        Boolean inferClasspath = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_INFER_CLASSPATH);
+        List<String> additionalModules = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_ADDITIONAL_MODULES);
+        Integer clientTimeout = readInteger(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_CLIENT_TIMEOUT);
+        Boolean sharedServer = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_SHARED_SERVER);
+        String sharedServerNamespace = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_SHARED_SERVER_NAMESPACE);
+        String logsDir = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_LOGS_DIR);
+        Integer serverIdleTimeoutMinutes = readInteger(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_SERVER_IDLE_TIMEOUT_MINUTES);
+        Map<String, String> serverSystemProperties = readStringMap(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_SERVER_SYSTEM_PROPERTIES);
+        Map<String, String> serverEnvironment = readStringMap(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_SERVER_ENVIRONMENT);
+        Boolean debugServer = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_DEBUG_SERVER);
+        String javaExecutable = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_JAVA_EXECUTABLE);
+        String startupOptimization = readEnum(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_STARTUP_OPTIMIZATION);
+        List<String> leydenJvmArgs = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_LEYDEN_JVM_ARGS);
 
         return new PyprojectModel.TestResources(
             configured,
@@ -361,5 +386,14 @@ public final class PyprojectModelReader {
             startupOptimization,
             leydenJvmArgs
         );
+    }
+
+    private static boolean hasSection(TomlParseResult parsed, PyprojectConfigSpec.SectionSpec section) {
+        for (String path : section.allPaths()) {
+            if (parsed.getTable(path) != null) {
+                return true;
+            }
+        }
+        return false;
     }
 }

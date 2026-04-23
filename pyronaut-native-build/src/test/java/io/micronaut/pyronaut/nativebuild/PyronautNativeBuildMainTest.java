@@ -125,7 +125,7 @@ class PyronautNativeBuildMainTest {
             """);
         Path configDir = project.resolve("config");
         Files.createDirectories(configDir);
-        Files.writeString(configDir.resolve("application.properties"), "micronaut.application.name=demo\n");
+        Files.writeString(configDir.resolve("application.toml"), "micronaut.application.name = \"demo\"\n");
         Files.createDirectories(configDir.resolve("nested"));
         Files.writeString(configDir.resolve("nested").resolve("extra.txt"), "hello\n");
         Path dependencyJar = createJar(
@@ -160,7 +160,7 @@ class PyronautNativeBuildMainTest {
         String resourceConfig = Files.readString(generatedDir.resolve("resource-config.json"));
         assertTrue(resourceConfig.contains("\\\\QMETA-INF/GRAALPY-VFS/micronaut-application/fileslist.txt\\\\E"));
         assertTrue(resourceConfig.contains("\\\\QMETA-INF/GRAALPY-VFS/micronaut-application/src/logback/__init__.py\\\\E"));
-        assertTrue(resourceConfig.contains("\\\\Qapplication.properties\\\\E"));
+        assertTrue(resourceConfig.contains("\\\\Qapplication.toml\\\\E"));
         assertTrue(resourceConfig.contains("\\\\Qnested/extra.txt\\\\E"));
 
         String directories = nativeCommand.stream()

@@ -167,7 +167,7 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
-        assertEquals("Invalid value for 'tool.pyronaut.build.mode': expected 'jvm' or 'native'", exception.getMessage());
+        assertEquals("Invalid value for 'tool.pyronaut.build.mode': expected one of [jvm, native]", exception.getMessage());
     }
 
     @Test
@@ -186,8 +186,8 @@ class PyprojectModelReaderTest {
             [tool.pyronaut.build.metadata]
             enabled = false
             version = "0.9.0"
-            repositoryUrl = "https://example.test/metadata.zip"
-            excludedModules = ["org.slf4j:slf4j-api", "ch.qos.logback:logback-classic"]
+            repository-url = "https://example.test/metadata.zip"
+            excluded-modules = ["org.slf4j:slf4j-api", "ch.qos.logback:logback-classic"]
             """);
 
         PyprojectModel model = reader.readFile(file);
@@ -228,24 +228,24 @@ class PyprojectModelReaderTest {
 
             [tool.pyronaut.validation]
             enabled = true
-            failOnNotPresent = false
-            deduceEnvironments = true
-            validateDependencyInjection = true
-            dependencyInjectionValidationStrategy = "all-beans"
+            fail-on-not-present = false
+            deduce-environments = true
+            validate-dependency-injection = true
+            dependency-injection-validation-strategy = "all-beans"
             format = "json"
             suppressions = ["micronaut.config.deprecated"]
-            suppressInjectErrors = ["missing.bean"]
-            projectBaseDir = "src"
-            resourcesDirs = ["src/main/resources"]
+            suppress-inject-errors = ["missing.bean"]
+            project-base-dir = "src"
+            resources-dirs = ["src/main/resources"]
 
             [tool.pyronaut.validation.run]
             environments = ["dev", "cloud"]
-            includeDefaultEnvironment = false
-            overrideClasspath = true
+            include-default-environment = false
+            override-classpath = true
             classpath = ["/tmp/run-cp"]
-            additionalClasspath = ["/tmp/additional"]
-            resourcesDirs = ["src/run/resources"]
-            outputDir = "build/reports/run"
+            additional-classpath = ["/tmp/additional"]
+            resources-dirs = ["src/run/resources"]
+            output-dir = "build/reports/run"
             """);
 
         PyprojectModel model = reader.readFile(file);
@@ -272,11 +272,11 @@ class PyprojectModelReaderTest {
             version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.validation]
-            failOnNotPresent = "yes"
+            fail-on-not-present = "yes"
             """);
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
-        assertEquals("Invalid type for 'tool.pyronaut.validation.failOnNotPresent': expected boolean", exception.getMessage());
+        assertEquals("Invalid type for 'tool.pyronaut.validation.fail-on-not-present': expected boolean", exception.getMessage());
     }
 
     @Test
@@ -289,26 +289,26 @@ class PyprojectModelReaderTest {
             [tool.pyronaut]
             version = "5.0.0-SNAPSHOT"
 
-            [tool.pyronaut.testResources]
+            [tool.pyronaut.test-resources]
             enabled = true
             version = "2.9.0"
-            explicitPort = 18081
-            inferClasspath = false
-            additionalModules = ["jdbc-postgresql"]
-            clientTimeout = 90
-            sharedServer = true
-            sharedServerNamespace = "demo"
-            logsDir = "var/test-resources-logs"
-            serverIdleTimeoutMinutes = 15
-            debugServer = true
-            javaExecutable = "/opt/jdk/bin/java"
-            startupOptimization = "leyden"
-            leydenJvmArgs = ["--enable-preview", "-XX:+UseFastUnorderedTimeStamps"]
+            explicit-port = 18081
+            infer-classpath = false
+            additional-modules = ["jdbc-postgresql"]
+            client-timeout = 90
+            shared-server = true
+            shared-server-namespace = "demo"
+            logs-dir = "var/test-resources-logs"
+            server-idle-timeout-minutes = 15
+            debug-server = true
+            java-executable = "/opt/jdk/bin/java"
+            startup-optimization = "leyden"
+            leyden-jvm-args = ["--enable-preview", "-XX:+UseFastUnorderedTimeStamps"]
 
-            [tool.pyronaut.testResources.serverSystemProperties]
+            [tool.pyronaut.test-resources.server-system-properties]
             "micronaut.server.host" = "127.0.0.1"
 
-            [tool.pyronaut.testResources.serverEnvironment]
+            [tool.pyronaut.test-resources.server-environment]
             "TEST_RESOURCES_MODE" = "standalone"
             """);
 
@@ -343,11 +343,68 @@ class PyprojectModelReaderTest {
             [tool.pyronaut]
             version = "5.0.0-SNAPSHOT"
 
-            [tool.pyronaut.testResources]
-            clientTimeout = "fast"
+            [tool.pyronaut.test-resources]
+            client-timeout = "fast"
             """);
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
-        assertEquals("Invalid type for 'tool.pyronaut.testResources.clientTimeout': expected integer", exception.getMessage());
+        assertEquals("Invalid type for 'tool.pyronaut.test-resources.client-timeout': expected integer", exception.getMessage());
+    }
+
+    @Test
+    void parseCamelCaseAliasesForCompatibility() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.build.metadata]
+            repositoryUrl = "https://example.test/metadata.zip"
+            excludedModules = ["org.slf4j:slf4j-api"]
+
+            [tool.pyronaut.validation]
+            failOnNotPresent = false
+            validateDependencyInjection = true
+            dependencyInjectionValidationStrategy = "all-beans"
+
+            [tool.pyronaut.testResources]
+            explicitPort = 18081
+            inferClasspath = false
+            clientTimeout = 90
+            sharedServer = true
+            sharedServerNamespace = "demo"
+            logsDir = "logs"
+            serverIdleTimeoutMinutes = 15
+            debugServer = true
+            javaExecutable = "/opt/jdk/bin/java"
+            startupOptimization = "leyden"
+            leydenJvmArgs = ["--enable-preview"]
+
+            [tool.pyronaut.testResources.serverSystemProperties]
+            "micronaut.server.host" = "127.0.0.1"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("https://example.test/metadata.zip", model.pyronaut().build().metadata().repositoryUrl());
+        assertEquals(List.of("org.slf4j:slf4j-api"), model.pyronaut().build().metadata().excludedModules());
+        assertEquals(Boolean.FALSE, model.pyronaut().validation().failOnNotPresent());
+        assertEquals(Boolean.TRUE, model.pyronaut().validation().validateDependencyInjection());
+        assertEquals("all-beans", model.pyronaut().validation().dependencyInjectionValidationStrategy());
+        assertEquals(Boolean.TRUE, model.pyronaut().testResources().configured());
+        assertEquals(Integer.valueOf(18081), model.pyronaut().testResources().explicitPort());
+        assertEquals(Boolean.FALSE, model.pyronaut().testResources().inferClasspath());
+        assertEquals(Integer.valueOf(90), model.pyronaut().testResources().clientTimeout());
+        assertEquals(Boolean.TRUE, model.pyronaut().testResources().sharedServer());
+        assertEquals("demo", model.pyronaut().testResources().sharedServerNamespace());
+        assertEquals("logs", model.pyronaut().testResources().logsDir());
+        assertEquals(Integer.valueOf(15), model.pyronaut().testResources().serverIdleTimeoutMinutes());
+        assertEquals(Boolean.TRUE, model.pyronaut().testResources().debugServer());
+        assertEquals("/opt/jdk/bin/java", model.pyronaut().testResources().javaExecutable());
+        assertEquals("leyden", model.pyronaut().testResources().startupOptimization());
+        assertEquals(List.of("--enable-preview"), model.pyronaut().testResources().leydenJvmArgs());
+        assertEquals(Map.of("micronaut.server.host", "127.0.0.1"), model.pyronaut().testResources().serverSystemProperties());
     }
 }

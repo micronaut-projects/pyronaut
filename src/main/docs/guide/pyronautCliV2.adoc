@@ -42,12 +42,12 @@ Resolves dependencies and writes scoped manifests under `__pyronaut__/`.
 Common options:
 
 - `--project-dir <dir>`: project root (default `.`)
-- `--scope <build|runtime|test|all>`: restrict resolution scope
+- `--scope <build|runtime|test|test-resources-server|all>`: restrict resolution scope
 - `--dependencies`: render dependency tree output
 - `--progress <auto|on|off>`: progress display mode
 - `--color <auto|always|never>`: dependency output color mode
-- `--refresh`: force re-resolution and cache rewrite
-- `--no-cache`: alias for refresh behavior
+- `--refresh`: force re-resolution and manifest rewrite without clearing `__pyronaut__/m2-repository`
+- `--no-cache`: clear `__pyronaut__/m2-repository` before resolving and skip cache reads/writes
 - `--offline`: resolve using offline repository mode
 
 Generated manifests:
@@ -55,6 +55,18 @@ Generated manifests:
 - `__pyronaut__/resolved-build-dependencies`
 - `__pyronaut__/resolved-runtime-dependencies`
 - `__pyronaut__/resolved-test-dependencies`
+- `__pyronaut__/resolved-test-resources-server-dependencies`
+
+Managed runtime defaults:
+
+- When dependency versions are managed from the Micronaut platform, `pyronaut install` adds `io.micronaut.toml:micronaut-toml` to the runtime classpath by default, so `config/application.toml` works without an explicit dependency declaration.
+
+Editor support:
+
+- `pyronaut install` also materializes a project-local JSON schema at `__pyronaut__/schemas/pyronaut-pyproject.schema.json`.
+- `pyronaut install` prepends a Taplo schema directive to `pyproject.toml` pointing at that schema.
+- Existing user-managed `#:schema ...` directives at the top of `pyproject.toml` are left untouched.
+- Older generated `.taplo.toml` files from previous Pyronaut installs are removed to avoid conflicting schema associations. User-managed `.taplo.toml` files are left untouched.
 
 === `pyronaut process`
 
@@ -194,9 +206,9 @@ Example `pyproject.toml` validation settings:
 ----
 [tool.pyronaut.validation]
 enabled = true
-failOnNotPresent = true
-validateDependencyInjection = false
-dependencyInjectionValidationStrategy = "reachable"
+fail-on-not-present = true
+validate-dependency-injection = false
+dependency-injection-validation-strategy = "reachable"
 format = "both"
 
 [tool.pyronaut.validation.production]
@@ -227,18 +239,20 @@ Example `pyproject.toml` test resources settings:
 
 [source,toml]
 ----
-[tool.pyronaut.testResources]
+[tool.pyronaut.test-resources]
 enabled = true
-explicitPort = 18080
-inferClasspath = true
-clientTimeout = 60
-sharedServer = false
-logsDir = ".micronaut/test-resources/logs"
-startupOptimization = "auto" # auto|leyden|cds|none
-leydenJvmArgs = ["--enable-preview"]
+explicit-port = 18080
+infer-classpath = true
+client-timeout = 60
+shared-server = false
+logs-dir = ".micronaut/test-resources/logs"
+startup-optimization = "auto" # auto|leyden|cds|none
+leyden-jvm-args = ["--enable-preview"]
 ----
 
-`logsDir` controls where standalone test resources server logs are written.
+Canonical `pyproject.toml` keys are kebab-case. Legacy camelCase aliases are still accepted for compatibility, but the generated schema prefers the kebab-case names.
+
+`logs-dir` controls where standalone test resources server logs are written.
 If the value is relative, it is resolved against the project directory.
 When omitted, the default is `.micronaut/test-resources/logs`.
 
@@ -246,7 +260,7 @@ Lifecycle behavior:
 
 - `pyronaut run` and `pyronaut test` automatically orchestrate test resources when enabled.
 - Owned servers are started on demand and stopped when the owning run/test session exits.
-- Shared servers (`sharedServer = true`) are intentionally left running across command invocations.
+- Shared servers (`shared-server = true`) are intentionally left running across command invocations.
 - Externally started servers are attached to when project-local settings already exist, but are not claimed or stopped by `run`/`test`.
 - `pyronaut test-resources-server start` remains the way to keep a reusable server running until you explicitly stop it.
 
@@ -295,8 +309,8 @@ mode = "native"
 [tool.pyronaut.build.metadata]
 enabled = true
 version = "0.11.5"
-repositoryUrl = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/0.11.5/graalvm-reachability-metadata-0.11.5-repository.zip"
-excludedModules = ["ch.qos.logback:logback-classic"]
+repository-url = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/0.11.5/graalvm-reachability-metadata-0.11.5-repository.zip"
+excluded-modules = ["ch.qos.logback:logback-classic"]
 ----
 
 Notes:

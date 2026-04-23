@@ -73,14 +73,20 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
     private final PyprojectModelReader modelReader;
     private final MavenClasspathResolver resolver;
+    private final PyprojectEditorSupport editorSupport;
 
     public PyronautInstallMain() {
-        this(new PyprojectModelReader(), new MavenClasspathResolver());
+        this(new PyprojectModelReader(), new MavenClasspathResolver(), new PyprojectEditorSupport());
     }
 
     PyronautInstallMain(PyprojectModelReader modelReader, MavenClasspathResolver resolver) {
+        this(modelReader, resolver, new PyprojectEditorSupport());
+    }
+
+    PyronautInstallMain(PyprojectModelReader modelReader, MavenClasspathResolver resolver, PyprojectEditorSupport editorSupport) {
         this.modelReader = modelReader;
         this.resolver = resolver;
+        this.editorSupport = editorSupport;
     }
 
     @Override
@@ -92,8 +98,10 @@ public final class PyronautInstallMain implements Callable<Integer> {
             DependencyTreeRenderer.ColorMode.fromCliValue(color);
             List<InstallScope> scopes = selectedScopes();
 
-            String hash = ResolutionCache.pyprojectHash(pyproject);
+            PyprojectModel model = modelReader.readFile(pyproject);
             Path cacheDir = root.resolve(DEFAULT_PYRONAUT_DIR);
+            editorSupport.ensureWritten(root, cacheDir);
+            String hash = ResolutionCache.pyprojectHash(pyproject);
             try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
                 if (dependencies) {
                     return renderDependencyTrees(root, scopes, progressReporter);
@@ -107,7 +115,6 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     progressReporter.cacheBypass();
                 }
 
-                PyprojectModel model = modelReader.readFile(pyproject);
                 Path localRepo = cacheDir.resolve("m2-repository");
                 if (noCache) {
                     deleteDirectoryIfExists(localRepo);

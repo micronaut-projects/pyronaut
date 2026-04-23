@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.PyprojectJsonSchemaGenerator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -58,6 +59,56 @@ class PyronautInstallMainTest {
         assertTrue(runtimeEntries.getFirst().contains("runtime-dep"));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
+    }
+
+    @Test
+    void injectsMicronautTomlByDefaultWhenManagedByPlatform() throws Exception {
+        Path repository = tempDir.resolve("repo-toml-default");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+        writeArtifact(repository, "io.micronaut.toml", "micronaut-toml", "1.2.3");
+        writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "1.0.0",
+            List.of(new ManagedDependency("io.micronaut.toml", "micronaut-toml", "1.2.3"))
+        );
+
+        Path project = tempDir.resolve("project-toml-default");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            version = "1.0.0"
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0"]
+            build = ["com.example:build-dep:1.0.0"]
+            test = ["com.example:test-dep:1.0.0"]
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-toml")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-toml")));
     }
 
     @Test
@@ -225,6 +276,102 @@ class PyronautInstallMainTest {
         long secondModified = Files.getLastModifiedTime(runtimeManifest).toMillis();
 
         assertEquals(firstModified, secondModified);
+    }
+
+    @Test
+    void installWritesPyprojectSchemaAndDirective() throws Exception {
+        Path repository = tempDir.resolve("repo-editor-support");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-editor-support");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path schemaFile = project.resolve("__pyronaut__")
+            .resolve("schemas")
+            .resolve(PyprojectJsonSchemaGenerator.SCHEMA_FILE_NAME);
+        String pyproject = Files.readString(project.resolve("pyproject.toml"), StandardCharsets.UTF_8);
+
+        assertTrue(Files.exists(schemaFile));
+        assertTrue(Files.readString(schemaFile, StandardCharsets.UTF_8).contains("\"tool\""));
+        assertTrue(pyproject.startsWith(PyprojectEditorSupport.managedDirectiveBlock()));
+    }
+
+    @Test
+    void installPreservesUserManagedTaploConfig() throws Exception {
+        Path repository = tempDir.resolve("repo-user-taplo");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-user-taplo");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+        Files.writeString(project.resolve(PyprojectEditorSupport.TAPLO_FILE_NAME), "[[rule]]\ninclude = [\"*.toml\"]\n", StandardCharsets.UTF_8);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        assertEquals("[[rule]]\ninclude = [\"*.toml\"]\n", Files.readString(project.resolve(PyprojectEditorSupport.TAPLO_FILE_NAME), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void installRemovesGeneratedTaploConfig() throws Exception {
+        Path repository = tempDir.resolve("repo-generated-taplo");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-generated-taplo");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+        Files.writeString(project.resolve(PyprojectEditorSupport.TAPLO_FILE_NAME),
+            "# Generated by pyronaut-install for Pyronaut TOML schema support.\n[[rule]]\ninclude = [\"pyproject.toml\"]\n",
+            StandardCharsets.UTF_8);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        assertFalse(Files.exists(project.resolve(PyprojectEditorSupport.TAPLO_FILE_NAME)));
+    }
+
+    @Test
+    void cacheHitRegeneratesMissingSchemaAndDirective() throws Exception {
+        Path repository = tempDir.resolve("repo-cache-editor-support");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-cache-editor-support");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain firstRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        firstRun.projectDir = project;
+        assertEquals(InstallExitCode.SUCCESS.code(), firstRun.call());
+
+        Path schemaFile = project.resolve("__pyronaut__")
+            .resolve("schemas")
+            .resolve(PyprojectJsonSchemaGenerator.SCHEMA_FILE_NAME);
+        Files.deleteIfExists(schemaFile);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository), StandardCharsets.UTF_8);
+
+        PyronautInstallMain secondRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        secondRun.projectDir = project;
+        assertEquals(InstallExitCode.SUCCESS.code(), secondRun.call());
+
+        assertTrue(Files.exists(schemaFile));
+        assertTrue(Files.readString(project.resolve("pyproject.toml"), StandardCharsets.UTF_8)
+            .startsWith(PyprojectEditorSupport.managedDirectiveBlock()));
     }
 
     @Test
