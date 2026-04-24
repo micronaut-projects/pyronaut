@@ -6,7 +6,10 @@ This module provides pytest fixtures for testing Micronaut applications.
 
 import sys
 import java
+import re
 from typing import Optional, Dict, Any, List, Union
+
+JAVA_CLASS_RE = re.compile(r"JavaClass\[([^\]]+)\]")
 
 class MicronautTest:
     """
@@ -97,65 +100,75 @@ class ApplicationContextWrapper:
         Supports ctx["Foo"] notation.
         Delegates to the Java method (e.g., getBean(String)) and raises KeyError if not found.
         """
+        bean_class, lookup_key = self._resolve_bean_key(key)
+        result = self._find_bean(bean_class, lookup_key)
+        if hasattr(result, 'asPolyglotValue'):
+            return result.asPolyglotValue()
+        return result
+
+    def _resolve_bean_key(self, key):
         if isinstance(key, str):
-            # Resolve bean safely to avoid ForeignException crossing into pytest
             try:
-                bean_class = java.type(key)
-            except BaseException:
-                raise KeyError(f"Key '{key}' not found in context")
-            try:
-                findBean = getattr(self.java_ctx, 'findBean', None)
-                if findBean is not None:
-                    opt = findBean(bean_class)
-                    present = opt is not None and (not hasattr(opt, 'isPresent') or opt.isPresent())
-                    if not present:
-                        raise KeyError(f"Key '{key}' not found in context")
-                    result = opt.get() if hasattr(opt, 'get') else opt
-                else:
-                    # Fallback to getBean; wrap any Java exceptions as KeyError
-                    result = self.java_ctx.getBean(bean_class)
+                return java.type(key), key
             except BaseException:
                 raise KeyError(f"Key '{key}' not found in context")
 
-            if hasattr(result, 'asPolyglotValue'):
-                 return result.asPolyglotValue()
-            else:
-                return result
-        elif isinstance(key, type):
-            # Class key: Resolve FQN as "module.qualname"
-            module_name = key.__module__
-            qualname = key.__qualname__  # Handles nested classes if needed
-            class_name = key.__name__  # Simple class name for duplicate check
-            if module_name == '__main__' or module_name.startswith('__'):
-                # Handle builtin or main-module classes; customize as needed (e.g., raise error or use qualname only)
-                raise ValueError(f"Cannot resolve FQN for class '{key.__name__}' in module '{module_name}'")
-            # Base FQN
-            fqn = f"{module_name}.{qualname}"
-
-            # Heuristic to strip duplicate if module ends with '.ClassName'
-            if module_name.endswith(f'.{class_name}'):
-                # Strip the trailing '.ClassName' from module and reconstruct
-                stripped_module = module_name[:-len(f'.{class_name}')]
-                fqn = f"{stripped_module}.{qualname}" if stripped_module else qualname
-
-            lookup_key = fqn
-            result = None
-
+        if isinstance(key, type):
+            lookup_key = self._python_type_to_lookup_key(key)
             try:
-                result = self.java_ctx.getBean(java.type(lookup_key))
-            except KeyError:
+                return java.type(lookup_key), lookup_key
+            except BaseException:
+                class_name = key.__name__
                 if lookup_key == f"{class_name}.{class_name}":
-                    result = self.java_ctx.getBean(java.type(f"python.{class_name}"))
-
-            if result is None:
+                    fallback_key = f"python.{class_name}"
+                    try:
+                        return java.type(fallback_key), fallback_key
+                    except BaseException:
+                        pass
                 raise KeyError(f"Key '{lookup_key}' not found in context")
 
-            if hasattr(result, 'asPolyglotValue'):
-                return result.asPolyglotValue()
-            else:
-                return result
-        else:
-            raise TypeError(f"Unsupported key type: {type(key)}")
+        lookup_key = self._foreign_java_class_name(key)
+        if lookup_key is not None:
+            try:
+                return java.type(lookup_key), lookup_key
+            except BaseException:
+                return key, lookup_key
+
+        raise TypeError(f"Unsupported key type: {type(key)}")
+
+    def _python_type_to_lookup_key(self, key):
+        module_name = key.__module__
+        qualname = key.__qualname__
+        class_name = key.__name__
+        if module_name == '__main__' or module_name.startswith('__'):
+            raise ValueError(f"Cannot resolve FQN for class '{key.__name__}' in module '{module_name}'")
+
+        fqn = f"{module_name}.{qualname}"
+        if module_name.endswith(f'.{class_name}'):
+            stripped_module = module_name[:-len(f'.{class_name}')]
+            fqn = f"{stripped_module}.{qualname}" if stripped_module else qualname
+        return fqn
+
+    def _foreign_java_class_name(self, key):
+        if type(key).__module__ != "polyglot":
+            return None
+        match = JAVA_CLASS_RE.search(repr(key))
+        if match is None:
+            return None
+        return match.group(1)
+
+    def _find_bean(self, bean_class, lookup_key):
+        try:
+            findBean = getattr(self.java_ctx, 'findBean', None)
+            if findBean is not None:
+                opt = findBean(bean_class)
+                present = opt is not None and (not hasattr(opt, 'isPresent') or opt.isPresent())
+                if not present:
+                    raise KeyError(f"Key '{lookup_key}' not found in context")
+                return opt.get() if hasattr(opt, 'get') else opt
+            return self.java_ctx.getBean(bean_class)
+        except BaseException:
+            raise KeyError(f"Key '{lookup_key}' not found in context")
 
     def __getattr__(self, name):
         """

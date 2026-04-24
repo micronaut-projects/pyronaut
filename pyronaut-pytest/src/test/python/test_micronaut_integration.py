@@ -84,3 +84,9 @@ def test_micronaut_context_creation2(my_context):
     assert "test" in ctx.getEnvironment().getActiveNames()
     assert ctx.getEnvironment().containsProperty("custom.property")
     assert ctx.getEnvironment().getProperty("custom.property", java.type("java.lang.String")).get() == "test_value"
+
+
+def test_context_lookup_with_java_type(my_context):
+    env = my_context[java.type("io.micronaut.context.env.Environment")]
+    assert env is not None
+    assert "test" in env.getActiveNames()
