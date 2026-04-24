@@ -285,6 +285,54 @@ class PyronautValidateConfigMainTest {
         assertFalse(err.toString().contains("[tool.pyronaut.validation]"));
     }
 
+    @Test
+    void executorPrintsExplicitValidationMessageForEnvironments() throws Exception {
+        Class<?> executorType = Class.forName("io.micronaut.pyronaut.validateconfig.MicronautConfigurationValidatorExecutor");
+        var method = executorType.getDeclaredMethod("validationMessage", PyronautValidateConfigMain.ValidationSettings.class);
+        method.setAccessible(true);
+
+        PyronautValidateConfigMain.ValidationSettings settings = new PyronautValidateConfigMain.ValidationSettings(
+            true,
+            true,
+            false,
+            false,
+            "reachable",
+            PyronautValidateConfigMain.ReportFormat.HTML,
+            tempDir.resolve("reports"),
+            tempDir,
+            List.of("dev"),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            "run"
+        );
+
+        String message = (String) method.invoke(null, settings);
+        assertEquals("Validating configuration for environments: [dev]", message);
+    }
+
+    @Test
+    void executorSuppressesDefaultEnvironmentLogger() throws Exception {
+        String property = "org.slf4j.simpleLogger.log.io.micronaut.context.env.DefaultEnvironment";
+        String previous = System.getProperty(property);
+        try {
+            System.clearProperty(property);
+            Class<?> executorType = Class.forName("io.micronaut.pyronaut.validateconfig.MicronautConfigurationValidatorExecutor");
+            var method = executorType.getDeclaredMethod("suppressDefaultEnvironmentLogging");
+            method.setAccessible(true);
+            method.invoke(null);
+
+            assertEquals("error", System.getProperty(property));
+        } finally {
+            if (previous == null) {
+                System.clearProperty(property);
+            } else {
+                System.setProperty(property, previous);
+            }
+        }
+    }
+
     private static String invokeSuppressionPattern(String property) {
         try {
             Class<?> executorType = Class.forName("io.micronaut.pyronaut.validateconfig.MicronautConfigurationValidatorExecutor");

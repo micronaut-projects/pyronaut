@@ -30,10 +30,13 @@ import java.util.List;
 import java.util.Set;
 
 final class MicronautConfigurationValidatorExecutor implements PyronautValidateConfigMain.ConfigurationValidatorExecutor {
+    private static final String DEFAULT_ENVIRONMENT_LOGGER = "org.slf4j.simpleLogger.log.io.micronaut.context.env.DefaultEnvironment";
 
     @Override
     public PyronautValidateConfigMain.ValidationExecutionResult validate(PyronautValidateConfigMain.ValidationSettings settings) throws Exception {
         Files.createDirectories(settings.outputDir());
+        suppressDefaultEnvironmentLogging();
+        System.out.println(validationMessage(settings));
 
         ConfigurationJsonSchemaValidator validator = new ConfigurationJsonSchemaValidator();
         validator.setFailOnNotPresent(settings.failOnNotPresent());
@@ -83,6 +86,20 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
 
         boolean hasErrors = errors.stream().anyMatch(e -> e.type() == ConfigurationError.Type.ERROR) || !dependencyInjectionErrors.isEmpty();
         return new PyronautValidateConfigMain.ValidationExecutionResult(hasErrors);
+    }
+
+    private static void suppressDefaultEnvironmentLogging() {
+        System.setProperty(DEFAULT_ENVIRONMENT_LOGGER, "error");
+    }
+
+    private static String validationMessage(PyronautValidateConfigMain.ValidationSettings settings) {
+        if (!settings.environments().isEmpty()) {
+            return "Validating configuration for environments: " + settings.environments();
+        }
+        if (settings.deduceEnvironments()) {
+            return "Validating configuration with deduced environments.";
+        }
+        return "Validating configuration with no explicit environments.";
     }
 
     private static List<String> suppressionPatterns(Set<ConfigurationError> errors) {
