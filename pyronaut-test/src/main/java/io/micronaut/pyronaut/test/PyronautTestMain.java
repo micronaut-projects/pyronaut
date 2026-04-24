@@ -26,7 +26,6 @@ import picocli.CommandLine;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -318,23 +317,10 @@ public final class PyronautTestMain implements Callable<Integer> {
 
     static void publishReportLocations(Path projectRoot) {
         Path reportsDir = projectRoot.resolve(DEFAULT_REPORTS_DIR).normalize();
-        Path junit = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
         Path html = reportsDir.resolve(DEFAULT_HTML_REPORT);
-        Path nodeid = reportsDir.resolve(DEFAULT_NODEID_REPORT);
-        Path legacyJunit = projectRoot.resolve(DEFAULT_JUNIT_XML_REPORT).normalize();
-        Path legacyHtml = projectRoot.resolve(DEFAULT_HTML_REPORT).normalize();
-        Path legacyNodeid = projectRoot.resolve(DEFAULT_NODEID_REPORT).normalize();
-
-        recoverCanonicalFromLegacy(junit, legacyJunit);
-        recoverCanonicalFromLegacy(html, legacyHtml);
-        recoverCanonicalFromLegacy(nodeid, legacyNodeid);
 
         System.out.println("Test reports directory: " + reportsDir);
         System.out.println("HTML report: " + html);
-
-        syncMirror(junit, legacyJunit);
-        syncMirror(html, legacyHtml);
-        syncMirror(nodeid, legacyNodeid);
     }
 
     static void clearLegacyReportAliases(Path projectRoot) {
@@ -352,37 +338,6 @@ public final class PyronautTestMain implements Callable<Integer> {
             Files.deleteIfExists(projectRoot.resolve(DEFAULT_NODEID_REPORT).normalize());
         } catch (Exception e) {
             System.err.println("Unable to remove stale mirrored report: " + projectRoot.resolve(DEFAULT_NODEID_REPORT).normalize() + " (" + e.getMessage() + ")");
-        }
-    }
-
-    private static void recoverCanonicalFromLegacy(Path canonical, Path legacy) {
-        if (Files.exists(canonical) || !Files.exists(legacy)) {
-            return;
-        }
-        try {
-            Path parent = canonical.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-            Files.copy(legacy, canonical, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            System.err.println("Unable to recover canonical report from legacy location: " + canonical + " (" + e.getMessage() + ")");
-        }
-    }
-
-    private static void syncMirror(Path source, Path target) {
-        if (!Files.exists(source)) {
-            try {
-                Files.deleteIfExists(target);
-            } catch (Exception e) {
-                System.err.println("Unable to remove stale mirrored report: " + target + " (" + e.getMessage() + ")");
-            }
-            return;
-        }
-        try {
-            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            System.err.println("Unable to mirror report to project root: " + target + " (" + e.getMessage() + ")");
         }
     }
 

@@ -177,22 +177,23 @@ class PyronautTestMainTest {
     }
 
     @Test
-    void recoversCanonicalReportsFromLegacyArtifactsWhenNeeded() throws Exception {
-        Path project = tempDir.resolve("legacy-report-recovery-project");
+    void publishReportLocationsDoesNotMirrorLegacyArtifactsIntoReportsDirectory() throws Exception {
+        Path project = tempDir.resolve("legacy-report-no-recovery-project");
         Files.createDirectories(project);
         Files.writeString(project.resolve("junit.xml"), "<testsuite name=\"legacy\"/>", StandardCharsets.UTF_8);
         Files.writeString(project.resolve("index.html"), "<html><body>legacy</body></html>", StandardCharsets.UTF_8);
         Files.writeString(project.resolve(".pyronaut-last-nodeid.txt"), "tests/test_a.py::test_ok\n", StandardCharsets.UTF_8);
+        Files.createDirectories(project.resolve("__pyronaut__/reports/tests"));
 
         PyronautTestMain.publishReportLocations(project);
 
         Path reportsDir = project.resolve("__pyronaut__/reports/tests");
-        assertTrue(Files.exists(reportsDir.resolve("junit.xml")));
-        assertTrue(Files.exists(reportsDir.resolve("index.html")));
-        assertTrue(Files.exists(reportsDir.resolve(".pyronaut-last-nodeid.txt")));
-        assertEquals("<testsuite name=\"legacy\"/>", Files.readString(reportsDir.resolve("junit.xml"), StandardCharsets.UTF_8));
-        assertEquals("<html><body>legacy</body></html>", Files.readString(reportsDir.resolve("index.html"), StandardCharsets.UTF_8));
-        assertEquals("tests/test_a.py::test_ok\n", Files.readString(reportsDir.resolve(".pyronaut-last-nodeid.txt"), StandardCharsets.UTF_8));
+        assertFalse(Files.exists(reportsDir.resolve("junit.xml")));
+        assertFalse(Files.exists(reportsDir.resolve("index.html")));
+        assertFalse(Files.exists(reportsDir.resolve(".pyronaut-last-nodeid.txt")));
+        assertTrue(Files.exists(project.resolve("junit.xml")));
+        assertTrue(Files.exists(project.resolve("index.html")));
+        assertTrue(Files.exists(project.resolve(".pyronaut-last-nodeid.txt")));
     }
 
     @Test
