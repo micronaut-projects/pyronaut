@@ -39,6 +39,7 @@ class PyprojectModelReaderTest {
         assertEquals("jvm", model.pyronaut().build().mode());
         assertNotNull(model.pyronaut().build().metadata());
         assertEquals(List.of(), model.pyronaut().build().metadata().excludedModules());
+        assertNotNull(model.pyronaut().build().docker());
         assertNotNull(model.pyronaut().validation());
         assertEquals(Boolean.TRUE, model.pyronaut().validation().enabled());
         assertEquals(Boolean.TRUE, model.pyronaut().validation().failOnNotPresent());
@@ -196,6 +197,68 @@ class PyprojectModelReaderTest {
         assertEquals("0.9.0", model.pyronaut().build().metadata().version());
         assertEquals("https://example.test/metadata.zip", model.pyronaut().build().metadata().repositoryUrl());
         assertEquals(List.of("org.slf4j:slf4j-api", "ch.qos.logback:logback-classic"), model.pyronaut().build().metadata().excludedModules());
+    }
+
+    @Test
+    void parseBuildDockerConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.build.docker]
+            image-name = "example/demo"
+            dockerfile = "docker/Dockerfile.jvm"
+            dockerfile-native = "docker/Dockerfile.native"
+            jvm-base-image = "container-registry.oracle.com/graalvm/jdk:25"
+            native-builder-image = "container-registry.oracle.com/graalvm/native-image:25"
+            native-base-image = "gcr.io/distroless/base"
+            static-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25-muslib"
+            static-native-base-image = "scratch"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("example/demo", model.pyronaut().build().docker().imageName());
+        assertEquals("docker/Dockerfile.jvm", model.pyronaut().build().docker().dockerfile());
+        assertEquals("docker/Dockerfile.native", model.pyronaut().build().docker().dockerfileNative());
+        assertEquals("container-registry.oracle.com/graalvm/jdk:25", model.pyronaut().build().docker().jvmBaseImage());
+        assertEquals("container-registry.oracle.com/graalvm/native-image:25", model.pyronaut().build().docker().nativeBuilderImage());
+        assertEquals("gcr.io/distroless/base", model.pyronaut().build().docker().nativeBaseImage());
+        assertEquals("container-registry.oracle.com/graalvm/native-image:25-muslib", model.pyronaut().build().docker().staticNativeBuilderImage());
+        assertEquals("scratch", model.pyronaut().build().docker().staticNativeBaseImage());
+    }
+
+    @Test
+    void parseBuildDockerCamelCaseAliases() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.build.docker]
+            imageName = "example/demo"
+            dockerfileNative = "DockerfileNative"
+            jvmBaseImage = "example/jvm"
+            nativeBuilderImage = "example/builder"
+            nativeBaseImage = "example/native"
+            staticNativeBuilderImage = "example/static-builder"
+            staticNativeBaseImage = "example/static-native"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("example/demo", model.pyronaut().build().docker().imageName());
+        assertEquals("DockerfileNative", model.pyronaut().build().docker().dockerfileNative());
+        assertEquals("example/jvm", model.pyronaut().build().docker().jvmBaseImage());
+        assertEquals("example/builder", model.pyronaut().build().docker().nativeBuilderImage());
+        assertEquals("example/native", model.pyronaut().build().docker().nativeBaseImage());
+        assertEquals("example/static-builder", model.pyronaut().build().docker().staticNativeBuilderImage());
+        assertEquals("example/static-native", model.pyronaut().build().docker().staticNativeBaseImage());
     }
 
     @Test

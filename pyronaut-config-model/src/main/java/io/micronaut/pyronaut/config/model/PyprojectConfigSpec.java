@@ -155,6 +155,59 @@ public final class PyprojectConfigSpec {
         List.of(),
         List.of("tool.pyronaut.build.metadata.excludedModules")
     );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_IMAGE_NAME = string(
+        "tool.pyronaut.build.docker.image-name",
+        "Docker image name for container builds.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.docker.imageName")
+    );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_DOCKERFILE = string(
+        "tool.pyronaut.build.docker.dockerfile",
+        "Custom Dockerfile path for JVM container builds."
+    );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_DOCKERFILE_NATIVE = string(
+        "tool.pyronaut.build.docker.dockerfile-native",
+        "Custom Dockerfile path for native container builds.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.docker.dockerfileNative")
+    );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_JVM_BASE_IMAGE = string(
+        "tool.pyronaut.build.docker.jvm-base-image",
+        "Base image for JVM container builds.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.docker.jvmBaseImage")
+    );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_NATIVE_BUILDER_IMAGE = string(
+        "tool.pyronaut.build.docker.native-builder-image",
+        "Builder image for native container builds.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.docker.nativeBuilderImage")
+    );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_NATIVE_BASE_IMAGE = string(
+        "tool.pyronaut.build.docker.native-base-image",
+        "Runtime base image for non-static native container builds.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.docker.nativeBaseImage")
+    );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BUILDER_IMAGE = string(
+        "tool.pyronaut.build.docker.static-native-builder-image",
+        "Builder image for static native container builds.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.docker.staticNativeBuilderImage")
+    );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BASE_IMAGE = string(
+        "tool.pyronaut.build.docker.static-native-base-image",
+        "Runtime base image for static native container builds.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.docker.staticNativeBaseImage")
+    );
 
     public static final FieldSpec PYRONAUT_VALIDATION_ENABLED = bool(
         "tool.pyronaut.validation.enabled",
@@ -498,6 +551,14 @@ public final class PyprojectConfigSpec {
         PYRONAUT_BUILD_METADATA_VERSION,
         PYRONAUT_BUILD_METADATA_REPOSITORY_URL,
         PYRONAUT_BUILD_METADATA_EXCLUDED_MODULES,
+        PYRONAUT_BUILD_DOCKER_IMAGE_NAME,
+        PYRONAUT_BUILD_DOCKER_DOCKERFILE,
+        PYRONAUT_BUILD_DOCKER_DOCKERFILE_NATIVE,
+        PYRONAUT_BUILD_DOCKER_JVM_BASE_IMAGE,
+        PYRONAUT_BUILD_DOCKER_NATIVE_BUILDER_IMAGE,
+        PYRONAUT_BUILD_DOCKER_NATIVE_BASE_IMAGE,
+        PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BUILDER_IMAGE,
+        PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BASE_IMAGE,
         PYRONAUT_VALIDATION_ENABLED,
         PYRONAUT_VALIDATION_FAIL_ON_NOT_PRESENT,
         PYRONAUT_VALIDATION_DEDUCE_ENVIRONMENTS,
@@ -555,6 +616,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.dependencies", true),
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.build.metadata", true),
+        section("tool.pyronaut.build.docker", true),
         section("tool.pyronaut.validation", true),
         section("tool.pyronaut.validation.run", true),
         section("tool.pyronaut.validation.test", true),

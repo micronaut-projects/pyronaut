@@ -87,7 +87,8 @@ public record PyprojectModel(Project project,
      * @param mode default build mode (for example jvm or native)
      */
     public record Build(String mode,
-                        Metadata metadata) {
+                        Metadata metadata,
+                        Docker docker) {
     }
 
     /**
@@ -102,6 +103,28 @@ public record PyprojectModel(Project project,
                            String version,
                            String repositoryUrl,
                            List<String> excludedModules) {
+    }
+
+    /**
+     * tool.pyronaut.build.docker table.
+     *
+     * @param imageName image name/tag repository prefix
+     * @param dockerfile custom Dockerfile for JVM container builds
+     * @param dockerfileNative custom Dockerfile for native container builds
+     * @param jvmBaseImage JVM runtime base image
+     * @param nativeBuilderImage native builder image
+     * @param nativeBaseImage native runtime base image for non-static builds
+     * @param staticNativeBuilderImage native builder image for static builds
+     * @param staticNativeBaseImage native runtime base image for static builds
+     */
+    public record Docker(String imageName,
+                         String dockerfile,
+                         String dockerfileNative,
+                         String jvmBaseImage,
+                         String nativeBuilderImage,
+                         String nativeBaseImage,
+                         String staticNativeBuilderImage,
+                         String staticNativeBaseImage) {
     }
 
     /**

@@ -171,6 +171,43 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void resolvesRelativeRuntimeManifestEntriesAgainstProjectDirectory() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["org.example:demo:1.0"]
+            """);
+        Path dependencyJar = createJar(
+            project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-runtime/5.0.0/micronaut-runtime-5.0.0.jar")
+        );
+        overwriteRuntimeManifest(project, List.of("__pyronaut__/m2-repository/io/micronaut/micronaut-runtime/5.0.0/micronaut-runtime-5.0.0.jar"));
+
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            createRequiredSchemas(extractedRoot);
+            createModuleMetadata(extractedRoot, "org.example", "demo", "1.0.0", Set.of("1.0"), true);
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        int exit = new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image");
+
+        assertEquals(0, exit);
+        List<String> nativeCommand = executed.getFirst();
+        int classpathIndex = nativeCommand.indexOf("-cp");
+        assertTrue(classpathIndex >= 0);
+        assertTrue(nativeCommand.get(classpathIndex + 1).contains(dependencyJar.toAbsolutePath().normalize().toString()));
+    }
+
+    @Test
     void skipsMetadataConfigurationWhenDisabledInPyproject() throws Exception {
         Path project = prepareProject("""
             [project]

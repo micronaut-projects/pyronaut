@@ -44,6 +44,11 @@ JAVA_DELEGATE_JAR_ENV = {
     "test": "PYRONAUT_TEST_JAR",
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
+_DEFAULT_DOCKER_JVM_BASE_IMAGE = "container-registry.oracle.com/graalvm/jdk:25"
+_DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25"
+_DEFAULT_DOCKER_NATIVE_BASE_IMAGE = "gcr.io/distroless/base"
+_DEFAULT_DOCKER_STATIC_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25-muslib"
+_DEFAULT_DOCKER_STATIC_NATIVE_BASE_IMAGE = "scratch"
 
 _DELEGATE_JVM_FLAGS = [
     "--sun-misc-unsafe-memory-access=allow",
@@ -492,11 +497,17 @@ def _run_build(
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
+    docker_build = _extract_build_docker(args)
+    static_native = _extract_build_static(args)
     try:
         project_name, project_version = _read_pyproject_project_metadata(project_dir)
         main_class = _extract_main_class(args)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
+
+    if static_native and (mode != "native" or not docker_build):
+        print("--static is only supported with pyronaut build --native --docker", file=sys.stderr)
         return USAGE_ERROR
 
     if no_validate:
@@ -515,6 +526,20 @@ def _run_build(
     preflight = _run_preflight(str(project_dir), no_cache, runner, resolver)
     if preflight != SUCCESS:
         return preflight
+
+    if docker_build:
+        return _run_docker_build(
+            args=args,
+            runner=runner,
+            resolver=resolver,
+            project_dir=project_dir,
+            project_name=project_name,
+            project_version=project_version,
+            mode=mode,
+            main_class=main_class,
+            verbose=verbose,
+            static_native=static_native,
+        )
 
     dist_dir = project_dir / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
@@ -766,6 +791,331 @@ def _write_relative_manifest(*, source: Path, target: Path, project_dir: Path) -
             continue
         rewritten.append(entry)
     target.write_text("".join(f"{entry}\n" for entry in rewritten), encoding="utf-8")
+
+
+def _extract_build_docker(args: Sequence[str]) -> bool:
+    return any(token == "--docker" for token in args)
+
+
+def _extract_build_static(args: Sequence[str]) -> bool:
+    return any(token == "--static" for token in args)
+
+
+def _read_pyproject_build_docker_config(project_dir: Path) -> dict[str, str]:
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return {}
+    try:
+        import tomllib
+    except Exception:
+        return {}
+    try:
+        with pyproject.open("rb") as fp:
+            data = tomllib.load(fp)
+    except Exception:
+        return {}
+
+    tool = data.get("tool")
+    if not isinstance(tool, dict):
+        return {}
+    pyronaut = tool.get("pyronaut")
+    if not isinstance(pyronaut, dict):
+        return {}
+    build = pyronaut.get("build")
+    if not isinstance(build, dict):
+        return {}
+    docker = build.get("docker")
+    if not isinstance(docker, dict):
+        return {}
+
+    resolved: dict[str, str] = {}
+    aliases = {
+        "image_name": ("image-name", "imageName"),
+        "dockerfile": ("dockerfile",),
+        "dockerfile_native": ("dockerfile-native", "dockerfileNative"),
+        "jvm_base_image": ("jvm-base-image", "jvmBaseImage"),
+        "native_builder_image": ("native-builder-image", "nativeBuilderImage"),
+        "native_base_image": ("native-base-image", "nativeBaseImage"),
+        "static_native_builder_image": ("static-native-builder-image", "staticNativeBuilderImage"),
+        "static_native_base_image": ("static-native-base-image", "staticNativeBaseImage"),
+    }
+    for key, candidates in aliases.items():
+        for candidate in candidates:
+            value = docker.get(candidate)
+            if isinstance(value, str) and value.strip():
+                resolved[key] = value.strip()
+                break
+    return resolved
+
+
+def _default_docker_image_name(project_name: str) -> str:
+    normalized = project_name.strip().lower()
+    normalized = re.sub(r"[^a-z0-9._/-]+", "-", normalized)
+    normalized = re.sub(r"-+", "-", normalized).strip("-/")
+    if not normalized:
+        return "pyronaut-app"
+    return normalized
+
+
+def _resolve_build_dockerfile(
+    *,
+    project_dir: Path,
+    configured_path: str | None,
+    default_name: str,
+) -> Path | None:
+    candidates: list[Path] = []
+    if configured_path is not None and configured_path.strip():
+        configured = Path(configured_path.strip())
+        candidates.append(configured if configured.is_absolute() else (project_dir / configured))
+    candidates.append(project_dir / default_name)
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate.resolve()
+    if configured_path is not None and configured_path.strip():
+        raise RuntimeError(f"Configured Dockerfile does not exist: {configured_path}")
+    return None
+
+
+def _stage_delegate_distribution(executable_path: str, target_dir: Path) -> Path:
+    resolved = Path(executable_path).resolve()
+    if resolved.suffix == ".jar":
+        raise RuntimeError(f"Docker builds require an installDist launcher, not a jar override: {resolved}")
+    install_root = resolved.parent.parent
+    if not install_root.exists():
+        raise RuntimeError(f"Missing delegate distribution for Docker build: {resolved}")
+    shutil.copytree(install_root, target_dir, dirs_exist_ok=True)
+    return target_dir / "bin" / resolved.name
+
+
+def _prepare_common_docker_app_context(project_dir: Path, context_dir: Path) -> Path:
+    app_dir = context_dir / "app"
+    pyronaut_dir = app_dir / "__pyronaut__"
+    pyronaut_dir.mkdir(parents=True, exist_ok=True)
+    _copytree_if_exists(project_dir / "config", app_dir / "config")
+    if (project_dir / "pyproject.toml").exists():
+        shutil.copy2(project_dir / "pyproject.toml", app_dir / "pyproject.toml")
+    return app_dir
+
+
+def _prepare_jvm_docker_context(
+    *,
+    project_dir: Path,
+    context_dir: Path,
+    resolver: Callable[[str], str | None],
+) -> None:
+    app_dir = _prepare_common_docker_app_context(project_dir, context_dir)
+    pyronaut_dir = app_dir / "__pyronaut__"
+    classes_dir = project_dir / "__pyronaut__" / "classes"
+    runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+    if not classes_dir.is_dir():
+        raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+    if not runtime_manifest.exists():
+        raise RuntimeError(f"Missing classpath manifest: {runtime_manifest}. Run pyronaut install first.")
+    _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copytree_if_exists(project_dir / "__pyronaut__" / "m2-repository", pyronaut_dir / "m2-repository")
+    _write_relative_manifest(
+        source=runtime_manifest,
+        target=pyronaut_dir / "resolved-runtime-dependencies",
+        project_dir=project_dir,
+    )
+    delegate_executable = resolver(COMMAND_TO_EXECUTABLE["run"])
+    if delegate_executable is None:
+        raise RuntimeError(f"Missing delegated executable: {COMMAND_TO_EXECUTABLE['run']}")
+    _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / "pyronaut-run")
+
+
+def _prepare_native_docker_context(
+    *,
+    project_dir: Path,
+    context_dir: Path,
+    resolver: Callable[[str], str | None],
+) -> None:
+    app_dir = _prepare_common_docker_app_context(project_dir, context_dir)
+    pyronaut_dir = app_dir / "__pyronaut__"
+    classes_dir = project_dir / "__pyronaut__" / "classes"
+    runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+    if not classes_dir.is_dir():
+        raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+    if not runtime_manifest.exists():
+        raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
+    _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copytree_if_exists(project_dir / "__pyronaut__" / "m2-repository", pyronaut_dir / "m2-repository")
+    _write_relative_manifest(
+        source=runtime_manifest,
+        target=pyronaut_dir / "resolved-runtime-dependencies",
+        project_dir=project_dir,
+    )
+    delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
+    if delegate_executable is None:
+        raise RuntimeError(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}")
+    _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / "pyronaut-native-build")
+
+
+def _write_jvm_dockerfile(*, target: Path, base_image: str) -> None:
+    dockerfile = f"""\
+FROM {base_image}
+WORKDIR /app
+COPY app/ /app/
+ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]
+"""
+    target.write_text(dockerfile, encoding="utf-8")
+
+
+def _write_native_dockerfile(
+    *,
+    target: Path,
+    builder_image: str,
+    runtime_image: str,
+    project_name: str,
+    main_class: str,
+    verbose: bool,
+    static_native: bool,
+    passthrough_args: Sequence[str],
+) -> None:
+    output_binary = f"/workspace/app/__pyronaut__/native/{project_name}"
+    build_command = [
+        "/workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build",
+        "--project-dir",
+        "/workspace/app",
+        "--main-class",
+        main_class,
+        "--output",
+        output_binary,
+    ]
+    if verbose:
+        build_command.append("--verbose")
+    build_command.extend(passthrough_args)
+    if static_native:
+        build_command.extend(["--static", "--libc=musl"])
+    dockerfile = f"""\
+FROM {builder_image} AS builder
+WORKDIR /workspace
+COPY app/ /workspace/app/
+RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
+RUN {shlex.join(build_command)}
+
+FROM {runtime_image}
+WORKDIR /app
+COPY --from=builder {output_binary} /app/{project_name}
+ENTRYPOINT ["/app/{project_name}"]
+"""
+    target.write_text(dockerfile, encoding="utf-8")
+
+
+def _copy_dockerfile_into_context(source: Path, context_dir: Path) -> Path:
+    target = context_dir / source.name
+    shutil.copy2(source, target)
+    return target
+
+
+def _build_docker_command(
+    *,
+    dockerfile: Path,
+    image_tag: str,
+    context_dir: Path,
+    verbose: bool,
+    build_args: dict[str, str],
+) -> list[str]:
+    docker_executable = shutil.which("docker") or "docker"
+    command = [docker_executable, "build"]
+    if verbose:
+        command.append("--progress=plain")
+    for key, value in build_args.items():
+        command.extend(["--build-arg", f"{key}={value}"])
+    command.extend(["-t", image_tag, "-f", str(dockerfile), str(context_dir)])
+    return command
+
+
+def _run_docker_build(
+    *,
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    project_dir: Path,
+    project_name: str,
+    project_version: str,
+    mode: str,
+    main_class: str,
+    verbose: bool,
+    static_native: bool,
+) -> int:
+    docker_config = _read_pyproject_build_docker_config(project_dir)
+    image_name = docker_config.get("image_name") or _default_docker_image_name(project_name)
+    image_tag = f"{image_name}:{project_version}"
+    if mode == "native":
+        image_tag = f"{image_name}:{project_version}-native"
+
+    with tempfile.TemporaryDirectory(prefix=f"pyronaut-build-{mode}-docker-") as context_root:
+        context_dir = Path(context_root)
+        build_args = {
+            "PYRONAUT_PROJECT_NAME": project_name,
+            "PYRONAUT_PROJECT_VERSION": project_version,
+            "PYRONAUT_BUILD_MODE": mode,
+            "PYRONAUT_NATIVE_STATIC": "true" if static_native else "false",
+        }
+        if mode == "native":
+            _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+            builder_image = docker_config.get(
+                "static_native_builder_image" if static_native else "native_builder_image"
+            ) or (
+                _DEFAULT_DOCKER_STATIC_NATIVE_BUILDER_IMAGE if static_native else _DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE
+            )
+            runtime_image = docker_config.get(
+                "static_native_base_image" if static_native else "native_base_image"
+            ) or (
+                _DEFAULT_DOCKER_STATIC_NATIVE_BASE_IMAGE if static_native else _DEFAULT_DOCKER_NATIVE_BASE_IMAGE
+            )
+            build_args["PYRONAUT_NATIVE_BUILDER_IMAGE"] = builder_image
+            build_args["PYRONAUT_NATIVE_BASE_IMAGE"] = runtime_image
+            custom = _resolve_build_dockerfile(
+                project_dir=project_dir,
+                configured_path=docker_config.get("dockerfile_native"),
+                default_name="DockerfileNative",
+            )
+            if custom is not None:
+                dockerfile = _copy_dockerfile_into_context(custom, context_dir)
+            else:
+                dockerfile = context_dir / "DockerfileNative"
+                _write_native_dockerfile(
+                    target=dockerfile,
+                    builder_image=builder_image,
+                    runtime_image=runtime_image,
+                    project_name=project_name,
+                    main_class=main_class,
+                    verbose=verbose,
+                    static_native=static_native,
+                    passthrough_args=_extract_native_build_passthrough_args(args),
+                )
+        else:
+            _prepare_jvm_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+            build_args["PYRONAUT_JVM_BASE_IMAGE"] = docker_config.get("jvm_base_image") or _DEFAULT_DOCKER_JVM_BASE_IMAGE
+            custom = _resolve_build_dockerfile(
+                project_dir=project_dir,
+                configured_path=docker_config.get("dockerfile"),
+                default_name="Dockerfile",
+            )
+            if custom is not None:
+                dockerfile = _copy_dockerfile_into_context(custom, context_dir)
+            else:
+                dockerfile = context_dir / "Dockerfile"
+                _write_jvm_dockerfile(
+                    target=dockerfile,
+                    base_image=build_args["PYRONAUT_JVM_BASE_IMAGE"],
+                )
+
+        command = _build_docker_command(
+            dockerfile=dockerfile,
+            image_tag=image_tag,
+            context_dir=context_dir,
+            verbose=verbose,
+            build_args=build_args,
+        )
+        if _delegation_trace_enabled():
+            print(shlex.join(command), file=sys.stderr)
+        exit_code = runner(command, None)
+    if exit_code == SUCCESS:
+        print(f"Docker image build complete: {image_tag}")
+    return exit_code
 
 
 def _launcher_package_name(project_name: str) -> str:
@@ -1085,7 +1435,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token == "--":
             passthrough.extend(args[index + 1:])
             break
-        if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate"}:
+        if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate", "--docker", "--static"}:
             index += 1
             continue
         if token in {"--mode", "--main-class", "--project-dir"}:
@@ -1098,6 +1448,8 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
             or token.startswith("--main-class=")
             or token.startswith("--project-dir=")
             or token.startswith("--no-cache=")
+            or token.startswith("--docker=")
+            or token.startswith("--static=")
         ):
             index += 1
             continue
@@ -1810,7 +2162,7 @@ def _print_build_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut build [--project-dir <dir>] [--native|--jvm|--mode=<native|jvm>] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
+        "Usage: pyronaut build [--project-dir <dir>] [--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
     )
 
 

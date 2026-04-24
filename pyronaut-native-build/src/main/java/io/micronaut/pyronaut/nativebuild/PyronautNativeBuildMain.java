@@ -113,7 +113,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 return PRECONDITION_FAILED;
             }
 
-            List<Path> runtimeClasspath = readManifest(runtimeManifest);
+            List<Path> runtimeClasspath = readManifest(root, runtimeManifest);
             List<Path> nativeClasspath = new ArrayList<>(runtimeClasspath);
             nativeClasspath.add(classesDir);
             Path configDir = root.resolve(DEFAULT_CONFIG_DIR).normalize();
@@ -513,12 +513,13 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         return group + ":" + artifact + ":" + version;
     }
 
-    private static List<Path> readManifest(Path file) {
+    private static List<Path> readManifest(Path root, Path file) {
         try {
             return Files.readAllLines(file, StandardCharsets.UTF_8).stream()
                 .map(String::trim)
                 .filter(line -> !line.isEmpty())
                 .map(Path::of)
+                .map(path -> path.isAbsolute() ? path : root.resolve(path).normalize())
                 .toList();
         } catch (IOException e) {
             throw new IllegalStateException("Failed reading runtime classpath manifest: " + file, e);

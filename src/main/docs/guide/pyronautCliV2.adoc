@@ -136,7 +136,7 @@ Report artifacts:
 
 === `pyronaut build`
 
-Builds either a JVM wheel or a native executable.
+Builds a JVM wheel, a native executable, or a Docker image for either mode.
 
 Build mode selection:
 
@@ -148,6 +148,8 @@ Build mode selection:
 Common options:
 
 - `--project-dir <dir>`
+- `--docker`: build a container image instead of a wheel/native binary on the host
+- `--static`: static native container build; only valid with `--native --docker`
 - `--main-class <fqcn>` (native mode)
 - `--verbose` (native mode, forwarded to `native-image`)
 - `--no-validate`: explicitly bypasses lifecycle config validation
@@ -158,12 +160,55 @@ JVM mode:
 - Builds a wheel using `pip wheel`.
 - Outputs artifacts to `dist/`.
 
+JVM Docker mode (`pyronaut build --docker`):
+
+- Runs `pyronaut-validate-config --scenario production` before install/process preflight by default.
+- Runs install/process preflight.
+- Stages a compact build context under a temporary `app/` root containing `config/`, `pyproject.toml`, processed classes, the project-local Maven cache, and the delegated `pyronaut-run` distribution.
+- Generates a default Dockerfile when `Dockerfile` is not present.
+- Builds an image tagged `<image-name>:<project-version>`.
+- Uses `tool.pyronaut.build.docker.jvm-base-image` when configured, otherwise defaults to `container-registry.oracle.com/graalvm/jdk:25`.
+
 Native mode:
 
 - Runs `pyronaut-validate-config --scenario production` before install/process preflight by default.
 - Runs install/process preflight.
 - Delegates to `pyronaut-native-build`.
 - Produces `__pyronaut__/native/application` by default.
+
+Native Docker mode (`pyronaut build --native --docker`):
+
+- Runs `pyronaut-validate-config --scenario production` before install/process preflight by default.
+- Runs install/process preflight.
+- Stages a container build context with processed classes, runtime dependency metadata, the project-local Maven cache, and the delegated `pyronaut-native-build` distribution.
+- Builds the native executable inside the configured builder image so container builds remain Linux-targeted even when started from macOS.
+- Uses a generated multistage Dockerfile when `DockerfileNative` is not present.
+- Builds an image tagged `<image-name>:<project-version>-native`.
+- Uses `tool.pyronaut.build.docker.native-builder-image` and `tool.pyronaut.build.docker.native-base-image` by default.
+- When `--static` is present, the generated Dockerfile adds `--static --libc=musl` and uses `tool.pyronaut.build.docker.static-native-builder-image` plus `tool.pyronaut.build.docker.static-native-base-image`.
+
+Custom Dockerfiles:
+
+- `Dockerfile` customizes JVM Docker builds.
+- `DockerfileNative` customizes native Docker builds.
+- `tool.pyronaut.build.docker.dockerfile` and `tool.pyronaut.build.docker.dockerfile-native` can point at alternate paths relative to the project directory.
+- Custom Dockerfiles still receive build arguments such as `PYRONAUT_PROJECT_NAME`, `PYRONAUT_PROJECT_VERSION`, `PYRONAUT_BUILD_MODE`, `PYRONAUT_NATIVE_STATIC`, `PYRONAUT_JVM_BASE_IMAGE`, `PYRONAUT_NATIVE_BUILDER_IMAGE`, and `PYRONAUT_NATIVE_BASE_IMAGE`.
+- The Docker build context root is temporary, with the application materialized under `app/`, so custom Dockerfiles should use paths such as `COPY app/ /app/`.
+
+Example `pyproject.toml` Docker settings:
+
+[source,toml]
+----
+[tool.pyronaut.build.docker]
+image-name = "acme/demo"
+jvm-base-image = "container-registry.oracle.com/graalvm/jdk:25"
+native-builder-image = "container-registry.oracle.com/graalvm/native-image:25"
+native-base-image = "gcr.io/distroless/base"
+static-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25-muslib"
+static-native-base-image = "scratch"
+dockerfile = "docker/Dockerfile.jvm"
+dockerfile-native = "docker/Dockerfile.native"
+----
 
 === `pyronaut validate-config`
 
@@ -341,6 +386,8 @@ In smoke/non-interactive paths, the TUI delegates through the same orchestrator 
 
 - `run`, `test`: orchestrator runs install+process preflight.
 - `build --native`: orchestrator runs install+process preflight, then delegates native build.
+- `build --docker`: orchestrator runs install+process preflight, then delegates Docker image creation with the staged JVM runtime.
+- `build --native --docker`: orchestrator runs install+process preflight, then delegates Docker image creation with in-container native compilation.
 - `install`, `process`, `build` (JVM): no additional orchestrator preflight stage.
 
 == Environment variables

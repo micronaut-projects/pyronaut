@@ -95,7 +95,7 @@ public final class PyprojectModelReader {
                 build,
                 readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST)
             ),
-            new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed)),
+            new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
             resolveValidation(parsed),
             resolveTestResources(parsed)
         );
@@ -166,6 +166,19 @@ public final class PyprojectModelReader {
         String repositoryUrl = readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_REPOSITORY_URL);
         List<String> excludedModules = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_EXCLUDED_MODULES);
         return new PyprojectModel.Metadata(enabled, version, repositoryUrl, excludedModules);
+    }
+
+    private static PyprojectModel.Docker resolveBuildDocker(TomlParseResult parsed) {
+        return new PyprojectModel.Docker(
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_IMAGE_NAME),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_DOCKERFILE),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_DOCKERFILE_NATIVE),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_JVM_BASE_IMAGE),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_NATIVE_BUILDER_IMAGE),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_NATIVE_BASE_IMAGE),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BUILDER_IMAGE),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BASE_IMAGE)
+        );
     }
 
     private static PyprojectModel.Validation resolveValidation(TomlParseResult parsed) {

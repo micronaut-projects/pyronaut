@@ -120,6 +120,19 @@ class OrchestratorTest(unittest.TestCase):
         if build:
             (cache_dir / "resolved-build-dependencies").write_text("/tmp/build.jar\n", encoding="utf-8")
 
+    @staticmethod
+    def _write_fake_install_dist(root_dir: Path, command_name: str) -> str:
+        install_root = root_dir / f"{command_name}-install"
+        bin_dir = install_root / "bin"
+        lib_dir = install_root / "lib"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        launcher = bin_dir / command_name
+        launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        launcher.chmod(0o755)
+        (lib_dir / f"{command_name}.jar").write_text("", encoding="utf-8")
+        return str(launcher)
+
     def _assert_test_resources_start(self, command_line, project_dir: str) -> None:
         self.assertEqual("/tmp/pyronaut-test-resources-server", command_line[0])
         self.assertEqual("start", command_line[1])
@@ -1648,6 +1661,276 @@ logsDir = "var/custom-test-resources-logs"
         self.assertEqual([], executed)
         self.assertIn("Usage: pyronaut build", stdout.getvalue())
 
+    def test_build_docker_requires_native_when_static_is_requested(self):
+        stderr = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as temp_dir, redirect_stderr(stderr):
+            project_dir = Path(temp_dir) / "docker-static-error"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            exit_code = cli.run(
+                ["build", "--project-dir", str(project_dir), "--docker", "--static"],
+                runner_with_env=lambda *_args: 0,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertIn("--static is only supported with pyronaut build --native --docker", stderr.getvalue())
+
+    def test_build_docker_jvm_runs_preflight_then_docker_build(self):
+        executed = []
+        captured: dict[str, object] = {}
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if len(command_line) >= 2 and command_line[1] == "build":
+                context_dir = Path(command_line[-1])
+                dockerfile = Path(command_line[command_line.index("-f") + 1])
+                captured["docker_command"] = command_line
+                captured["dockerfile"] = dockerfile.read_text(encoding="utf-8")
+                captured["manifest"] = (context_dir / "app" / "__pyronaut__" / "resolved-runtime-dependencies").read_text(encoding="utf-8")
+                captured["context_files"] = sorted(str(path.relative_to(context_dir)) for path in context_dir.rglob("*"))
+            return 0
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
+            root_dir = Path(temp_dir)
+            project_dir = root_dir / "docker-demo"
+            runtime_jar = project_dir / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar"
+            runtime_jar.parent.mkdir(parents=True, exist_ok=True)
+            runtime_jar.write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes" / "example").mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "classes" / "example" / "Demo.class").write_text("", encoding="utf-8")
+            (project_dir / "config").mkdir(parents=True, exist_ok=True)
+            (project_dir / "config" / "application.toml").write_text("micronaut.server.port = 8080\n", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                str(runtime_jar.resolve()) + "\n",
+                encoding="utf-8",
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"demo-app\"\nversion = \"1.2.3\"\n",
+                encoding="utf-8",
+            )
+            run_executable = self._write_fake_install_dist(root_dir, "pyronaut-run")
+
+            def resolver(command_name):
+                if command_name == "pyronaut-run":
+                    return run_executable
+                return f"/tmp/{command_name}"
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    ["build", "--project-dir", str(project_dir), "--docker"],
+                    runner_with_env=runner_with_env,
+                    resolver=resolver,
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir.resolve()), "--scenario", "production"],
+            executed[0][0],
+        )
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir.resolve())], executed[1][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir.resolve())], executed[2][0])
+        docker_command = captured["docker_command"]
+        self.assertEqual("/usr/bin/docker", docker_command[0])
+        self.assertEqual("build", docker_command[1])
+        self.assertIn("--build-arg", docker_command)
+        self.assertIn("PYRONAUT_BUILD_MODE=jvm", docker_command)
+        self.assertIn("PYRONAUT_PROJECT_NAME=demo-app", docker_command)
+        self.assertIn("PYRONAUT_PROJECT_VERSION=1.2.3", docker_command)
+        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25", docker_command)
+        self.assertIn("-t", docker_command)
+        self.assertIn("demo-app:1.2.3", docker_command)
+        self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
+        self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
+        self.assertIn("app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", captured["context_files"])
+        self.assertIn("app/config/application.toml", captured["context_files"])
+        self.assertIn("app/pyproject.toml", captured["context_files"])
+        self.assertIn("Docker image build complete: demo-app:1.2.3", stdout.getvalue())
+
+    def test_build_docker_native_uses_container_build_and_static_args(self):
+        executed = []
+        captured: dict[str, object] = {}
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if len(command_line) >= 2 and command_line[1] == "build":
+                context_dir = Path(command_line[-1])
+                dockerfile = Path(command_line[command_line.index("-f") + 1])
+                captured["docker_command"] = command_line
+                captured["dockerfile"] = dockerfile.read_text(encoding="utf-8")
+                captured["manifest"] = (context_dir / "app" / "__pyronaut__" / "resolved-runtime-dependencies").read_text(encoding="utf-8")
+                captured["context_files"] = sorted(str(path.relative_to(context_dir)) for path in context_dir.rglob("*"))
+            return 0
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
+            root_dir = Path(temp_dir)
+            project_dir = root_dir / "native-docker-demo"
+            runtime_jar = project_dir / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar"
+            runtime_jar.parent.mkdir(parents=True, exist_ok=True)
+            runtime_jar.write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes" / "example").mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "classes" / "example" / "Demo.class").write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                str(runtime_jar.resolve()) + "\n",
+                encoding="utf-8",
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        "name = \"demo-app\"",
+                        "version = \"1.2.3\"",
+                        "",
+                        "[tool.pyronaut.build.docker]",
+                        "image-name = \"example/demo\"",
+                        "native-builder-image = \"example/native-builder:1\"",
+                        "native-base-image = \"example/native-base:1\"",
+                        "static-native-builder-image = \"example/static-builder:1\"",
+                        "static-native-base-image = \"example/static-base:1\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
+
+            def resolver(command_name):
+                if command_name == "pyronaut-native-build":
+                    return native_executable
+                return f"/tmp/{command_name}"
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    [
+                        "build",
+                        "--native",
+                        "--docker",
+                        "--static",
+                        "--project-dir",
+                        str(project_dir),
+                        "--main-class",
+                        "example.Main",
+                        "--verbose",
+                        "--",
+                        "--initialize-at-run-time=example.Foo",
+                    ],
+                    runner_with_env=runner_with_env,
+                    resolver=resolver,
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir.resolve()), "--scenario", "production"],
+            executed[0][0],
+        )
+        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(project_dir.resolve())], executed[1][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir.resolve())], executed[2][0])
+        self.assertEqual(4, len(executed))
+        docker_command = captured["docker_command"]
+        self.assertEqual("/usr/bin/docker", docker_command[0])
+        self.assertEqual("build", docker_command[1])
+        self.assertIn("--progress=plain", docker_command)
+        self.assertIn("PYRONAUT_BUILD_MODE=native", docker_command)
+        self.assertIn("PYRONAUT_NATIVE_STATIC=true", docker_command)
+        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=example/static-builder:1", docker_command)
+        self.assertIn("PYRONAUT_NATIVE_BASE_IMAGE=example/static-base:1", docker_command)
+        self.assertIn("example/demo:1.2.3-native", docker_command)
+        self.assertIn("FROM example/static-builder:1 AS builder", captured["dockerfile"])
+        self.assertIn("FROM example/static-base:1", captured["dockerfile"])
+        self.assertIn("--static --libc=musl", captured["dockerfile"])
+        self.assertIn("--initialize-at-run-time=example.Foo", captured["dockerfile"])
+        self.assertIn("app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build", captured["context_files"])
+        self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
+        self.assertIn("Docker image build complete: example/demo:1.2.3-native", stdout.getvalue())
+
+    def test_build_docker_uses_custom_dockerfiles_from_pyproject(self):
+        executed = []
+        captured: dict[str, object] = {}
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if len(command_line) >= 2 and command_line[1] == "build":
+                dockerfile = Path(command_line[command_line.index("-f") + 1])
+                captured["docker_command"] = command_line
+                captured["dockerfile_name"] = dockerfile.name
+                captured["dockerfile"] = dockerfile.read_text(encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
+            root_dir = Path(temp_dir)
+            project_dir = root_dir / "custom-docker-demo"
+            runtime_jar = project_dir / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar"
+            runtime_jar.parent.mkdir(parents=True, exist_ok=True)
+            runtime_jar.write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                str(runtime_jar.resolve()) + "\n",
+                encoding="utf-8",
+            )
+            (project_dir / "docker").mkdir(parents=True, exist_ok=True)
+            (project_dir / "docker" / "Dockerfile.jvm").write_text(
+                "FROM ${PYRONAUT_JVM_BASE_IMAGE}\nARG PYRONAUT_PROJECT_NAME\n",
+                encoding="utf-8",
+            )
+            (project_dir / "docker" / "Dockerfile.native").write_text(
+                "FROM ${PYRONAUT_NATIVE_BUILDER_IMAGE} AS builder\nARG PYRONAUT_NATIVE_STATIC\n",
+                encoding="utf-8",
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        "name = \"demo-app\"",
+                        "version = \"1.2.3\"",
+                        "",
+                        "[tool.pyronaut.build.docker]",
+                        "dockerfile = \"docker/Dockerfile.jvm\"",
+                        "dockerfile-native = \"docker/Dockerfile.native\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            run_executable = self._write_fake_install_dist(root_dir, "pyronaut-run")
+            native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
+
+            def resolver(command_name):
+                if command_name == "pyronaut-run":
+                    return run_executable
+                if command_name == "pyronaut-native-build":
+                    return native_executable
+                return f"/tmp/{command_name}"
+
+            exit_code_jvm = cli.run(
+                ["build", "--project-dir", str(project_dir), "--docker"],
+                runner_with_env=runner_with_env,
+                resolver=resolver,
+                platform_name="linux",
+            )
+            self.assertEqual(0, exit_code_jvm)
+            self.assertEqual("Dockerfile.jvm", captured["dockerfile_name"])
+            self.assertIn("ARG PYRONAUT_PROJECT_NAME", captured["dockerfile"])
+            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25", captured["docker_command"])
+
+            captured.clear()
+            executed.clear()
+            exit_code_native = cli.run(
+                ["build", "--native", "--docker", "--project-dir", str(project_dir), "--main-class", "example.Main"],
+                runner_with_env=runner_with_env,
+                resolver=resolver,
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code_native)
+        self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
+        self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
+        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25", captured["docker_command"])
+
     def test_prepare_jvm_build_wheel_staging_rewrites_manifest_and_generates_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "stage-demo"
@@ -1677,6 +1960,31 @@ logsDir = "var/custom-test-resources-logs"
             launcher_code = (launcher_pkg / "launcher.py").read_text(encoding="utf-8")
             self.assertIn("example.Main", launcher_code)
             self.assertIn("_build_java_delegate_invocation", launcher_code)
+
+    def test_prepare_native_docker_context_stages_distribution_and_rewrites_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root_dir = Path(temp_dir)
+            project_dir = root_dir / "native-context-demo"
+            context_dir = root_dir / "context"
+            runtime_jar = project_dir / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar"
+            runtime_jar.parent.mkdir(parents=True, exist_ok=True)
+            runtime_jar.write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                str(runtime_jar.resolve()) + "\n",
+                encoding="utf-8",
+            )
+            native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
+
+            cli._prepare_native_docker_context(  # noqa: SLF001 - internal helper coverage
+                project_dir=project_dir,
+                context_dir=context_dir,
+                resolver=lambda command_name: native_executable if command_name == "pyronaut-native-build" else None,
+            )
+
+            manifest = (context_dir / "app" / "__pyronaut__" / "resolved-runtime-dependencies").read_text(encoding="utf-8")
+            self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", manifest)
+            self.assertTrue((context_dir / "app" / "__pyronaut__" / "tools" / "pyronaut-native-build" / "bin" / "pyronaut-native-build").exists())
 
     def test_remove_existing_built_wheels_cleans_matching_distribution_prefix(self):
         with tempfile.TemporaryDirectory() as temp_dir:
