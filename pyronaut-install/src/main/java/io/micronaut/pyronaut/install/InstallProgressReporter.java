@@ -93,6 +93,13 @@ final class InstallProgressReporter implements AutoCloseable {
         output.println("Resolved " + scope.cliValue() + " dependencies (" + artifactCount + " artifacts)");
     }
 
+    void generatedApplicationSchema(int fragmentCount) {
+        if (!enabled) {
+            return;
+        }
+        output.println("Generated application schema from runtime classpath (" + fragmentCount + " fragments)");
+    }
+
     @Override
     public void close() {
         stopSpinner();

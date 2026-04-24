@@ -65,7 +65,10 @@ Editor support:
 
 - `pyronaut install` also materializes a project-local JSON schema at `__pyronaut__/schemas/pyronaut-pyproject.schema.json`.
 - `pyronaut install` prepends a Taplo schema directive to `pyproject.toml` pointing at that schema.
+- If `config/application.toml` exists, `pyronaut install` also builds `__pyronaut__/schemas/micronaut-application.schema.json` from the Micronaut configuration schemas present on the resolved runtime classpath and prepends a schema directive to `config/application.toml`.
+- Runtime configuration schemas are merged by their `x-micronaut.prefix` path, so overlapping contributors such as `micronaut.server` and `micronaut.server.netty` are combined into one rooted schema tree.
 - Existing user-managed `#:schema ...` directives at the top of `pyproject.toml` are left untouched.
+- Existing user-managed `#:schema ...` directives at the top of `config/application.toml` are left untouched.
 - Older generated `.taplo.toml` files from previous Pyronaut installs are removed to avoid conflicting schema associations. User-managed `.taplo.toml` files are left untouched.
 
 === `pyronaut process`

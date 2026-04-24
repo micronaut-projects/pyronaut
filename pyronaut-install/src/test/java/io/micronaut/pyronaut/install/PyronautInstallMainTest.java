@@ -12,7 +12,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -305,6 +308,170 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void installWritesApplicationSchemaAndDirective() throws Exception {
+        Path repository = tempDir.resolve("repo-app-schema");
+        writeArtifactWithEntries(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "META-INF/micronaut-configuration-schemas/example.HttpServerConfiguration.json", """
+                {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "$id": "urn:test:http-server",
+                  "title": "HttpServerConfiguration",
+                  "type": "object",
+                  "x-micronaut": {
+                    "prefix": "micronaut.server",
+                    "kind": "configuration-properties"
+                  },
+                  "properties": {
+                    "port": {
+                      "type": "integer"
+                    }
+                  }
+                }
+                """,
+            "META-INF/micronaut-configuration-schemas/example.NettyHttpServerConfiguration.json", """
+                {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "$id": "urn:test:netty-http-server",
+                  "title": "NettyHttpServerConfiguration",
+                  "type": "object",
+                  "x-micronaut": {
+                    "prefix": "micronaut.server.netty",
+                    "kind": "configuration-properties"
+                  },
+                  "properties": {
+                    "log-level": {
+                      "type": "string"
+                    }
+                  }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-app-schema");
+        Files.createDirectories(project.resolve("config"));
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+        Files.writeString(project.resolve("config/application.toml"), "micronaut.server.port = 8080\n");
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path schemaFile = project.resolve("__pyronaut__")
+            .resolve("schemas")
+            .resolve(MicronautApplicationJsonSchemaBundler.SCHEMA_FILE_NAME);
+        Path stateFile = project.resolve("__pyronaut__")
+            .resolve("schemas")
+            .resolve(MicronautApplicationJsonSchemaBundler.STATE_FILE_NAME);
+        String applicationToml = Files.readString(project.resolve("config/application.toml"), StandardCharsets.UTF_8);
+        String schema = Files.readString(schemaFile, StandardCharsets.UTF_8);
+
+        assertTrue(Files.exists(schemaFile));
+        assertTrue(Files.exists(stateFile));
+        assertTrue(applicationToml.startsWith(PyprojectEditorSupport.applicationManagedDirectiveBlock()));
+        assertTrue(schema.contains("\"micronaut\""));
+        assertTrue(schema.contains("\"server\""));
+        assertTrue(schema.contains("\"port\""));
+        assertTrue(schema.contains("\"netty\""));
+        assertTrue(schema.contains("\"log-level\""));
+    }
+
+    @Test
+    void installMergesApplicationEachPropertySchemasByPrefix() throws Exception {
+        Path repository = tempDir.resolve("repo-app-schema-merge");
+        writeArtifactWithEntries(repository, "com.example", "runtime-a", "1.0.0", Map.of(
+            "META-INF/micronaut-configuration-schemas/example.DataJdbcConfiguration.json", """
+                {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "$id": "urn:test:data-jdbc",
+                  "title": "DataJdbcConfiguration",
+                  "type": "object",
+                  "x-micronaut": {
+                    "prefix": "datasources",
+                    "kind": "each-property",
+                    "container": "map"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/$defs/Entry"
+                  },
+                  "$defs": {
+                    "Entry": {
+                      "type": "object",
+                      "properties": {
+                        "dialect": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+                """
+        ));
+        writeArtifactWithEntries(repository, "com.example", "runtime-b", "1.0.0", Map.of(
+            "META-INF/micronaut-configuration-schemas/example.HikariConfiguration.json", """
+                {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "$id": "urn:test:hikari",
+                  "title": "DatasourceConfiguration",
+                  "type": "object",
+                  "x-micronaut": {
+                    "prefix": "datasources",
+                    "kind": "each-property",
+                    "container": "map"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/$defs/Entry"
+                  },
+                  "$defs": {
+                    "Entry": {
+                      "type": "object",
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-app-schema-merge");
+        Files.createDirectories(project.resolve("config"));
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-a:1.0.0", "com.example:runtime-b:1.0.0"]
+            build = ["com.example:build-dep:1.0.0"]
+            test = ["com.example:test-dep:1.0.0"]
+            """.formatted(repository.toUri()));
+        Files.writeString(project.resolve("config/application.toml"), "[datasources.default]\n");
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String schema = Files.readString(
+            project.resolve("__pyronaut__").resolve("schemas").resolve(MicronautApplicationJsonSchemaBundler.SCHEMA_FILE_NAME),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(schema.contains("\"datasources\""));
+        assertTrue(schema.contains("\"dialect\""));
+        assertTrue(schema.contains("\"url\""));
+    }
+
+    @Test
     void installPreservesUserManagedTaploConfig() throws Exception {
         Path repository = tempDir.resolve("repo-user-taplo");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
@@ -372,6 +539,55 @@ class PyronautInstallMainTest {
         assertTrue(Files.exists(schemaFile));
         assertTrue(Files.readString(project.resolve("pyproject.toml"), StandardCharsets.UTF_8)
             .startsWith(PyprojectEditorSupport.managedDirectiveBlock()));
+    }
+
+    @Test
+    void cacheHitRegeneratesMissingApplicationSchemaAndDirective() throws Exception {
+        Path repository = tempDir.resolve("repo-cache-app-editor-support");
+        writeArtifactWithEntries(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "META-INF/micronaut-configuration-schemas/example.ApplicationConfiguration.json", """
+                {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "$id": "urn:test:application",
+                  "title": "ApplicationConfiguration",
+                  "type": "object",
+                  "x-micronaut": {
+                    "prefix": "micronaut.application",
+                    "kind": "configuration-properties"
+                  },
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-cache-app-editor-support");
+        Files.createDirectories(project.resolve("config"));
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+        Files.writeString(project.resolve("config/application.toml"), "micronaut.application.name = \"demo\"\n");
+
+        PyronautInstallMain firstRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        firstRun.projectDir = project;
+        assertEquals(InstallExitCode.SUCCESS.code(), firstRun.call());
+
+        Path schemaFile = project.resolve("__pyronaut__")
+            .resolve("schemas")
+            .resolve(MicronautApplicationJsonSchemaBundler.SCHEMA_FILE_NAME);
+        Files.deleteIfExists(schemaFile);
+        Files.writeString(project.resolve("config/application.toml"), "micronaut.application.name = \"demo\"\n", StandardCharsets.UTF_8);
+
+        PyronautInstallMain secondRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        secondRun.projectDir = project;
+        assertEquals(InstallExitCode.SUCCESS.code(), secondRun.call());
+
+        assertTrue(Files.exists(schemaFile));
+        assertTrue(Files.readString(project.resolve("config/application.toml"), StandardCharsets.UTF_8)
+            .startsWith(PyprojectEditorSupport.applicationManagedDirectiveBlock()));
     }
 
     @Test
@@ -1040,6 +1256,40 @@ class PyronautInstallMainTest {
 
         Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
         Files.write(jarFile, jarBytes);
+    }
+
+    private static void writeArtifactWithEntries(Path repository,
+                                                 String groupId,
+                                                 String artifactId,
+                                                 String version,
+                                                 Map<String, String> entries) throws IOException {
+        Path artifactDir = repository
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version);
+        Files.createDirectories(artifactDir);
+
+        Path pomFile = artifactDir.resolve(artifactId + "-" + version + ".pom");
+        Files.writeString(pomFile, """
+            <project xmlns=\"http://maven.apache.org/POM/4.0.0\"
+                     xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"
+                     xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd\">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>%s</groupId>
+              <artifactId>%s</artifactId>
+              <version>%s</version>
+            </project>
+            """.formatted(groupId, artifactId, version));
+
+        Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
+        try (ZipOutputStream outputStream = new ZipOutputStream(Files.newOutputStream(jarFile))) {
+            Map<String, String> ordered = new LinkedHashMap<>(entries);
+            for (Map.Entry<String, String> entry : ordered.entrySet()) {
+                outputStream.putNextEntry(new ZipEntry(entry.getKey()));
+                outputStream.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                outputStream.closeEntry();
+            }
+        }
     }
 
     private static void writeArtifactWithDependencies(Path repository,

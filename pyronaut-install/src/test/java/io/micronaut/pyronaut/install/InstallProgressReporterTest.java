@@ -18,11 +18,13 @@ class InstallProgressReporterTest {
         try (InstallProgressReporter reporter = new InstallProgressReporter(new PrintStream(buffer), InstallProgressReporter.ProgressMode.AUTO, false)) {
             reporter.startScope(InstallScope.RUNTIME);
             reporter.finishScope(InstallScope.RUNTIME, 3);
+            reporter.generatedApplicationSchema(12);
         }
 
         String output = buffer.toString(StandardCharsets.UTF_8);
         assertTrue(output.contains("Resolving runtime dependencies..."));
         assertTrue(output.contains("Resolved runtime dependencies (3 artifacts)"));
+        assertTrue(output.contains("Generated application schema from runtime classpath (12 fragments)"));
         assertFalse(output.contains("\r"));
     }
 
@@ -47,6 +49,7 @@ class InstallProgressReporterTest {
             reporter.cacheHit();
             reporter.startScope(InstallScope.TEST);
             reporter.finishScope(InstallScope.TEST, 2);
+            reporter.generatedApplicationSchema(5);
         }
 
         assertEquals("", buffer.toString(StandardCharsets.UTF_8));

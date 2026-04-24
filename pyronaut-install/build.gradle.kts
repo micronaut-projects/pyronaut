@@ -12,6 +12,7 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
 
     implementation(project(":micronaut-pyronaut-config-model"))
+    implementation(mnSerde.micronaut.serde.jackson)
     implementation(mnPicocli.picocli)
 
     implementation(libs.maven.resolver.api)

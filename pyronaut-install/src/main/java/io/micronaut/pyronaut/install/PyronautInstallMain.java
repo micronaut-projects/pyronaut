@@ -129,6 +129,12 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     progressReporter.finishScope(installScope, classpath.size());
                     resolved.put(installScope, classpath);
                 }
+                if (resolved.containsKey(InstallScope.RUNTIME)) {
+                    var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, resolved.get(InstallScope.RUNTIME));
+                    if (schemaResult.status() == MicronautApplicationJsonSchemaBundler.Status.GENERATED) {
+                        progressReporter.generatedApplicationSchema(schemaResult.mergedSchemas());
+                    }
+                }
                 ResolutionCache.write(cacheDir, hash, resolved);
             }
             return InstallExitCode.SUCCESS.code();
