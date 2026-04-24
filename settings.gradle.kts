@@ -11,7 +11,6 @@ plugins {
 
 rootProject.name = "pyronaut-parent"
 
-include("pyronaut-cli")
 include("pyronaut")
 include("pyronaut-config-model")
 include("pyronaut-install")
