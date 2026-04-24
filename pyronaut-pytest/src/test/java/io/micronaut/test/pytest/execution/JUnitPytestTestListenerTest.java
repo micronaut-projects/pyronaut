@@ -5,6 +5,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.platform.engine.EngineExecutionListener;
 import org.junit.platform.engine.TestExecutionResult;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JUnitPytestTestListenerTest {
+    private static final String FAILURE_OUTPUT_PROPERTY = "pyronaut.test.render-failure-output";
 
     @TempDir
     Path tempDir;
@@ -167,5 +170,95 @@ class JUnitPytestTestListenerTest {
         assertTrue(content.contains("\"text\":\"hello\\n\""));
         assertTrue(content.contains("\"testId\":\"tests/test_stream.py::test_one\""));
         assertFalse(content.contains("\"eventType\":\"unknown\""));
+    }
+
+    @Test
+    void writesFailedTestDiagnosticsToStandardError() throws Exception {
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of()
+        );
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        String originalProperty = System.getProperty(FAILURE_OUTPUT_PROPERTY);
+        try {
+            System.setProperty(FAILURE_OUTPUT_PROPERTY, "true");
+            System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
+            listener.onOutput("tests/test_console.py::test_fail", "stdout", "hello stdout\n");
+            listener.onOutput("tests/test_console.py::test_fail", "stderr", "hello stderr\n");
+            listener.onOutput("tests/test_console.py::test_fail", "log", "traceback details\n");
+            listener.afterTest(
+                "tests/test_console.py::test_fail",
+                null,
+                TestExecutionResult.failed(new RuntimeException("boom"))
+            );
+        } finally {
+            System.setErr(originalErr);
+            restoreFailureOutputProperty(originalProperty);
+        }
+
+        String output = err.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("Pyronaut test failure: tests/test_console.py::test_fail"));
+        assertTrue(output.contains("Failure:\njava.lang.RuntimeException: boom"));
+        assertTrue(output.contains("Framework Log:\ntraceback details"));
+        assertTrue(output.contains("System Out:\nhello stdout"));
+        assertTrue(output.contains("System Err:\nhello stderr"));
+    }
+
+    @Test
+    void doesNotWriteSuccessfulTestDiagnosticsToStandardError() throws Exception {
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of()
+        );
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        try {
+            System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
+            listener.onOutput("tests/test_console.py::test_ok", "stdout", "hello stdout\n");
+            listener.afterTest(
+                "tests/test_console.py::test_ok",
+                null,
+                TestExecutionResult.successful()
+            );
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        assertTrue(err.toString(StandardCharsets.UTF_8).isBlank());
+    }
+
+    @Test
+    void doesNotWriteFailedTestDiagnosticsWhenPropertyIsDisabled() throws Exception {
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of()
+        );
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        String originalProperty = System.getProperty(FAILURE_OUTPUT_PROPERTY);
+        try {
+            System.clearProperty(FAILURE_OUTPUT_PROPERTY);
+            System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
+            listener.onOutput("tests/test_console.py::test_fail", "log", "traceback details\n");
+            listener.afterTest(
+                "tests/test_console.py::test_fail",
+                null,
+                TestExecutionResult.failed(new RuntimeException("boom"))
+            );
+        } finally {
+            System.setErr(originalErr);
+            restoreFailureOutputProperty(originalProperty);
+        }
+
+        assertTrue(err.toString(StandardCharsets.UTF_8).isBlank());
+    }
+
+    private static void restoreFailureOutputProperty(String value) {
+        if (value == null) {
+            System.clearProperty(FAILURE_OUTPUT_PROPERTY);
+        } else {
+            System.setProperty(FAILURE_OUTPUT_PROPERTY, value);
+        }
     }
 }

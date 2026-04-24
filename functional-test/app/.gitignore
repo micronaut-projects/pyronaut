@@ -1,0 +1,13 @@
+.venv/
+__pyronaut__/
+.micronaut/
+.pytest_cache/
+logs/
+dist/
+build/
+*.egg-info/
+launcher/
+*.whl
+junit.xml
+index.html
+.pyronaut-last-nodeid.txt

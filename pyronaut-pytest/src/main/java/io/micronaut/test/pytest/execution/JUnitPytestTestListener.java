@@ -47,6 +47,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class JUnitPytestTestListener implements PytestTestListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(JUnitPytestTestListener.class);
+    private static final String FAILURE_OUTPUT_PROPERTY = "pyronaut.test.render-failure-output";
     private static final String MICRONAUT_LOGO_URL =
         "https://micronaut.io/wp-content/uploads/2020/11/MIcronautLogo_Horizontal.svg";
     private static final String MICRONAUT_LOGO_MARKUP = """
@@ -167,6 +168,9 @@ public class JUnitPytestTestListener implements PytestTestListener {
         var payload = new LinkedHashMap<String, String>();
         result.getThrowable().ifPresent(throwable -> payload.put("failure", throwable.toString()));
         writeEvent("test_finished", testId, result.getStatus().name(), payload);
+        if (result.getStatus() == TestExecutionResult.Status.FAILED && renderFailureOutputEnabled()) {
+            emitFailureDiagnostics(testId, result);
+        }
         allDescriptors
             .stream()
             .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
@@ -240,6 +244,32 @@ public class JUnitPytestTestListener implements PytestTestListener {
         } catch (Exception e) {
             LOG.debug("Unable to write last nodeid report: {}", lastNodeIdPath, e);
         }
+    }
+
+    private void emitFailureDiagnostics(String testId, TestExecutionResult result) {
+        String rendered = renderFailureDiagnostics(testId, result);
+        if (!rendered.isBlank()) {
+            System.err.print(rendered);
+            if (!rendered.endsWith("\n")) {
+                System.err.println();
+            }
+        }
+    }
+
+    private static boolean renderFailureOutputEnabled() {
+        return Boolean.getBoolean(FAILURE_OUTPUT_PROPERTY);
+    }
+
+    private String renderFailureDiagnostics(String testId, TestExecutionResult result) {
+        TestStreamOutput details = outputByTest.getOrDefault(testId, new TestStreamOutput());
+        String failure = result.getThrowable().map(Throwable::toString).orElse("");
+        StringBuilder message = new StringBuilder(256);
+        message.append("\n=== Pyronaut test failure: ").append(testId).append(" ===\n");
+        appendConsoleSection(message, "Failure", failure);
+        appendConsoleSection(message, "Framework Log", details.log());
+        appendConsoleSection(message, "System Out", details.stdout());
+        appendConsoleSection(message, "System Err", details.stderr());
+        return message.toString();
     }
 
     private void initializeNodeIdReport() {
@@ -449,6 +479,18 @@ public class JUnitPytestTestListener implements PytestTestListener {
             .append(escapeHtml(content))
             .append("</code></pre>\n")
             .append("</section>\n");
+    }
+
+    private static void appendConsoleSection(StringBuilder message, String title, String content) {
+        if (content == null || content.isBlank()) {
+            return;
+        }
+        message.append(title)
+            .append(":\n")
+            .append(content);
+        if (!content.endsWith("\n")) {
+            message.append('\n');
+        }
     }
 
     private void ensureNodeIdFileExists() {

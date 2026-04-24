@@ -29,6 +29,8 @@ include("pyronaut-bom")
 include("pyronaut-logging")
 include("pyronaut-logback")
 include("pyronaut-requests")
+include("functional-test")
+project(":functional-test").name = "functional-test"
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
