@@ -820,12 +820,18 @@ class PyronautInstallMainTest {
             "io.micronaut.platform",
             "micronaut-platform",
             "5.0.0",
-            List.of(new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0"))
+            List.of(
+                new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0"),
+                new ManagedDependency("org.junit.platform", "junit-platform-launcher", "1.12.2"),
+                new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2")
+            )
         );
 
         writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0");
         writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0");
         writeArtifact(repository, "io.micronaut.test", "micronaut-test-junit5", "5.0.0");
+        writeArtifact(repository, "org.junit.platform", "junit-platform-launcher", "1.12.2");
+        writeArtifact(repository, "org.junit.jupiter", "junit-jupiter-engine", "5.12.2");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
@@ -857,18 +863,98 @@ class PyronautInstallMainTest {
         List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
         List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
 
-        assertEquals(1, buildEntries.size());
-        assertTrue(buildEntries.getFirst().contains("micronaut-context-python"));
+        assertEquals(2, buildEntries.size());
+        assertTrue(buildEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python")));
+        assertTrue(buildEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python")));
 
-        assertEquals(2, runtimeEntries.size());
-        assertTrue(runtimeEntries.getFirst().contains("micronaut-inject-python"));
+        assertEquals(3, runtimeEntries.size());
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python")));
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
 
-        assertEquals(3, testEntries.size());
+        assertEquals(6, testEntries.size());
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("junit-platform-launcher")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("junit-jupiter-engine")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
+    }
+
+    @Test
+    void addsDefaultRuntimeBuildAndTestDependenciesWhenOmittedFromPyproject() throws Exception {
+        Path repository = tempDir.resolve("repo-default-dependencies");
+        writeBom(
+            repository,
+            "io.micronaut",
+            "micronaut-core-bom",
+            "5.0.0",
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.0.0"),
+                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.0.0"),
+                new ManagedDependency("io.micronaut.toml", "micronaut-toml", "5.0.0")
+            )
+        );
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "5.0.0",
+            List.of(
+                new ManagedDependency("org.junit.platform", "junit-platform-launcher", "1.12.2"),
+                new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2")
+            )
+        );
+
+        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0");
+        writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0");
+        writeArtifact(repository, "io.micronaut.toml", "micronaut-toml", "5.0.0");
+        writeArtifact(repository, "org.junit.platform", "junit-platform-launcher", "1.12.2");
+        writeArtifact(repository, "org.junit.jupiter", "junit-jupiter-engine", "5.12.2");
+
+        Path project = tempDir.resolve("project-default-dependencies");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "default-dependencies-test"
+
+            [tool.pyronaut]
+            version = "5.0.0"
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = []
+            build = []
+            test = []
+
+            [tool.pyronaut.testResources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> buildEntries = Files.readAllLines(cacheDir.resolve("resolved-build-dependencies"), StandardCharsets.UTF_8);
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+
+        assertEquals(2, buildEntries.size());
+        assertTrue(buildEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python")));
+        assertTrue(buildEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python")));
+
+        assertEquals(2, runtimeEntries.size());
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-toml")));
+
+        assertEquals(4, testEntries.size());
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("junit-platform-launcher")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("junit-jupiter-engine")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-toml")));
     }
 
     @Test
@@ -880,7 +966,8 @@ class PyronautInstallMainTest {
             "micronaut-core-bom",
             "5.0.0-SNAPSHOT",
             List.of(
-                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT")
+                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT"),
+                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.0.0-SNAPSHOT")
             )
         );
         writeBom(
@@ -888,11 +975,18 @@ class PyronautInstallMainTest {
             "io.micronaut.platform",
             "micronaut-platform",
             "5.0.0-SNAPSHOT",
-            List.of(new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0-SNAPSHOT"))
+            List.of(
+                new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0-SNAPSHOT"),
+                new ManagedDependency("org.junit.platform", "junit-platform-launcher", "1.12.2"),
+                new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2")
+            )
         );
 
         writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0-SNAPSHOT");
         writeArtifact(repository, "io.micronaut.test", "micronaut-test-junit5", "5.0.0-SNAPSHOT");
+        writeArtifact(repository, "org.junit.platform", "junit-platform-launcher", "1.12.2");
+        writeArtifact(repository, "org.junit.jupiter", "junit-jupiter-engine", "5.12.2");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
@@ -924,6 +1018,7 @@ class PyronautInstallMainTest {
         List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
 
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python") && entry.contains("5.0.0-SNAPSHOT")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.0.0-SNAPSHOT")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0-SNAPSHOT")));
     }
 

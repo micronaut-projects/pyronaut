@@ -29,7 +29,6 @@ suppressions = [
 
 [tool.pyronaut.dependencies]
 runtime = [ 
-    "io.micronaut:micronaut-context-python",
     "io.micronaut:micronaut-http-server-netty", 
     "io.micronaut:micronaut-json-core",
     "io.micronaut.serde:micronaut-serde-jackson",
@@ -44,16 +43,12 @@ runtime = [
 ]
 
 build = [
-    "io.micronaut:micronaut-inject-python",
-    "io.micronaut:micronaut-context-python",
     "io.micronaut.data:micronaut-data-processor",
     "io.micronaut.serde:micronaut-serde-processor",
     "io.micronaut.jsonschema:micronaut-json-schema-processor"
 ]
 
 test = [ 
-   "org.junit.platform:junit-platform-launcher", 
    "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
-   "io.micronaut.test:micronaut-test-junit5",
-   "org.junit.jupiter:junit-jupiter-engine"
+   "io.micronaut.test:micronaut-test-junit5"
  ]

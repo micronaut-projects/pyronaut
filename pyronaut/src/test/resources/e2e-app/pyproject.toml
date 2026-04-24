@@ -21,8 +21,6 @@ version = "2.9.0"
 
 [tool.pyronaut.dependencies]
 runtime = [
-  "io.micronaut:micronaut-inject-python",
-  "io.micronaut:micronaut-context-python",
   "io.micronaut:micronaut-http-server-netty",
   "io.micronaut:micronaut-json-core",
   "io.micronaut:micronaut-jackson-databind",
@@ -31,12 +29,8 @@ runtime = [
   "ch.qos.logback:logback-classic"
 ]
 build = [
-  "io.micronaut:micronaut-inject-python",
-  "io.micronaut:micronaut-context-python"
 ]
 test = [
-  "org.junit.platform:junit-platform-launcher",
   "io.micronaut:micronaut-pytest-engine:5.0.0-SNAPSHOT",
-  "io.micronaut.test:micronaut-test-junit5",
-  "org.junit.jupiter:junit-jupiter-engine"
+  "io.micronaut.test:micronaut-test-junit5"
 ]

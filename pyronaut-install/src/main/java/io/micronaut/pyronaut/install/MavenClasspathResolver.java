@@ -65,6 +65,10 @@ final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_CLIENT_MODULE = "io.micronaut.testresources:micronaut-test-resources-client";
     private static final String TEST_RESOURCES_SERVER_MODULE = "io.micronaut.testresources:micronaut-test-resources-server";
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
+    private static final String MICRONAUT_CONTEXT_PYTHON_MODULE = "io.micronaut:micronaut-context-python";
+    private static final String MICRONAUT_INJECT_PYTHON_MODULE = "io.micronaut:micronaut-inject-python";
+    private static final String JUNIT_PLATFORM_LAUNCHER_MODULE = "org.junit.platform:junit-platform-launcher";
+    private static final String JUNIT_JUPITER_ENGINE_MODULE = "org.junit.jupiter:junit-jupiter-engine";
     private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
     private static final String PYRONAUT_BOM_ARTIFACT = "micronaut-pyronaut-bom";
     private static final String MYSQL_CONNECTOR_J_MODULE = "mysql:mysql-connector-j";
@@ -190,17 +194,21 @@ final class MavenClasspathResolver {
         }
         PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
         if (scope == InstallScope.BUILD) {
-            return dependencies.build() == null ? List.of() : dependencies.build();
+            LinkedHashSet<String> build = new LinkedHashSet<>();
+            if (dependencies.build() != null) {
+                build.addAll(dependencies.build());
+            }
+            addDefaultCoordinate(build, MICRONAUT_INJECT_PYTHON_MODULE, managedVersions);
+            addDefaultCoordinate(build, MICRONAUT_CONTEXT_PYTHON_MODULE, managedVersions);
+            return List.copyOf(build);
         }
         if (scope == InstallScope.RUNTIME) {
             LinkedHashSet<String> runtime = new LinkedHashSet<>();
             if (dependencies.runtime() != null) {
                 runtime.addAll(dependencies.runtime());
             }
-            String micronautToml = defaultRuntimeCoordinate(MICRONAUT_TOML_MODULE, managedVersions);
-            if (micronautToml != null) {
-                runtime.add(micronautToml);
-            }
+            addDefaultCoordinate(runtime, MICRONAUT_CONTEXT_PYTHON_MODULE, managedVersions);
+            addDefaultCoordinate(runtime, MICRONAUT_TOML_MODULE, managedVersions);
             String testResourcesClient = testResourcesClientCoordinate(model, managedVersions);
             if (testResourcesClient != null) {
                 runtime.add(testResourcesClient);
@@ -215,6 +223,8 @@ final class MavenClasspathResolver {
         if (dependencies.test() != null) {
             merged.addAll(dependencies.test());
         }
+        addDefaultCoordinate(merged, JUNIT_PLATFORM_LAUNCHER_MODULE, managedVersions);
+        addDefaultCoordinate(merged, JUNIT_JUPITER_ENGINE_MODULE, managedVersions);
         return List.copyOf(merged);
     }
 
@@ -454,7 +464,14 @@ final class MavenClasspathResolver {
         return normalizedVersion(VersionInfo.getVersion());
     }
 
-    private static String defaultRuntimeCoordinate(String module, Map<String, String> managedVersions) {
+    private static void addDefaultCoordinate(Set<String> coordinates, String module, Map<String, String> managedVersions) {
+        String coordinate = defaultManagedCoordinate(module, managedVersions);
+        if (coordinate != null) {
+            coordinates.add(coordinate);
+        }
+    }
+
+    private static String defaultManagedCoordinate(String module, Map<String, String> managedVersions) {
         String version = normalizedVersion(managedVersions.get(module));
         return version == null ? null : module + ":" + version;
     }

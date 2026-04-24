@@ -60,6 +60,9 @@ Generated manifests:
 Managed runtime defaults:
 
 - When dependency versions are managed from the Micronaut platform, `pyronaut install` adds `io.micronaut.toml:micronaut-toml` to the runtime classpath by default, so `config/application.toml` works without an explicit dependency declaration.
+- `pyronaut install` also adds `io.micronaut:micronaut-context-python` to `runtime` by default.
+- `pyronaut install` also adds `io.micronaut:micronaut-inject-python` and `io.micronaut:micronaut-context-python` to `build` by default.
+- `pyronaut install` also adds `org.junit.platform:junit-platform-launcher` and `org.junit.jupiter:junit-jupiter-engine` to `test` by default.
 
 Editor support:
 

@@ -535,7 +535,7 @@ class E2EFlowTest(unittest.TestCase):
         pyproject = project_dir / "pyproject.toml"
         content = pyproject.read_text(encoding="utf-8")
         runtime_marker = '  "ch.qos.logback:logback-classic"\n]'
-        test_marker = '  "org.junit.jupiter:junit-jupiter-engine"\n]'
+        test_marker = '  "io.micronaut.test:micronaut-test-junit5"\n]'
         if runtime_marker not in content or test_marker not in content:
             raise AssertionError("Unexpected e2e pyproject fixture format")
 
@@ -548,7 +548,7 @@ class E2EFlowTest(unittest.TestCase):
         )
         content = content.replace(
             test_marker,
-            '  "org.junit.jupiter:junit-jupiter-engine",\n'
+            '  "io.micronaut.test:micronaut-test-junit5",\n'
             '  "io.micronaut.testresources:micronaut-test-resources-jdbc-mysql"\n'
             ']',
         )
