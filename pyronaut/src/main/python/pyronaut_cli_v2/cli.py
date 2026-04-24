@@ -204,6 +204,19 @@ def run(
             sys.stderr.write("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)\n")
 
         if auto_restart_mode:
+            if no_validate:
+                sys.stderr.write("[validation] skipped (--no-validate)\n")
+            else:
+                validation_code = _run_lifecycle_validation(
+                    project_dir=project_dir,
+                    scenario=command,
+                    runner=execute,
+                    resolver=locate,
+                    no_cache=no_cache,
+                    env_overrides=test_resources_env_overrides,
+                )
+                if validation_code != SUCCESS:
+                    return validation_code
             preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
             if preflight_code != SUCCESS:
                 return preflight_code

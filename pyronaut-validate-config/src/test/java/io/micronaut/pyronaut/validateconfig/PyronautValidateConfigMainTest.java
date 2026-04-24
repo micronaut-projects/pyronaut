@@ -194,6 +194,53 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void validateConfigIncludesConfigDirectoryInDefaultResourceDirs() throws Exception {
+        Path project = prepareProject();
+        Files.createDirectories(project.resolve("config"));
+        Files.writeString(project.resolve("config/application.toml"), "[micronaut.server]\nport = \"junk\"\n");
+
+        AtomicReference<List<Path>> runResources = new AtomicReference<>(List.of());
+        PyronautValidateConfigMain runCommand = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                runResources.set(settings.resourcesDirs());
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        AtomicReference<List<Path>> testResources = new AtomicReference<>(List.of());
+        PyronautValidateConfigMain testCommand = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                testResources.set(settings.resourcesDirs());
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        int runExit = new CommandLine(runCommand).execute("--project-dir", project.toString(), "--scenario", "run", "--no-cache");
+        int testExit = new CommandLine(testCommand).execute("--project-dir", project.toString(), "--scenario", "test", "--no-cache");
+
+        assertEquals(0, runExit);
+        assertEquals(0, testExit);
+        assertEquals(
+            List.of(project.resolve("config"), project.resolve("src/main/resources")),
+            runResources.get()
+        );
+        assertEquals(
+            List.of(project.resolve("config"), project.resolve("src/main/resources"), project.resolve("src/test/resources")),
+            testResources.get()
+        );
+    }
+
+    @Test
     void executorPrintsCopyPasteablePyprojectSuppressionsForConfigurationErrors() throws Exception {
         var err = new ByteArrayOutputStream();
         PrintStream originalErr = System.err;

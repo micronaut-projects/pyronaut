@@ -33,6 +33,9 @@ import java.util.Map;
  * Reader that validates and maps {@code pyproject.toml} into {@link PyprojectModel}.
  */
 public final class PyprojectModelReader {
+    private static final List<String> DEFAULT_MAIN_VALIDATION_RESOURCE_DIRS = List.of("config", "src/main/resources");
+    private static final List<String> DEFAULT_TEST_VALIDATION_RESOURCE_DIRS = List.of("config", "src/main/resources", "src/test/resources");
+
     public static final String FILE_NAME = "pyproject.toml";
 
     public PyprojectModel readProjectDirectory(Path projectDirectory) {
@@ -188,7 +191,7 @@ public final class PyprojectModelReader {
             PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_RESOURCES_DIRS,
             PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_OUTPUT_DIR,
             List.of("dev"),
-            List.of("src/main/resources")
+            DEFAULT_MAIN_VALIDATION_RESOURCE_DIRS
         );
         PyprojectModel.ValidationScenario test = resolveValidationScenario(
             parsed,
@@ -201,7 +204,7 @@ public final class PyprojectModelReader {
             PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_RESOURCES_DIRS,
             PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_OUTPUT_DIR,
             List.of("test"),
-            List.of("src/main/resources", "src/test/resources")
+            DEFAULT_TEST_VALIDATION_RESOURCE_DIRS
         );
         PyprojectModel.ValidationScenario production = resolveValidationScenario(
             parsed,
@@ -214,7 +217,7 @@ public final class PyprojectModelReader {
             PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_RESOURCES_DIRS,
             PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_OUTPUT_DIR,
             List.of(),
-            List.of("src/main/resources")
+            DEFAULT_MAIN_VALIDATION_RESOURCE_DIRS
         );
 
         return new PyprojectModel.Validation(
