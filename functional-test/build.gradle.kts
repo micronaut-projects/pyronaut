@@ -263,29 +263,43 @@ fun buildPyronautTestCommand(): List<String> {
 val publishFixtureArtifactsToMavenLocal by tasks.registering {
     group = "build setup"
     description = "Stages local Pyronaut fixture modules into the functional-test file repository."
+    val bomProject = project(":micronaut-pyronaut-bom")
     val logbackProject = project(":micronaut-pyronaut-logback")
     val pytestProject = project(":micronaut-pyronaut-pytest")
     dependsOn(
+        bomProject.tasks.named("generatePomFileForMavenPublication"),
         logbackProject.tasks.named("jar"),
         logbackProject.tasks.named("generatePomFileForMavenPublication"),
         pytestProject.tasks.named("jar"),
         pytestProject.tasks.named("generatePomFileForMavenPublication"),
     )
+    val bomVersion = bomProject.version.toString()
     val logbackVersion = logbackProject.version.toString()
     val pytestVersion = pytestProject.version.toString()
     inputs.files(
+        bomProject.layout.buildDirectory.file("publications/maven/pom-default.xml"),
         logbackProject.layout.buildDirectory.file("libs/${logbackProject.name}-${logbackVersion}.jar"),
         logbackProject.layout.buildDirectory.file("publications/maven/pom-default.xml"),
         pytestProject.layout.buildDirectory.file("libs/${pytestProject.name}-${pytestVersion}.jar"),
         pytestProject.layout.buildDirectory.file("publications/maven/pom-default.xml"),
     )
     outputs.files(
+        fixtureStagedRepoDir.file("io/micronaut/pyronaut/${bomProject.name}/${bomVersion}/${bomProject.name}-${bomVersion}.pom"),
         fixtureStagedRepoDir.file("io/micronaut/pyronaut/${logbackProject.name}/${logbackVersion}/${logbackProject.name}-${logbackVersion}.jar"),
         fixtureStagedRepoDir.file("io/micronaut/pyronaut/${logbackProject.name}/${logbackVersion}/${logbackProject.name}-${logbackVersion}.pom"),
         fixtureStagedRepoDir.file("io/micronaut/pyronaut/${pytestProject.name}/${pytestVersion}/${pytestProject.name}-${pytestVersion}.jar"),
         fixtureStagedRepoDir.file("io/micronaut/pyronaut/${pytestProject.name}/${pytestVersion}/${pytestProject.name}-${pytestVersion}.pom"),
     )
     doLast {
+        val bomArtifactDir = fixtureStagedRepoDir.asFile
+            .resolve("io/micronaut/pyronaut")
+            .resolve(bomProject.name)
+            .resolve(bomVersion)
+        bomArtifactDir.mkdirs()
+        bomProject.layout.buildDirectory.file("publications/maven/pom-default.xml").get().asFile.copyTo(
+            bomArtifactDir.resolve("${bomProject.name}-${bomVersion}.pom"),
+            overwrite = true
+        )
         val stagedArtifacts = listOf(
             project.fixturePublishedArtifact(":micronaut-pyronaut-logback"),
             project.fixturePublishedArtifact(":micronaut-pyronaut-pytest"),

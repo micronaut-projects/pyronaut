@@ -115,6 +115,58 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void resolvesVersionlessPyronautModulesFromPyronautBom() throws Exception {
+        Path repository = tempDir.resolve("repo-pyronaut-bom");
+        writeArtifact(repository, "io.micronaut.pyronaut", "micronaut-pyronaut-logback", "0.0.99");
+        writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
+        writeBom(repository, "io.micronaut.platform", "micronaut-platform", "1.0.0", List.of());
+        writeBom(
+            repository,
+            "io.micronaut.pyronaut",
+            "micronaut-pyronaut-bom",
+            "9.9.9",
+            List.of(new ManagedDependency("io.micronaut.pyronaut", "micronaut-pyronaut-logback", "0.0.99"))
+        );
+
+        Path project = tempDir.resolve("project-pyronaut-bom");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            version = "1.0.0"
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.micronaut.pyronaut:micronaut-pyronaut-logback"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        MavenClasspathResolver resolver = new MavenClasspathResolver(
+            new ProxyConfigurationLoader(),
+            System::getenv,
+            () -> "9.9.9"
+        );
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), resolver);
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        List<String> runtimeEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertEquals(1, runtimeEntries.size());
+        assertTrue(runtimeEntries.getFirst().contains("micronaut-pyronaut-logback"));
+    }
+
+    @Test
     void injectsTestResourcesClientOnlyForRunAndTestWhenConfiguredAndEnabled() throws Exception {
         Path repository = tempDir.resolve("repo-test-resources-enabled");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");

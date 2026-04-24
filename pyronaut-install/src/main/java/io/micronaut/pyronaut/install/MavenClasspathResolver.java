@@ -56,6 +56,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Resolves classpaths using Apache Maven Resolver.
@@ -64,6 +65,8 @@ final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_CLIENT_MODULE = "io.micronaut.testresources:micronaut-test-resources-client";
     private static final String TEST_RESOURCES_SERVER_MODULE = "io.micronaut.testresources:micronaut-test-resources-server";
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
+    private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
+    private static final String PYRONAUT_BOM_ARTIFACT = "micronaut-pyronaut-bom";
     private static final String MYSQL_CONNECTOR_J_MODULE = "mysql:mysql-connector-j";
     private static final String MYSQL_CONNECTOR_J_MODULE_MODERN = "com.mysql:mysql-connector-j";
     private static final Set<String> EXTRA_FORBIDDEN_SERVER_MODULES = Set.of(
@@ -74,30 +77,45 @@ final class MavenClasspathResolver {
     private final RepositorySystem repositorySystem;
     private final ProxyConfigurationLoader proxyConfigurationLoader;
     private final Function<String, String> envReader;
+    private final Supplier<String> pyronautVersionProvider;
 
     MavenClasspathResolver() {
-        this(newRepositorySystem(), new ProxyConfigurationLoader(), System::getenv);
+        this(newRepositorySystem(), new ProxyConfigurationLoader(), System::getenv, MavenClasspathResolver::resolvePyronautVersion);
     }
 
     MavenClasspathResolver(ProxyConfigurationLoader proxyConfigurationLoader) {
-        this(newRepositorySystem(), proxyConfigurationLoader, System::getenv);
+        this(newRepositorySystem(), proxyConfigurationLoader, System::getenv, MavenClasspathResolver::resolvePyronautVersion);
     }
 
     MavenClasspathResolver(ProxyConfigurationLoader proxyConfigurationLoader,
                           Function<String, String> envReader) {
-        this(newRepositorySystem(), proxyConfigurationLoader, envReader);
+        this(newRepositorySystem(), proxyConfigurationLoader, envReader, MavenClasspathResolver::resolvePyronautVersion);
+    }
+
+    MavenClasspathResolver(ProxyConfigurationLoader proxyConfigurationLoader,
+                           Function<String, String> envReader,
+                           Supplier<String> pyronautVersionProvider) {
+        this(newRepositorySystem(), proxyConfigurationLoader, envReader, pyronautVersionProvider);
     }
 
     MavenClasspathResolver(RepositorySystem repositorySystem, ProxyConfigurationLoader proxyConfigurationLoader) {
-        this(repositorySystem, proxyConfigurationLoader, System::getenv);
+        this(repositorySystem, proxyConfigurationLoader, System::getenv, MavenClasspathResolver::resolvePyronautVersion);
     }
 
     MavenClasspathResolver(RepositorySystem repositorySystem,
                            ProxyConfigurationLoader proxyConfigurationLoader,
                            Function<String, String> envReader) {
+        this(repositorySystem, proxyConfigurationLoader, envReader, MavenClasspathResolver::resolvePyronautVersion);
+    }
+
+    MavenClasspathResolver(RepositorySystem repositorySystem,
+                           ProxyConfigurationLoader proxyConfigurationLoader,
+                           Function<String, String> envReader,
+                           Supplier<String> pyronautVersionProvider) {
         this.repositorySystem = repositorySystem;
         this.proxyConfigurationLoader = proxyConfigurationLoader;
         this.envReader = envReader;
+        this.pyronautVersionProvider = pyronautVersionProvider;
     }
 
     List<Path> resolveScope(PyprojectModel model,
@@ -352,6 +370,44 @@ final class MavenClasspathResolver {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    private static String resolvePyronautVersion() {
+        Package pkg = MavenClasspathResolver.class.getPackage();
+        if (pkg == null) {
+            return null;
+        }
+        return pkg.getImplementationVersion();
+    }
+
+    private static boolean requiresPyronautManagedDependencies(PyprojectModel model) {
+        if (model.pyronaut() == null || model.pyronaut().dependencies() == null) {
+            return false;
+        }
+        PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
+        return containsVersionlessPyronautDependency(dependencies.runtime())
+            || containsVersionlessPyronautDependency(dependencies.build())
+            || containsVersionlessPyronautDependency(dependencies.test());
+    }
+
+    private static boolean containsVersionlessPyronautDependency(List<String> coordinates) {
+        if (coordinates == null || coordinates.isEmpty()) {
+            return false;
+        }
+        for (String coordinate : coordinates) {
+            if (coordinate == null) {
+                continue;
+            }
+            String trimmed = coordinate.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            String[] parts = trimmed.split(":");
+            if (parts.length == 2 && PYRONAUT_GROUP.equals(parts[0])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private String testResourcesClientCoordinate(PyprojectModel model,
                                                  Map<String, String> managedVersions) {
         if (isTestResourcesDisabledViaEnvironment()) {
@@ -438,6 +494,21 @@ final class MavenClasspathResolver {
             visitedBoms,
             managed
         );
+        if (requiresPyronautManagedDependencies(model)) {
+            String toolVersion = normalizedVersion(pyronautVersionProvider.get());
+            if (toolVersion == null) {
+                throw new PyprojectModelException(
+                    "Versionless Pyronaut dependencies require the running Pyronaut tool version, but it is unavailable"
+                );
+            }
+            addManagedDependenciesFromBom(
+                new DefaultArtifact(PYRONAUT_GROUP, PYRONAUT_BOM_ARTIFACT, "", "pom", toolVersion),
+                repositories,
+                session,
+                visitedBoms,
+                managed
+            );
+        }
         return List.copyOf(managed.values());
     }
 
