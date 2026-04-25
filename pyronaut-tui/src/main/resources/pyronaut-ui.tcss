@@ -33,6 +33,16 @@ Panel:focus {
     text-style: bold;
 }
 
+ListElement {
+    border-color: #3a3d40;
+    border-type: rounded;
+}
+
+ListElement:focus {
+    border-color: $focus-color;
+    background: #263238;
+}
+
 Text {
     width: fit;
 }

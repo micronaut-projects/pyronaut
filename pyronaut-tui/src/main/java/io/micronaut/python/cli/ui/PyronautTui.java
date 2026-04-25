@@ -126,7 +126,7 @@ public final class PyronautTui {
         }
 
         var config = TuiConfig.builder()
-                .mouseCapture(true)
+                .mouseCapture(false)
                 .build();
         var bindings = BindingSets.standard()
                 .toBuilder()

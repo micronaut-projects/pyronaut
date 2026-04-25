@@ -110,11 +110,20 @@ class OrchestratorTest(unittest.TestCase):
         return properties
 
     @staticmethod
-    def _write_manifests(project_dir: Path, *, runtime: bool = True, test: bool = True, build: bool = True) -> None:
+    def _write_manifests(
+        project_dir: Path,
+        *,
+        runtime: bool = True,
+        development_runtime: bool = False,
+        test: bool = True,
+        build: bool = True,
+    ) -> None:
         cache_dir = project_dir / "__pyronaut__"
         cache_dir.mkdir(parents=True, exist_ok=True)
         if runtime:
             (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+        if development_runtime:
+            (cache_dir / "resolved-development-runtime-dependencies").write_text("/tmp/runtime-dev.jar\n", encoding="utf-8")
         if test:
             (cache_dir / "resolved-test-dependencies").write_text("/tmp/test.jar\n", encoding="utf-8")
         if build:
@@ -746,6 +755,22 @@ logsDir = "var/custom-test-resources-logs"
             self.assertIn(str((lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").resolve()), entries)
             self.assertIn(str((lib_dir / "picocli-4.7.7.jar").resolve()), entries)
             self.assertIn(str((lib_dir / "slf4j-api-2.0.17.jar").resolve()), entries)
+
+    def test_run_delegate_classpath_prefers_development_runtime_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir, development_runtime=True)
+
+            classpath = cli._build_delegate_classpath(  # noqa: SLF001 - exercising internal helper directly
+                "run",
+                project_dir.resolve(),
+                lambda command_name: f"/tmp/{command_name}",
+            )
+
+            entries = classpath.split(os.pathsep)
+            self.assertIn("/tmp/runtime-dev.jar", entries)
+            self.assertNotIn("/tmp/runtime.jar", entries)
 
     def test_run_delegation_preserves_server_port_env_without_java_home_provider(self):
         executed = []

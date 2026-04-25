@@ -1,5 +1,5 @@
 import pytest
-# import requests
+import requests
 
 from pyronaut.test import *
 from helloworld.services import MessageService
@@ -17,10 +17,10 @@ def base_url(my_context):
     server = my_context[EmbeddedServer]
     return f"http://localhost:{server.getPort()}"
 
-# def test_hello_world(base_url):
-#     r = requests.get(f"{base_url}/hello/John")
-#     assert r.json()['message'] == "Hello John!!!!!!!!!!"
-#     assert r.status_code == 200
+def test_hello_world(base_url):
+    r = requests.get(f"{base_url}/hello/John")
+    assert r.json()['message'] == "Hello John!!!!!!"
+    assert r.status_code == 200
 
 @pytest.fixture
 def my_service(my_context) -> MessageService:

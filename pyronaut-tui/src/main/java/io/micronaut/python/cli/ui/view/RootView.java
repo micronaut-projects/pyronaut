@@ -30,6 +30,7 @@ import dev.tamboui.widgets.wavetext.WaveTextState;
 import io.micronaut.python.cli.ui.Mode;
 import io.micronaut.python.cli.ui.UiController;
 import io.micronaut.python.cli.ui.UiModel;
+import dev.tamboui.widgets.common.ScrollBarPolicy;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -39,8 +40,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static dev.tamboui.toolkit.Toolkit.*;
-import static dev.tamboui.toolkit.elements.ListElement.ScrollBarPolicy.AS_NEEDED;
-
 /**
  * Root dashboard view composed with Toolkit DSL, styled via TCSS classes.
  * 80x24-first layout:
@@ -60,25 +59,40 @@ public final class RootView extends Component<RootView> {
     private final WaveTextState stateWave = new WaveTextState();
     private final TestTreeView testTreeView = new TestTreeView(null);
     private final ListElement<?> testOutputList = list()
-            .scrollbar(AS_NEEDED)
+            .scrollbar(ScrollBarPolicy.AS_NEEDED)
             .displayOnly()
-            .stickyScroll();
+            .stickyScroll()
+            .rounded()
+            .focusable()
+            .id("test-output-list");
     private final ListElement<?> activityList = list()
-            .scrollbar(AS_NEEDED)
+            .scrollbar(ScrollBarPolicy.AS_NEEDED)
             .displayOnly()
-            .stickyScroll();
+            .stickyScroll()
+            .rounded()
+            .focusable()
+            .id("activity-list");
     private final ListElement<?> notificationsList = list()
-            .scrollbar(AS_NEEDED)
+            .scrollbar(ScrollBarPolicy.AS_NEEDED)
             .displayOnly()
-            .stickyScroll();
+            .stickyScroll()
+            .rounded()
+            .focusable()
+            .id("notifications-list");
     private final ListElement<?> testResourcesSummaryList = list()
-            .scrollbar(AS_NEEDED)
+            .scrollbar(ScrollBarPolicy.AS_NEEDED)
             .displayOnly()
-            .stickyScroll();
+            .stickyScroll()
+            .rounded()
+            .focusable()
+            .id("test-resources-summary-list");
     private final ListElement<?> testResourcesLogsList = list()
-            .scrollbar(AS_NEEDED)
+            .scrollbar(ScrollBarPolicy.AS_NEEDED)
             .displayOnly()
-            .stickyScroll();
+            .stickyScroll()
+            .rounded()
+            .focusable()
+            .id("test-resources-logs-list");
 
     private final TabsState tabsState = new TabsState(0);
     private Mode mode = Mode.RUN;
@@ -151,7 +165,7 @@ public final class RootView extends Component<RootView> {
         UiState state = computeState();
         StyledElement<?> appStatus;
         if (state == UiState.RUNNING) {
-            appStatus = row(stateWidget(state), spacer(4), url().addClass("fit"));
+            appStatus = row(stateWidget(state), spacer(4), linksRow().addClass("fit"));
         } else {
             appStatus = stateWidget(state);
         }
@@ -188,6 +202,7 @@ public final class RootView extends Component<RootView> {
         return panel(
                 row(
                         text("[Tab]").addClass("primary"), text(" Focus  ").addClass("dim"),
+                        text("[↑↓/PgUp/PgDn]").addClass("primary"), text(" Scroll  ").addClass("dim"),
                         text("[Ctrl+T]").addClass("primary"), text(" Test  ").addClass("dim"),
                         text("[Ctrl+R]").addClass("primary"), text(" Run  ").addClass("dim"),
                         text("| ").addClass("dim"), text("Mode: ").addClass("dim"), text(mode == Mode.TEST ? "Test" : "Run"),
@@ -199,12 +214,33 @@ public final class RootView extends Component<RootView> {
 
     // ============ Left column panels ============
 
-    private StyledElement<?> url() {
+    private StyledElement<?> linksRow() {
+        var links = new ArrayList<Element>();
+        links.add(applicationLink().addClass("fit"));
+        var managementHealth = managementHealthLink();
+        if (managementHealth != null) {
+            links.add(spacer(2));
+            links.add(managementHealth);
+        }
+        return row(links.toArray(Element[]::new));
+    }
+
+    private StyledElement<?> applicationLink() {
         var url = controller.getUrl();
         if (url != null) {
-            return text(url).style(Style.EMPTY.hyperlink(url)).addClass("chip").addClass("primary");
+            return markupText("[link=" + url + "]" + url + "[/]").addClass("chip").addClass("primary");
         }
         return text("(not running)").addClass("dim");
+    }
+
+    private StyledElement<?> managementHealthLink() {
+        var healthUrl = controller.getManagementHealthUrl();
+        var status = controller.getManagementHealthStatus();
+        if (healthUrl == null || status == null || status.isBlank()) {
+            return null;
+        }
+        var styleClass = "UP".equalsIgnoreCase(status) ? "success" : "warning";
+        return markupText("[link=" + healthUrl + "]Health: " + status + "[/]").addClass("chip").addClass(styleClass);
     }
 
     private void addFileUpdates(List<StyledElement<?>> items) {
@@ -232,7 +268,7 @@ public final class RootView extends Component<RootView> {
         if (eps.isEmpty()) {
             elems.add(text("No endpoints discovered").addClass("dim"));
             if (controller.isRunning()) {
-                elems.add(markupText("   Check if you have [code][link=https://docs.micronaut.io/latest/guide/#management]io.micronaut:micronaut-management[/][/] in your [code]pyproject.toml[/] file and that configuration enables endpoints.").addClass("dim").addClass("endpoint"));
+                elems.add(markupText("   Check that management endpoints are enabled in your application configuration. [code][link=https://docs.micronaut.io/latest/guide/#management]io.micronaut:micronaut-management[/][/] is included automatically for development runs.").addClass("dim").addClass("endpoint"));
             }
         } else {
             elems.add(text("Discovered Endpoints").addClass("info"));
@@ -308,8 +344,7 @@ public final class RootView extends Component<RootView> {
             notificationsList.elements(items.toArray(new StyledElement[0]));
         }
         return panel("Notifications", notificationsList)
-                .addClass("notifications")
-                .focusable();
+                .addClass("notifications");
     }
 
     private Panel testResourcesPanel() {
@@ -365,8 +400,7 @@ public final class RootView extends Component<RootView> {
                 .fill()
         )
             .id("test-resources")
-            .addClass("tests")
-            .focusable();
+            .addClass("tests");
     }
 
     // ============ Right column (Activity) ============
@@ -407,8 +441,7 @@ public final class RootView extends Component<RootView> {
         return panel("Activity", activityList)
                 .id("activity")
                 .addClass("activity")
-                .onMouseEvent(activityList::handleMouseEvent)
-                .focusable();
+                .onMouseEvent(activityList::handleMouseEvent);
     }
 
     private StyledElement<?> activityItem(ActivityItem item) {

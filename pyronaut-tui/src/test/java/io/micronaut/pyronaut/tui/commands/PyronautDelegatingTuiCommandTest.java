@@ -2,12 +2,14 @@ package io.micronaut.pyronaut.tui.commands;
 
 import io.micronaut.python.cli.ui.UiController;
 import io.micronaut.python.cli.ui.UiModel;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.util.List;
 import java.util.Properties;
@@ -279,6 +281,13 @@ class PyronautDelegatingTuiCommandTest {
             runtimeJar + System.lineSeparator(),
             StandardCharsets.UTF_8
         );
+        Path developmentRuntimeJar = project.resolve("deps/runtime-dev.jar").toAbsolutePath().normalize();
+        Files.writeString(developmentRuntimeJar, "", StandardCharsets.UTF_8);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-development-runtime-dependencies"),
+            developmentRuntimeJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
 
         Path toolRoot = tempDir.resolve("tool/pyronaut-run");
         Path executable = toolRoot.resolve("bin/pyronaut-run");
@@ -295,25 +304,110 @@ class PyronautDelegatingTuiCommandTest {
         setField(command, "testExecutable", executable);
 
         Object target = enumConstant(command, "ManagedCommandTarget", "RUN");
-        @SuppressWarnings("unchecked")
-        List<String> commandLine = (List<String>) invoke(
+        Object managedCommand = invoke(
             command,
             "buildManagedCommand",
             new Class<?>[]{Path.class, target.getClass()},
             project,
             target
         );
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(managedCommand, "command", new Class<?>[]{});
+        String managementServerUri = (String) invoke(managedCommand, "managementServerUri", new Class<?>[]{});
 
         assertTrue(commandLine.getFirst().endsWith("/bin/java") || "java".equals(commandLine.getFirst()));
         assertTrue(commandLine.contains("--sun-misc-unsafe-memory-access=allow"));
         assertTrue(commandLine.contains("--enable-native-access=ALL-UNNAMED"));
+        assertTrue(commandLine.contains("-Dendpoints.all.enabled=true"));
+        assertTrue(commandLine.contains("-Dendpoints.all.sensitive=false"));
+        assertTrue(commandLine.contains("-Dendpoints.loggers.write-sensitive=false"));
+        String managementPortArg = commandLine.stream()
+            .filter(arg -> arg.startsWith("-Dendpoints.all.port="))
+            .findFirst()
+            .orElseThrow();
+        assertTrue(managementServerUri.endsWith(managementPortArg.substring("-Dendpoints.all.port=".length())));
         assertTrue(commandLine.contains("io.micronaut.pyronaut.run.PyronautRunMain"));
         int cpIndex = commandLine.indexOf("-cp");
         assertTrue(cpIndex > 0);
         String classpath = commandLine.get(cpIndex + 1);
-        assertTrue(classpath.contains(runtimeJar.toString()));
+        assertTrue(classpath.contains(developmentRuntimeJar.toString()));
+        assertFalse(classpath.contains(runtimeJar.toString()));
         assertTrue(classpath.contains(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize().toString()));
         assertTrue(classpath.contains(toolJar.toString()));
+    }
+
+    @Test
+    void refreshApplicationEndpointsLoadsRoutesIntoController() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/routes", exchange -> {
+            byte[] body = """
+                [
+                  {"method":"GET","uri":"/hello/{name}"},
+                  {"method":"POST","uri":"/books"},
+                  {"method":"GET","uri":"/hello/{name}"}
+                ]
+                """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        server.start();
+        try {
+            UiController controller = new UiController();
+            PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+            setField(command, "controller", controller);
+
+            boolean refreshed = (boolean) invoke(
+                command,
+                "refreshApplicationEndpoints",
+                new Class<?>[]{String.class},
+                "http://127.0.0.1:" + server.getAddress().getPort()
+            );
+
+            assertTrue(refreshed);
+            assertEquals(List.of("GET  /hello/{name}", "POST /books"), controller.getEndpoints());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void refreshApplicationEndpointsLoadsRoutesFromMicronautObjectPayload() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/routes", exchange -> {
+            byte[] body = """
+                {
+                  "{[/hello/{name}],method=[GET],produces=[application/json]}":{"method":"java.util.Map helloworld.Controller.hello()"},
+                  "{[/health],method=[GET],produces=[application/json]}":{"method":"java.lang.Object io.micronaut.management.endpoint.health.HealthEndpoint.getHealth()"},
+                  "{[/books],method=[POST],produces=[application/json]}":{"method":"java.lang.Object helloworld.BookController.create()"}
+                }
+                """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        server.start();
+        try {
+            UiController controller = new UiController();
+            PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+            setField(command, "controller", controller);
+
+            boolean refreshed = (boolean) invoke(
+                command,
+                "refreshApplicationEndpoints",
+                new Class<?>[]{String.class},
+                "http://127.0.0.1:" + server.getAddress().getPort()
+            );
+
+            assertTrue(refreshed);
+            assertEquals(List.of("GET  /hello/{name}", "POST /books"), controller.getEndpoints());
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test

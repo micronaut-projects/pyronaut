@@ -41,6 +41,7 @@ import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.net.URI;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -74,6 +75,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private static final String EVENTS_REPORT = "events.ndjson";
     private static final String TUI_LOG = "pyronaut-tui.log";
     private static final String RUNTIME_DEPENDENCIES = "__pyronaut__/resolved-runtime-dependencies";
+    private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES = "__pyronaut__/resolved-development-runtime-dependencies";
     private static final String BUILD_DEPENDENCIES = "__pyronaut__/resolved-build-dependencies";
     private static final String TEST_DEPENDENCIES = "__pyronaut__/resolved-test-dependencies";
     private static final String CLASSES_DIR = "__pyronaut__/classes";
@@ -86,6 +88,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         "--sun-misc-unsafe-memory-access=allow",
         "--enable-native-access=ALL-UNNAMED"
     );
+    private static final List<String> DEV_MANAGEMENT_JVM_FLAGS = List.of(
+        "-Dendpoints.all.enabled=true",
+        "-Dendpoints.all.sensitive=false",
+        "-Dendpoints.loggers.write-sensitive=false"
+    );
+    private static final String MANAGEMENT_METHOD_PREFIX = "io.micronaut.management.endpoint.";
     private static final long WATCH_DEBOUNCE_MILLIS = 250;
     private static final long TEST_RESOURCES_POLL_MILLIS = 2000;
     private static final long TEST_RESOURCES_MAX_BACKOFF_MILLIS = 8000;
@@ -249,11 +257,11 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         try {
             var runCommand = buildManagedCommand(project, ManagedCommandTarget.RUN);
             if (traceDelegation) {
-                controller.addActivityOutput("[tui-delegate] " + String.join(" ", runCommand));
+                controller.addActivityOutput("[tui-delegate] " + String.join(" ", runCommand.command));
             }
             long generation = executionGeneration.incrementAndGet();
-            var process = startProcess(project, runCommand);
-            activeProcess.set(new ManagedProcess(generation, process));
+            var process = startProcess(project, runCommand.command);
+            activeProcess.set(new ManagedProcess(generation, process, runCommand.managementServerUri));
             controller.setRunning();
             controller.notify(restart ? "Run command restarted" : "Run command started", UiModel.Severity.SUCCESS);
             attachOutputReaders(process, true);
@@ -293,7 +301,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         try {
             testCode = runForegroundWithIncrementalEvents(
                 project,
-                buildManagedCommand(project, ManagedCommandTarget.TEST),
+                buildManagedCommand(project, ManagedCommandTarget.TEST).command,
                 reports.resolve(EVENTS_REPORT)
             );
         } catch (IOException | IllegalStateException e) {
@@ -320,7 +328,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         try {
             long generation = executionGeneration.incrementAndGet();
             var process = startProcess(project, command);
-            activeProcess.set(new ManagedProcess(generation, process));
+            activeProcess.set(new ManagedProcess(generation, process, null));
             var reader = Thread.ofVirtual().unstarted(() -> consumeOutput(process, parseServerUri));
             reader.start();
             var code = waitFor(process);
@@ -344,7 +352,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         try {
             long generation = executionGeneration.incrementAndGet();
             var process = startProcess(project, command);
-            activeProcess.set(new ManagedProcess(generation, process));
+            activeProcess.set(new ManagedProcess(generation, process, null));
             var reader = Thread.ofVirtual().unstarted(() -> consumeOutput(process, false));
             reader.start();
             stream.start();
@@ -375,24 +383,38 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         return builder.start();
     }
 
-    private List<String> buildManagedCommand(Path project, ManagedCommandTarget target) throws IOException {
+    private ManagedCommand buildManagedCommand(Path project, ManagedCommandTarget target) throws IOException {
         Optional<TestResourcesConnection> connection = resolveTestResourcesConnection(project);
         return switch (target) {
-            case RUN -> buildJavaDelegateCommand(
-                project,
-                runExecutable,
-                RUN_MAIN_CLASS,
-                readRuntimeClasspathEntries(project, runExecutable),
-                List.of("--project-dir", project.toString()),
-                connection
-            );
-            case TEST -> buildJavaDelegateCommand(
-                project,
-                testExecutable,
-                TEST_MAIN_CLASS,
-                readTestClasspathEntries(project, testExecutable),
-                List.of("--project-dir", project.toString()),
-                connection
+            case RUN -> {
+                int managementPort = findAvailablePort();
+                String managementServerUri = "http://127.0.0.1:" + managementPort;
+                var jvmArgs = new ArrayList<>(DEV_MANAGEMENT_JVM_FLAGS);
+                jvmArgs.add("-Dendpoints.all.port=" + managementPort);
+                yield new ManagedCommand(
+                    buildJavaDelegateCommand(
+                        project,
+                        runExecutable,
+                        RUN_MAIN_CLASS,
+                        readRuntimeClasspathEntries(project, runExecutable),
+                        List.of("--project-dir", project.toString()),
+                        jvmArgs,
+                        connection
+                    ),
+                    managementServerUri
+                );
+            }
+            case TEST -> new ManagedCommand(
+                buildJavaDelegateCommand(
+                    project,
+                    testExecutable,
+                    TEST_MAIN_CLASS,
+                    readTestClasspathEntries(project, testExecutable),
+                    List.of("--project-dir", project.toString()),
+                    List.of(),
+                    connection
+                ),
+                null
             );
         };
     }
@@ -402,10 +424,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                                                          String mainClass,
                                                          List<String> classpathEntries,
                                                          List<String> arguments,
+                                                         List<String> extraJvmArgs,
                                                          Optional<TestResourcesConnection> connection) {
         List<String> command = new ArrayList<>();
         command.add(resolveJavaExecutable());
         command.addAll(DELEGATE_JVM_FLAGS);
+        command.addAll(extraJvmArgs);
         connection.ifPresent(value -> value.appendJvmArgs(command));
         command.add("-cp");
         command.add(String.join(File.pathSeparator, classpathEntries));
@@ -414,9 +438,15 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         return command;
     }
 
+    private static int findAvailablePort() throws IOException {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            return socket.getLocalPort();
+        }
+    }
+
     private static List<String> readRuntimeClasspathEntries(Path project, Path executable) throws IOException {
         LinkedHashSet<String> entries = new LinkedHashSet<>();
-        entries.addAll(readManifestEntries(project.resolve(RUNTIME_DEPENDENCIES), "runtime"));
+        entries.addAll(readManifestEntries(resolveRunRuntimeManifest(project), "runtime"));
         Path classesDir = project.resolve(CLASSES_DIR).toAbsolutePath().normalize();
         if (!Files.isDirectory(classesDir)) {
             throw new IllegalStateException("Missing processed classes directory: " + classesDir + ". Run pyronaut process first.");
@@ -462,6 +492,14 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             }
         }
         return entries;
+    }
+
+    private static Path resolveRunRuntimeManifest(Path project) {
+        Path developmentManifest = project.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES);
+        if (Files.exists(developmentManifest)) {
+            return developmentManifest;
+        }
+        return project.resolve(RUNTIME_DEPENDENCIES);
     }
 
     private static void addExecutableLibEntries(Path executable, LinkedHashSet<String> entries) throws IOException {
@@ -594,13 +632,70 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 if (parseServerUri) {
                     var matcher = SERVER_URI.matcher(line);
                     if (matcher.find()) {
-                        controller.setUrl(matcher.group(1));
+                        String serverUri = matcher.group(1);
+                        controller.setUrl(serverUri);
+                        refreshApplicationEndpointsAsync(resolveEndpointsServerUri(process, serverUri));
                     }
                 }
             }
         } catch (IOException e) {
             controller.notify("Failed reading command output: " + e.getMessage(), UiModel.Severity.WARNING);
         }
+    }
+
+    private String resolveEndpointsServerUri(Process process, String applicationServerUri) {
+        var managed = activeProcess.get();
+        if (managed != null && managed.process == process && managed.managementServerUri != null && !managed.managementServerUri.isBlank()) {
+            return managed.managementServerUri;
+        }
+        return applicationServerUri;
+    }
+
+    private void refreshApplicationEndpointsAsync(String serverUri) {
+        Thread.ofVirtual().start(() -> {
+            try {
+                refreshApplicationEndpoints(serverUri);
+            } catch (Exception e) {
+                appendLog("[endpoints] discovery failed: " + e.getMessage());
+            }
+        });
+    }
+
+    private boolean refreshApplicationEndpoints(String serverUri) throws IOException, InterruptedException {
+        controller.clearEndpoints();
+        controller.clearManagementHealth();
+        var routes = fetchApplicationEndpointRoutes(serverUri);
+        if (routes.statusCode() != 200) {
+            appendLog("[endpoints] routes endpoint returned status " + routes.statusCode());
+            return false;
+        }
+        List<String> endpoints = summarizeRoutePayload(routes.body());
+        controller.setEndpoints(endpoints);
+        refreshManagementHealth(serverUri);
+        return !endpoints.isEmpty();
+    }
+
+    private HttpResponse<String> fetchApplicationEndpointRoutes(String serverUri) throws IOException, InterruptedException {
+        var request = HttpRequest.newBuilder(URI.create(serverUri + "/routes"))
+            .timeout(Duration.ofSeconds(5))
+            .GET()
+            .build();
+        return insightsClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
+    private void refreshManagementHealth(String serverUri) throws IOException, InterruptedException {
+        String healthUri = serverUri + "/health";
+        var request = HttpRequest.newBuilder(URI.create(healthUri))
+            .timeout(Duration.ofSeconds(5))
+            .GET()
+            .build();
+        var response = insightsClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200) {
+            appendLog("[endpoints] health endpoint returned status " + response.statusCode());
+            return;
+        }
+        String status = firstNonBlank(jsonString(response.body(), "status"), "UNKNOWN");
+        controller.setManagementHealth(healthUri, status);
     }
 
     private void routeOutputLine(Process process, String line) {
@@ -928,6 +1023,20 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
     private static String summarizeObject(String key, String object) {
         return switch (key) {
+            case "routes" -> {
+                String method = firstNonBlank(jsonString(object, "method"), joinJsonStringArray(object, "methods"));
+                String uri = firstNonBlank(jsonString(object, "uri"), jsonString(object, "path"));
+                if (method == null && uri == null) {
+                    yield object;
+                }
+                if (method == null) {
+                    yield uri;
+                }
+                if (uri == null) {
+                    yield method;
+                }
+                yield method + " " + uri;
+            }
             case "containers" -> {
                 String name = firstNonBlank(jsonString(object, "name"), "<unknown>");
                 String status = firstNonBlank(jsonString(object, "status"), "unknown");
@@ -980,6 +1089,199 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             }
             default -> object;
         };
+    }
+
+    private static List<String> summarizeRoutePayload(String body) {
+        List<String> items = extractArrayItems(body, "routes");
+        if (items.isEmpty()) {
+            items = extractTopLevelArrayItems(body);
+        }
+        if (items.isEmpty()) {
+            items = summarizeTopLevelRouteObject(body);
+            if (!items.isEmpty()) {
+                return items;
+            }
+        }
+        if (items.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> routes = new LinkedHashSet<>();
+        for (String item : items) {
+            String trimmed = item.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            routes.add(summarizeObject("routes", trimmed));
+        }
+        return alignRouteRows(List.copyOf(routes));
+    }
+
+    private static List<String> summarizeTopLevelRouteObject(String body) {
+        List<RouteEntry> entries = extractTopLevelRouteEntries(body);
+        if (entries.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> routes = new LinkedHashSet<>();
+        for (RouteEntry entry : entries) {
+            if (isManagementRoute(entry.value)) {
+                continue;
+            }
+            String route = summarizeRouteKey(entry.key);
+            if (route != null && !route.isBlank()) {
+                routes.add(route);
+            }
+        }
+        return alignRouteRows(List.copyOf(routes));
+    }
+
+    private static String summarizeRouteKey(String key) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        String method = extractBracketedValue(key, "method=[");
+        String uri = null;
+        int uriStart = key.indexOf("{[");
+        if (uriStart >= 0) {
+            int uriEnd = key.indexOf("]", uriStart + 2);
+            if (uriEnd > uriStart + 2) {
+                uri = key.substring(uriStart + 1, uriEnd + 1);
+            }
+        }
+        if (uri != null && uri.startsWith("[") && uri.endsWith("]")) {
+            uri = uri.substring(1, uri.length() - 1);
+        }
+        if (method == null && uri == null) {
+            return null;
+        }
+        if (method == null) {
+            return uri;
+        }
+        if (uri == null) {
+            return method;
+        }
+        return method + " " + uri;
+    }
+
+    private static String extractBracketedValue(String body, String marker) {
+        int start = body.indexOf(marker);
+        if (start < 0) {
+            return null;
+        }
+        int valueStart = start + marker.length();
+        int valueEnd = body.indexOf(']', valueStart);
+        if (valueEnd < 0) {
+            return null;
+        }
+        return body.substring(valueStart, valueEnd);
+    }
+
+    private static boolean isManagementRoute(String routeValue) {
+        String method = jsonString(routeValue, "method");
+        return method != null && method.contains(MANAGEMENT_METHOD_PREFIX);
+    }
+
+    private static List<RouteEntry> extractTopLevelRouteEntries(String body) {
+        String trimmed = body == null ? "" : body.trim();
+        if (!trimmed.startsWith("{")) {
+            return List.of();
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaping = false;
+        boolean expectingKey = false;
+        int keyStart = -1;
+        String pendingKey = null;
+        int valueStart = -1;
+        var entries = new ArrayList<RouteEntry>();
+        for (int i = 0; i < trimmed.length(); i++) {
+            char ch = trimmed.charAt(i);
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (ch == '\\') {
+                    escaping = true;
+                } else if (ch == '"') {
+                    inString = false;
+                    if (depth == 1 && expectingKey && keyStart >= 0) {
+                        pendingKey = unescapeJson(trimmed.substring(keyStart, i));
+                        keyStart = -1;
+                        expectingKey = false;
+                    }
+                }
+                continue;
+            }
+            if (ch == '"') {
+                inString = true;
+                if (depth == 1 && expectingKey) {
+                    keyStart = i + 1;
+                } else if (depth == 1 && pendingKey != null && valueStart < 0) {
+                    valueStart = i;
+                }
+                continue;
+            }
+            if (ch == '{' || ch == '[') {
+                if (depth == 1 && pendingKey != null && valueStart < 0) {
+                    valueStart = i;
+                }
+                depth++;
+                if (ch == '{' && depth == 1) {
+                    expectingKey = true;
+                }
+                continue;
+            }
+            if (ch == '}' || ch == ']') {
+                if (depth == 2 && pendingKey != null && valueStart >= 0) {
+                    entries.add(new RouteEntry(pendingKey, trimmed.substring(valueStart, i + 1)));
+                    pendingKey = null;
+                    valueStart = -1;
+                }
+                if (depth == 1 && ch == '}') {
+                    break;
+                }
+                depth--;
+                continue;
+            }
+            if (depth == 1 && pendingKey != null && valueStart < 0 && !Character.isWhitespace(ch) && ch == 'n') {
+                int end = findTopLevelValueEnd(trimmed, i);
+                entries.add(new RouteEntry(pendingKey, trimmed.substring(i, end)));
+                pendingKey = null;
+                valueStart = -1;
+                i = end - 1;
+                continue;
+            }
+            if (depth == 1 && ch == ',') {
+                expectingKey = true;
+            }
+        }
+        return List.copyOf(entries);
+    }
+
+    private static int findTopLevelValueEnd(String body, int start) {
+        int index = start;
+        while (index < body.length() && body.charAt(index) != ',' && body.charAt(index) != '}') {
+            index++;
+        }
+        return index;
+    }
+
+    private static List<String> alignRouteRows(List<String> routes) {
+        int width = 0;
+        var parsed = new ArrayList<RouteDisplay>(routes.size());
+        for (String route : routes) {
+            var display = RouteDisplay.parse(route);
+            parsed.add(display);
+            if (display.path != null) {
+                width = Math.max(width, display.method.length());
+            }
+        }
+        if (width == 0) {
+            return routes;
+        }
+        var aligned = new ArrayList<String>(routes.size());
+        for (RouteDisplay display : parsed) {
+            aligned.add(display.render(width));
+        }
+        return List.copyOf(aligned);
     }
 
     private static List<String> extractArrayItems(String body, String key) {
@@ -1058,6 +1360,14 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         return List.copyOf(items);
     }
 
+    private static List<String> extractTopLevelArrayItems(String body) {
+        String trimmed = body == null ? "" : body.trim();
+        if (!trimmed.startsWith("[")) {
+            return List.of();
+        }
+        return extractArrayItems("{\"routes\":" + trimmed + "}", "routes");
+    }
+
     private static String unescapeJson(String value) {
         return value
             .replace("\\n", "\n")
@@ -1065,6 +1375,24 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             .replace("\\t", "\t")
             .replace("\\\"", "\"")
             .replace("\\\\", "\\");
+    }
+
+    private static String joinJsonStringArray(String body, String key) {
+        List<String> items = extractArrayItems(body, key);
+        if (items.isEmpty()) {
+            return null;
+        }
+        List<String> values = new ArrayList<>();
+        for (String item : items) {
+            String trimmed = item.trim();
+            if (trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() >= 2) {
+                values.add(unescapeJson(trimmed.substring(1, trimmed.length() - 1)));
+            }
+        }
+        if (values.isEmpty()) {
+            return null;
+        }
+        return String.join(",", values);
     }
 
     private static String firstStackTraceLine(String stackTrace) {
@@ -1872,10 +2200,48 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private static final class ManagedProcess {
         private final long generation;
         private final Process process;
+        private final String managementServerUri;
 
-        private ManagedProcess(long generation, Process process) {
+        private ManagedProcess(long generation, Process process, String managementServerUri) {
             this.generation = generation;
             this.process = process;
+            this.managementServerUri = managementServerUri;
+        }
+    }
+
+    private record ManagedCommand(List<String> command, String managementServerUri) {
+    }
+
+    private record RouteEntry(String key, String value) {
+    }
+
+    private static final class RouteDisplay {
+        private final String original;
+        private final String method;
+        private final String path;
+
+        private RouteDisplay(String original, String method, String path) {
+            this.original = original;
+            this.method = method;
+            this.path = path;
+        }
+
+        private static RouteDisplay parse(String route) {
+            if (route == null) {
+                return new RouteDisplay("", "", null);
+            }
+            int firstSpace = route.indexOf(' ');
+            if (firstSpace > 0 && firstSpace + 1 < route.length() && route.charAt(firstSpace + 1) == '/') {
+                return new RouteDisplay(route, route.substring(0, firstSpace), route.substring(firstSpace + 1));
+            }
+            return new RouteDisplay(route, route, null);
+        }
+
+        private String render(int methodWidth) {
+            if (path == null) {
+                return original;
+            }
+            return String.format("%-" + methodWidth + "s %s", method, path);
         }
     }
 

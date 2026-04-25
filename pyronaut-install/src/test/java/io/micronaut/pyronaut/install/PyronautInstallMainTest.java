@@ -45,10 +45,12 @@ class PyronautInstallMainTest {
         Path cacheDir = project.resolve("__pyronaut__");
         Path buildManifest = cacheDir.resolve("resolved-build-dependencies");
         Path runtimeManifest = cacheDir.resolve("resolved-runtime-dependencies");
+        Path developmentRuntimeManifest = cacheDir.resolve("resolved-development-runtime-dependencies");
         Path testManifest = cacheDir.resolve("resolved-test-dependencies");
         Path testResourcesServerManifest = cacheDir.resolve("resolved-test-resources-server-dependencies");
         assertTrue(Files.exists(buildManifest));
         assertTrue(Files.exists(runtimeManifest));
+        assertTrue(Files.exists(developmentRuntimeManifest));
         assertTrue(Files.exists(testManifest));
         assertTrue(Files.exists(testResourcesServerManifest));
 
@@ -62,6 +64,54 @@ class PyronautInstallMainTest {
         assertTrue(runtimeEntries.getFirst().contains("runtime-dep"));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
+    }
+
+    @Test
+    void injectsMicronautManagementOnlyIntoDevelopmentRuntimeManifest() throws Exception {
+        Path repository = tempDir.resolve("repo-management-default");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "io.micronaut", "micronaut-management", "1.2.3");
+        writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "1.0.0",
+            List.of(new ManagedDependency("io.micronaut", "micronaut-management", "1.2.3"))
+        );
+
+        Path project = tempDir.resolve("project-management-default");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            version = "1.0.0"
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> developmentEntries = Files.readAllLines(cacheDir.resolve("resolved-development-runtime-dependencies"), StandardCharsets.UTF_8);
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
+        assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-management")));
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-management")));
     }
 
     @Test

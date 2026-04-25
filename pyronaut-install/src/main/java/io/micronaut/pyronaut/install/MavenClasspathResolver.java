@@ -67,6 +67,7 @@ final class MavenClasspathResolver {
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
     private static final String MICRONAUT_CONTEXT_PYTHON_MODULE = "io.micronaut:micronaut-context-python";
     private static final String MICRONAUT_INJECT_PYTHON_MODULE = "io.micronaut:micronaut-inject-python";
+    private static final String MICRONAUT_MANAGEMENT_MODULE = "io.micronaut:micronaut-management";
     private static final String JUNIT_PLATFORM_LAUNCHER_MODULE = "org.junit.platform:junit-platform-launcher";
     private static final String JUNIT_JUPITER_ENGINE_MODULE = "org.junit.jupiter:junit-jupiter-engine";
     private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
@@ -213,6 +214,11 @@ final class MavenClasspathResolver {
             if (testResourcesClient != null) {
                 runtime.add(testResourcesClient);
             }
+            return List.copyOf(runtime);
+        }
+        if (scope == InstallScope.DEVELOPMENT_RUNTIME) {
+            LinkedHashSet<String> runtime = new LinkedHashSet<>(coordinatesForScope(model, InstallScope.RUNTIME, managedVersions));
+            addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
             return List.copyOf(runtime);
         }
         if (scope == InstallScope.TEST_RESOURCES_SERVER) {

@@ -43,6 +43,8 @@ public final class UiController {
 
     // Instance fields
     private String url = null;
+    private String managementHealthUrl = null;
+    private String managementHealthStatus = null;
     private List<String> endpoints = List.of();
     private UiModel.Notification lastNotification = null;
     private List<UiModel.FileUpdate> updatedFiles = List.of();
@@ -101,6 +103,34 @@ public final class UiController {
         readLock.lock();
         try {
             return url;
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+    /**
+     * Returns the management health URL exposed by the running application, or null if none.
+     *
+     * @return management health URL or null
+     */
+    public String getManagementHealthUrl() {
+        readLock.lock();
+        try {
+            return managementHealthUrl;
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+    /**
+     * Returns the current management health status, or null if unknown.
+     *
+     * @return health status or null
+     */
+    public String getManagementHealthStatus() {
+        readLock.lock();
+        try {
+            return managementHealthStatus;
         } finally {
             readLock.unlock();
         }
@@ -276,6 +306,36 @@ public final class UiController {
     }
 
     /**
+     * Set the management health endpoint URL and status.
+     *
+     * @param url health endpoint URL
+     * @param status health status text
+     */
+    public void setManagementHealth(String url, String status) {
+        writeLock.lock();
+        try {
+            this.managementHealthUrl = url;
+            this.managementHealthStatus = status;
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    /**
+     * Clear the management health endpoint state.
+     */
+    public void clearManagementHealth() {
+        writeLock.lock();
+        try {
+            this.managementHealthUrl = null;
+            this.managementHealthStatus = null;
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+
+    /**
      * Set controller to running mode (not compiling nor testing).
      */
     public void setRunning() {
@@ -299,6 +359,8 @@ public final class UiController {
         writeLock.lock();
         try {
             this.url = null;
+            this.managementHealthUrl = null;
+            this.managementHealthStatus = null;
             this.compiling.set(false);
             this.testing.set(false);
         } finally {
@@ -313,6 +375,8 @@ public final class UiController {
         writeLock.lock();
         try {
             this.url = null;
+            this.managementHealthUrl = null;
+            this.managementHealthStatus = null;
             this.endpoints = List.of();
             this.compiling.set(false);
             this.testing.set(false);
@@ -331,6 +395,8 @@ public final class UiController {
         writeLock.lock();
         try {
             this.url = null;
+            this.managementHealthUrl = null;
+            this.managementHealthStatus = null;
             this.endpoints = List.of();
             this.compiling.set(false);
             this.testing.set(false);

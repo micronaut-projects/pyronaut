@@ -50,5 +50,6 @@ build = [
 
 test = [ 
    "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
-   "io.micronaut.test:micronaut-test-junit5"
+   "io.micronaut.test:micronaut-test-junit5",
+    "io.micronaut.pyronaut:micronaut-pyronaut-requests",
  ]

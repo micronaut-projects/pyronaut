@@ -403,6 +403,13 @@ def _read_manifest_entries(file: Path) -> list[str]:
     return entries
 
 
+def _resolve_run_manifest(cache_dir: Path) -> Path:
+    development_manifest = cache_dir / "resolved-development-runtime-dependencies"
+    if development_manifest.exists():
+        return development_manifest
+    return cache_dir / "resolved-runtime-dependencies"
+
+
 def _delegate_lib_entries(executable_path: str) -> list[str]:
     path = Path(executable_path).resolve()
     if path.suffix == ".jar":
@@ -418,7 +425,7 @@ def _delegate_lib_entries(executable_path: str) -> list[str]:
 def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
     cache_dir = project_dir / "__pyronaut__"
     if command == "run":
-        entries = _read_manifest_entries(cache_dir / "resolved-runtime-dependencies")
+        entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")

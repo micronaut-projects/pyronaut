@@ -28,6 +28,7 @@ import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.event.MouseEvent;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.tree.TreeNode;
+import dev.tamboui.widgets.common.ScrollBarPolicy;
 import io.micronaut.python.cli.ui.UiModel;
 
 import java.util.ArrayList;
@@ -97,7 +98,7 @@ final class TestTreeView implements Element {
             TreeNode<UiModel.TestTree> none = TreeNode.<UiModel.TestTree>of("No tests to display").leaf();
             tree.roots(none)
                 .nodeRenderer(node -> text(node.label()).fg(DIM))
-                .scrollbar(TreeElement.ScrollBarPolicy.AS_NEEDED)
+                .scrollbar(ScrollBarPolicy.AS_NEEDED)
                 .fill()
                 .render(frame, area, context);
             return;
@@ -105,7 +106,7 @@ final class TestTreeView implements Element {
 
         tree
             .nodeRenderer(this::renderNode)
-            .scrollbar(TreeElement.ScrollBarPolicy.AS_NEEDED)
+            .scrollbar(ScrollBarPolicy.AS_NEEDED)
             .fill()
             .render(frame, area, context);
     }

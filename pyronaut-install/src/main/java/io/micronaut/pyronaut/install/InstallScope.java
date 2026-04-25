@@ -23,6 +23,7 @@ import java.util.Arrays;
 public enum InstallScope {
     BUILD("build", "resolved-build-dependencies"),
     RUNTIME("runtime", "resolved-runtime-dependencies"),
+    DEVELOPMENT_RUNTIME("development-runtime", "resolved-development-runtime-dependencies"),
     TEST("test", "resolved-test-dependencies"),
     TEST_RESOURCES_SERVER("test-resources-server", "resolved-test-resources-server-dependencies");
 
@@ -46,6 +47,6 @@ public enum InstallScope {
         return Arrays.stream(values())
             .filter(scope -> scope.cliValue.equals(value))
             .findFirst()
-            .orElseThrow(() -> new IllegalArgumentException("Unsupported scope '" + value + "'. Expected one of: build,runtime,test,test-resources-server"));
+            .orElseThrow(() -> new IllegalArgumentException("Unsupported scope '" + value + "'. Expected one of: build,runtime,development-runtime,test,test-resources-server"));
     }
 }
