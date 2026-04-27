@@ -16,10 +16,12 @@ val pytestInstallMarker = layout.buildDirectory.file("task-state/pytest-installe
 val installAppMarker = layout.buildDirectory.file("task-state/install-app-ready.txt")
 val fixtureTestResourcesSettingsFile = fixtureAppDir.file(".micronaut/test-resources/test-resources.properties")
 val fixtureCacheDir = fixtureAppDir.dir("__pyronaut__")
+val fixtureIdeStubsDir = fixtureCacheDir.dir("ide-stubs")
 val fixtureReportsDir = fixtureCacheDir.dir("reports/tests")
 val fixtureStagedRepoDir = layout.buildDirectory.dir("fixture-repo").get()
 val fixtureM2RepoDir = fixtureCacheDir.dir("m2-repository")
 val fixtureSchemasDir = fixtureCacheDir.dir("schemas")
+val fixtureResolvedEditorArtifacts = fixtureCacheDir.file("resolved-editor-artifacts.json")
 val fixtureResolvedBuildDependencies = fixtureCacheDir.file("resolved-build-dependencies")
 val fixtureResolvedRuntimeDependencies = fixtureCacheDir.file("resolved-runtime-dependencies")
 val fixtureResolvedTestDependencies = fixtureCacheDir.file("resolved-test-dependencies")
@@ -217,9 +219,21 @@ fun installAppOutputsPresent(): Boolean {
     return fixtureResolvedBuildDependencies.asFile.isFile &&
         fixtureResolvedRuntimeDependencies.asFile.isFile &&
         fixtureResolvedTestDependencies.asFile.isFile &&
+        fixtureResolvedEditorArtifacts.asFile.isFile &&
         fixtureResolvedTestResourcesServerDependencies.asFile.isFile &&
         fixtureM2RepoDir.asFile.isDirectory &&
-        fixtureSchemasDir.asFile.isDirectory
+        fixtureSchemasDir.asFile.isDirectory &&
+        fixtureIdeStubsDir.asFile.isDirectory
+}
+
+fun requireFixtureFileContains(file: java.io.File, expected: String, description: String) {
+    if (!file.isFile) {
+        throw GradleException("Missing $description: ${file.absolutePath}")
+    }
+    val content = file.readText()
+    if (!content.contains(expected)) {
+        throw GradleException("Expected $description to contain '$expected': ${file.absolutePath}")
+    }
 }
 
 fun buildPyronautTestCommand(): List<String> {
@@ -414,6 +428,56 @@ val installApp by tasks.registering {
     }
 }
 
+val verifyEditorSupport by tasks.registering {
+    group = "verification"
+    description = "Verifies that pyronaut-install generated IDE stubs and VS Code settings for the fixture app."
+    dependsOn(installApp)
+    inputs.files(
+        fixtureResolvedEditorArtifacts,
+        fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi"),
+        fixtureIdeStubsDir.file("micronaut/http/__init__.pyi"),
+        fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi"),
+        fixtureAppDir.file(".vscode/settings.json"),
+    )
+    doLast {
+        requireFixtureFileContains(
+            fixtureResolvedEditorArtifacts.asFile,
+            "\"scope\":\"runtime\"",
+            "resolved editor artifact manifest"
+        )
+        requireFixtureFileContains(
+            fixtureAppDir.file(".vscode/settings.json").asFile,
+            "__pyronaut__/ide-stubs",
+            "VS Code settings"
+        )
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi").asFile,
+            "Get: _GetDecorator",
+            "Micronaut annotation stubs"
+        )
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi").asFile,
+            "class _GetDecorator(Protocol):\n    \"\"\"",
+            "Micronaut annotation stub docstrings"
+        )
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("micronaut/http/__init__.pyi").asFile,
+            "class HttpResponse(",
+            "Micronaut HTTP stubs"
+        )
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
+            "Inject: _InjectDecorator",
+            "Jakarta inject stubs"
+        )
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
+            "class _InjectDecorator(Protocol):\n    \"\"\"",
+            "Jakarta annotation stub docstrings"
+        )
+    }
+}
+
 val validateConfig by tasks.registering {
     group = "verification"
     description = "Validates the functional-test app configuration with the local validator."
@@ -464,7 +528,7 @@ val process by tasks.registering {
 tasks.register("test") {
     group = "verification"
     description = "Runs the functional-test app through pyronaut-test using local project launchers."
-    dependsOn(process)
+    dependsOn(process, verifyEditorSupport)
     inputs.dir(fixtureAppDir)
     doLast {
         val startCommand = listOf(
