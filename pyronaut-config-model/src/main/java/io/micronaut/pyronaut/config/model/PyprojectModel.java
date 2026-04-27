@@ -217,7 +217,7 @@ public record PyprojectModel(Project project,
      * @param serverEnvironment environment variables passed to server process
      * @param debugServer enable server debug mode
      * @param javaExecutable explicit Java executable for server process
-     * @param startupOptimization startup optimization mode (auto/leyden/cds/none)
+     * @param startupOptimization startup optimization mode (none/auto/leyden/cds)
      * @param leydenJvmArgs Leyden JVM args used for best-effort startup optimization
      */
     public record TestResources(boolean configured,

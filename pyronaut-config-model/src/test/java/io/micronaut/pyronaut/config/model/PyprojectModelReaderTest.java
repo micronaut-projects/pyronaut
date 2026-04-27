@@ -59,7 +59,7 @@ class PyprojectModelReaderTest {
         assertEquals(Boolean.TRUE, model.pyronaut().testResources().inferClasspath());
         assertEquals(Integer.valueOf(60), model.pyronaut().testResources().clientTimeout());
         assertEquals(Boolean.FALSE, model.pyronaut().testResources().sharedServer());
-        assertEquals("auto", model.pyronaut().testResources().startupOptimization());
+        assertEquals("none", model.pyronaut().testResources().startupOptimization());
     }
 
     @Test

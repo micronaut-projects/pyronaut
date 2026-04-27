@@ -563,7 +563,7 @@ public final class PyprojectConfigSpec {
     public static final FieldSpec PYRONAUT_TEST_RESOURCES_STARTUP_OPTIMIZATION = enumString(
         "tool.pyronaut.test-resources.startup-optimization",
         "Startup optimization mode for the test resources server.",
-        "auto",
+        "none",
         List.of("auto", "leyden", "cds", "none"),
         List.of("tool.pyronaut.testResources.startupOptimization")
     );

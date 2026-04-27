@@ -307,7 +307,7 @@ infer-classpath = true
 client-timeout = 60
 shared-server = false
 logs-dir = ".micronaut/test-resources/logs"
-startup-optimization = "auto" # auto|leyden|cds|none
+startup-optimization = "none" # none|auto|leyden|cds
 leyden-jvm-args = ["--enable-preview"]
 ----
 
@@ -333,10 +333,10 @@ Integration behavior:
 
 Fallback semantics:
 
-- `auto`: uses CDS by default; if Leyden args are supplied and unsupported, prints one fallback warning and continues.
+- `none`: default; no startup optimization flags.
+- `auto`: opt-in CDS by default; if Leyden args are supplied and unsupported, prints one fallback warning and continues.
 - `leyden`: best effort; prints one deterministic fallback warning and continues with CDS/plain startup.
 - `cds`: best effort CDS, fallback to plain startup when unavailable.
-- `none`: no startup optimization flags.
 
 === Native-image argument passthrough
 

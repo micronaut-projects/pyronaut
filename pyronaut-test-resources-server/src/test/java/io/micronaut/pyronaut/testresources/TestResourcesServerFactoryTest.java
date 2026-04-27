@@ -100,6 +100,36 @@ class TestResourcesServerFactoryTest {
     }
 
     @Test
+    void omitsJmxRemoteFlagForCdsDumpInvocation() throws Exception {
+        Path firstJar = tempDir.resolve("libs/one.jar").toAbsolutePath().normalize();
+        Files.createDirectories(firstJar.getParent());
+
+        CapturingStarter starter = new CapturingStarter();
+        PyronautTestResourcesServerMain.ServerStartRequest request = new PyronautTestResourcesServerMain.ServerStartRequest(
+            tempDir.resolve(".micronaut/test-resources"),
+            tempDir.resolve(".micronaut/test-resources/logs"),
+            tempDir.resolve(".micronaut/test-resources/server.port"),
+            tempDir.resolve("manifest-not-used-here"),
+            null,
+            "token-123",
+            null,
+            30,
+            15,
+            Map.of(),
+            Map.of(),
+            false,
+            "java"
+        );
+        TestResourcesServerFactory factory = new TestResourcesServerFactory(request, starter);
+
+        factory.startServer(new StubProcessParameters(true, tempDir.resolve("port.file"), firstJar.toFile()));
+
+        List<String> command = starter.command;
+        assertTrue(command.contains("-Xshare:dump"));
+        assertTrue(command.stream().noneMatch(token -> token.equals("-Dcom.sun.management.jmxremote")));
+    }
+
+    @Test
     void selfModuleClasspathEntriesIncludeSiblingJarsFromLauncherLibDirectory() {
         String originalClasspath = System.getProperty("java.class.path");
         try {
@@ -145,10 +175,16 @@ class TestResourcesServerFactoryTest {
     }
 
     private static final class StubProcessParameters implements io.micronaut.testresources.buildtools.ServerUtils.ProcessParameters {
+        private final boolean cdsDumpInvocation;
         private final List<File> classpath;
         private final Path portFile;
 
         private StubProcessParameters(Path portFile, File... classpath) {
+            this(false, portFile, classpath);
+        }
+
+        private StubProcessParameters(boolean cdsDumpInvocation, Path portFile, File... classpath) {
+            this.cdsDumpInvocation = cdsDumpInvocation;
             this.portFile = portFile;
             this.classpath = List.of(classpath);
         }
@@ -175,7 +211,15 @@ class TestResourcesServerFactoryTest {
 
         @Override
         public List<String> getJvmArguments() {
+            if (cdsDumpInvocation) {
+                return List.of("-XX:+TieredCompilation", "-XX:TieredStopAtLevel=1", "-Xshare:dump");
+            }
             return List.of("-XX:+TieredCompilation", "-XX:TieredStopAtLevel=1");
+        }
+
+        @Override
+        public boolean isCDSDumpInvocation() {
+            return cdsDumpInvocation;
         }
     }
 

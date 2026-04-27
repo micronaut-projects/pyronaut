@@ -33,6 +33,7 @@ import java.util.stream.Stream;
 final class TestResourcesServerFactory implements ServerFactory {
     private static final String LOGS_DIR_SYSTEM_PROPERTY = "pyronaut.test-resources.logs-dir";
     private static final String LOGBACK_CONFIGURATION_SYSTEM_PROPERTY = "logback.configurationFile";
+    private static final String JMX_REMOTE_SYSTEM_PROPERTY = "com.sun.management.jmxremote";
     private static final String STDIO_LOG_FILE = "launcher-stdio.log";
     private static final File NULL_DEVICE = new File(isWindows() ? "NUL" : "/dev/null");
 
@@ -78,6 +79,10 @@ final class TestResourcesServerFactory implements ServerFactory {
         Map<String, String> configuredSystemProperties = request.systemProperties();
         if (configuredSystemProperties != null) {
             systemProperties.putAll(configuredSystemProperties);
+        }
+        if (processParameters.isCDSDumpInvocation()) {
+            // JDK management agent startup conflicts with -Xshare:dump on recent JDKs.
+            systemProperties.remove(JMX_REMOTE_SYSTEM_PROPERTY);
         }
         systemProperties.forEach((k, v) -> command.add(v == null ? "-D" + k : "-D" + k + "=" + v));
 

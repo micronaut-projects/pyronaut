@@ -10,6 +10,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautTestResourcesServerMainTest {
@@ -48,6 +49,19 @@ class PyronautTestResourcesServerMainTest {
         int exit = new CommandLine(command).execute("status", "--project-dir", project.toString());
 
         assertEquals(0, exit);
+    }
+
+    @Test
+    void startDoesNotEnableCdsWhenTestResourcesAreUnconfigured() throws Exception {
+        Path project = prepareProject("");
+
+        RecordingServerManager manager = new RecordingServerManager();
+        PyronautTestResourcesServerMain command = new PyronautTestResourcesServerMain(new PyprojectModelReader(), manager);
+
+        int exit = new CommandLine(command).execute("start", "--project-dir", project.toString());
+
+        assertEquals(0, exit);
+        assertNull(manager.lastStartRequest.cdsDir());
     }
 
     @Test
