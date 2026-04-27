@@ -8,14 +8,20 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import javax.tools.JavaCompiler;
+import javax.tools.StandardJavaFileManager;
+import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -1406,6 +1412,1250 @@ class PyronautInstallMainTest {
         assertTrue(unrelatedWarning.contains("Continuing resolution"));
     }
 
+    @Test
+    void installGeneratesPythonIdeStubsAndVsCodeSettings() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-stubs");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpResponse", """
+                package io.micronaut.http;
+
+                /**
+                 * Represents an HTTP response exposed to Python code.
+                 */
+                public class HttpResponse {
+                    public static HttpResponse ok(Object body) {
+                        return new HttpResponse();
+                    }
+
+                    public int code() {
+                        return 200;
+                    }
+                }
+                """,
+            "io.micronaut.http.HttpRequest", """
+                package io.micronaut.http;
+
+                public class HttpRequest {
+                }
+                """,
+            "io.micronaut.http.client.HttpClient", """
+                package io.micronaut.http.client;
+
+                import io.micronaut.http.HttpRequest;
+                import io.micronaut.http.HttpResponse;
+
+                public class HttpClient {
+                    /**
+                     * Exchanges a request for a response.
+                     */
+                    public HttpResponse exchange(HttpRequest request) {
+                        return new HttpResponse();
+                    }
+                }
+                """,
+            "io.micronaut.http.client.HttpClientBuilder", """
+                package io.micronaut.http.client;
+
+                import io.micronaut.http.HttpRequest;
+
+                public class HttpClientBuilder {
+                    /**
+                     * Creates an empty builder.
+                     */
+                    public HttpClientBuilder() {
+                    }
+
+                    /**
+                     * Creates a builder preloaded with a request.
+                     */
+                    public HttpClientBuilder(HttpRequest request) {
+                    }
+
+                    /**
+                     * Builds a client without a preset request.
+                     */
+                    public HttpClient create() {
+                        return new HttpClient();
+                    }
+
+                    /**
+                     * Builds a client for the given request.
+                     */
+                    public HttpClient create(HttpRequest request) {
+                        return new HttpClient();
+                    }
+                }
+                """,
+            "io.micronaut.http.annotation.Get", """
+                package io.micronaut.http.annotation;
+
+                /**
+                 * Handles HTTP GET requests.
+                 */
+                public @interface Get {
+                    String value() default "";
+                    String[] produces() default {};
+                }
+                """,
+            "io.micronaut.http.annotation.Post", """
+                package io.micronaut.http.annotation;
+
+                public @interface Post {
+                    String value() default "";
+                    String[] consumes() default {};
+                }
+                """,
+            "io.micronaut.http.annotation.Body", """
+                package io.micronaut.http.annotation;
+
+                public @interface Body {
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeCompiledArtifact(repository, "com.example", "test-dep", "1.0.0", Map.of(
+            "jakarta.inject.Inject", """
+                package jakarta.inject;
+
+                /**
+                 * Injects a dependency from the Micronaut context.
+                 */
+                public @interface Inject {
+                }
+                """,
+            "jakarta.inject.Singleton", """
+                package jakarta.inject;
+
+                public @interface Singleton {
+                }
+                """
+        ));
+
+        Path project = tempDir.resolve("project-python-ide-stubs");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path stubsRoot = project.resolve("__pyronaut__").resolve("ide-stubs");
+        String editorManifest = Files.readString(project.resolve("__pyronaut__").resolve("resolved-editor-artifacts.json"), StandardCharsets.UTF_8);
+        String annotationStub = Files.readString(stubsRoot.resolve("micronaut/http/annotation/__init__.pyi"), StandardCharsets.UTF_8);
+        String httpStub = Files.readString(stubsRoot.resolve("micronaut/http/__init__.pyi"), StandardCharsets.UTF_8);
+        String httpClientStub = Files.readString(stubsRoot.resolve("micronaut/http/client/__init__.pyi"), StandardCharsets.UTF_8);
+        String injectStub = Files.readString(stubsRoot.resolve("jakarta/inject/__init__.pyi"), StandardCharsets.UTF_8);
+        String settings = Files.readString(project.resolve(".vscode/settings.json"), StandardCharsets.UTF_8);
+
+        assertTrue(editorManifest.contains("\"scope\":\"runtime\""));
+        assertTrue(editorManifest.contains("\"sourceJar\""));
+        assertTrue(annotationStub.contains("@overload\ndef Get(target: _T, /) -> _T: ..."));
+        assertTrue(annotationStub.contains("@overload\ndef Get(value: str = ..., *, produces: str | list[str] = ...) -> Callable[[_T], _T]: ..."));
+        assertTrue(annotationStub.contains("def Get(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n    \"\"\""));
+        assertTrue(annotationStub.contains("    Handles HTTP GET requests."));
+        assertTrue(annotationStub.contains("@overload\ndef Post(value: str = ..., *, consumes: str | list[str] = ...) -> Callable[[_T], _T]: ..."));
+        assertTrue(annotationStub.contains("def Post(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:"));
+        assertTrue(annotationStub.contains("def Body(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:"));
+        assertTrue(httpStub.contains("class HttpResponse:"));
+        assertTrue(httpStub.contains("Represents an HTTP response exposed to Python code"));
+        assertTrue(httpStub.contains("def ok(body: Any) -> HttpResponse: ..."));
+        assertTrue(httpClientStub.contains("from micronaut.http import HttpRequest, HttpResponse"));
+        assertTrue(httpClientStub.contains("        Exchanges a request for a response."));
+        assertTrue(httpClientStub.contains("def exchange(self, request: HttpRequest) -> HttpResponse:\n        \"\"\""));
+        assertTrue(httpClientStub.contains("class HttpClientBuilder:"));
+        assertTrue(httpClientStub.contains("@overload\n    def __init__(self) -> None: ..."));
+        assertTrue(httpClientStub.contains("def __init__(self, *args: Any, **kwargs: Any) -> None:\n        \"\"\""));
+        assertTrue(httpClientStub.contains("        Creates an empty builder."));
+        assertTrue(httpClientStub.contains("@overload\n    def __init__(self, request: HttpRequest) -> None: ..."));
+        assertTrue(httpClientStub.contains("@overload\n    def create(self) -> HttpClient: ..."));
+        assertTrue(httpClientStub.contains("def create(self, *args: Any, **kwargs: Any) -> HttpClient:\n        \"\"\""));
+        assertTrue(httpClientStub.contains("        Builds a client without a preset request."));
+        assertTrue(httpClientStub.contains("@overload\n    def create(self, request: HttpRequest) -> HttpClient: ..."));
+        assertTrue(injectStub.contains("@overload\ndef Inject(target: _T, /) -> _T: ..."));
+        assertTrue(injectStub.contains("def Inject(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n    \"\"\""));
+        assertTrue(injectStub.contains("    Injects a dependency from the Micronaut context."));
+        assertTrue(settings.contains("__pyronaut__/ide-stubs"));
+    }
+
+    @Test
+    void installSkipsVsCodeSettingsWhenPyrightConfigExists() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-pyright");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.annotation.Get", """
+                package io.micronaut.http.annotation;
+
+                public @interface Get {
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-pyright");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+        Files.writeString(project.resolve("pyrightconfig.json"), "{\"extraPaths\":[\"src\"]}", StandardCharsets.UTF_8);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        assertFalse(Files.exists(project.resolve(".vscode/settings.json")));
+        assertTrue(Files.exists(project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/annotation/__init__.pyi")));
+    }
+
+    @Test
+    void installGeneratesPythonIdeStubsAndPyCharmModule() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-pycharm");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.annotation.Get", """
+                package io.micronaut.http.annotation;
+
+                public @interface Get {
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeCompiledArtifact(repository, "com.example", "test-dep", "1.0.0", Map.of(
+            "jakarta.inject.Inject", """
+                package jakarta.inject;
+
+                public @interface Inject {
+                }
+                """
+        ));
+
+        Path project = tempDir.resolve("project-python-ide-pycharm");
+        Files.createDirectories(project.resolve(".idea"));
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository) + """
+
+            [tool.pyronaut.ide-stubs]
+            ide = "pycharm"
+            destination-dir = "__pyronaut__/custom-stubs"
+            """);
+        Files.writeString(project.resolve(".idea/modules.xml"), """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project version="4">
+              <component name="ProjectModuleManager">
+                <modules>
+                  <module fileurl="file://$PROJECT_DIR$/.idea/existing.iml" filepath="$PROJECT_DIR$/.idea/existing.iml" />
+                </modules>
+              </component>
+            </project>
+            """, StandardCharsets.UTF_8);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        assertTrue(Files.exists(project.resolve("__pyronaut__/custom-stubs").resolve("micronaut/http/annotation/__init__.pyi")));
+        assertFalse(Files.exists(project.resolve(".vscode/settings.json")));
+
+        String modulesXml = Files.readString(project.resolve(".idea/modules.xml"), StandardCharsets.UTF_8);
+        String generatedModule = Files.readString(
+            project.resolve(".idea").resolve(PyCharmSettingsWriter.GENERATED_MODULE_FILE),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(modulesXml.contains("existing.iml"));
+        assertTrue(modulesXml.contains(PyCharmSettingsWriter.GENERATED_MODULE_FILE));
+        assertTrue(generatedModule.contains("type=\"PYTHON_MODULE\""));
+        assertTrue(generatedModule.contains("file://$MODULE_DIR$/../__pyronaut__/custom-stubs"));
+        assertTrue(generatedModule.contains("file://$MODULE_DIR$/.."));
+    }
+
+    @Test
+    void installHonorsConfiguredIdeStubDestinationAndPackages() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-configured");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.annotation.Get", """
+                package io.micronaut.http.annotation;
+
+                public @interface Get {
+                }
+                """,
+            "io.micronaut.context.BeanContext", """
+                package io.micronaut.context;
+
+                public class BeanContext {
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeCompiledArtifact(repository, "com.example", "test-dep", "1.0.0", Map.of(
+            "jakarta.inject.Inject", """
+                package jakarta.inject;
+
+                public @interface Inject {
+                }
+                """
+        ));
+
+        Path project = tempDir.resolve("project-python-ide-configured");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository) + """
+
+            [tool.pyronaut.ide-stubs]
+            packages = ["io.micronaut.http.annotation"]
+            destination-dir = "__pyronaut__/custom-stubs"
+            """);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        assertTrue(Files.exists(project.resolve("__pyronaut__/custom-stubs").resolve("micronaut/http/annotation/__init__.pyi")));
+        assertFalse(Files.exists(project.resolve("__pyronaut__/custom-stubs").resolve("micronaut/context/__init__.pyi")));
+        String settings = Files.readString(project.resolve(".vscode/settings.json"), StandardCharsets.UTF_8);
+        assertTrue(settings.contains("__pyronaut__/custom-stubs"));
+    }
+
+    @Test
+    void sourceMetadataSuppliesParameterNamesWhenBytecodeOmitsThem() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-source-params");
+        writeCompiledArtifactWithoutParameterMetadata(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpRequest", """
+                package io.micronaut.http;
+
+                public class HttpRequest {
+                }
+                """,
+            "io.micronaut.http.client.ParameterNameClient", """
+                package io.micronaut.http.client;
+
+                import io.micronaut.http.HttpRequest;
+
+                public class ParameterNameClient {
+                    public ParameterNameClient(HttpRequest requestTemplate) {
+                    }
+
+                    public String send(HttpRequest requestTemplate, String routeName) {
+                        return routeName;
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-source-params");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String httpClientStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/client/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpClientStub.contains("def __init__(self, requestTemplate: HttpRequest) -> None: ..."));
+        assertTrue(httpClientStub.contains("def send(self, requestTemplate: HttpRequest, routeName: str) -> str: ..."));
+        assertFalse(httpClientStub.contains("arg0"));
+        assertFalse(httpClientStub.contains("arg1"));
+    }
+
+    @Test
+    void sourceMetadataDisambiguatesSameArityOverloads() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-overload-signatures");
+        writeCompiledArtifactWithoutParameterMetadata(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpRequest", """
+                package io.micronaut.http;
+
+                public class HttpRequest {
+                }
+                """,
+            "io.micronaut.http.client.OverloadDocClient", """
+                package io.micronaut.http.client;
+
+                import io.micronaut.http.HttpRequest;
+
+                public class OverloadDocClient {
+                    /**
+                     * Sends the template request.
+                     */
+                    public String send(HttpRequest requestTemplate) {
+                        return "request";
+                    }
+
+                    /**
+                     * Sends the route by name.
+                     */
+                    public String send(String routeName) {
+                        return routeName;
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-overload-signatures");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String httpClientStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/client/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpClientStub.contains("        Sends the template request."));
+        assertTrue(httpClientStub.contains("@overload\n    def send(self, requestTemplate: HttpRequest) -> str: ..."));
+        assertTrue(httpClientStub.contains("@overload\n    def send(self, routeName: str) -> str: ..."));
+        assertTrue(httpClientStub.contains("def send(self, *args: Any, **kwargs: Any) -> str:\n        \"\"\""));
+    }
+
+    @Test
+    void overloadedStaticMethodsRetainVisibleImplementationDocstrings() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-overloaded-static");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpResponse", """
+                package io.micronaut.http;
+
+                public class HttpResponse {
+                    /**
+                     * Creates a response without a body.
+                     */
+                    public static HttpResponse ok() {
+                        return new HttpResponse();
+                    }
+
+                    /**
+                     * Creates a response with a body.
+                     */
+                    public static HttpResponse ok(Object body) {
+                        return new HttpResponse();
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-overloaded-static");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("@overload\n    @staticmethod\n    def ok() -> HttpResponse: ..."));
+        assertTrue(httpStub.contains("@overload\n    @staticmethod\n    def ok(body: Any) -> HttpResponse: ..."));
+        assertTrue(httpStub.contains("@staticmethod\n    def ok(*args: Any, **kwargs: Any) -> HttpResponse:\n        \"\"\""));
+        assertTrue(httpStub.contains("        Overloads for `ok`:"));
+        assertTrue(httpStub.contains("        Creates a response without a body."));
+        assertTrue(httpStub.contains("        Creates a response with a body."));
+    }
+
+    @Test
+    void realisticHttpResponseInterfaceRetainsClassAndStaticMethodDocstrings() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-http-response-interface");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpMessage", """
+                package io.micronaut.http;
+
+                import java.util.Optional;
+
+                public interface HttpMessage<B> {
+                    /**
+                     * @return The request body
+                     */
+                    default Optional<B> getBody() {
+                        return Optional.empty();
+                    }
+                }
+                """,
+            "io.micronaut.http.MutableHttpResponse", """
+                package io.micronaut.http;
+
+                public interface MutableHttpResponse<B> extends HttpResponse<B> {
+                }
+                """,
+            "io.micronaut.http.HttpResponseFactory", """
+                package io.micronaut.http;
+
+                public interface HttpResponseFactory {
+                    HttpResponseFactory INSTANCE = null;
+
+                    <T> MutableHttpResponse<T> ok();
+
+                    <T> MutableHttpResponse<T> ok(T body);
+                }
+                """,
+            "io.micronaut.http.HttpResponse", """
+                package io.micronaut.http;
+
+                import org.jspecify.annotations.Nullable;
+
+                import java.util.Optional;
+
+                /**
+                 * <p>Common interface for HTTP response implementations.</p>
+                 *
+                 * @param <B> The Http body type
+                 */
+                public interface HttpResponse<B> extends HttpMessage<B> {
+                    /**
+                     * @return The response status code
+                     */
+                    int code();
+
+                    /**
+                     * @return The HTTP status reason phrase
+                     */
+                    String reason();
+
+                    /**
+                     * Return an {@link io.micronaut.http.HttpStatus#OK} response with an empty body.
+                     *
+                     * @param <T> The response type
+                     * @return The ok response
+                     */
+                    static <T> MutableHttpResponse<T> ok() {
+                        return HttpResponseFactory.INSTANCE.ok();
+                    }
+
+                    /**
+                     * Return an {@link io.micronaut.http.HttpStatus#OK} response with a body.
+                     *
+                     * @param body The response body
+                     * @param <T>  The body type
+                     * @return The ok response
+                     */
+                    static <T> MutableHttpResponse<T> ok(T body) {
+                        return HttpResponseFactory.INSTANCE.ok(body);
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-http-response-interface");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("class HttpResponse(Protocol, HttpMessage[_HttpResponse_B], Generic[_HttpResponse_B]):\n    \"\"\""));
+        assertTrue(httpStub.contains("Common interface for HTTP response implementations."));
+        assertTrue(httpStub.contains("@staticmethod\n    def ok(*args: Any, **kwargs: Any) -> MutableHttpResponse[_HttpResponse_ok_T]:\n        \"\"\""));
+        assertTrue(httpStub.contains("Overloads for `ok`:"));
+        assertTrue(httpStub.contains("Return an `HttpStatus.OK` response with an empty body."));
+        assertTrue(httpStub.contains("Return an `HttpStatus.OK` response with a body."));
+    }
+
+    @Test
+    void sourceMetadataIncludesPublicFieldsAndConstants() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-fields");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpStatus", """
+                package io.micronaut.http;
+
+                public class HttpStatus {
+                    /**
+                     * Successful response status.
+                     */
+                    public static final int OK = 200;
+
+                    /**
+                     * Human readable reason.
+                     */
+                    public String reason;
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-fields");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("# Successful response status."));
+        assertTrue(httpStub.contains("OK: ClassVar[int]"));
+        assertTrue(httpStub.contains("# Human readable reason."));
+        assertTrue(httpStub.contains("reason: str"));
+    }
+
+    @Test
+    void installSkipsMicronautInternalTypesWhenAnnotated() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-internal");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.core.annotation.Internal", """
+                package io.micronaut.core.annotation;
+
+                public @interface Internal {
+                }
+                """,
+            "io.micronaut.http.PublicThing", """
+                package io.micronaut.http;
+
+                public class PublicThing {
+                    public String value() {
+                        return "ok";
+                    }
+                }
+                """,
+            "io.micronaut.http.InternalThing", """
+                package io.micronaut.http;
+
+                import io.micronaut.core.annotation.Internal;
+
+                @Internal
+                public class InternalThing {
+                    public String hidden() {
+                        return "hidden";
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-internal");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("class PublicThing:"));
+        assertFalse(httpStub.contains("class InternalThing:"));
+    }
+
+    @Test
+    void genericsUseUsefulBoundsInsteadOfFallingBackToAny() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-generics");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpRequest", """
+                package io.micronaut.http;
+
+                public class HttpRequest {
+                }
+                """,
+            "io.micronaut.http.client.GenericClient", """
+                package io.micronaut.http.client;
+
+                import io.micronaut.http.HttpRequest;
+                import java.util.List;
+
+                public class GenericClient {
+                    public <T extends HttpRequest> List<T> echoAll(List<? extends T> requests) {
+                        return java.util.List.of();
+                    }
+
+                    public <T extends HttpRequest> T[] copyArray(T[] requests) {
+                        return requests;
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-generics");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String clientStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/client/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(clientStub.contains("_GenericClient_echoAll_T = TypeVar(\"_GenericClient_echoAll_T\", bound=HttpRequest)"));
+        assertTrue(clientStub.contains("_GenericClient_copyArray_T = TypeVar(\"_GenericClient_copyArray_T\", bound=HttpRequest)"));
+        assertTrue(clientStub.contains("def echoAll(self, requests: list[_GenericClient_echoAll_T]) -> list[_GenericClient_echoAll_T]: ..."));
+        assertTrue(clientStub.contains("def copyArray(self, requests: list[_GenericClient_copyArray_T]) -> list[_GenericClient_copyArray_T]: ..."));
+        assertFalse(clientStub.contains("list[Any]"));
+    }
+
+    @Test
+    void classGenericsArePreservedWithGenericBase() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-class-generics");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpRequest", """
+                package io.micronaut.http;
+
+                public class HttpRequest {
+                }
+                """,
+            "io.micronaut.http.client.GenericHolder", """
+                package io.micronaut.http.client;
+
+                import io.micronaut.http.HttpRequest;
+                import java.util.List;
+
+                public class GenericHolder<T extends HttpRequest> {
+                    public T current;
+
+                    public GenericHolder(T current) {
+                        this.current = current;
+                    }
+
+                    public List<T> all() {
+                        return java.util.List.of();
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-class-generics");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String clientStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/client/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(clientStub.contains("_GenericHolder_T = TypeVar(\"_GenericHolder_T\", bound=HttpRequest)"));
+        assertTrue(clientStub.contains("class GenericHolder(Generic[_GenericHolder_T]):"));
+        assertTrue(clientStub.contains("current: _GenericHolder_T"));
+        assertTrue(clientStub.contains("def __init__(self, current: _GenericHolder_T) -> None: ..."));
+        assertTrue(clientStub.contains("def all(self) -> list[_GenericHolder_T]: ..."));
+    }
+
+    @Test
+    void selfReferentialGenericBoundsDoNotOverflow() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-lifecycle");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.context.LifeCycle", """
+                package io.micronaut.context;
+
+                import java.io.Closeable;
+
+                public interface LifeCycle<T extends LifeCycle<T>> extends Closeable, AutoCloseable {
+                    boolean isRunning();
+
+                    default T start() {
+                        return (T) this;
+                    }
+
+                    default T stop() {
+                        return (T) this;
+                    }
+
+                    @Override
+                    default void close() {
+                        stop();
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-lifecycle");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String contextStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/context/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        String warningReport = Files.readString(
+            project.resolve("__pyronaut__/reports/editor-stubs/stub-generation-report.txt"),
+            StandardCharsets.UTF_8
+        );
+        assertFalse(warningReport.contains("StackOverflowError"));
+        assertTrue(contextStub.contains("_LifeCycle_T = TypeVar(\"_LifeCycle_T\""));
+        assertTrue(contextStub.contains("class LifeCycle("));
+        assertTrue(contextStub.contains("def start(self) -> _LifeCycle_T:"));
+        assertTrue(contextStub.contains("def stop(self) -> _LifeCycle_T:"));
+    }
+
+    @Test
+    void annotationsWithNestedEnumMembersRenderWithoutSkippingTheType() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-nested-annotation");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.test.annotation.Sql", """
+                package io.micronaut.test.annotation;
+
+                import java.lang.annotation.Documented;
+                import java.lang.annotation.ElementType;
+                import java.lang.annotation.Inherited;
+                import java.lang.annotation.Repeatable;
+                import java.lang.annotation.Retention;
+                import java.lang.annotation.RetentionPolicy;
+                import java.lang.annotation.Target;
+
+                @Target({ElementType.TYPE})
+                @Retention(RetentionPolicy.RUNTIME)
+                @Documented
+                @Inherited
+                @Repeatable(Sql.Sqls.class)
+                public @interface Sql {
+                    String[] value() default {};
+
+                    Phase phase() default Phase.BEFORE_ALL;
+
+                    @Target({ElementType.TYPE})
+                    @Retention(RetentionPolicy.RUNTIME)
+                    @Documented
+                    @Inherited
+                    @interface Sqls {
+                        Sql[] value();
+                    }
+
+                    enum Phase {
+                        BEFORE_ALL,
+                        AFTER_ALL
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-nested-annotation");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String annotationStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/test/annotation/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(annotationStub.contains("@overload\ndef Sql(target: _T, /) -> _T: ..."));
+        assertTrue(annotationStub.contains("def Sql(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:"));
+    }
+
+    @Test
+    void defaultExcludePatternsSkipModuleInfoTypesWithoutWarnings() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-module-info");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.data.info.MicronautDataModelModuleInfo", """
+                package io.micronaut.data.info;
+
+                public class MicronautDataModelModuleInfo {
+                }
+                """,
+            "io.micronaut.http.HttpResponse", """
+                package io.micronaut.http;
+
+                public class HttpResponse {
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-module-info");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String warningReport = Files.readString(
+            project.resolve("__pyronaut__/reports/editor-stubs/stub-generation-report.txt"),
+            StandardCharsets.UTF_8
+        );
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("class HttpResponse:"));
+        assertFalse(Files.exists(project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/data/info/__init__.pyi")));
+        assertFalse(warningReport.contains("MicronautDataModelModuleInfo"));
+    }
+
+    @Test
+    void configuredExcludePatternsSkipMatchingTypes() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-custom-excludes");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpResponse", """
+                package io.micronaut.http;
+
+                public class HttpResponse {
+                }
+                """,
+            "io.micronaut.http.internal.HiddenClient", """
+                package io.micronaut.http.internal;
+
+                public class HiddenClient {
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-custom-excludes");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository) + """
+
+            [tool.pyronaut.ide-stubs]
+            exclude-patterns = ["*ModuleInfo", "io.micronaut.http.internal.*"]
+            """);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("class HttpResponse:"));
+        assertFalse(httpStub.contains("class HiddenClient:"));
+    }
+
+    @Test
+    void kotlinLinkageFailuresAreSilentlySkipped() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-kotlin-linkage");
+        writeCompiledArtifact(repository, "com.example", "compile-only-dep", "1.0.0", Map.of(
+            "kotlin.coroutines.Continuation", """
+                package kotlin.coroutines;
+
+                public interface Continuation<T> {
+                }
+                """
+        ));
+        Path compileOnlyJar = repository.resolve("com/example/compile-only-dep/1.0.0/compile-only-dep-1.0.0.jar");
+        writeCompiledArtifact(
+            repository,
+            "com.example",
+            "runtime-dep",
+            "1.0.0",
+            Map.of(
+                "io.micronaut.http.HttpResponse", """
+                    package io.micronaut.http;
+
+                    public class HttpResponse {
+                    }
+                    """,
+                "io.micronaut.http.CoroutineBridge", """
+                    package io.micronaut.http;
+
+                    public class CoroutineBridge {
+                        public kotlin.coroutines.Continuation<?> continuation;
+                    }
+                    """
+            ),
+            true,
+            List.of(compileOnlyJar)
+        );
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-kotlin-linkage");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String warningReport = Files.readString(
+            project.resolve("__pyronaut__/reports/editor-stubs/stub-generation-report.txt"),
+            StandardCharsets.UTF_8
+        );
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("class HttpResponse:"));
+        assertFalse(httpStub.contains("class CoroutineBridge:"));
+        assertFalse(warningReport.contains("CoroutineBridge"));
+        assertFalse(warningReport.contains("kotlin.coroutines.Continuation"));
+    }
+
+    @Test
+    void classHeadersPreserveMappedSuperclassesAndInterfaces() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-inheritance");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpRequest", """
+                package io.micronaut.http;
+
+                public class HttpRequest {
+                }
+                """,
+            "io.micronaut.http.client.HttpOperations", """
+                package io.micronaut.http.client;
+
+                public interface HttpOperations {
+                    String route();
+                }
+                """,
+            "io.micronaut.http.client.BaseClient", """
+                package io.micronaut.http.client;
+
+                import io.micronaut.http.HttpRequest;
+
+                public class BaseClient<T extends HttpRequest> {
+                    public T request;
+                }
+                """,
+            "io.micronaut.http.client.AdvancedClient", """
+                package io.micronaut.http.client;
+
+                import io.micronaut.http.HttpRequest;
+
+                public class AdvancedClient extends BaseClient<HttpRequest> implements HttpOperations {
+                    public String route() {
+                        return "/advanced";
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-inheritance");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String clientStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/client/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(clientStub.contains("class HttpOperations(Protocol):"));
+        assertTrue(clientStub.contains("class BaseClient(Generic[_BaseClient_T]):"));
+        assertTrue(clientStub.contains("class AdvancedClient(BaseClient[HttpRequest], HttpOperations):"));
+    }
+
+    @Test
+    void enumsRenderAsPythonEnums() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-enums");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpMethod", """
+                package io.micronaut.http;
+
+                /**
+                 * Supported HTTP methods.
+                 */
+                public enum HttpMethod {
+                    GET,
+                    POST
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-enums");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("from enum import Enum"));
+        assertTrue(httpStub.contains("class HttpMethod(Enum):"));
+        assertTrue(httpStub.contains("Supported HTTP methods."));
+        assertTrue(httpStub.contains("GET = ..."));
+        assertTrue(httpStub.contains("POST = ..."));
+    }
+
+    @Test
+    void stubGenerationIsBestEffortForInvalidArtifacts() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-invalid");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0", new byte[]{1, 2, 3});
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeCompiledArtifact(repository, "com.example", "test-dep", "1.0.0", Map.of(
+            "jakarta.inject.Inject", """
+                package jakarta.inject;
+
+                public @interface Inject {
+                }
+                """
+        ));
+
+        Path project = tempDir.resolve("project-python-ide-invalid");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        assertTrue(Files.exists(project.resolve("__pyronaut__/ide-stubs").resolve("jakarta/inject/__init__.pyi")));
+        assertTrue(Files.exists(project.resolve("__pyronaut__/reports/editor-stubs/stub-generation-report.txt")));
+    }
+
+    @Test
+    void stubGenerationIsBestEffortWhenTypeRenderingHitsMissingTransitiveClass() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-missing-transitive");
+        writeCompiledArtifact(repository, "com.example", "compile-only-dep", "1.0.0", Map.of(
+            "io.micronaut.http.MissingDependency", """
+                package io.micronaut.http;
+
+                public enum MissingDependency {
+                    VALUE
+                }
+                """
+        ));
+        Path compileOnlyJar = repository.resolve("com/example/compile-only-dep/1.0.0/compile-only-dep-1.0.0.jar");
+        writeCompiledArtifact(
+            repository,
+            "com.example",
+            "runtime-dep",
+            "1.0.0",
+            Map.of(
+                "io.micronaut.http.HttpResponse", """
+                    package io.micronaut.http;
+
+                    public class HttpResponse {
+                    }
+                    """,
+                "io.micronaut.http.BrokenType", """
+                    package io.micronaut.http;
+
+                    public class BrokenType {
+                        public MissingDependency missing;
+                    }
+                    """
+            ),
+            true,
+            List.of(compileOnlyJar)
+        );
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeCompiledArtifact(repository, "com.example", "test-dep", "1.0.0", Map.of(
+            "jakarta.inject.Inject", """
+                package jakarta.inject;
+
+                public @interface Inject {
+                }
+                """
+        ));
+
+        Path project = tempDir.resolve("project-python-ide-missing-transitive");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("class HttpResponse:"));
+        assertFalse(httpStub.contains("class BrokenType:"));
+    }
+
+    @Test
+    void stubGenerationUsesSlf4jSupportJarFromInstallClasspath() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-slf4j-support");
+        Path slf4jApiJar = currentClasspathArtifact("org.slf4j.Logger");
+        writeCompiledArtifact(
+            repository,
+            "com.example",
+            "runtime-dep",
+            "1.0.0",
+            Map.of(
+                "io.micronaut.http.HttpResponse", """
+                    package io.micronaut.http;
+
+                    public class HttpResponse {
+                    }
+                    """,
+                "io.micronaut.http.LoggingSupport", """
+                    package io.micronaut.http;
+
+                    public class LoggingSupport {
+                        public org.slf4j.Logger logger;
+                    }
+                    """
+            ),
+            true,
+            List.of(slf4jApiJar)
+        );
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-slf4j-support");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("class HttpResponse:"));
+        assertTrue(httpStub.contains("class LoggingSupport:"));
+        assertTrue(httpStub.contains("logger: Any"));
+        Path warningReport = project.resolve("__pyronaut__/reports/editor-stubs/stub-generation-report.txt");
+        if (Files.exists(warningReport)) {
+            String report = Files.readString(warningReport, StandardCharsets.UTF_8);
+            assertFalse(report.contains("LoggingSupport"));
+            assertFalse(report.contains("org/slf4j/Logger"));
+        }
+    }
+
     private static String pyproject(Path repository) {
         return """
             [project]
@@ -1420,6 +2670,20 @@ class PyronautInstallMainTest {
             build = ["com.example:build-dep:1.0.0"]
             test = ["com.example:test-dep:1.0.0"]
             """.formatted(repository.toUri());
+    }
+
+    private static Path currentClasspathArtifact(String className) throws IOException {
+        try {
+            Class<?> type = Class.forName(className);
+            if (type.getProtectionDomain() == null
+                || type.getProtectionDomain().getCodeSource() == null
+                || type.getProtectionDomain().getCodeSource().getLocation() == null) {
+                throw new IOException("Could not determine classpath artifact for " + className);
+            }
+            return Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI());
+        } catch (Exception e) {
+            throw new IOException("Could not determine classpath artifact for " + className, e);
+        }
     }
 
     private static String pyprojectWithTestResources(Path repository, boolean enabled) {
@@ -1525,6 +2789,120 @@ class PyronautInstallMainTest {
 
         Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
         Files.write(jarFile, new byte[]{0});
+    }
+
+    private static void writeCompiledArtifact(Path repository,
+                                              String groupId,
+                                              String artifactId,
+                                              String version,
+                                              Map<String, String> sources) throws IOException {
+        writeCompiledArtifact(repository, groupId, artifactId, version, sources, true);
+    }
+
+    private static void writeCompiledArtifactWithoutParameterMetadata(Path repository,
+                                                                      String groupId,
+                                                                      String artifactId,
+                                                                      String version,
+                                                                      Map<String, String> sources) throws IOException {
+        writeCompiledArtifact(repository, groupId, artifactId, version, sources, false);
+    }
+
+    private static void writeCompiledArtifact(Path repository,
+                                              String groupId,
+                                              String artifactId,
+                                              String version,
+                                              Map<String, String> sources,
+                                              boolean includeParameterMetadata) throws IOException {
+        writeCompiledArtifact(repository, groupId, artifactId, version, sources, includeParameterMetadata, List.of());
+    }
+
+    private static void writeCompiledArtifact(Path repository,
+                                              String groupId,
+                                              String artifactId,
+                                              String version,
+                                              Map<String, String> sources,
+                                              boolean includeParameterMetadata,
+                                              List<Path> compileClasspath) throws IOException {
+        Path artifactDir = repository
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version);
+        Files.createDirectories(artifactDir);
+
+        Files.writeString(artifactDir.resolve(artifactId + "-" + version + ".pom"), """
+            <project xmlns="http://maven.apache.org/POM/4.0.0"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>%s</groupId>
+              <artifactId>%s</artifactId>
+              <version>%s</version>
+            </project>
+            """.formatted(groupId, artifactId, version), StandardCharsets.UTF_8);
+
+        Path sourceDir = Files.createTempDirectory("pyronaut-install-sources");
+        Path classesDir = Files.createTempDirectory("pyronaut-install-classes");
+        List<Path> sourceFiles = new ArrayList<>();
+        for (Map.Entry<String, String> entry : sources.entrySet()) {
+            Path sourceFile = sourceDir.resolve(entry.getKey().replace('.', '/') + ".java");
+            Files.createDirectories(sourceFile.getParent());
+            Files.writeString(sourceFile, entry.getValue(), StandardCharsets.UTF_8);
+            sourceFiles.add(sourceFile);
+        }
+
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        if (compiler == null) {
+            throw new IOException("No system Java compiler is available");
+        }
+        StringWriter compilerOutput = new StringWriter();
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(null, null, StandardCharsets.UTF_8)) {
+            List<String> compilerOptions = new ArrayList<>();
+            if (includeParameterMetadata) {
+                compilerOptions.add("-parameters");
+            }
+            if (compileClasspath != null && !compileClasspath.isEmpty()) {
+                compilerOptions.add("-classpath");
+                compilerOptions.add(compileClasspath.stream()
+                    .map(Path::toString)
+                    .reduce((left, right) -> left + java.io.File.pathSeparator + right)
+                    .orElse(""));
+            }
+            compilerOptions.add("-d");
+            compilerOptions.add(classesDir.toString());
+            boolean success = compiler.getTask(
+                compilerOutput,
+                fileManager,
+                null,
+                compilerOptions,
+                null,
+                fileManager.getJavaFileObjectsFromFiles(sourceFiles.stream().map(Path::toFile).toList())
+            ).call();
+            if (!success) {
+                throw new IOException("Compilation failed: " + compilerOutput);
+            }
+        }
+
+        Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
+        try (ZipOutputStream outputStream = new ZipOutputStream(Files.newOutputStream(jarFile));
+             Stream<Path> walk = Files.walk(classesDir)) {
+            for (Path file : walk.filter(Files::isRegularFile).toList()) {
+                String entryName = classesDir.relativize(file).toString().replace('\\', '/');
+                outputStream.putNextEntry(new ZipEntry(entryName));
+                outputStream.write(Files.readAllBytes(file));
+                outputStream.closeEntry();
+            }
+        }
+
+        Path sourceJarFile = artifactDir.resolve(artifactId + "-" + version + "-sources.jar");
+        try (ZipOutputStream outputStream = new ZipOutputStream(Files.newOutputStream(sourceJarFile));
+             Stream<Path> walk = Files.walk(sourceDir)) {
+            for (Path file : walk.filter(Files::isRegularFile).toList()) {
+                String entryName = sourceDir.relativize(file).toString().replace('\\', '/');
+                outputStream.putNextEntry(new ZipEntry(entryName));
+                outputStream.write(Files.readAllBytes(file));
+                outputStream.closeEntry();
+            }
+        }
     }
 
     private static void writeBom(Path repository,

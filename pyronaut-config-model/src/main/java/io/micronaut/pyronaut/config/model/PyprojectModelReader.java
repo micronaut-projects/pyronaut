@@ -96,6 +96,7 @@ public final class PyprojectModelReader {
                 readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST)
             ),
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
+            resolveIdeStubs(parsed),
             resolveValidation(parsed),
             resolveTestResources(parsed)
         );
@@ -113,6 +114,9 @@ public final class PyprojectModelReader {
             } catch (TomlInvalidTypeException e) {
                 throw invalidType(field.canonicalPath(), "string", e);
             }
+        }
+        if (field.defaultValue() instanceof String defaultValue) {
+            return defaultValue;
         }
         return null;
     }
@@ -137,6 +141,11 @@ public final class PyprojectModelReader {
                 values.add(stringValue);
             }
             return List.copyOf(values);
+        }
+        if (field.defaultValue() instanceof List<?> defaultValues) {
+            @SuppressWarnings("unchecked")
+            List<String> strings = (List<String>) defaultValues;
+            return strings;
         }
         return List.of();
     }
@@ -178,6 +187,16 @@ public final class PyprojectModelReader {
             readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_NATIVE_BASE_IMAGE),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BUILDER_IMAGE),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BASE_IMAGE)
+        );
+    }
+
+    private static PyprojectModel.IdeStubs resolveIdeStubs(TomlParseResult parsed) {
+        return new PyprojectModel.IdeStubs(
+            readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_IDE_STUBS_ENABLED),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_IDE_STUBS_IDE),
+            readStringList(parsed, PyprojectConfigSpec.PYRONAUT_IDE_STUBS_PACKAGES),
+            readStringList(parsed, PyprojectConfigSpec.PYRONAUT_IDE_STUBS_EXCLUDE_PATTERNS),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_IDE_STUBS_DESTINATION_DIR)
         );
     }
 

@@ -15,7 +15,12 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"$schema\": \"http://json-schema.org/draft-07/schema#\""));
         assertTrue(schema.contains("\"test-resources\""));
         assertTrue(schema.contains("\"docker\""));
+        assertTrue(schema.contains("\"ide-stubs\""));
+        assertTrue(schema.contains("\"ide\""));
+        assertTrue(schema.contains("\"enum\": [\"vscode\", \"pycharm\"]"));
         assertTrue(schema.contains("\"image-name\""));
+        assertTrue(schema.contains("\"destination-dir\""));
+        assertTrue(schema.contains("\"exclude-patterns\""));
         assertTrue(schema.contains("\"dockerfile-native\""));
         assertTrue(schema.contains("\"static-native-base-image\""));
         assertTrue(schema.contains("\"fail-on-not-present\""));
@@ -31,8 +36,11 @@ class PyprojectJsonSchemaGeneratorTest {
         String schema = generator.generate();
 
         assertTrue(schema.contains("\"testResources\""));
+        assertTrue(schema.contains("\"ideStubs\""));
         assertTrue(schema.contains("\"failOnNotPresent\""));
         assertTrue(schema.contains("\"imageName\""));
+        assertTrue(schema.contains("\"destinationDir\""));
+        assertTrue(schema.contains("\"excludePatterns\""));
         assertTrue(schema.contains("\"dockerfileNative\""));
         assertTrue(schema.contains("\"deprecated\": true"));
         assertTrue(schema.contains("\"x-taplo\""));

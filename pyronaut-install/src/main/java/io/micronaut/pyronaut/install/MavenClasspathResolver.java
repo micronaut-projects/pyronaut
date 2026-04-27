@@ -33,6 +33,9 @@ import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.repository.Authentication;
 import org.eclipse.aether.repository.Proxy;
+import org.eclipse.aether.resolution.ArtifactRequest;
+import org.eclipse.aether.resolution.ArtifactResult;
+import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactDescriptorException;
 import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
 import org.eclipse.aether.resolution.ArtifactDescriptorResult;
@@ -149,7 +152,7 @@ final class MavenClasspathResolver {
 
             List<String> coordinates = coordinatesForScope(model, scope, managedVersions);
             if (coordinates.isEmpty()) {
-                return new ResolvedScopeDetails(List.of(), null);
+                return new ResolvedScopeDetails(List.of(), null, List.of());
             }
 
             CollectRequest collectRequest = new CollectRequest();
@@ -177,7 +180,12 @@ final class MavenClasspathResolver {
                 .distinct()
                 .sorted(Comparator.naturalOrder())
                 .toList();
-            return new ResolvedScopeDetails(classpath, result.getRoot());
+            List<ResolvedEditorArtifact> editorArtifacts = result.getArtifactResults().stream()
+                .map(ArtifactResult::getArtifact)
+                .filter(Objects::nonNull)
+                .map(artifact -> toResolvedEditorArtifact(artifact, repositories, session))
+                .toList();
+            return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
         } catch (DependencyResolutionException e) {
             String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage();
             if (proxyConfiguration != null) {
@@ -652,6 +660,43 @@ final class MavenClasspathResolver {
         return List.copyOf(resolved.values());
     }
 
-    record ResolvedScopeDetails(List<Path> classpath, DependencyNode root) {
+    private ResolvedEditorArtifact toResolvedEditorArtifact(Artifact artifact,
+                                                            List<RemoteRepository> repositories,
+                                                            CloseableSession session) {
+        Path binaryPath = artifact.getPath();
+        Path sourcePath = resolveSourceArtifact(artifact, repositories, session);
+        return new ResolvedEditorArtifact(
+            binaryPath == null ? null : binaryPath.toAbsolutePath(),
+            sourcePath == null ? null : sourcePath.toAbsolutePath()
+        );
+    }
+
+    private Path resolveSourceArtifact(Artifact artifact,
+                                       List<RemoteRepository> repositories,
+                                       CloseableSession session) {
+        if (artifact.getPath() == null || !"jar".equalsIgnoreCase(artifact.getExtension())) {
+            return null;
+        }
+        Artifact sourceArtifact = new DefaultArtifact(
+            artifact.getGroupId(),
+            artifact.getArtifactId(),
+            "sources",
+            artifact.getExtension(),
+            artifact.getVersion()
+        );
+        ArtifactRequest request = new ArtifactRequest(sourceArtifact, repositories, null);
+        try {
+            ArtifactResult result = repositorySystem.resolveArtifact(session, request);
+            Artifact resolved = result.getArtifact();
+            return resolved == null ? null : resolved.getPath();
+        } catch (ArtifactResolutionException e) {
+            return null;
+        }
+    }
+
+    record ResolvedScopeDetails(List<Path> classpath, DependencyNode root, List<ResolvedEditorArtifact> editorArtifacts) {
+    }
+
+    record ResolvedEditorArtifact(Path binaryJar, Path sourceJar) {
     }
 }

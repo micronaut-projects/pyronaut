@@ -74,19 +74,28 @@ public final class PyronautInstallMain implements Callable<Integer> {
     private final PyprojectModelReader modelReader;
     private final MavenClasspathResolver resolver;
     private final PyprojectEditorSupport editorSupport;
+    private final PythonEditorSupport pythonEditorSupport;
 
     public PyronautInstallMain() {
-        this(new PyprojectModelReader(), new MavenClasspathResolver(), new PyprojectEditorSupport());
+        this(new PyprojectModelReader(), new MavenClasspathResolver(), new PyprojectEditorSupport(), new PythonEditorSupport());
     }
 
     PyronautInstallMain(PyprojectModelReader modelReader, MavenClasspathResolver resolver) {
-        this(modelReader, resolver, new PyprojectEditorSupport());
+        this(modelReader, resolver, new PyprojectEditorSupport(), new PythonEditorSupport());
     }
 
     PyronautInstallMain(PyprojectModelReader modelReader, MavenClasspathResolver resolver, PyprojectEditorSupport editorSupport) {
+        this(modelReader, resolver, editorSupport, new PythonEditorSupport());
+    }
+
+    PyronautInstallMain(PyprojectModelReader modelReader,
+                        MavenClasspathResolver resolver,
+                        PyprojectEditorSupport editorSupport,
+                        PythonEditorSupport pythonEditorSupport) {
         this.modelReader = modelReader;
         this.resolver = resolver;
         this.editorSupport = editorSupport;
+        this.pythonEditorSupport = pythonEditorSupport;
     }
 
     @Override
@@ -109,6 +118,10 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 boolean bypassRequested = refresh || noCache;
                 if (!bypassRequested && ResolutionCache.cacheHit(cacheDir, hash, scopes)) {
                     progressReporter.cacheHit();
+                    emitEditorSupportBestEffort(
+                        progressReporter,
+                        () -> pythonEditorSupport.ensureWrittenFromManifests(root, cacheDir, model.pyronaut().ideStubs())
+                    );
                     return InstallExitCode.SUCCESS.code();
                 }
                 if (bypassRequested) {
@@ -120,14 +133,16 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     deleteDirectoryIfExists(localRepo);
                 }
                 Map<InstallScope, List<String>> resolved = new EnumMap<>(InstallScope.class);
+                Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> resolvedEditorArtifacts = new EnumMap<>(InstallScope.class);
                 for (InstallScope installScope : scopes) {
                     progressReporter.startScope(installScope);
-                    List<String> classpath = resolver.resolveScope(model, installScope, localRepo, offline)
-                        .stream()
+                    MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline);
+                    List<String> classpath = details.classpath().stream()
                         .map(path -> path.toAbsolutePath().toString())
                         .toList();
                     progressReporter.finishScope(installScope, classpath.size());
                     resolved.put(installScope, classpath);
+                    resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
                 }
                 if (resolved.containsKey(InstallScope.RUNTIME)) {
                     var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, resolved.get(InstallScope.RUNTIME));
@@ -135,6 +150,16 @@ public final class PyronautInstallMain implements Callable<Integer> {
                         progressReporter.generatedApplicationSchema(schemaResult.mergedSchemas());
                     }
                 }
+                emitEditorSupportBestEffort(
+                    progressReporter,
+                    () -> pythonEditorSupport.ensureWrittenFromResolvedArtifacts(
+                        root,
+                        cacheDir,
+                        model.pyronaut().ideStubs(),
+                        resolvedEditorArtifacts.getOrDefault(InstallScope.RUNTIME, List.of()),
+                        resolvedEditorArtifacts.getOrDefault(InstallScope.TEST, List.of())
+                    )
+                );
                 ResolutionCache.write(cacheDir, hash, resolved);
             }
             return InstallExitCode.SUCCESS.code();
@@ -208,6 +233,36 @@ public final class PyronautInstallMain implements Callable<Integer> {
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautInstallMain()).execute(args);
         System.exit(exitCode);
+    }
+
+    private static void emitEditorSupport(InstallProgressReporter progressReporter,
+                                          PythonEditorSupport.EditorSupportResult result) {
+        if (result == null) {
+            return;
+        }
+        switch (result.status()) {
+            case GENERATED -> progressReporter.generatedEditorStubs(result.packageCount(), result.symbolCount());
+            case CACHED -> progressReporter.cachedEditorStubs();
+            case NONE -> {
+            }
+        }
+        if (result.warningCount() > 0) {
+            progressReporter.editorStubsWarnings(result.warningCount(), result.warningReport());
+        }
+    }
+
+    private static void emitEditorSupportBestEffort(InstallProgressReporter progressReporter,
+                                                    EditorSupportAction action) {
+        try {
+            emitEditorSupport(progressReporter, action.execute());
+        } catch (Exception e) {
+            progressReporter.warn("Python editor stub generation failed: " + e.getMessage());
+        }
+    }
+
+    @FunctionalInterface
+    private interface EditorSupportAction {
+        PythonEditorSupport.EditorSupportResult execute() throws Exception;
     }
 
     private static void deleteDirectoryIfExists(Path directory) throws IOException {

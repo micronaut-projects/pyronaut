@@ -37,6 +37,12 @@ class PyprojectModelReaderTest {
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());
         assertEquals("jvm", model.pyronaut().build().mode());
+        assertNotNull(model.pyronaut().ideStubs());
+        assertEquals(Boolean.TRUE, model.pyronaut().ideStubs().enabled());
+        assertEquals("vscode", model.pyronaut().ideStubs().ide());
+        assertEquals(List.of("io.micronaut", "jakarta"), model.pyronaut().ideStubs().packages());
+        assertEquals(List.of("*ModuleInfo"), model.pyronaut().ideStubs().excludePatterns());
+        assertEquals("__pyronaut__/ide-stubs", model.pyronaut().ideStubs().destinationDir());
         assertNotNull(model.pyronaut().build().metadata());
         assertEquals(List.of(), model.pyronaut().build().metadata().excludedModules());
         assertNotNull(model.pyronaut().build().docker());
@@ -259,6 +265,32 @@ class PyprojectModelReaderTest {
         assertEquals("example/native", model.pyronaut().build().docker().nativeBaseImage());
         assertEquals("example/static-builder", model.pyronaut().build().docker().staticNativeBuilderImage());
         assertEquals("example/static-native", model.pyronaut().build().docker().staticNativeBaseImage());
+    }
+
+    @Test
+    void parseIdeStubConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.ide-stubs]
+            enabled = false
+            ide = "pycharm"
+            packages = ["io.micronaut.http", "jakarta.inject"]
+            exclude-patterns = ["*ModuleInfo", "io.micronaut.http.internal.*"]
+            destination-dir = "__pyronaut__/custom-stubs"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals(Boolean.FALSE, model.pyronaut().ideStubs().enabled());
+        assertEquals("pycharm", model.pyronaut().ideStubs().ide());
+        assertEquals(List.of("io.micronaut.http", "jakarta.inject"), model.pyronaut().ideStubs().packages());
+        assertEquals(List.of("*ModuleInfo", "io.micronaut.http.internal.*"), model.pyronaut().ideStubs().excludePatterns());
+        assertEquals("__pyronaut__/custom-stubs", model.pyronaut().ideStubs().destinationDir());
     }
 
     @Test

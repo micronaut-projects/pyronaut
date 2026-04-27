@@ -24,6 +24,7 @@ dependencies {
     implementation(libs.maven.resolver.supplier.mvn3)
     implementation(libs.micronaut.test.resources.build.tools)
     implementation(libs.tomlj)
+    implementation(libs.javaparser.core)
 
     runtimeOnly(libs.slf4j.simple)
 

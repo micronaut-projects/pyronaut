@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.install;
 
 import java.io.PrintStream;
+import java.nio.file.Path;
 
 final class InstallProgressReporter implements AutoCloseable {
 
@@ -98,6 +99,39 @@ final class InstallProgressReporter implements AutoCloseable {
             return;
         }
         output.println("Generated application schema from runtime classpath (" + fragmentCount + " fragments)");
+    }
+
+    void generatedEditorStubs(int packageCount, int symbolCount) {
+        if (!enabled) {
+            return;
+        }
+        output.println("Generated Python editor stubs (" + packageCount + " packages, " + symbolCount + " symbols)");
+    }
+
+    void cachedEditorStubs() {
+        if (!enabled) {
+            return;
+        }
+        output.println("Python editor stubs are up to date");
+    }
+
+    void editorStubsWarnings(int warningCount, Path reportPath) {
+        if (!enabled) {
+            return;
+        }
+        String message = "Python editor stubs generated with " + warningCount + " warning"
+            + (warningCount == 1 ? "" : "s");
+        if (reportPath != null) {
+            message += " (report: " + reportPath + ")";
+        }
+        output.println(message);
+    }
+
+    void warn(String message) {
+        if (!enabled) {
+            return;
+        }
+        output.println("WARNING: " + message);
     }
 
     @Override

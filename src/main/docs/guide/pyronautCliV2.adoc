@@ -70,6 +70,16 @@ Editor support:
 - `pyronaut install` prepends a Taplo schema directive to `pyproject.toml` pointing at that schema.
 - If `config/application.toml` exists, `pyronaut install` also builds `__pyronaut__/schemas/micronaut-application.schema.json` from the Micronaut configuration schemas present on the resolved runtime classpath and prepends a schema directive to `config/application.toml`.
 - Runtime configuration schemas are merged by their `x-micronaut.prefix` path, so overlapping contributors such as `micronaut.server` and `micronaut.server.netty` are combined into one rooted schema tree.
+- `pyronaut install` also generates Python editor stubs under `__pyronaut__/ide-stubs` from the resolved `runtime` and `test` classpaths.
+- Python editor stub generation is configurable under `[tool.pyronaut.ide-stubs]` with `enabled`, `ide`, `packages`, `exclude-patterns`, and `destination-dir`.
+- `ide` defaults to `vscode` and currently supports `vscode` and `pycharm`.
+- `exclude-patterns` accepts wildcard matches against fully qualified Java type names and defaults to `["*ModuleInfo"]` to skip generated module metadata classes.
+- The resolved editor input set is recorded in `__pyronaut__/resolved-editor-artifacts.json`, including binary JAR and source JAR paths when available.
+- When `ide = "vscode"` is used without user-managed Pyright configuration, `pyronaut install` writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the configured stub directory so Pylance can resolve Java-backed Python imports such as `micronaut.http.annotation` and `jakarta.inject`.
+- If `pyrightconfig.json` or `[tool.pyright]` already exists, `pyronaut install` leaves that configuration user-managed and records the skipped settings update in the editor stub report.
+- When `ide = "pycharm"`, `pyronaut install` writes a generated `.idea/pyronaut-editor-stubs.iml` module and adds it to `.idea/modules.xml` so the stub directory is visible as a source root without rewriting the main project module.
+- Python editor stub generation is best effort. If a particular Java type cannot be rendered cleanly, Pyronaut skips that API surface and continues install processing.
+- Detailed stub-generation warnings are written to `__pyronaut__/reports/editor-stubs/stub-generation-report.txt` instead of being streamed line-by-line to the console.
 - Existing user-managed `#:schema ...` directives at the top of `pyproject.toml` are left untouched.
 - Existing user-managed `#:schema ...` directives at the top of `config/application.toml` are left untouched.
 - Older generated `.taplo.toml` files from previous Pyronaut installs are removed to avoid conflicting schema associations. User-managed `.taplo.toml` files are left untouched.

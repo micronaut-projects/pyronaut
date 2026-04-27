@@ -58,6 +58,7 @@ public record PyprojectModel(Project project,
      * @param repositories configured repositories
      * @param dependencies dependency scopes
      * @param build build defaults/settings
+     * @param ideStubs IDE stub generation settings
      * @param validation validation settings
      * @param testResources test resources settings
      */
@@ -65,8 +66,25 @@ public record PyprojectModel(Project project,
                            List<String> repositories,
                            Dependencies dependencies,
                            Build build,
+                           IdeStubs ideStubs,
                            Validation validation,
                            TestResources testResources) {
+    }
+
+    /**
+     * tool.pyronaut.ide-stubs table.
+     *
+     * @param enabled whether IDE stub generation is enabled
+     * @param ide target IDE to configure for the generated stubs
+     * @param packages Java packages to render into Python stubs
+     * @param excludePatterns fully qualified Java type-name patterns excluded from stub generation
+     * @param destinationDir destination directory for generated stubs
+     */
+    public record IdeStubs(Boolean enabled,
+                           String ide,
+                           List<String> packages,
+                           List<String> excludePatterns,
+                           String destinationDir) {
     }
 
     /**

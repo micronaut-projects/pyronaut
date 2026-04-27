@@ -20,6 +20,7 @@ micronaut-control-panel = "1.8.0"
 docker-java = "3.4.1"
 micronaut-test = "5.0.0-M8"
 micronaut-data = "5.0.0-M6"
+javaparser = "3.27.0"
 
 [libraries]
 micronaut-core = { module = 'io.micronaut:micronaut-core-bom', version.ref = 'micronaut' }
@@ -61,6 +62,7 @@ micronaut-json-schema-configuration-validator = { module = "io.micronaut.jsonsch
 micronaut-test-core = { module = "io.micronaut.test:micronaut-test-core", version.ref = "micronaut-test" }
 micronaut-data-jdbc = { module = "io.micronaut.data:micronaut-data-jdbc", version.ref = "micronaut-data" }
 micronaut-data-processor = { module = "io.micronaut.data:micronaut-data-processor", version.ref = "micronaut-data" }
+javaparser-core = { module = "com.github.javaparser:javaparser-core", version.ref = "javaparser" }
 
 [bundles]
 

@@ -208,6 +208,46 @@ public final class PyprojectConfigSpec {
         List.of(),
         List.of("tool.pyronaut.build.docker.staticNativeBaseImage")
     );
+    public static final SectionSpec PYRONAUT_IDE_STUBS_SECTION = section(
+        "tool.pyronaut.ide-stubs",
+        true,
+        "tool.pyronaut.ideStubs"
+    );
+    public static final FieldSpec PYRONAUT_IDE_STUBS_ENABLED = bool(
+        "tool.pyronaut.ide-stubs.enabled",
+        "Whether best-effort Python IDE stub generation is enabled during install.",
+        Boolean.TRUE,
+        List.of(),
+        List.of("tool.pyronaut.ideStubs.enabled")
+    );
+    public static final FieldSpec PYRONAUT_IDE_STUBS_IDE = enumString(
+        "tool.pyronaut.ide-stubs.ide",
+        "IDE to configure for generated Python IDE stubs.",
+        "vscode",
+        List.of("vscode", "pycharm"),
+        List.of("tool.pyronaut.ideStubs.ide")
+    );
+    public static final FieldSpec PYRONAUT_IDE_STUBS_PACKAGES = stringArray(
+        "tool.pyronaut.ide-stubs.packages",
+        "Java package roots to process for Python IDE stub generation.",
+        List.of("io.micronaut", "jakarta"),
+        List.of(),
+        List.of("tool.pyronaut.ideStubs.packages")
+    );
+    public static final FieldSpec PYRONAUT_IDE_STUBS_EXCLUDE_PATTERNS = stringArray(
+        "tool.pyronaut.ide-stubs.exclude-patterns",
+        "Fully qualified Java type-name wildcard patterns excluded from Python IDE stub generation.",
+        List.of("*ModuleInfo"),
+        List.of(),
+        List.of("tool.pyronaut.ideStubs.excludePatterns")
+    );
+    public static final FieldSpec PYRONAUT_IDE_STUBS_DESTINATION_DIR = string(
+        "tool.pyronaut.ide-stubs.destination-dir",
+        "Destination directory for generated Python IDE stubs.",
+        "__pyronaut__/ide-stubs",
+        List.of(),
+        List.of("tool.pyronaut.ideStubs.destinationDir")
+    );
 
     public static final FieldSpec PYRONAUT_VALIDATION_ENABLED = bool(
         "tool.pyronaut.validation.enabled",
@@ -559,6 +599,11 @@ public final class PyprojectConfigSpec {
         PYRONAUT_BUILD_DOCKER_NATIVE_BASE_IMAGE,
         PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BUILDER_IMAGE,
         PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BASE_IMAGE,
+        PYRONAUT_IDE_STUBS_ENABLED,
+        PYRONAUT_IDE_STUBS_IDE,
+        PYRONAUT_IDE_STUBS_PACKAGES,
+        PYRONAUT_IDE_STUBS_EXCLUDE_PATTERNS,
+        PYRONAUT_IDE_STUBS_DESTINATION_DIR,
         PYRONAUT_VALIDATION_ENABLED,
         PYRONAUT_VALIDATION_FAIL_ON_NOT_PRESENT,
         PYRONAUT_VALIDATION_DEDUCE_ENVIRONMENTS,
@@ -617,6 +662,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.build.metadata", true),
         section("tool.pyronaut.build.docker", true),
+        PYRONAUT_IDE_STUBS_SECTION,
         section("tool.pyronaut.validation", true),
         section("tool.pyronaut.validation.run", true),
         section("tool.pyronaut.validation.test", true),
