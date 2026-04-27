@@ -118,32 +118,24 @@
     },
     {
       "type": "org.apache.maven.model.Build"
+      ,
+      "allPublicMethods": true
     },
     {
       "type": "org.apache.maven.model.BuildBase",
-      "methods": [
-        {
-          "name": "getDirectory",
-          "parameterTypes": []
-        }
-      ]
+      "allPublicMethods": true
     },
     {
       "type": "org.apache.maven.model.Model",
-      "methods": [
-        {
-          "name": "getArtifactId",
-          "parameterTypes": []
-        },
-        {
-          "name": "getBuild",
-          "parameterTypes": []
-        },
-        {
-          "name": "getVersion",
-          "parameterTypes": []
-        }
-      ]
+      "allPublicMethods": true
+    },
+    {
+      "type": "org.apache.maven.model.ModelBase",
+      "allPublicMethods": true
+    },
+    {
+      "type": "org.apache.maven.model.Parent",
+      "allPublicMethods": true
     },
     {
       "type": "picocli.CommandLine$AutoHelpMixin",

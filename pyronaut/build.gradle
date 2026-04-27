@@ -21,6 +21,10 @@ def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-test-resources-server", command: "pyronaut-test-resources-server"],
     [path: ":micronaut-pyronaut-tui", command: "pyronaut-tui", installDir: "pyronaut-tui"]
 ]
+def delegatedNativeCliProjects = [
+    [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
+    [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"]
+]
 
 tasks.register("prepareWheelSources", Sync) {
     from("src/main/python") {
@@ -33,6 +37,13 @@ tasks.register("prepareWheelSources", Sync) {
         def installDirName = cliProject.containsKey("installDir") ? cliProject.installDir : project(cliProject.path).name
         from(project(cliProject.path).layout.buildDirectory.dir("install/${installDirName}")) {
             into("src/pyronaut_cli_v2/tools/${cliProject.command}")
+        }
+    }
+    delegatedNativeCliProjects.each { cliProject ->
+        def nativeCompileTask = project(cliProject.path).tasks.named("nativeCompile")
+        dependsOn(nativeCompileTask)
+        from(nativeCompileTask.map { it.outputFile.get().asFile }) {
+            into("src/pyronaut_cli_v2/tools/${cliProject.command}/native")
         }
     }
 
@@ -50,6 +61,13 @@ tasks.register("prepareWheelSources", Sync) {
                 if (sourceBat.exists() && !targetBat.exists()) {
                     sourceBat.renameTo(targetBat)
                 }
+            }
+        }
+
+        delegatedNativeCliProjects.each { cliProject ->
+            def nativeBinary = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/${cliProject.command}").asFile
+            if (nativeBinary.exists()) {
+                nativeBinary.setExecutable(true)
             }
         }
 
@@ -103,6 +121,9 @@ pyronaut_cli_v2 =
 [options.entry_points]
 console_scripts =
     pyronaut = pyronaut_cli_v2.cli:main
+
+[bdist_wheel]
+root_is_pure = false
 """.trim() + System.lineSeparator()
     }
 }

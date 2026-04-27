@@ -15,6 +15,7 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"$schema\": \"http://json-schema.org/draft-07/schema#\""));
         assertTrue(schema.contains("\"test-resources\""));
         assertTrue(schema.contains("\"docker\""));
+        assertTrue(schema.contains("\"processor\""));
         assertTrue(schema.contains("\"ide-stubs\""));
         assertTrue(schema.contains("\"ide\""));
         assertTrue(schema.contains("\"enum\": [\"vscode\", \"pycharm\"]"));
@@ -29,6 +30,8 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"additionalProperties\": false"));
         assertTrue(schema.contains("\"default\": \"jvm\""));
         assertTrue(schema.contains("\"enum\": [\"jvm\", \"native\"]"));
+        assertTrue(schema.contains("\"default\": \"jit\""));
+        assertTrue(schema.contains("\"enum\": [\"jit\", \"native\"]"));
     }
 
     @Test

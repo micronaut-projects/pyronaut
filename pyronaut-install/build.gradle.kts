@@ -1,5 +1,6 @@
 import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask
 import org.gradle.api.tasks.SourceSetContainer
+import java.io.File
 
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
@@ -35,6 +36,53 @@ dependencies {
 application {
     mainClass = "io.micronaut.pyronaut.install.PyronautInstallMain"
 }
+
+val nativeImageCLibraryPathArgs = providers.provider {
+    val javaHome = System.getenv("JAVA_HOME")?.takeIf { it.isNotBlank() } ?: return@provider emptyList<String>()
+    val clibrariesDir = File(javaHome, "lib/svm/clibraries")
+    if (!clibrariesDir.isDirectory) {
+        return@provider emptyList<String>()
+    }
+    val osArch = System.getProperty("os.arch").lowercase()
+    val platformDir = when {
+        osArch.contains("aarch64") || osArch.contains("arm64") -> File(clibrariesDir, "darwin-aarch64")
+        else -> null
+    }
+    buildList {
+        platformDir?.takeIf { it.isDirectory }?.let { add(it.absolutePath) }
+        add(clibrariesDir.absolutePath)
+    }.takeIf { it.isNotEmpty() }
+        ?.let { listOf("-H:CLibraryPath=${it.joinToString(",")}") }
+        ?: emptyList()
+}
+
+val nativeImageRuntimeClassLoadingArgs = listOf(
+    "-H:+UnlockExperimentalVMOptions",
+    "-H:EnableURLProtocols=jar",
+    "-H:+RuntimeClassLoading",
+    "-H:+AllowJRTFileSystem",
+    "-H:Preserve=package=java.lang.*",
+    "-H:Preserve=package=java.lang.invoke.*",
+    "-H:Preserve=package=java.text.*",
+    "-H:Preserve=package=java.time.*",
+    "-H:Preserve=package=java.util.*",
+    "-H:Preserve=package=jdk.internal.misc.*",
+    "-H:Preserve=package=jdk.internal.access.*",
+    "-H:Preserve=package=io.micronaut.core.annotation.*",
+    "-H:Preserve=package=io.micronaut.core.beans.*",
+    "-H:Preserve=package=io.micronaut.core.naming.*",
+    "-H:Preserve=package=io.micronaut.core.reflect.*",
+    "-H:Preserve=package=io.micronaut.core.util.*",
+    "-H:Preserve=package=io.micronaut.core.io.service.*",
+    "-H:Preserve=package=io.micronaut.inject.*",
+    "-H:Preserve=package=io.micronaut.context.*",
+    "-H:Preserve=package=com.github.javaparser.*",
+    "-H:Preserve=package=com.github.javaparser.ast.*",
+    "-H:Preserve=package=com.github.javaparser.javadoc.*",
+    "-H:Preserve=package=com.github.javaparser.metamodel.*",
+    "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
+    "-H:-UnlockExperimentalVMOptions"
+)
 
 tasks {
     startScripts {
@@ -78,6 +126,8 @@ graalvmNative {
         named("main") {
             imageName.set("pyronaut-install")
             sharedLibrary.set(false)
+            buildArgs.addAll(nativeImageCLibraryPathArgs)
+            buildArgs.addAll(nativeImageRuntimeClassLoadingArgs)
         }
         all {
             resources.autodetect()

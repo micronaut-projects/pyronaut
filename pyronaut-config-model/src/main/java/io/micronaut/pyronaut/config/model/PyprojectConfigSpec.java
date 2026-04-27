@@ -133,6 +133,12 @@ public final class PyprojectConfigSpec {
         "jvm",
         List.of("jvm", "native")
     );
+    public static final FieldSpec PYRONAUT_PROCESSOR_MODE = enumString(
+        "tool.pyronaut.processor.mode",
+        "Processor execution mode.",
+        "jit",
+        List.of("jit", "native")
+    );
     public static final FieldSpec PYRONAUT_BUILD_METADATA_ENABLED = bool(
         "tool.pyronaut.build.metadata.enabled",
         "Whether native image metadata repository lookup is enabled."
@@ -587,6 +593,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_DEPENDENCIES_BUILD,
         PYRONAUT_DEPENDENCIES_TEST,
         PYRONAUT_BUILD_MODE,
+        PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_BUILD_METADATA_ENABLED,
         PYRONAUT_BUILD_METADATA_VERSION,
         PYRONAUT_BUILD_METADATA_REPOSITORY_URL,
@@ -660,6 +667,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut", true),
         section("tool.pyronaut.dependencies", true),
         section("tool.pyronaut.build", true),
+        section("tool.pyronaut.processor", true),
         section("tool.pyronaut.build.metadata", true),
         section("tool.pyronaut.build.docker", true),
         PYRONAUT_IDE_STUBS_SECTION,

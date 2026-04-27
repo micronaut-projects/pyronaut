@@ -96,6 +96,7 @@ public final class PyprojectModelReader {
                 readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST)
             ),
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
+            new PyprojectModel.Processor(resolveProcessorMode(parsed)),
             resolveIdeStubs(parsed),
             resolveValidation(parsed),
             resolveTestResources(parsed)
@@ -175,6 +176,21 @@ public final class PyprojectModelReader {
         String repositoryUrl = readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_REPOSITORY_URL);
         List<String> excludedModules = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_EXCLUDED_MODULES);
         return new PyprojectModel.Metadata(enabled, version, repositoryUrl, excludedModules);
+    }
+
+    private static String resolveProcessorMode(TomlParseResult parsed) {
+        String mode = readString(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE);
+        if (mode == null || mode.isBlank()) {
+            return (String) PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE.defaultValue();
+        }
+        String normalized = mode.trim().toLowerCase();
+        if (PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE.enumValues().contains(normalized)) {
+            return normalized;
+        }
+        throw new PyprojectModelException(
+            "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE.canonicalPath()
+                + "': expected one of " + PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE.enumValues()
+        );
     }
 
     private static PyprojectModel.Docker resolveBuildDocker(TomlParseResult parsed) {

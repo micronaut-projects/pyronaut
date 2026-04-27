@@ -31,6 +31,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 
 import org.eclipse.aether.resolution.DependencyResolutionException;
 
@@ -101,6 +102,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @Override
     public Integer call() {
         try (ChecksumWarningFilter ignored = ChecksumWarningFilter.install()) {
+            initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
             Path root = projectDir.toAbsolutePath().normalize();
             Path pyproject = root.resolve(PyprojectModelReader.FILE_NAME);
             InstallProgressReporter.ProgressMode.fromCliValue(progress);
@@ -233,6 +235,17 @@ public final class PyronautInstallMain implements Callable<Integer> {
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautInstallMain()).execute(args);
         System.exit(exitCode);
+    }
+
+    static void initializeJavaHomeIfMissing(Supplier<String> javaHomeSupplier) {
+        String currentJavaHome = System.getProperty("java.home");
+        if (currentJavaHome != null && !currentJavaHome.isBlank()) {
+            return;
+        }
+        String javaHome = javaHomeSupplier.get();
+        if (javaHome != null && !javaHome.isBlank()) {
+            System.setProperty("java.home", javaHome);
+        }
     }
 
     private static void emitEditorSupport(InstallProgressReporter progressReporter,

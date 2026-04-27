@@ -1,6 +1,7 @@
 import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask
 import org.gradle.api.attributes.java.TargetJvmVersion
 import org.gradle.api.tasks.SourceSetContainer
+import java.io.File
 
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
@@ -50,6 +51,25 @@ application {
     mainClass = "io.micronaut.pyronaut.processor.PyronautProcessorMain"
 }
 
+val nativeImageCLibraryPathArgs = providers.provider {
+    val javaHome = System.getenv("JAVA_HOME")?.takeIf { it.isNotBlank() } ?: return@provider emptyList<String>()
+    val clibrariesDir = File(javaHome, "lib/svm/clibraries")
+    if (!clibrariesDir.isDirectory) {
+        return@provider emptyList<String>()
+    }
+    val osArch = System.getProperty("os.arch").lowercase()
+    val platformDir = when {
+        osArch.contains("aarch64") || osArch.contains("arm64") -> File(clibrariesDir, "darwin-aarch64")
+        else -> null
+    }
+    buildList {
+        platformDir?.takeIf { it.isDirectory }?.let { add(it.absolutePath) }
+        add(clibrariesDir.absolutePath)
+    }.takeIf { it.isNotEmpty() }
+        ?.let { listOf("-H:CLibraryPath=${it.joinToString(",")}") }
+        ?: emptyList()
+}
+
 tasks {
     startScripts {
         applicationName = "pyronaut-processor"
@@ -57,10 +77,6 @@ tasks {
 
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")
     val testSourceSet = the<SourceSetContainer>()["test"]
-
-    nativeCompileTask.configure {
-        onlyIf { nativeProcessorEnabled.get() }
-    }
 
     register<Test>("nativeSmokeTest") {
         group = "verification"
@@ -97,6 +113,7 @@ graalvmNative {
             imageName.set("pyronaut-processor")
             sharedLibrary.set(false)
             buildArgs.add("-H:ConfigurationFileDirectories=${project.layout.projectDirectory.dir("src/main/resources/META-INF/native-image/io.micronaut/micronaut-pyronaut-processor").asFile.absolutePath}")
+            buildArgs.addAll(nativeImageCLibraryPathArgs)
         }
         all {
             resources.autodetect()

@@ -307,10 +307,10 @@ def _delegate(
             java_home_provider=java_home_provider,
         )
 
-    executable_name = COMMAND_TO_EXECUTABLE[command]
-    executable_path = resolver(executable_name)
-    if executable_path is None:
-        print(f"Missing delegated executable: {executable_name}", file=sys.stderr)
+    try:
+        executable_path = _resolve_delegate_executable_path(command, args, resolver)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
     command_line = [executable_path, *args]
     if debug_vm and command in {"run", "test"}:
@@ -1294,6 +1294,38 @@ def _read_pyproject_build_mode(project_dir: Path) -> str | None:
     raise ValueError("Invalid build mode in pyproject.toml. Use tool.pyronaut.build.mode = 'native' or 'jvm'")
 
 
+def _read_pyproject_processor_mode(project_dir: Path) -> str:
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return "jit"
+    try:
+        import tomllib
+    except Exception:
+        return "jit"
+    try:
+        with pyproject.open("rb") as fp:
+            data = tomllib.load(fp)
+    except Exception:
+        return "jit"
+
+    tool = data.get("tool")
+    if not isinstance(tool, dict):
+        return "jit"
+    pyronaut = tool.get("pyronaut")
+    if not isinstance(pyronaut, dict):
+        return "jit"
+    processor = pyronaut.get("processor")
+    if not isinstance(processor, dict):
+        return "jit"
+    mode = processor.get("mode")
+    if not isinstance(mode, str):
+        return "jit"
+    normalized = mode.strip().lower()
+    if normalized in {"jit", "native"}:
+        return normalized
+    raise ValueError("Invalid processor mode in pyproject.toml. Use tool.pyronaut.processor.mode = 'jit' or 'native'")
+
+
 def _read_pyproject_test_resources_table(project_dir: Path) -> dict[str, object] | None:
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.exists():
@@ -2134,6 +2166,79 @@ def _bundled_executable(command_name: str) -> Path | None:
     return None
 
 
+def _bundled_native_executable(command_name: str) -> Path | None:
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
+        package_root = Path(__file__).resolve().parent
+        return package_root / "tools" / command_name / "native" / command_name
+    return None
+
+
+def _resolve_native_preferred_executable(
+    command_name: str,
+    resolver: Callable[[str], str | None],
+    *,
+    fallback_to_resolver: bool = True,
+) -> str | None:
+    env_key = command_name.upper().replace("-", "_") + "_NATIVE_EXECUTABLE"
+    override = _read_env(env_key)
+    if override:
+        return override
+
+    bundled = _bundled_native_executable(command_name)
+    if bundled is not None and bundled.exists():
+        return str(bundled)
+
+    discovered = shutil.which(f"{command_name}-native")
+    if discovered and Path(discovered).name == f"{command_name}-native":
+        return discovered
+
+    if fallback_to_resolver:
+        return resolver(command_name)
+    return None
+
+
+def _resolve_delegate_executable_path(
+    command: str,
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+) -> str:
+    executable_name = COMMAND_TO_EXECUTABLE[command]
+    project_dir = Path(_extract_project_dir(args)).resolve()
+
+    if command == "install":
+        executable_path = _resolve_native_preferred_executable(executable_name, resolver)
+        if executable_path is None:
+            raise RuntimeError(f"Missing delegated executable: {executable_name}")
+        return executable_path
+
+    if command == "process":
+        try:
+            processor_mode = _read_pyproject_processor_mode(project_dir)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if processor_mode == "native":
+            executable_path = _resolve_native_preferred_executable(
+                executable_name,
+                resolver,
+                fallback_to_resolver=False,
+            )
+            if executable_path is None:
+                raise RuntimeError(
+                    "Missing native delegated executable for pyronaut-processor. "
+                    "Build or install a native pyronaut-processor, or set tool.pyronaut.processor.mode = 'jit'."
+                )
+            return executable_path
+        executable_path = resolver(executable_name)
+        if executable_path is None:
+            raise RuntimeError(f"Missing delegated executable: {executable_name}")
+        return executable_path
+
+    executable_path = resolver(executable_name)
+    if executable_path is None:
+        raise RuntimeError(f"Missing delegated executable: {executable_name}")
+    return executable_path
+
+
 def _read_env(name: str) -> str | None:
     value = __import__("os").environ.get(name)
     if value and value.strip():
@@ -2553,8 +2658,8 @@ def _run_tamboui_tui(
         return PRECONDITION_FAILED
 
     delegated = {
-        "install": resolver("pyronaut-install"),
-        "process": resolver("pyronaut-processor"),
+        "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
+        "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
         "run": resolver("pyronaut-run"),
         "test": resolver("pyronaut-test"),
     }

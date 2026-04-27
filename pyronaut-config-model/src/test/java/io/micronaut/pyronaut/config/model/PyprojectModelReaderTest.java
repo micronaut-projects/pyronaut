@@ -37,6 +37,7 @@ class PyprojectModelReaderTest {
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());
         assertEquals("jvm", model.pyronaut().build().mode());
+        assertEquals("jit", model.pyronaut().processor().mode());
         assertNotNull(model.pyronaut().ideStubs());
         assertEquals(Boolean.TRUE, model.pyronaut().ideStubs().enabled());
         assertEquals("vscode", model.pyronaut().ideStubs().ide());
@@ -175,6 +176,75 @@ class PyprojectModelReaderTest {
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
         assertEquals("Invalid value for 'tool.pyronaut.build.mode': expected one of [jvm, native]", exception.getMessage());
+    }
+
+    @Test
+    void parseProcessorModeDefaultsToJitWhenMissing() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("jit", model.pyronaut().processor().mode());
+    }
+
+    @Test
+    void parseProcessorModeWhenConfigured() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.processor]
+            mode = "native"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("native", model.pyronaut().processor().mode());
+    }
+
+    @Test
+    void rejectInvalidProcessorModeType() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.processor]
+            mode = ["native"]
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid type for 'tool.pyronaut.processor.mode': expected string", exception.getMessage());
+    }
+
+    @Test
+    void rejectInvalidProcessorModeValue() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.processor]
+            mode = "fast"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid value for 'tool.pyronaut.processor.mode': expected one of [jit, native]", exception.getMessage());
     }
 
     @Test

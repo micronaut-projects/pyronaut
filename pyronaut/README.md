@@ -10,7 +10,7 @@ Python orchestrator module for CLI v2 packaging and verification.
 
 ## Build and install the SDK wheel locally
 
-Build the Python wheel that bundles the `pyronaut` orchestrator and delegated CLI tools:
+Build the Python wheel that bundles the `pyronaut` orchestrator, delegated CLI tools, and native launcher binaries where available:
 
 ```bash
 ./gradlew :micronaut-pyronaut:buildSdkWheel
@@ -42,6 +42,13 @@ If you rebuild the wheel and want to retest with the latest local artifact:
 
 ```bash
 python -m pip install --force-reinstall pyronaut/build/wheel/dist/pyronaut-*.whl
+```
+
+The SDK wheel now stages native `pyronaut-install` and `pyronaut-processor` launchers from Gradle `nativeCompile` outputs. `pyronaut install` prefers the native launcher automatically when bundled, while `pyronaut process` stays on JIT by default unless the project opts into:
+
+```toml
+[tool.pyronaut.processor]
+mode = "native"
 ```
 
 ## Install command usability flags

@@ -300,6 +300,77 @@ class OrchestratorTest(unittest.TestCase):
             executed,
         )
 
+    def test_install_prefers_bundled_native_executable_when_available(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_install = Path(temp_dir) / "pyronaut-install"
+            native_install.write_text("", encoding="utf-8")
+            native_install.chmod(0o755)
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_install if command_name == "pyronaut-install" else None):
+                exit_code = cli.run(
+                    ["install", "--project-dir", "/tmp/demo"],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([[str(native_install), "--project-dir", "/tmp/demo"]], executed)
+
+    def test_process_uses_bundled_native_executable_when_configured(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-processor"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.processor]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+            native_processor = Path(temp_dir) / "pyronaut-processor"
+            native_processor.write_text("", encoding="utf-8")
+            native_processor.chmod(0o755)
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_processor if command_name == "pyronaut-processor" else None):
+                exit_code = cli.run(
+                    ["process", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([[str(native_processor), "--project-dir", str(project_dir)]], executed)
+
+    def test_process_native_mode_fails_when_native_executable_missing(self):
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "missing-native-processor"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.processor]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["process", "--project-dir", str(project_dir)],
+                    runner=self._runner_ok(),
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Missing native delegated executable for pyronaut-processor", stderr.getvalue())
+
     def test_test_performs_process_when_test_classes_missing(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -818,17 +889,22 @@ logsDir = "var/custom-test-resources-logs"
 
     def test_build_does_not_orchestrate_test_resources_lifecycle(self):
         executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "build-no-test-resources"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
 
-        def runner(command_line):
-            executed.append(command_line)
-            return 0
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
 
-        exit_code = cli.run(
-            ["build", "--project-dir", "/tmp/demo"],
-            runner=runner,
-            resolver=self._resolver(),
-            platform_name="linux",
-        )
+            exit_code = cli.run(
+                ["build", "--project-dir", str(project_dir)],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
 
         self.assertEqual(0, exit_code)
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
