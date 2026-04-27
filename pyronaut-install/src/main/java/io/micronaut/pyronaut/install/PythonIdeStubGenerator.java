@@ -549,8 +549,6 @@ final class PythonIdeStubGenerator {
                                                    Map<String, SymbolRef> symbolRegistry) {
         StringBuilder builder = new StringBuilder();
         Set<ImportRef> imports = new LinkedHashSet<>();
-        builder.append("@overload\n");
-        builder.append("def ").append(type.getSimpleName()).append("(target: _T, /) -> _T: ...\n");
         String invocation = renderAnnotationInvocation(type, currentModule, symbolRegistry, imports, false);
         if (invocation != null && !invocation.isBlank()) {
             builder.append("@overload\n");
@@ -558,6 +556,8 @@ final class PythonIdeStubGenerator {
             builder.append(invocation);
             builder.append(") -> Callable[[_T], _T]: ...\n");
         }
+        builder.append("@overload\n");
+        builder.append("def ").append(type.getSimpleName()).append("(target: _T, /) -> _T: ...\n");
         builder.append("def ").append(type.getSimpleName()).append("(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T");
         appendCallableBody(builder, documentation, "");
         return new TypeDescriptor(currentModule, type.getSimpleName(), builder.toString(), Set.copyOf(imports), Set.of(), true, false);
