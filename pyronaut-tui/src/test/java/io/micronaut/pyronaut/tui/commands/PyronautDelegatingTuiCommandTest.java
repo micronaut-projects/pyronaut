@@ -356,6 +356,113 @@ class PyronautDelegatingTuiCommandTest {
     }
 
     @Test
+    void buildManagedTestCommandUsesNativeExecutableWhenNoLibDirectoryExists() throws Exception {
+        Path project = tempDir.resolve("managed-test-native");
+        Files.createDirectories(project.resolve("__pyronaut__/test-classes"));
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Path runtimeJar = project.resolve("deps/runtime-one.jar").toAbsolutePath().normalize();
+        Path testJar = project.resolve("deps/test-one.jar").toAbsolutePath().normalize();
+        Path buildJar = project.resolve("deps/build-one.jar").toAbsolutePath().normalize();
+        Files.createDirectories(runtimeJar.getParent());
+        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
+        Files.writeString(testJar, "", StandardCharsets.UTF_8);
+        Files.writeString(buildJar, "", StandardCharsets.UTF_8);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
+            runtimeJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-test-dependencies"),
+            testJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-build-dependencies"),
+            buildJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+
+        Path nativeExecutable = tempDir.resolve("tool/native/pyronaut-test");
+        Files.createDirectories(nativeExecutable.getParent());
+        Files.writeString(nativeExecutable, "#!/bin/sh\n", StandardCharsets.UTF_8);
+        nativeExecutable.toFile().setExecutable(true);
+
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "testExecutable", nativeExecutable);
+
+        Object target = enumConstant(command, "ManagedCommandTarget", "TEST");
+        Object managedCommand = invoke(
+            command,
+            "buildManagedCommand",
+            new Class<?>[]{Path.class, target.getClass()},
+            project,
+            target
+        );
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(managedCommand, "command", new Class<?>[]{});
+
+        assertEquals(List.of(nativeExecutable.toString(), "--project-dir", project.toString()), commandLine);
+    }
+
+    @Test
+    void buildManagedTestCommandTreatsNativeLayoutAsNativeEvenWhenToolRootHasLibDirectory() throws Exception {
+        Path project = tempDir.resolve("managed-test-native-layout");
+        Files.createDirectories(project.resolve("__pyronaut__/test-classes"));
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Path runtimeJar = project.resolve("deps/runtime-one.jar").toAbsolutePath().normalize();
+        Path testJar = project.resolve("deps/test-one.jar").toAbsolutePath().normalize();
+        Path buildJar = project.resolve("deps/build-one.jar").toAbsolutePath().normalize();
+        Files.createDirectories(runtimeJar.getParent());
+        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
+        Files.writeString(testJar, "", StandardCharsets.UTF_8);
+        Files.writeString(buildJar, "", StandardCharsets.UTF_8);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
+            runtimeJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-test-dependencies"),
+            testJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-build-dependencies"),
+            buildJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+
+        Path toolRoot = tempDir.resolve("tool/pyronaut-test");
+        Path nativeExecutable = toolRoot.resolve("native/pyronaut-test");
+        Path libDir = toolRoot.resolve("lib");
+        Path binDir = toolRoot.resolve("bin");
+        Files.createDirectories(nativeExecutable.getParent());
+        Files.createDirectories(libDir);
+        Files.createDirectories(binDir);
+        Files.writeString(nativeExecutable, "#!/bin/sh\n", StandardCharsets.UTF_8);
+        nativeExecutable.toFile().setExecutable(true);
+        Files.writeString(libDir.resolve("micronaut-pyronaut-test.jar"), "", StandardCharsets.UTF_8);
+        Files.writeString(binDir.resolve("pyronaut-test"), "#!/bin/sh\n", StandardCharsets.UTF_8);
+
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "testExecutable", nativeExecutable);
+
+        Object target = enumConstant(command, "ManagedCommandTarget", "TEST");
+        Object managedCommand = invoke(
+            command,
+            "buildManagedCommand",
+            new Class<?>[]{Path.class, target.getClass()},
+            project,
+            target
+        );
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(managedCommand, "command", new Class<?>[]{});
+
+        assertEquals(List.of(nativeExecutable.toString(), "--project-dir", project.toString()), commandLine);
+    }
+
+    @Test
     void refreshApplicationEndpointsLoadsRoutesIntoController() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/routes", exchange -> {

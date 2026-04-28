@@ -429,19 +429,24 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                     managementServerUri
                 );
             }
-            case TEST -> new ManagedCommand(
-                buildJavaDelegateCommand(
-                    project,
-                    testExecutable,
-                    TEST_MAIN_CLASS,
-                    readTestClasspathEntries(project, testExecutable),
-                    List.of("--project-dir", project.toString()),
-                    List.of(),
-                    connection
-                ),
-                null
-            );
+            case TEST -> new ManagedCommand(buildManagedTestCommand(project, connection), null);
         };
+    }
+
+    private List<String> buildManagedTestCommand(Path project,
+                                                 Optional<TestResourcesConnection> connection) throws IOException {
+        if (isJavaLauncherDistribution(testExecutable)) {
+            return buildJavaDelegateCommand(
+                project,
+                testExecutable,
+                TEST_MAIN_CLASS,
+                readTestClasspathEntries(project, testExecutable),
+                List.of("--project-dir", project.toString()),
+                List.of(),
+                connection
+            );
+        }
+        return List.of(testExecutable.toString(), "--project-dir", project.toString());
     }
 
     private static List<String> buildJavaDelegateCommand(Path project,
@@ -539,6 +544,22 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 .map(path -> path.toAbsolutePath().normalize().toString())
                 .forEach(entries::add);
         }
+    }
+
+    private static boolean isJavaLauncherDistribution(Path executable) {
+        Path normalized = executable.toAbsolutePath().normalize();
+        Path parent = normalized.getParent();
+        if (parent == null) {
+            return false;
+        }
+        if (!"bin".equals(parent.getFileName().toString())) {
+            return false;
+        }
+        Path grandParent = parent.getParent();
+        if (grandParent == null) {
+            return false;
+        }
+        return Files.isDirectory(grandParent.resolve("lib"));
     }
 
     private static String resolveJavaExecutable() {

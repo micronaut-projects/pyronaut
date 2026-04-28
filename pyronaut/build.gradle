@@ -24,6 +24,7 @@ def delegatedCliProjects = [
 def delegatedNativeCliProjects = [
     [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
     [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"],
+    [path: ":micronaut-pyronaut-test", command: "pyronaut-test"],
     [path: ":micronaut-pyronaut-validate-config", command: "pyronaut-validate-config"],
     [path: ":micronaut-pyronaut-test-resources-server", command: "pyronaut-test-resources-server"]
 ]
@@ -138,6 +139,10 @@ tasks.register("buildSdkWheel", Exec) {
     outputs.dir(wheelDistDir)
     doFirst {
         delete(wheelDistDir)
+        delete(wheelStagingDir.get().dir("build"))
+        delete(fileTree(wheelStagingDir).matching {
+            include("src/*.egg-info")
+        })
     }
     commandLine(
         "python3",

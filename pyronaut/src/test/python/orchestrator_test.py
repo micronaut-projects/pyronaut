@@ -431,6 +431,93 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
         self.assertIn("Missing native delegated executable for pyronaut-processor", stderr.getvalue())
 
+    def test_test_uses_bundled_native_executable_when_configured(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-test"
+            cache_dir = project_dir / "__pyronaut__"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.test]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+            native_test = Path(temp_dir) / "pyronaut-test"
+            native_test.write_text("", encoding="utf-8")
+            native_test.chmod(0o755)
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_test if command_name == "pyronaut-test" else None):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([str(native_test), "--project-dir", str(project_dir)], executed[4])
+
+    def test_test_debug_vm_forces_jit_mode_even_when_native_is_configured(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-test-debug"
+            cache_dir = project_dir / "__pyronaut__"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.test]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+            native_test = Path(temp_dir) / "pyronaut-test"
+            native_test.write_text("", encoding="utf-8")
+            native_test.chmod(0o755)
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_test if command_name == "pyronaut-test" else None):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir), "--debug-vm"],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self._assert_test_delegate(executed[4], str(project_dir), ["--debug-vm"])
+
+    def test_test_native_mode_fails_when_native_executable_missing(self):
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "missing-native-test"
+            cache_dir = project_dir / "__pyronaut__"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.test]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir)],
+                    runner=self._runner_ok(),
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Missing native delegated executable for pyronaut-test", stderr.getvalue())
+
     def test_test_performs_process_when_test_classes_missing(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2979,7 +3066,8 @@ logsDir = "var/custom-test-resources-logs"
             project_dir = Path(temp_dir) / "demo"
             project_dir.mkdir(parents=True, exist_ok=True)
             (project_dir / "pyproject.toml").write_text(
-                "[tool.pyronaut.processor]\nmode = \"native\"\n",
+                "[tool.pyronaut.processor]\nmode = \"native\"\n"
+                "[tool.pyronaut.test]\nmode = \"native\"\n",
                 encoding="utf-8",
             )
             expected_project_dir = project_dir.resolve()
@@ -2994,6 +3082,9 @@ logsDir = "var/custom-test-resources-logs"
             native_processor = Path(temp_dir) / "pyronaut-processor"
             native_processor.write_text("", encoding="utf-8")
             native_processor.chmod(0o755)
+            native_test = Path(temp_dir) / "pyronaut-test"
+            native_test.write_text("", encoding="utf-8")
+            native_test.chmod(0o755)
             native_test_resources = Path(temp_dir) / "pyronaut-test-resources-server"
             native_test_resources.write_text("", encoding="utf-8")
             native_test_resources.chmod(0o755)
@@ -3003,6 +3094,7 @@ logsDir = "var/custom-test-resources-logs"
                     "pyronaut-install": native_install,
                     "pyronaut-validate-config": native_validate,
                     "pyronaut-processor": native_processor,
+                    "pyronaut-test": native_test,
                     "pyronaut-test-resources-server": native_test_resources,
                 }.get(command_name)
 
@@ -3046,7 +3138,7 @@ logsDir = "var/custom-test-resources-logs"
                 "--run-executable",
                 "/tmp/pyronaut-run/bin/pyronaut-run",
                 "--test-executable",
-                "/tmp/pyronaut-test/bin/pyronaut-test",
+                str(native_test),
             ],
             executed[1][0],
         )
