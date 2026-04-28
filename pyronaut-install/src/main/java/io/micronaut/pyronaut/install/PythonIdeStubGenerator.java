@@ -550,10 +550,12 @@ final class PythonIdeStubGenerator {
         StringBuilder builder = new StringBuilder();
         Set<ImportRef> imports = new LinkedHashSet<>();
         String invocation = renderAnnotationInvocation(type, currentModule, symbolRegistry, imports, false);
-        if (invocation != null && !invocation.isBlank()) {
+        if (invocation != null) {
             builder.append("@overload\n");
             builder.append("def ").append(type.getSimpleName()).append("(");
-            builder.append(invocation);
+            if (!invocation.isBlank()) {
+                builder.append(invocation);
+            }
             builder.append(") -> Callable[[_T], _T]: ...\n");
         }
         builder.append("@overload\n");
@@ -575,9 +577,6 @@ final class PythonIdeStubGenerator {
             return includeReceiver ? "self" : null;
         }
         Arrays.sort(members, Comparator.comparing(Method::getName));
-        if (members.length == 0) {
-            return includeReceiver ? "self" : null;
-        }
         List<String> keywordArguments = new ArrayList<>();
         String positional = null;
         for (Method member : members) {
@@ -586,7 +585,7 @@ final class PythonIdeStubGenerator {
             }
             MappedType mappedType = mapAnnotationMemberType(member.getGenericReturnType(), currentModule, symbolRegistry);
             imports.addAll(mappedType.imports());
-            String rendered = member.getName() + ": " + mappedType.rendered();
+            String rendered = sanitizeParameterName(member.getName(), keywordArguments.size()) + ": " + mappedType.rendered();
             if (member.getDefaultValue() != null) {
                 rendered += " = ...";
             }
@@ -617,7 +616,7 @@ final class PythonIdeStubGenerator {
         if (!keywordArguments.isEmpty()) {
             builder.append(String.join(", ", keywordArguments));
         }
-        return builder.isEmpty() ? null : builder.toString();
+        return builder.toString();
     }
 
     private static MappedType mapAnnotationMemberType(Type type,
@@ -701,7 +700,7 @@ final class PythonIdeStubGenerator {
                                            GenericTypeContext genericContext) {
         LinkedHashSet<String> bases = new LinkedHashSet<>();
         if (type.isInterface()) {
-            bases.add("Protocol");
+            bases.add(protocolBase(genericContext));
         }
         String superType = renderBaseType(type.getGenericSuperclass(), currentModule, symbolRegistry, imports, genericContext);
         if (superType != null && !superType.isBlank()) {
@@ -713,7 +712,7 @@ final class PythonIdeStubGenerator {
                 bases.add(rendered);
             }
         }
-        String genericBase = genericBase(genericContext);
+        String genericBase = type.isInterface() ? "" : genericBase(genericContext);
         if (!genericBase.isEmpty()) {
             bases.add(genericBase);
         }
@@ -1107,6 +1106,10 @@ final class PythonIdeStubGenerator {
                         MappedType firstType = firstTypeArgument(arguments, currentModule, symbolRegistry, genericContext, visiting);
                         return new MappedType(firstType.rendered() + " | None", firstType.imports());
                     }
+                    if (rawClass == Class.class) {
+                        MappedType firstType = firstTypeArgument(arguments, currentModule, symbolRegistry, genericContext, visiting);
+                        return new MappedType("type[" + firstType.rendered() + "]", firstType.imports());
+                    }
                     MappedType rawMapped = mapClass(rawClass, currentModule, symbolRegistry);
                     if (!"Any".equals(rawMapped.rendered()) && arguments.length > 0) {
                         List<String> renderedArguments = new ArrayList<>(arguments.length);
@@ -1206,6 +1209,9 @@ final class PythonIdeStubGenerator {
         }
         if (cls == String.class || CharSequence.class.isAssignableFrom(cls) || cls == char.class || cls == Character.class) {
             return new MappedType("str", Set.of());
+        }
+        if (cls.isAnnotation()) {
+            return new MappedType("Callable[..., Any]", Set.of());
         }
         if (cls == Class.class) {
             return new MappedType("type[Any]", Set.of());
@@ -1373,6 +1379,18 @@ final class PythonIdeStubGenerator {
             return "";
         }
         return "Generic[" + genericContext.bindings().values().stream()
+            .map(TypeVarBinding::name)
+            .distinct()
+            .sorted()
+            .reduce((left, right) -> left + ", " + right)
+            .orElse("") + "]";
+    }
+
+    private static String protocolBase(GenericTypeContext genericContext) {
+        if (genericContext.bindings().isEmpty()) {
+            return "Protocol";
+        }
+        return "Protocol[" + genericContext.bindings().values().stream()
             .map(TypeVarBinding::name)
             .distinct()
             .sorted()

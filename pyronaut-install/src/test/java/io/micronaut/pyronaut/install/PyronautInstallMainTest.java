@@ -1602,9 +1602,66 @@ class PyronautInstallMainTest {
         assertTrue(httpClientStub.contains("        Builds a client without a preset request."));
         assertTrue(httpClientStub.contains("@overload\n    def create(self, request: HttpRequest) -> HttpClient: ..."));
         assertTrue(injectStub.contains("@overload\ndef Inject(target: _T, /) -> _T: ..."));
+        assertTrue(injectStub.contains("@overload\ndef Singleton() -> Callable[[_T], _T]: ..."));
+        assertTrue(injectStub.contains("@overload\ndef Singleton(target: _T, /) -> _T: ..."));
         assertTrue(injectStub.contains("def Inject(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n    \"\"\""));
         assertTrue(injectStub.contains("    Injects a dependency from the Micronaut context."));
         assertTrue(settings.contains("__pyronaut__/ide-stubs"));
+    }
+
+    @Test
+    void annotationStubsRenderValidKeywordAndAnnotationMemberTypes() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-annotation-signatures");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.annotation.Header", """
+                package io.micronaut.http.annotation;
+
+                public @interface Header {
+                    String value() default "";
+                    String name() default "";
+                    String defaultValue() default "";
+                }
+                """,
+            "io.micronaut.http.annotation.Headers", """
+                package io.micronaut.http.annotation;
+
+                public @interface Headers {
+                    Header[] value() default {};
+                }
+                """,
+            "io.micronaut.http.annotation.Error", """
+                package io.micronaut.http.annotation;
+
+                public @interface Error {
+                    Class<?> value() default Object.class;
+                    Class<?> exception() default Throwable.class;
+                    boolean global() default false;
+                    String status() default "";
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-annotation-signatures");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String annotationStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/annotation/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+
+        assertTrue(annotationStub.contains("@overload\ndef Header(value: str = ..., *, defaultValue: str = ..., name: str = ...) -> Callable[[_T], _T]: ..."));
+        assertTrue(annotationStub.contains("@overload\ndef Headers(value: Callable[..., Any] | list[Callable[..., Any]] = ...) -> Callable[[_T], _T]: ..."));
+        assertTrue(annotationStub.contains("@overload\ndef Error(value: type[Any] = ..., *, exception: type[Any] = ..., global_: bool = ..., status: str = ...) -> Callable[[_T], _T]: ..."));
+        assertFalse(annotationStub.contains("type[Any][Any]"));
+        assertFalse(annotationStub.contains(" global: "));
     }
 
     @Test
@@ -1984,7 +2041,7 @@ class PyronautInstallMainTest {
             project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
             StandardCharsets.UTF_8
         );
-        assertTrue(httpStub.contains("class HttpResponse(Protocol, HttpMessage[_HttpResponse_B], Generic[_HttpResponse_B]):\n    \"\"\""));
+        assertTrue(httpStub.contains("class HttpResponse(Protocol[_HttpResponse_B], HttpMessage[_HttpResponse_B]):\n    \"\"\""));
         assertTrue(httpStub.contains("Common interface for HTTP response implementations."));
         assertTrue(httpStub.contains("@staticmethod\n    def ok(*args: Any, **kwargs: Any) -> MutableHttpResponse[_HttpResponse_ok_T]:\n        \"\"\""));
         assertTrue(httpStub.contains("Overloads for `ok`:"));
