@@ -102,6 +102,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private static final String TEST_RESOURCES_IMAGE_PULL_MARKER = "Pulling docker image:";
     private static final String TEST_RESOURCES_CONTAINER_CREATE_MARKER = "Creating container for image:";
     private static final String TEST_RESOURCES_CONTAINER_STARTED_MARKER = " started in PT";
+    private static final Pattern ANSI_ESCAPE_PATTERN = Pattern.compile("\\u001B\\[[;?0-9]*[ -/]*[@-~]");
 
     @Option(names = "--project-dir", required = true, description = "Project directory")
     Path projectDir;
@@ -111,6 +112,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
     @Option(names = "--report-dir", description = "Path to pyronaut-test report directory")
     Path reportDir;
+
+    @Option(names = "--validate-executable", required = true, description = "Path to pyronaut-validate-config executable")
+    Path validateExecutable;
 
     @Option(names = "--install-executable", required = true, description = "Path to pyronaut-install executable")
     Path installExecutable;
@@ -237,9 +241,19 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         if (restart) {
             controller.notify("Change detected, restarting run workflow", UiModel.Severity.INFO);
         }
-        controller.notify(reason + " (install -> process -> run)", UiModel.Severity.INFO);
+        controller.notify(reason + " (validate -> install -> process -> run)", UiModel.Severity.INFO);
         controller.startCompiling();
 
+        var validationCode = runForeground(
+            project,
+            List.of(validateExecutable.toString(), "--project-dir", project.toString(), "--scenario", "run"),
+            false
+        );
+        if (validationCode != 0) {
+            controller.stopCompiling();
+            controller.notify("Configuration validation failed with exit code " + validationCode, UiModel.Severity.ERROR);
+            return;
+        }
         var installCode = runForeground(project, List.of(installExecutable.toString(), "--project-dir", project.toString()), false);
         if (installCode != 0) {
             controller.stopCompiling();
@@ -277,9 +291,20 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         if (restart) {
             controller.notify("Change detected, rerunning tests", UiModel.Severity.INFO);
         }
-        controller.notify(reason + " (install -> process -> test)", UiModel.Severity.INFO);
+        controller.notify(reason + " (validate -> install -> process -> test)", UiModel.Severity.INFO);
         controller.startCompiling();
 
+        var validationCode = runForeground(
+            project,
+            List.of(validateExecutable.toString(), "--project-dir", project.toString(), "--scenario", "test"),
+            false
+        );
+        if (validationCode != 0) {
+            controller.stopCompiling();
+            controller.notify("Configuration validation failed with exit code " + validationCode, UiModel.Severity.ERROR);
+            controller.stopTesting();
+            return;
+        }
         var installCode = runForeground(project, List.of(installExecutable.toString(), "--project-dir", project.toString()), false);
         if (installCode != 0) {
             controller.stopCompiling();
@@ -606,10 +631,11 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         if (currentLogFile == null) {
             return;
         }
+        String sanitized = stripAnsi(line);
         try {
             Files.writeString(
                 currentLogFile,
-                line + System.lineSeparator(),
+                sanitized + System.lineSeparator(),
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.WRITE,
@@ -1763,12 +1789,20 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 if (line == null || line.isEmpty()) {
                     continue;
                 }
+                String sanitized = stripAnsi(line);
                 controller.addTestResourcesOutput(prefixWithFile
-                    ? "[" + logFile.getFileName() + "] " + line
-                    : line);
+                    ? "[" + logFile.getFileName() + "] " + sanitized
+                    : sanitized);
             }
             lineOffsets.put(logFile, lines.size());
         }
+    }
+
+    private static String stripAnsi(String line) {
+        if (line == null || line.isEmpty()) {
+            return "";
+        }
+        return ANSI_ESCAPE_PATTERN.matcher(line).replaceAll("");
     }
 
     private final class WatchLoop {

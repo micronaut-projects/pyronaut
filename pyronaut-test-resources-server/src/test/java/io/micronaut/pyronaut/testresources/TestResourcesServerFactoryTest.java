@@ -56,7 +56,16 @@ class TestResourcesServerFactoryTest {
         assertEquals("java", command.getFirst());
         assertTrue(command.contains("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"));
         assertTrue(command.contains("-Dpyronaut.test-resources.logs-dir=" + tempDir.resolve(".micronaut/test-resources/logs").toAbsolutePath().normalize()));
-        assertTrue(command.stream().anyMatch(token -> token.startsWith("-Dlogback.configurationFile=") && token.contains("pyronaut-test-resources-logback.xml")));
+        String logbackToken = command.stream()
+            .filter(token -> token.startsWith("-Dlogback.configurationFile="))
+            .findFirst()
+            .orElseThrow();
+        Path materializedLogback = Path.of(logbackToken.substring("-Dlogback.configurationFile=".length()));
+        assertEquals(
+            tempDir.resolve(".micronaut/test-resources/logs/pyronaut-test-resources-logback.xml").toAbsolutePath().normalize(),
+            materializedLogback
+        );
+        assertTrue(Files.exists(materializedLogback));
         assertTrue(command.contains("-Dmicronaut.server.port=18080"));
         assertTrue(command.contains("-Dserver.access-token=token-123"));
         assertTrue(command.contains("-Dserver.idle.timeout.minutes=15"));
@@ -133,16 +142,14 @@ class TestResourcesServerFactoryTest {
     void selfModuleClasspathEntriesIncludeSiblingJarsFromLauncherLibDirectory() {
         String originalClasspath = System.getProperty("java.class.path");
         try {
-            System.setProperty(
-                "java.class.path",
-                String.join(
-                    File.pathSeparator,
-                    "/tmp/launcher/lib/micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar",
-                    "/tmp/launcher/lib/micronaut-test-resources-control-panel-2.9.0.jar",
-                    "/tmp/launcher/lib/micronaut-control-panel-core-1.8.0.jar",
-                    "/tmp/other/location/unrelated.jar"
-                )
+            String classpath = String.join(
+                File.pathSeparator,
+                "/tmp/launcher/lib/micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar",
+                "/tmp/launcher/lib/micronaut-test-resources-control-panel-2.9.0.jar",
+                "/tmp/launcher/lib/micronaut-control-panel-core-1.8.0.jar",
+                "/tmp/other/location/unrelated.jar"
             );
+            System.setProperty("java.class.path", classpath);
 
             assertEquals(
                 List.of(
@@ -150,7 +157,7 @@ class TestResourcesServerFactoryTest {
                     "/tmp/launcher/lib/micronaut-test-resources-control-panel-2.9.0.jar",
                     "/tmp/launcher/lib/micronaut-control-panel-core-1.8.0.jar"
                 ),
-                TestResourcesServerFactory.selfModuleClasspathEntries()
+                TestResourcesServerFactory.selfModuleClasspathEntries(classpath, "")
             );
         } finally {
             if (originalClasspath == null) {
@@ -159,6 +166,35 @@ class TestResourcesServerFactoryTest {
                 System.setProperty("java.class.path", originalClasspath);
             }
         }
+    }
+
+    @Test
+    void selfModuleClasspathEntriesIncludeSiblingJarsFromNativeExecutableLayout() throws Exception {
+        Path installRoot = tempDir.resolve("tool/pyronaut-test-resources-server");
+        Path nativeDir = installRoot.resolve("native");
+        Path libDir = installRoot.resolve("lib");
+        Files.createDirectories(nativeDir);
+        Files.createDirectories(libDir);
+
+        Path nativeBinary = nativeDir.resolve("pyronaut-test-resources-server");
+        Files.writeString(nativeBinary, "", java.nio.charset.StandardCharsets.UTF_8);
+        Path wrapperJar = libDir.resolve("micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar");
+        Path controlPanelJar = libDir.resolve("micronaut-test-resources-control-panel-2.9.0.jar");
+        Path coreJar = libDir.resolve("micronaut-control-panel-core-1.8.0.jar");
+        Files.writeString(wrapperJar, "", java.nio.charset.StandardCharsets.UTF_8);
+        Files.writeString(controlPanelJar, "", java.nio.charset.StandardCharsets.UTF_8);
+        Files.writeString(coreJar, "", java.nio.charset.StandardCharsets.UTF_8);
+
+        assertEquals(
+            new java.util.LinkedHashSet<>(List.of(
+                wrapperJar.toAbsolutePath().normalize().toString(),
+                controlPanelJar.toAbsolutePath().normalize().toString(),
+                coreJar.toAbsolutePath().normalize().toString()
+            )),
+            new java.util.LinkedHashSet<>(
+                TestResourcesServerFactory.selfModuleClasspathEntries("", nativeBinary.toAbsolutePath().normalize().toString())
+            )
+        );
     }
 
     private static final class CapturingStarter implements TestResourcesServerFactory.ProcessStarter {

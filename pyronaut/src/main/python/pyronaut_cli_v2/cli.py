@@ -61,6 +61,7 @@ _TEST_RESOURCES_ENV_TO_PROPERTY = {
     "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT": "micronaut.test.resources.server.client.read.timeout",
 }
 _TEST_RESOURCES_LOG_FILE = "test-resources.log"
+_TEST_RESOURCES_STDIO_LOG_FILE = "launcher-stdio.log"
 _TEST_RESOURCES_IMAGE_PULL_MARKER = "Pulling docker image:"
 _TEST_RESOURCES_CONTAINER_CREATE_MARKER = "Creating container for image:"
 _TEST_RESOURCES_CONTAINER_STARTED_MARKER = " started in PT"
@@ -2403,7 +2404,7 @@ class _OwnedTestResourcesSession:
             return
 
         self._emit_status("[test-resources] stop owned server")
-        self._delegate_test_resources_server(
+        exit_code = self._delegate_test_resources_server(
             [
                 "stop",
                 "--project-dir",
@@ -2414,7 +2415,10 @@ class _OwnedTestResourcesSession:
             runner=runner,
             resolver=resolver,
         )
-        self._remove_session_file()
+        if exit_code == SUCCESS:
+            self._remove_session_file()
+        else:
+            self._emit_status(f"[test-resources] stop failed (exit code {exit_code}); preserving session state for retry")
 
     def client_env_overrides(self) -> dict[str, str] | None:
         if self._client_env_overrides is None:
@@ -2452,7 +2456,17 @@ class _OwnedTestResourcesSession:
         self._shutdown_registered = True
 
     def _start_log_mirror(self) -> None:
-        log_file = _resolve_test_resources_logs_dir(self._project_dir, self._settings_file) / _TEST_RESOURCES_LOG_FILE
+        logs_dir = _resolve_test_resources_logs_dir(self._project_dir, self._settings_file)
+        log_files = [
+            logs_dir / _TEST_RESOURCES_LOG_FILE,
+            logs_dir / _TEST_RESOURCES_STDIO_LOG_FILE,
+        ]
+        initial_positions: dict[Path, int] = {}
+        for candidate in log_files:
+            try:
+                initial_positions[candidate] = candidate.stat().st_size
+            except OSError:
+                initial_positions[candidate] = 0
         if self._log_mirror_thread is not None and self._log_mirror_thread.is_alive():
             return
         stop_event = threading.Event()
@@ -2460,21 +2474,34 @@ class _OwnedTestResourcesSession:
 
         def _tail() -> None:
             position = 0
-            while not stop_event.is_set() and not log_file.exists():
+            active_log_file: Path | None = None
+
+            def _resolve_active_log_file() -> Path | None:
+                for candidate in log_files:
+                    if candidate.exists():
+                        return candidate
+                return None
+
+            while not stop_event.is_set() and active_log_file is None:
+                active_log_file = _resolve_active_log_file()
                 stop_event.wait(0.1)
-            if not log_file.exists():
+            if active_log_file is None:
                 return
-            try:
-                position = log_file.stat().st_size
-            except OSError:
-                position = 0
+            position = initial_positions.get(active_log_file, 0)
             while not stop_event.is_set():
                 try:
-                    current_size = log_file.stat().st_size
+                    candidate = _resolve_active_log_file()
+                    if candidate is None:
+                        stop_event.wait(0.1)
+                        continue
+                    if active_log_file != candidate:
+                        active_log_file = candidate
+                        position = initial_positions.get(active_log_file, 0)
+                    current_size = active_log_file.stat().st_size
                     if current_size < position:
                         position = 0
                     if current_size > position:
-                        with log_file.open("r", encoding="utf-8") as handle:
+                        with active_log_file.open("r", encoding="utf-8") as handle:
                             handle.seek(position)
                             chunk = handle.read()
                             position = handle.tell()
@@ -2560,7 +2587,10 @@ class _OwnedTestResourcesSession:
         runner: RunnerWithEnv,
         resolver: Callable[[str], str | None],
     ) -> int:
-        executable_path = resolver(COMMAND_TO_EXECUTABLE["test-resources-server"])
+        executable_path = _resolve_native_preferred_executable(
+            COMMAND_TO_EXECUTABLE["test-resources-server"],
+            resolver,
+        )
         if executable_path is None:
             raise RuntimeError("Missing delegated executable: pyronaut-test-resources-server")
         command_line = [executable_path, *args]
@@ -2658,6 +2688,7 @@ def _run_tamboui_tui(
         return PRECONDITION_FAILED
 
     delegated = {
+        "validate-config": _resolve_delegate_executable_path("validate-config", ["--project-dir", str(project_dir)], resolver),
         "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
         "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
         "run": resolver("pyronaut-run"),
@@ -2677,6 +2708,8 @@ def _run_tamboui_tui(
         initial_mode,
         "--report-dir",
         str(report_dir),
+        "--validate-executable",
+        str(delegated["validate-config"]),
         "--install-executable",
         str(delegated["install"]),
         "--process-executable",

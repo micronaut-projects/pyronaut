@@ -20,7 +20,10 @@ import io.micronaut.testresources.buildtools.ServerUtils;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -35,6 +38,7 @@ final class TestResourcesServerFactory implements ServerFactory {
     private static final String LOGBACK_CONFIGURATION_SYSTEM_PROPERTY = "logback.configurationFile";
     private static final String JMX_REMOTE_SYSTEM_PROPERTY = "com.sun.management.jmxremote";
     private static final String STDIO_LOG_FILE = "launcher-stdio.log";
+    private static final String LOGBACK_CONFIGURATION_FILE = "pyronaut-test-resources-logback.xml";
     private static final File NULL_DEVICE = new File(isWindows() ? "NUL" : "/dev/null");
 
     private final PyronautTestResourcesServerMain.ServerStartRequest request;
@@ -70,7 +74,7 @@ final class TestResourcesServerFactory implements ServerFactory {
             command.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005");
         }
         command.add("-D" + LOGS_DIR_SYSTEM_PROPERTY + "=" + request.logsDir().toAbsolutePath().normalize());
-        String logbackConfiguration = PyronautTestResourcesServerMain.resolveLogbackConfigurationLocation();
+        String logbackConfiguration = materializeLogbackConfiguration(request.logsDir());
         if (logbackConfiguration != null && !logbackConfiguration.isBlank()) {
             command.add("-D" + LOGBACK_CONFIGURATION_SYSTEM_PROPERTY + "=" + logbackConfiguration);
         }
@@ -115,32 +119,88 @@ final class TestResourcesServerFactory implements ServerFactory {
 
     static List<String> selfModuleClasspathEntries() {
         String classpath = System.getProperty("java.class.path", "");
-        if (classpath.isBlank()) {
-            return List.of();
-        }
-        List<Path> entries = Stream.of(classpath.split(File.pathSeparator))
-            .map(String::trim)
-            .filter(entry -> !entry.isEmpty())
-            .map(entry -> Path.of(entry).toAbsolutePath().normalize())
-            .toList();
+        String command = ProcessHandle.current().info().command().orElse("");
+        return selfModuleClasspathEntries(classpath, command);
+    }
+
+    static List<String> selfModuleClasspathEntries(String classpath, String commandPath) {
         LinkedHashSet<Path> launcherLibDirs = new LinkedHashSet<>();
-        for (Path entry : entries) {
-            String normalized = entry.toString();
-            if (normalized.contains("micronaut-pyronaut-test-resources-server") && entry.getParent() != null) {
-                launcherLibDirs.add(entry.getParent());
+        if (!classpath.isBlank()) {
+            List<Path> entries = Stream.of(classpath.split(File.pathSeparator))
+                .map(String::trim)
+                .filter(entry -> !entry.isEmpty())
+                .map(entry -> Path.of(entry).toAbsolutePath().normalize())
+                .toList();
+            for (Path entry : entries) {
+                String normalized = entry.toString();
+                if (normalized.contains("micronaut-pyronaut-test-resources-server") && entry.getParent() != null) {
+                    launcherLibDirs.add(entry.getParent());
+                }
+            }
+            LinkedHashSet<String> resolvedEntries = new LinkedHashSet<>();
+            for (Path entry : entries) {
+                Path parent = entry.getParent();
+                if (parent != null && launcherLibDirs.contains(parent)) {
+                    resolvedEntries.add(entry.toString());
+                }
+            }
+            if (!resolvedEntries.isEmpty()) {
+                return List.copyOf(resolvedEntries);
             }
         }
-        if (launcherLibDirs.isEmpty()) {
+        return discoverExecutableSiblingLibEntries(commandPath);
+    }
+
+    private static List<String> discoverExecutableSiblingLibEntries(String commandPath) {
+        String command = commandPath == null ? "" : commandPath.trim();
+        if (command.isEmpty()) {
             return List.of();
         }
-        LinkedHashSet<String> resolvedEntries = new LinkedHashSet<>();
-        for (Path entry : entries) {
-            Path parent = entry.getParent();
-            if (parent != null && launcherLibDirs.contains(parent)) {
-                resolvedEntries.add(entry.toString());
+        Path executable = Path.of(command).toAbsolutePath().normalize();
+        List<Path> candidates = new ArrayList<>();
+        Path parent = executable.getParent();
+        if (parent != null) {
+            String parentName = parent.getFileName() == null ? "" : parent.getFileName().toString();
+            if (("bin".equals(parentName) || "native".equals(parentName)) && parent.getParent() != null) {
+                candidates.add(parent.getParent().resolve("lib").toAbsolutePath().normalize());
+            }
+            candidates.add(parent.resolve("lib").toAbsolutePath().normalize());
+        }
+        for (Path libDir : candidates) {
+            List<String> entries = listJarEntries(libDir);
+            if (!entries.isEmpty()) {
+                return entries;
             }
         }
-        return List.copyOf(resolvedEntries);
+        return List.of();
+    }
+
+    private static List<String> listJarEntries(Path libDir) {
+        if (!Files.isDirectory(libDir)) {
+            return List.of();
+        }
+        try (Stream<Path> stream = Files.list(libDir)) {
+            return stream
+                .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                .sorted()
+                .map(path -> path.toAbsolutePath().normalize().toString())
+                .toList();
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
+    static String materializeLogbackConfiguration(Path logsDir) throws IOException {
+        Files.createDirectories(logsDir);
+        try (InputStream stream = PyronautTestResourcesServerMain.class.getClassLoader()
+            .getResourceAsStream(LOGBACK_CONFIGURATION_FILE)) {
+            if (stream == null) {
+                return null;
+            }
+            Path target = logsDir.resolve(LOGBACK_CONFIGURATION_FILE).toAbsolutePath().normalize();
+            Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING);
+            return target.toString();
+        }
     }
 
     interface ProcessStarter {

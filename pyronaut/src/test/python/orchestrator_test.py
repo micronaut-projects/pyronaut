@@ -169,7 +169,7 @@ class OrchestratorTest(unittest.TestCase):
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
             self._write_manifests(project_dir)
 
-            def runner(command_line):
+            def runner(command_line, env=None):
                 executed.append(command_line)
                 return 0
 
@@ -198,7 +198,7 @@ class OrchestratorTest(unittest.TestCase):
             classes_dir.mkdir(parents=True, exist_ok=True)
             self._write_manifests(project_dir)
 
-            def runner(command_line):
+            def runner(command_line, env=None):
                 executed.append(command_line)
                 return 0
 
@@ -349,6 +349,37 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(
             [[str(native_validate_config), "--project-dir", "/tmp/demo", "--scenario", "production"]],
             executed,
+        )
+
+    def test_test_resources_server_prefers_bundled_native_executable_when_available(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_test_resources_server = Path(temp_dir) / "pyronaut-test-resources-server"
+            native_test_resources_server.write_text("", encoding="utf-8")
+            native_test_resources_server.chmod(0o755)
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir, owner_command="pyronaut run")
+            with patch.object(
+                cli,
+                "_resolve_native_preferred_executable",
+                side_effect=lambda command_name, resolver: str(native_test_resources_server) if command_name == "pyronaut-test-resources-server" else resolver(command_name),
+            ):
+                exit_code = session._delegate_test_resources_server(
+                    ["start", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [str(native_test_resources_server), "start", "--project-dir", str(project_dir)],
+            executed[0],
         )
 
     def test_process_uses_bundled_native_executable_when_configured(self):
@@ -1000,6 +1031,41 @@ logsDir = "var/custom-test-resources-logs"
 
             self.assertIn("Creating container for image: mysql:8.4.0", stderr.getvalue())
 
+    def test_owned_test_resources_session_mirrors_late_container_logs_from_launcher_stdio(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            settings_dir = project_dir / ".micronaut" / "test-resources"
+            settings_dir.mkdir(parents=True, exist_ok=True)
+            settings_file = settings_dir / "test-resources.properties"
+            settings_file.write_text(
+                "server.uri=http\\://localhost\\:18900\n"
+                "server.access.token=token-abc\n",
+                encoding="utf-8",
+            )
+            log_dir = settings_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "launcher-stdio.log"
+            log_file.write_text("", encoding="utf-8")
+
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut run")
+            stderr = io.StringIO()
+            try:
+                with redirect_stderr(stderr):
+                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
+                    with log_file.open("a", encoding="utf-8") as handle:
+                        handle.write(
+                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
+                        )
+                        handle.flush()
+                    deadline = time.time() + 2.0
+                    while "Creating container for image: mysql:8.4.0" not in stderr.getvalue() and time.time() < deadline:
+                        time.sleep(0.05)
+            finally:
+                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+
+            self.assertIn("Creating container for image: mysql:8.4.0", stderr.getvalue())
+
     def test_owned_test_resources_session_quiet_mode_suppresses_stderr_output(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
@@ -1060,6 +1126,38 @@ logsDir = "var/custom-test-resources-logs"
             _, kwargs = run_mock.call_args
             self.assertIs(kwargs.get("stdout"), cli.subprocess.DEVNULL)
             self.assertIs(kwargs.get("stderr"), cli.subprocess.DEVNULL)
+
+    def test_owned_test_resources_session_preserves_session_file_when_stop_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            settings_dir = project_dir / ".micronaut" / "test-resources"
+            settings_dir.mkdir(parents=True, exist_ok=True)
+            settings_file = settings_dir / "test-resources.properties"
+            settings_file.write_text(
+                "server.uri=http\\://localhost\\:18900\n"
+                "server.access.token=token-abc\n",
+                encoding="utf-8",
+            )
+
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut run")
+            session._started = True  # noqa: SLF001 - internal helper coverage
+            (project_dir / "__pyronaut__").mkdir(parents=True, exist_ok=True)
+            session._persist_session(started_at=time.time())  # noqa: SLF001 - internal helper coverage
+
+            executed = []
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 10
+
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                session.stop_if_owned(runner=runner, resolver=self._resolver())
+
+            self.assertTrue(session._session_file.exists())  # noqa: SLF001 - internal helper coverage
+            self.assertIn("stop failed (exit code 10); preserving session state for retry", stderr.getvalue())
+            self._assert_test_resources_stop(executed[0], str(project_dir))
 
     def test_test_forwards_tests_selectors_after_preflight(self):
         executed = []
@@ -2669,6 +2767,8 @@ logsDir = "var/custom-test-resources-logs"
                 "run",
                 "--report-dir",
                 str(expected_project_dir / "__pyronaut__" / "reports" / "tests"),
+                "--validate-executable",
+                "/tmp/pyronaut-validate-config",
                 "--install-executable",
                 "/tmp/pyronaut-install",
                 "--process-executable",
@@ -2773,6 +2873,8 @@ logsDir = "var/custom-test-resources-logs"
                 "test",
                 "--report-dir",
                 str(expected_reports_dir),
+                "--validate-executable",
+                "/tmp/pyronaut-validate-config",
                 "--install-executable",
                 "/tmp/pyronaut-install",
                 "--process-executable",
@@ -2837,6 +2939,8 @@ logsDir = "var/custom-test-resources-logs"
                 "run",
                 "--report-dir",
                 str(expected_project_dir / "__pyronaut__" / "reports" / "tests"),
+                "--validate-executable",
+                "/tmp/pyronaut-validate-config",
                 "--install-executable",
                 "/tmp/pyronaut-install",
                 "--process-executable",
@@ -2853,6 +2957,110 @@ logsDir = "var/custom-test-resources-logs"
         assert isinstance(executed[1][1], dict)
         self.assertIn("JAVA_HOME", executed[1][1])
         self.assertEqual("http://localhost:18900", executed[1][1].get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
+
+    def test_tui_interactive_prefers_native_delegate_executables(self):
+        executed = []
+        settings_file: Path | None = None
+
+        def runner_with_env(command_line, env):
+            nonlocal settings_file
+            executed.append((command_line, env))
+            if command_line[:2] == ["/tmp/native-test-resources-server", "start"]:
+                assert settings_file is not None
+                settings_file.parent.mkdir(parents=True, exist_ok=True)
+                settings_file.write_text(
+                    "server.uri=http\\://localhost\\:18900\n"
+                    "server.access.token=token-abc\n",
+                    encoding="utf-8",
+                )
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.processor]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+            expected_project_dir = project_dir.resolve()
+            settings_file = expected_project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+
+            native_install = Path(temp_dir) / "pyronaut-install"
+            native_install.write_text("", encoding="utf-8")
+            native_install.chmod(0o755)
+            native_validate = Path(temp_dir) / "pyronaut-validate-config"
+            native_validate.write_text("", encoding="utf-8")
+            native_validate.chmod(0o755)
+            native_processor = Path(temp_dir) / "pyronaut-processor"
+            native_processor.write_text("", encoding="utf-8")
+            native_processor.chmod(0o755)
+            native_test_resources = Path(temp_dir) / "pyronaut-test-resources-server"
+            native_test_resources.write_text("", encoding="utf-8")
+            native_test_resources.chmod(0o755)
+
+            def bundled_native(command_name: str) -> Path | None:
+                return {
+                    "pyronaut-install": native_install,
+                    "pyronaut-validate-config": native_validate,
+                    "pyronaut-processor": native_processor,
+                    "pyronaut-test-resources-server": native_test_resources,
+                }.get(command_name)
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=bundled_native):
+                exit_code = cli.run(
+                    ["--tui", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(3, len(executed))
+        self.assertEqual(
+            [
+                str(native_test_resources),
+                "start",
+                "--project-dir",
+                str(expected_project_dir),
+                "--owner-token",
+                executed[0][0][5],
+            ],
+            executed[0][0],
+        )
+        self.assertEqual(
+            [
+                "/tmp/pyronaut-tui",
+                "delegating-tui",
+                "--project-dir",
+                str(expected_project_dir),
+                "--mode",
+                "run",
+                "--report-dir",
+                str(expected_project_dir / "__pyronaut__" / "reports" / "tests"),
+                "--validate-executable",
+                str(native_validate),
+                "--install-executable",
+                str(native_install),
+                "--process-executable",
+                str(native_processor),
+                "--run-executable",
+                "/tmp/pyronaut-run/bin/pyronaut-run",
+                "--test-executable",
+                "/tmp/pyronaut-test/bin/pyronaut-test",
+            ],
+            executed[1][0],
+        )
+        self.assertEqual(
+            [
+                str(native_test_resources),
+                "stop",
+                "--project-dir",
+                str(expected_project_dir),
+                "--owner-token",
+                executed[2][0][5],
+            ],
+            executed[2][0],
+        )
 
     def test_tui_help_delegates_to_tui_executable_help(self):
         executed = []

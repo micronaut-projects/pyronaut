@@ -190,6 +190,25 @@ class PyronautDelegatingTuiCommandTest {
     }
 
     @Test
+    void testResourcesLogsStripAnsiEscapeSequences() throws Exception {
+        Path project = tempDir.resolve("tail-ansi-logs");
+        Path logsDir = project.resolve(".micronaut/test-resources/logs");
+        Files.createDirectories(logsDir);
+        Path logFile = logsDir.resolve("test-resources.log");
+        Files.writeString(logFile, "\u001B[31mERROR\u001B[0m container failed\n", StandardCharsets.UTF_8);
+
+        UiController controller = new UiController();
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "controller", controller);
+        setField(command, "testResourcesLogTail", new java.util.concurrent.atomic.AtomicReference<>(
+            newInner(command, "TestResourcesLogTail", new Class<?>[]{Path.class}, project)
+        ));
+
+        invoke(command, "refreshTestResourcesLogs", new Class<?>[]{Path.class}, project);
+        assertEquals(List.of("ERROR container failed"), controller.getTestResourcesLogLines());
+    }
+
+    @Test
     void summarizeArrayPayloadParsesControlPanelContainersAndProperties() throws Exception {
         PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
         String dockerBody = """

@@ -25,6 +25,7 @@ import picocli.CommandLine;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.ConnectException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -171,7 +172,15 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             }
             return SUCCESS;
         }
-        boolean stopped = serverManager.stop(settingsDir);
+        boolean stopped;
+        try {
+            stopped = serverManager.stop(settingsDir);
+        } catch (IOException e) {
+            if (!isAlreadyStoppedFailure(e)) {
+                throw e;
+            }
+            stopped = false;
+        }
         Files.deleteIfExists(sessionFile);
         deleteServerSettings(settingsDir);
         if (!isOrchestratedRequest()) {
@@ -218,6 +227,21 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             return Optional.empty();
         }
         return Optional.empty();
+    }
+
+    private static boolean isAlreadyStoppedFailure(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof ConnectException) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase(Locale.ROOT).contains("connection refused")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static Path resolveSettingsDir(Path root, PyprojectModel.TestResources config) {

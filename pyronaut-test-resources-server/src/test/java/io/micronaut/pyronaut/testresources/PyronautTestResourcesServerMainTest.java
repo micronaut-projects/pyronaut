@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
 
+import java.io.IOException;
+import java.net.ConnectException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -243,6 +245,42 @@ class PyronautTestResourcesServerMainTest {
         assertFalse(Files.exists(propertiesFile));
     }
 
+    @Test
+    void stopTreatsConnectionRefusedAsAlreadyStoppedAndCleansState() throws Exception {
+        Path project = prepareProject("");
+        Path sessionFile = project.resolve("__pyronaut__").resolve("test-resources-session.json");
+        Path settingsDir = project.resolve(".micronaut").resolve("test-resources");
+        Path portFile = settingsDir.resolve("server.port");
+        Path propertiesFile = settingsDir.resolve("test-resources.properties");
+        Files.createDirectories(sessionFile.getParent());
+        Files.createDirectories(settingsDir);
+        Files.writeString(
+            sessionFile,
+            """
+                {
+                  "ownerToken": "owner-expected",
+                  "ownerPid": 1,
+                  "ownerCommand": "pyronaut run",
+                  "startedAt": 1
+                }
+                """,
+            java.nio.charset.StandardCharsets.UTF_8
+        );
+        Files.writeString(portFile, "18080\n", java.nio.charset.StandardCharsets.UTF_8);
+        Files.writeString(propertiesFile, "server.uri=http\\://localhost\\:18080\n", java.nio.charset.StandardCharsets.UTF_8);
+
+        RecordingServerManager manager = new RecordingServerManager();
+        manager.stopError = new ConnectException("Connection refused");
+        PyronautTestResourcesServerMain command = new PyronautTestResourcesServerMain(new PyprojectModelReader(), manager);
+        int exit = new CommandLine(command).execute("stop", "--project-dir", project.toString(), "--owner-token", "owner-expected");
+
+        assertEquals(0, exit);
+        assertEquals(1, manager.stopInvocations);
+        assertFalse(Files.exists(sessionFile));
+        assertFalse(Files.exists(portFile));
+        assertFalse(Files.exists(propertiesFile));
+    }
+
     private Path prepareProject(String additionalPyprojectContent) throws Exception {
         Path project = tempDir.resolve("app");
         Files.createDirectories(project);
@@ -260,6 +298,7 @@ class PyronautTestResourcesServerMainTest {
         private PyronautTestResourcesServerMain.ServerStartRequest lastStartRequest;
         private PyronautTestResourcesServerMain.ServerStatus status = new PyronautTestResourcesServerMain.ServerStatus(true, 18080, "http://localhost:18080");
         private int stopInvocations;
+        private IOException stopError;
 
         @Override
         public PyronautTestResourcesServerMain.ServerStatus start(PyronautTestResourcesServerMain.ServerStartRequest request) {
@@ -273,8 +312,11 @@ class PyronautTestResourcesServerMainTest {
         }
 
         @Override
-        public boolean stop(Path settingsDir) {
+        public boolean stop(Path settingsDir) throws IOException {
             stopInvocations++;
+            if (stopError != null) {
+                throw stopError;
+            }
             return true;
         }
     }
