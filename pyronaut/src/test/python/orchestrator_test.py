@@ -322,6 +322,35 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual([[str(native_install), "--project-dir", "/tmp/demo"]], executed)
 
+    def test_validate_config_prefers_bundled_native_executable_when_available(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_validate_config = Path(temp_dir) / "pyronaut-validate-config"
+            native_validate_config.write_text("", encoding="utf-8")
+            native_validate_config.chmod(0o755)
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: native_validate_config if command_name == "pyronaut-validate-config" else None,
+            ):
+                exit_code = cli.run(
+                    ["validate-config", "--project-dir", "/tmp/demo", "--scenario", "production"],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [[str(native_validate_config), "--project-dir", "/tmp/demo", "--scenario", "production"]],
+            executed,
+        )
+
     def test_process_uses_bundled_native_executable_when_configured(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:

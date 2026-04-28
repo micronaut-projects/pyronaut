@@ -15,12 +15,41 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautValidateConfigMainTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void initializesJavaHomeFromEnvironmentWhenMissing() {
+        String previousJavaHome = System.getProperty("java.home");
+        try {
+            System.clearProperty("java.home");
+
+            PyronautValidateConfigMain.initializeJavaHomeIfMissing(() -> "/tmp/graalvm-home");
+
+            assertEquals("/tmp/graalvm-home", System.getProperty("java.home"));
+        } finally {
+            restoreJavaHome(previousJavaHome);
+        }
+    }
+
+    @Test
+    void leavesJavaHomeUnsetWhenEnvironmentMissing() {
+        String previousJavaHome = System.getProperty("java.home");
+        try {
+            System.clearProperty("java.home");
+
+            PyronautValidateConfigMain.initializeJavaHomeIfMissing(() -> null);
+
+            assertNull(System.getProperty("java.home"));
+        } finally {
+            restoreJavaHome(previousJavaHome);
+        }
+    }
 
     @Test
     void validateConfigWritesJsonAndHtmlReportsForProductionScenario() throws Exception {
@@ -364,5 +393,13 @@ class PyronautValidateConfigMainTest {
         Files.createDirectories(project.resolve("src/main/resources"));
         Files.writeString(project.resolve("pyproject.toml"), pyprojectToml);
         return project;
+    }
+
+    private static void restoreJavaHome(String previousJavaHome) {
+        if (previousJavaHome == null) {
+            System.clearProperty("java.home");
+        } else {
+            System.setProperty("java.home", previousJavaHome);
+        }
     }
 }

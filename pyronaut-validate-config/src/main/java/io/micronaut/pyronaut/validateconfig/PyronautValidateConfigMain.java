@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 
 @CommandLine.Command(name = "pyronaut-validate-config", mixinStandardHelpOptions = true, description = "Validate Micronaut configuration and generate reports")
 public final class PyronautValidateConfigMain implements Callable<Integer> {
@@ -106,8 +107,20 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         }
     }
 
+    static void initializeJavaHomeIfMissing(Supplier<String> javaHomeSupplier) {
+        String currentJavaHome = System.getProperty("java.home");
+        if (currentJavaHome != null && !currentJavaHome.isBlank()) {
+            return;
+        }
+        String javaHome = javaHomeSupplier.get();
+        if (javaHome != null && !javaHome.isBlank()) {
+            System.setProperty("java.home", javaHome);
+        }
+    }
+
     @Override
     public Integer call() {
+        initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             String normalizedScenario = normalizeScenario(scenario);
@@ -160,9 +173,17 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             System.err.println(e.getMessage());
             return CommandLine.ExitCode.USAGE;
         } catch (Exception e) {
+            if (isTraceEnabled()) {
+                e.printStackTrace(System.err);
+            }
             System.err.println("validate-config failed: " + e.getMessage());
             return INTERNAL_ERROR;
         }
+    }
+
+    private static boolean isTraceEnabled() {
+        String value = System.getenv("PYRONAUT_VALIDATE_CONFIG_TRACE");
+        return value != null && !value.isBlank() && !"false".equalsIgnoreCase(value);
     }
 
     private ValidationSettings resolveSettings(Path root,

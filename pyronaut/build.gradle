@@ -23,7 +23,8 @@ def delegatedCliProjects = [
 ]
 def delegatedNativeCliProjects = [
     [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
-    [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"]
+    [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"],
+    [path: ":micronaut-pyronaut-validate-config", command: "pyronaut-validate-config"]
 ]
 
 tasks.register("prepareWheelSources", Sync) {

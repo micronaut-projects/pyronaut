@@ -2205,7 +2205,7 @@ def _resolve_delegate_executable_path(
     executable_name = COMMAND_TO_EXECUTABLE[command]
     project_dir = Path(_extract_project_dir(args)).resolve()
 
-    if command == "install":
+    if command in {"install", "validate-config"}:
         executable_path = _resolve_native_preferred_executable(executable_name, resolver)
         if executable_path is None:
             raise RuntimeError(f"Missing delegated executable: {executable_name}")
