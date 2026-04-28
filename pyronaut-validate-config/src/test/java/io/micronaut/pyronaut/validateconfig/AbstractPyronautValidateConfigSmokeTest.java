@@ -27,6 +27,37 @@ abstract class AbstractPyronautValidateConfigSmokeTest {
     @TempDir
     Path tempDir;
 
+    protected void assertValidationFindsConfigurationErrors() throws Exception {
+        Path project = tempDir.resolve("app");
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(classesDir);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject(), StandardCharsets.UTF_8);
+        Files.writeString(classesDir.resolve("application.properties"), """
+            test.config.enabled=not-a-bool
+            """, StandardCharsets.UTF_8);
+        writeConfigurationSchema(classesDir);
+        compileApplication(classesDir);
+        assertBeanMetadataGenerated(classesDir);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
+            runtimeClasspathManifest(),
+            StandardCharsets.UTF_8
+        );
+
+        RunResult result = runValidation(project);
+
+        assertEquals(1, result.exitCode(), result.output());
+        Path reportDir = project.resolve("__pyronaut__/reports/config-validation/run");
+        Path jsonReport = reportDir.resolve("configuration-errors.json");
+        Path htmlReport = reportDir.resolve("configuration-errors.html");
+        assertTrue(Files.exists(jsonReport), result.output());
+        assertTrue(Files.exists(htmlReport), result.output());
+
+        String json = Files.readString(jsonReport, StandardCharsets.UTF_8);
+        assertTrue(json.contains("test.config.enabled"), json);
+    }
+
     protected void assertValidationFindsConfigurationAndDependencyInjectionErrors() throws Exception {
         Path project = tempDir.resolve("app");
         Path classesDir = project.resolve("__pyronaut__/classes");

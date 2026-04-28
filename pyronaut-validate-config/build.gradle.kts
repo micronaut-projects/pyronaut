@@ -68,6 +68,7 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "-H:Preserve=package=io.micronaut.core.io.service.*",
     "-H:Preserve=package=io.micronaut.inject.*",
     "-H:Preserve=package=io.micronaut.context.*",
+    "-H:Preserve=package=io.micronaut.jsonschema.*",
     "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
     "--initialize-at-run-time=io.micronaut.core.io.socket.SocketUtils",
     "--initialize-at-run-time=io.micronaut.core.util.KotlinUtils",

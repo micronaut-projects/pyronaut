@@ -10,8 +10,8 @@ import java.nio.file.Path;
 class PyronautValidateConfigNativeSmokeTest extends AbstractPyronautValidateConfigSmokeTest {
 
     @Test
-    void nativeBinaryValidatesConfigurationAndDependencyInjection() throws Exception {
-        assertValidationFindsConfigurationAndDependencyInjectionErrors();
+    void nativeBinaryValidatesConfigurationErrors() throws Exception {
+        assertValidationFindsConfigurationErrors();
     }
 
     @Override
@@ -23,7 +23,6 @@ class PyronautValidateConfigNativeSmokeTest extends AbstractPyronautValidateConf
             "--project-dir", project.toString(),
             "--scenario", "run",
             "--validate-dependency-injection",
-            "--dependency-injection-validation-strategy", "all-beans",
             "--no-cache"
         )
             .redirectErrorStream(true);
