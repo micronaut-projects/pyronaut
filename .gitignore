@@ -45,6 +45,8 @@ pyronaut-pytest/__pyronaut__/reports/tests/events.ndjson
 
 # Local planning/work artifacts
 .sisyphus/
+plans/
+functional-test/app/.vscode/
 
 # Python bytecode caches
 **/__pycache__/
