@@ -71,7 +71,7 @@ class PyronautTestMainTest {
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
-        assertEquals(7, command.call());
+        assertEquals(0, command.call());
     }
 
     @Test
@@ -83,7 +83,7 @@ class PyronautTestMainTest {
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
-        assertEquals(7, command.call());
+        assertEquals(0, command.call());
     }
 
     @Test

@@ -97,16 +97,11 @@ class MicronautPytestPlugin:
 
     def pytest_sessionfinish(self, session, exitstatus):
         """Called when pytest session finishes."""
-        TestExecutionResult = java.type("org.junit.platform.engine.TestExecutionResult")
-        RuntimeException = java.type("java.lang.RuntimeException")
-
         # Convert pytest exit status to JUnit TestExecutionResult
         if exitstatus == pytest.ExitCode.OK:
-            result = TestExecutionResult.successful()
+            result = self.listener.successfulResult()
         else:
-            # Create a failed result with exit status information
-            exception = RuntimeException(f"Pytest session failed with exit code: {exitstatus}")
-            result = TestExecutionResult.failed(exception)
+            result = self.listener.failedResult(f"Pytest session failed with exit code: {exitstatus}")
 
         self.listener.onResult(result)
 
@@ -223,16 +218,13 @@ class MicronautPytestPlugin:
 
     def pytest_runtest_teardown(self, item):
         """Called after test teardown."""
-        TestExecutionResult = java.type("org.junit.platform.engine.TestExecutionResult")
-        AssertionError = java.type("io.micronaut.test.pytest.PythonAssertionError")
-
         test_id = self._get_test_id(item)
         exception = self.test_results.get(test_id)
 
         if exception is not None:
-            result = TestExecutionResult.failed(AssertionError(f"{exception}"))
+            result = self.listener.failedAssertionResult(f"{exception}")
         else:
-            result = TestExecutionResult.successful()
+            result = self.listener.successfulResult()
 
         self.listener.afterTest(test_id, item, result)
 
@@ -241,17 +233,14 @@ class MicronautPytestPlugin:
 
     def pytest_collectreport(self, report):
         """Called when collection report is generated."""
-        TestExecutionResult = java.type("org.junit.platform.engine.TestExecutionResult")
         if report.failed:
-            AssertionError = java.type("io.micronaut.test.pytest.PythonAssertionError")
-            exception = AssertionError(f"Collection failed: {report.longrepr}")
-            result = TestExecutionResult.failed(exception)
+            result = self.listener.failedAssertionResult(f"Collection failed: {report.longrepr}")
             if self.current_file:
                 self.listener.afterFile(f"{self.current_file}", result)
                 raise Exception(f"Collection failed: {report.longrepr}")
         else:
             if self.current_file:
-                self.listener.afterFile(f"{self.current_file}", TestExecutionResult.successful())
+                self.listener.afterFile(f"{self.current_file}", self.listener.successfulResult())
 
     def _resolve_bean_for_type(self, context, python_type):
         """Resolve a bean based on Python type hint."""

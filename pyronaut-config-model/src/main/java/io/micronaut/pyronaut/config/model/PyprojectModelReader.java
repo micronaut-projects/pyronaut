@@ -97,6 +97,7 @@ public final class PyprojectModelReader {
             ),
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
             new PyprojectModel.Processor(resolveProcessorMode(parsed)),
+            new PyprojectModel.Test(resolveTestMode(parsed)),
             resolveIdeStubs(parsed),
             resolveValidation(parsed),
             resolveTestResources(parsed)
@@ -190,6 +191,21 @@ public final class PyprojectModelReader {
         throw new PyprojectModelException(
             "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE.canonicalPath()
                 + "': expected one of " + PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE.enumValues()
+        );
+    }
+
+    private static String resolveTestMode(TomlParseResult parsed) {
+        String mode = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_MODE);
+        if (mode == null || mode.isBlank()) {
+            return (String) PyprojectConfigSpec.PYRONAUT_TEST_MODE.defaultValue();
+        }
+        String normalized = mode.trim().toLowerCase();
+        if (PyprojectConfigSpec.PYRONAUT_TEST_MODE.enumValues().contains(normalized)) {
+            return normalized;
+        }
+        throw new PyprojectModelException(
+            "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_TEST_MODE.canonicalPath()
+                + "': expected one of " + PyprojectConfigSpec.PYRONAUT_TEST_MODE.enumValues()
         );
     }
 

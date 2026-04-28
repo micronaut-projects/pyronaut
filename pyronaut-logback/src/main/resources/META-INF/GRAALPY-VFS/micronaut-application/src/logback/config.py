@@ -9,8 +9,8 @@ import logging.config
 try:
     import java
     LogbackConfigurer = java.type("io.micronaut.pyronaut.logback.LogbackConfigurer")
-except ImportError:
-    # Fallback for environments where java is not available
+except (ImportError, KeyError):
+    # Fallback for environments where java is unavailable or host symbol lookup is denied.
     LogbackConfigurer = None
 
 

@@ -248,6 +248,75 @@ class PyprojectModelReaderTest {
     }
 
     @Test
+    void parseTestModeDefaultsToJitWhenMissing() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("jit", model.pyronaut().test().mode());
+    }
+
+    @Test
+    void parseTestModeWhenConfigured() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.test]
+            mode = "native"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("native", model.pyronaut().test().mode());
+    }
+
+    @Test
+    void rejectInvalidTestModeType() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.test]
+            mode = ["native"]
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid type for 'tool.pyronaut.test.mode': expected string", exception.getMessage());
+    }
+
+    @Test
+    void rejectInvalidTestModeValue() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.test]
+            mode = "fast"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid value for 'tool.pyronaut.test.mode': expected one of [jit, native]", exception.getMessage());
+    }
+
+    @Test
     void parseBuildMetadataConfiguration() throws IOException {
         Path file = tempDir.resolve("pyproject.toml");
         Files.writeString(file, """

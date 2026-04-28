@@ -15,6 +15,7 @@
  */
 package io.micronaut.test.pytest.listener;
 
+import io.micronaut.test.pytest.PythonAssertionError;
 import org.graalvm.polyglot.Value;
 import org.junit.platform.engine.TestExecutionResult;
 
@@ -73,4 +74,33 @@ public interface PytestTestListener {
      * @param result The overall test execution result
      */
     void onResult(TestExecutionResult result);
+
+    /**
+     * Build a successful test execution result without requiring Python-side class lookup.
+     *
+     * @return A successful result
+     */
+    default TestExecutionResult successfulResult() {
+        return TestExecutionResult.successful();
+    }
+
+    /**
+     * Build a failed test execution result backed by a runtime exception.
+     *
+     * @param message The failure message
+     * @return A failed result
+     */
+    default TestExecutionResult failedResult(String message) {
+        return TestExecutionResult.failed(new RuntimeException(message));
+    }
+
+    /**
+     * Build a failed test execution result backed by a PythonAssertionError.
+     *
+     * @param message The failure message
+     * @return A failed result
+     */
+    default TestExecutionResult failedAssertionResult(String message) {
+        return TestExecutionResult.failed(new PythonAssertionError(message));
+    }
 }

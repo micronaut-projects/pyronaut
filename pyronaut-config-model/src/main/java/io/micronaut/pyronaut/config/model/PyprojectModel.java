@@ -59,6 +59,7 @@ public record PyprojectModel(Project project,
      * @param dependencies dependency scopes
      * @param build build defaults/settings
      * @param processor processor execution settings
+     * @param test test execution settings
      * @param ideStubs IDE stub generation settings
      * @param validation validation settings
      * @param testResources test resources settings
@@ -68,6 +69,7 @@ public record PyprojectModel(Project project,
                            Dependencies dependencies,
                            Build build,
                            Processor processor,
+                           Test test,
                            IdeStubs ideStubs,
                            Validation validation,
                            TestResources testResources) {
@@ -79,6 +81,14 @@ public record PyprojectModel(Project project,
      * @param mode processor execution mode (for example jit or native)
      */
     public record Processor(String mode) {
+    }
+
+    /**
+     * tool.pyronaut.test table.
+     *
+     * @param mode test execution mode (for example jit or native)
+     */
+    public record Test(String mode) {
     }
 
     /**

@@ -297,6 +297,25 @@ def _delegate(
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    if command == "test" and not debug_vm:
+        try:
+            executable_path = _resolve_delegate_executable_path(command, args, resolver)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        default_executable = resolver(COMMAND_TO_EXECUTABLE[command])
+        if executable_path != default_executable:
+            command_line = [executable_path, *args]
+            if _delegation_trace_enabled():
+                print(shlex.join(command_line), file=sys.stderr)
+            try:
+                env = _build_non_test_resources_env(command, java_home_provider)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return PRECONDITION_FAILED
+            env = _merge_env_overrides(env, env_overrides)
+            return runner(command_line, env)
+
     if command in {"run", "test"}:
         return _delegate_via_java(
             command,
@@ -442,7 +461,7 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             entries.append(str(test_classes_dir))
         elif classes_dir.is_dir():
             entries.append(str(classes_dir))
-        else:
+        if not test_classes_dir.is_dir() and not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
 
     config_dir = project_dir / "config"
@@ -1325,6 +1344,38 @@ def _read_pyproject_processor_mode(project_dir: Path) -> str:
     if normalized in {"jit", "native"}:
         return normalized
     raise ValueError("Invalid processor mode in pyproject.toml. Use tool.pyronaut.processor.mode = 'jit' or 'native'")
+
+
+def _read_pyproject_test_mode(project_dir: Path) -> str:
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return "jit"
+    try:
+        import tomllib
+    except Exception:
+        return "jit"
+    try:
+        with pyproject.open("rb") as fp:
+            data = tomllib.load(fp)
+    except Exception:
+        return "jit"
+
+    tool = data.get("tool")
+    if not isinstance(tool, dict):
+        return "jit"
+    pyronaut = tool.get("pyronaut")
+    if not isinstance(pyronaut, dict):
+        return "jit"
+    test = pyronaut.get("test")
+    if not isinstance(test, dict):
+        return "jit"
+    mode = test.get("mode")
+    if not isinstance(mode, str):
+        return "jit"
+    normalized = mode.strip().lower()
+    if normalized in {"jit", "native"}:
+        return normalized
+    raise ValueError("Invalid test mode in pyproject.toml. Use tool.pyronaut.test.mode = 'jit' or 'native'")
 
 
 def _read_pyproject_test_resources_table(project_dir: Path) -> dict[str, object] | None:
@@ -2234,6 +2285,26 @@ def _resolve_delegate_executable_path(
             raise RuntimeError(f"Missing delegated executable: {executable_name}")
         return executable_path
 
+    if command == "test":
+        try:
+            test_mode = _read_pyproject_test_mode(project_dir)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if _extract_debug_vm(args):
+            test_mode = "jit"
+        if test_mode == "native":
+            executable_path = _resolve_native_preferred_executable(
+                executable_name,
+                resolver,
+                fallback_to_resolver=False,
+            )
+            if executable_path is None:
+                raise RuntimeError(
+                    "Missing native delegated executable for pyronaut-test. "
+                    "Build or install a native pyronaut-test, or set tool.pyronaut.test.mode = 'jit'."
+                )
+            return executable_path
+
     executable_path = resolver(executable_name)
     if executable_path is None:
         raise RuntimeError(f"Missing delegated executable: {executable_name}")
@@ -2692,7 +2763,7 @@ def _run_tamboui_tui(
         "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
         "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
         "run": resolver("pyronaut-run"),
-        "test": resolver("pyronaut-test"),
+        "test": _resolve_delegate_executable_path("test", ["--project-dir", str(project_dir)], resolver),
     }
     missing = [name for (name, path) in delegated.items() if path is None]
     if missing:
