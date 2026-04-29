@@ -8,6 +8,22 @@ plugins {
     id("org.graalvm.buildtools.native") version "0.11.1"
 }
 
+val micronautCoreNativeImageExclusion = providers.provider {
+    val micronautCoreJar = configurations.runtimeClasspath.get().resolvedConfiguration.resolvedArtifacts
+        .firstOrNull { artifact ->
+            artifact.moduleVersion.id.group == "io.micronaut" &&
+                artifact.name == "micronaut-core" &&
+                artifact.extension == "jar"
+        }
+        ?.file
+        ?: error("Unable to resolve micronaut-core runtime jar for native-image exclusion")
+    listOf(
+        "--exclude-config",
+        "\\Q${micronautCoreJar.toPath().toAbsolutePath().normalize()}\\E",
+        "^/META-INF/native-image/.*"
+    )
+}
+
 dependencies {
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)
@@ -58,6 +74,18 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "-H:EnableURLProtocols=jar",
     "-H:+RuntimeClassLoading",
     "-H:+AllowJRTFileSystem",
+    "--initialize-at-build-time=io.micronaut.core.io",
+    "--initialize-at-build-time=io.micronaut.core.optim",
+    "--initialize-at-build-time=io.micronaut.core.util",
+    "--initialize-at-build-time=io.micronaut.core.bind",
+    "--initialize-at-build-time=io.micronaut.core.convert",
+    "--initialize-at-build-time=io.micronaut.core.convert.ConversionContext",
+    "--initialize-at-build-time=io.micronaut.core.convert.ImmutableArgumentConversionContext",
+    "--initialize-at-build-time=io.micronaut.core.type",
+    "--initialize-at-build-time=io.micronaut.core.annotation",
+    "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValue",
+    "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValueResolver",
+    "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
     "-H:Preserve=package=java.lang.*",
     "-H:Preserve=package=java.lang.invoke.*",
     "-H:Preserve=package=java.text.*",
@@ -130,6 +158,7 @@ graalvmNative {
             sharedLibrary.set(false)
             buildArgs.addAll(nativeImageCLibraryPathArgs)
             buildArgs.addAll(nativeImageRuntimeClassLoadingArgs)
+            buildArgs.addAll(micronautCoreNativeImageExclusion)
         }
         all {
             resources.autodetect()

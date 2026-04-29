@@ -29,11 +29,11 @@ class PyronautRunMainTest {
 
         AtomicReference<Class<?>> resolvedMainClass = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
-            className -> {
+            (className, classLoader) -> {
                 if (SampleApp.class.getName().equals(className)) {
                     return SampleApp.class;
                 }
-                return Class.forName(className);
+                return Class.forName(className, true, classLoader);
             },
             classLoader -> { },
             (loadedClass, resolvedClassesDir, appArgs) -> {
@@ -74,7 +74,7 @@ class PyronautRunMainTest {
 
         AtomicReference<Path> startedClassesDir = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
-            className -> {
+            (className, classLoader) -> {
                 throw new ClassNotFoundException(className);
             },
             classLoader -> { },
@@ -122,6 +122,37 @@ class PyronautRunMainTest {
             restoreProperty("micronaut.test.resources.server.uri", previousUri);
             restoreProperty("micronaut.test.resources.server.access.token", previousToken);
             restoreProperty("micronaut.test.resources.server.client.read.timeout", previousTimeout);
+        }
+    }
+
+    @Test
+    void resolveProjectLayoutUsesResolvedRuntimeDependencies() throws Exception {
+        Path project = tempDir.resolve("project-layout");
+        Path pyronautDir = project.resolve("__pyronaut__");
+        Path classesDir = pyronautDir.resolve("classes");
+        Path configDir = project.resolve("config");
+        Path runtimeJar = tempDir.resolve("runtime.jar");
+        Files.createDirectories(classesDir);
+        Files.createDirectories(configDir);
+        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
+        Files.createDirectories(pyronautDir);
+        Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
+
+        PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
+        try (var classLoader = layout.applicationClassLoader()) {
+            assertEquals(classesDir.toAbsolutePath().normalize(), layout.processedClassesRoot());
+            Path archivedClasses = pyronautDir.resolve("run-classes.jar");
+            assertTrue(Files.exists(archivedClasses));
+            assertTrue(
+                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains(runtimeJar.getFileName().toString()))
+            );
+            assertTrue(
+                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("run-classes.jar"))
+            );
+            assertTrue(
+                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("config/"))
+                    || java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().endsWith("/config"))
+            );
         }
     }
 

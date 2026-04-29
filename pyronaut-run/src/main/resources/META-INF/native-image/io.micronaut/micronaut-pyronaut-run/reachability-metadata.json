@@ -43,10 +43,10 @@
           "name": "classesDir"
         },
         {
-          "name": "classpath"
+          "name": "configDir"
         },
         {
-          "name": "configDir"
+          "name": "debugVm"
         },
         {
           "name": "mainClass"
