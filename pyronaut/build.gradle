@@ -1,3 +1,10 @@
+import org.gradle.api.GradleException
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.UserDefinedFileAttributeView
+
 plugins {
     id 'io.micronaut.build.internal.pyronaut-module'
 }
@@ -8,8 +15,73 @@ def wheelVersion = providers.provider {
     def configuredVersion = project.findProperty("projectVersion")?.toString() ?: project.version.toString()
     configuredVersion.replace("-SNAPSHOT", ".dev0")
 }
-def defaultGraalVmHome = "/Users/graemerocher/dev/oracle/graalvm-25.1.0-dev+10.1/Contents/Home"
-def graalVmHomeProvider = providers.gradleProperty("pyronautGraalVmHome").orElse(defaultGraalVmHome)
+def ensureMacOsGatekeeperDoesNotBlock = { File javaHome ->
+    def osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT)
+    if (!osName.contains("mac") || javaHome == null) {
+        return
+    }
+
+    def isQuarantined = [javaHome.toPath(), javaHome.toPath().resolve("bin/java")].any { candidate ->
+        try {
+            def view = Files.getFileAttributeView(candidate, UserDefinedFileAttributeView)
+            view != null && view.list().contains("com.apple.quarantine")
+        } catch (Exception ignored) {
+            false
+        }
+    }
+
+    if (isQuarantined) {
+        throw new GradleException(
+            """The provisioned GraalVM dev build at '${javaHome.absolutePath}' is blocked by macOS Gatekeeper.
+
+Run:
+xattr -r -d com.apple.quarantine '${javaHome.absolutePath}'
+
+If permissions prevent that, rerun the same command with sudo."""
+        )
+    }
+}
+def ensureNativeImageLauncherIsUsable = { File javaHome ->
+    if (javaHome == null) {
+        return
+    }
+
+    def launcher = new File(javaHome, "bin/native-image")
+    def realLauncher = new File(javaHome, "lib/svm/bin/native-image")
+    if (!realLauncher.isFile() || !realLauncher.canExecute()) {
+        return
+    }
+    if (launcher.isFile() && launcher.canExecute() && launcher.length() > 0) {
+        return
+    }
+
+    launcher.parentFile.mkdirs()
+    Files.deleteIfExists(launcher.toPath())
+    try {
+        Files.createSymbolicLink(launcher.toPath(), realLauncher.toPath())
+    } catch (UnsupportedOperationException | IOException ignored) {
+        Files.copy(realLauncher.toPath(), launcher.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        launcher.setExecutable(true, false)
+    }
+}
+def graalVmDevTag = providers.gradleProperty("pyronautGraalVmDevTag")
+def graalVmToolchainHomeProvider = graalVmDevTag.flatMap { tag ->
+    def matcher = (tag =~ /(jdk-)?(\d+)/)
+    if (!matcher.find()) {
+        throw new GradleException("Unable to extract a Java language version from pyronautGraalVmDevTag='${tag}'")
+    }
+    def devJavaVersion = Integer.parseInt(matcher.group(2))
+    def javaToolchains = extensions.getByType(JavaToolchainService)
+    javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(devJavaVersion)
+    }.map { launcher ->
+        def javaHome = launcher.metadata.installationPath.asFile
+        ensureNativeImageLauncherIsUsable(javaHome)
+        ensureMacOsGatekeeperDoesNotBlock(javaHome)
+        javaHome.absolutePath
+    }
+}
+def graalVmHomeProvider = providers.gradleProperty("pyronautGraalVmHome").orElse(graalVmToolchainHomeProvider)
 
 def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
@@ -206,8 +278,9 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
         project(":micronaut-pyronaut-test-resources-server").layout.buildDirectory.file("install/micronaut-pyronaut-test-resources-server/bin/pyronaut-test-resources-server").get().asFile.absolutePath
     )
     doFirst {
-        def graalVmHome = graalVmHomeProvider.get()
-        if (file(graalVmHome).exists()) {
+        if (graalVmHomeProvider.present) {
+            def graalVmHome = graalVmHomeProvider.get()
+            ensureMacOsGatekeeperDoesNotBlock(file(graalVmHome))
             environment("JAVA_HOME", graalVmHome)
             environment("PATH", graalVmHome + "/bin" + File.pathSeparator + System.getenv("PATH"))
         }
@@ -285,8 +358,9 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
             )
         }
 
-        def graalVmHome = graalVmHomeProvider.get()
-        if (file(graalVmHome).exists()) {
+        if (graalVmHomeProvider.present) {
+            def graalVmHome = graalVmHomeProvider.get()
+            ensureMacOsGatekeeperDoesNotBlock(file(graalVmHome))
             environment("JAVA_HOME", graalVmHome)
             environment("PATH", graalVmHome + "/bin" + File.pathSeparator + System.getenv("PATH"))
         }

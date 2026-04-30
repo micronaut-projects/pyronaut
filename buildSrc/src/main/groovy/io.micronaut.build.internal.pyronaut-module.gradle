@@ -1,5 +1,12 @@
 import static io.micronaut.build.TestFramework.JUNIT6
 
+import org.gradle.api.GradleException
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.UserDefinedFileAttributeView
+
 plugins {
     id 'io.micronaut.build.internal.pyronaut-base'
     id "io.micronaut.build.internal.module"
@@ -21,5 +28,84 @@ repositories {
 tasks.withType(Checkstyle).configureEach {
     exclude {
         it.toString().contains('generated')
+    }
+}
+
+def ensureMacOsGatekeeperDoesNotBlock = { File javaHome ->
+    def osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT)
+    if (!osName.contains("mac") || javaHome == null) {
+        return
+    }
+
+    def isQuarantined = [javaHome.toPath(), javaHome.toPath().resolve("bin/java")].any { candidate ->
+        try {
+            def view = Files.getFileAttributeView(candidate, UserDefinedFileAttributeView)
+            view != null && view.list().contains("com.apple.quarantine")
+        } catch (Exception ignored) {
+            false
+        }
+    }
+
+    if (isQuarantined) {
+        throw new GradleException(
+            """The provisioned GraalVM dev build at '${javaHome.absolutePath}' is blocked by macOS Gatekeeper.
+
+Run:
+xattr -r -d com.apple.quarantine '${javaHome.absolutePath}'
+
+If permissions prevent that, rerun the same command with sudo."""
+        )
+    }
+}
+
+def ensureNativeImageLauncherIsUsable = { File javaHome ->
+    if (javaHome == null) {
+        return
+    }
+
+    def launcher = new File(javaHome, "bin/native-image")
+    def realLauncher = new File(javaHome, "lib/svm/bin/native-image")
+    if (!realLauncher.isFile() || !realLauncher.canExecute()) {
+        return
+    }
+    if (launcher.isFile() && launcher.canExecute() && launcher.length() > 0) {
+        return
+    }
+
+    launcher.parentFile.mkdirs()
+    Files.deleteIfExists(launcher.toPath())
+    try {
+        Files.createSymbolicLink(launcher.toPath(), realLauncher.toPath())
+    } catch (UnsupportedOperationException | IOException ignored) {
+        Files.copy(realLauncher.toPath(), launcher.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        launcher.setExecutable(true, false)
+    }
+}
+
+pluginManager.withPlugin("org.graalvm.buildtools.native") {
+    def graalVmDevTag = providers.gradleProperty("pyronautGraalVmDevTag")
+    if (graalVmDevTag.present) {
+        def matcher = (graalVmDevTag.get() =~ /(jdk-)?(\d+)/)
+        if (!matcher.find()) {
+            throw new GradleException("Unable to extract a Java language version from pyronautGraalVmDevTag='${graalVmDevTag.get()}'")
+        }
+
+        Integer devJavaVersion = Integer.parseInt(matcher.group(2))
+        def javaToolchains = extensions.getByType(JavaToolchainService)
+        def graalVmLauncher = javaToolchains.launcherFor {
+            languageVersion = JavaLanguageVersion.of(devJavaVersion)
+        }.map { launcher ->
+            def javaHome = launcher.metadata.installationPath.asFile
+            ensureNativeImageLauncherIsUsable(javaHome)
+            ensureMacOsGatekeeperDoesNotBlock(javaHome)
+            launcher
+        }
+
+        graalvmNative {
+            toolchainDetection = true
+            binaries.configureEach {
+                javaLauncher = graalVmLauncher
+            }
+        }
     }
 }

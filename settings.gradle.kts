@@ -1,4 +1,5 @@
 pluginManagement {
+    includeBuild("gradle/graalvm-dev-toolchain")
     repositories {
         gradlePluginPortal()
         mavenCentral()
@@ -6,7 +7,18 @@ pluginManagement {
 }
 
 plugins {
+    id("io.micronaut.build.graalvm-dev-toolchain")
     id("io.micronaut.build.shared.settings") version "8.0.0-M13"
+}
+
+toolchainManagement {
+    jvm {
+        javaRepositories {
+            repository("graalvmCeDevBuilds") {
+                resolverClass.set(io.micronaut.build.GraalVmDevBuildToolchainResolver::class.java)
+            }
+        }
+    }
 }
 
 rootProject.name = "pyronaut-parent"

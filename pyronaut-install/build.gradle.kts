@@ -1,3 +1,4 @@
+import org.graalvm.buildtools.gradle.dsl.GraalVMExtension
 import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask
 import org.gradle.api.tasks.SourceSetContainer
 import java.io.File
@@ -37,8 +38,14 @@ application {
     mainClass = "io.micronaut.pyronaut.install.PyronautInstallMain"
 }
 
+val graalvmNativeExtension = extensions.getByType(GraalVMExtension::class.java)
+val nativeImageJavaHome = providers.provider {
+    graalvmNativeExtension.binaries.named("main").get().javaLauncher.orNull?.metadata?.installationPath?.asFile
+        ?: System.getenv("JAVA_HOME")?.takeIf { it.isNotBlank() }?.let(::File)
+}
+
 val nativeImageCLibraryPathArgs = providers.provider {
-    val javaHome = System.getenv("JAVA_HOME")?.takeIf { it.isNotBlank() } ?: return@provider emptyList<String>()
+    val javaHome = nativeImageJavaHome.orNull ?: return@provider emptyList<String>()
     val clibrariesDir = File(javaHome, "lib/svm/clibraries")
     if (!clibrariesDir.isDirectory) {
         return@provider emptyList<String>()
