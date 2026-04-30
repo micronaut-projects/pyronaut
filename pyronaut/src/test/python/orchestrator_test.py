@@ -483,7 +483,8 @@ class OrchestratorTest(unittest.TestCase):
                 executed.append(command_line)
                 return 0
 
-            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_test if command_name == "pyronaut-test" else None):
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_test if command_name == "pyronaut-test" else None), \
+                    patch.object(cli, "_check_port_available", return_value=(True, None)):
                 exit_code = cli.run(
                     ["test", "--project-dir", str(project_dir), "--debug-vm"],
                     runner=runner,
@@ -2742,10 +2743,13 @@ logsDir = "var/custom-test-resources-logs"
             expected = Path(temp_dir) / "sdkman-home"
         with patch.object(cli, "_provisioned_graalvm_home", None, create=True), \
                 patch.object(cli, "_read_env", lambda name: None, create=True), \
-                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
-                patch.object(cli, "_find_compatible_cached_jdk", lambda _root: None, create=True), \
-                patch.object(cli, "_install_with_sdkman", lambda _root: call_order.append("sdkman") or expected, create=True), \
-                patch.object(cli, "_download_and_install_graalvm", lambda _root: call_order.append("download") or None, create=True):
+                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "sdks", create=True), \
+                patch.object(cli, "_legacy_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
+                patch.object(cli, "_find_compatible_cached_jdk", lambda _root, _spec=None: None, create=True), \
+                patch.object(cli, "_install_with_sdkman", lambda _root, _spec=None: call_order.append("sdkman") or expected, create=True), \
+                patch.object(cli, "_find_with_jenv", lambda _spec: call_order.append("jenv") or None, create=True), \
+                patch.object(cli, "_find_with_gradle_jdks", lambda _spec: call_order.append("gradle") or None, create=True), \
+                patch.object(cli, "_download_and_install_graalvm", lambda _root, _spec=None: call_order.append("download") or None, create=True):
                 resolved = cli._ensure_graalvm_java_home()
 
         self.assertEqual(str(expected), resolved)
@@ -2757,32 +2761,71 @@ logsDir = "var/custom-test-resources-logs"
             expected = Path(temp_dir) / "download-home"
         with patch.object(cli, "_provisioned_graalvm_home", None, create=True), \
                 patch.object(cli, "_read_env", lambda name: None, create=True), \
-                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
-                patch.object(cli, "_find_compatible_cached_jdk", lambda _root: None, create=True), \
-                patch.object(cli, "_install_with_sdkman", lambda _root: call_order.append("sdkman") or None, create=True), \
-                patch.object(cli, "_download_and_install_graalvm", lambda _root: call_order.append("download") or expected, create=True):
+                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "sdks", create=True), \
+                patch.object(cli, "_legacy_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
+                patch.object(cli, "_find_compatible_cached_jdk", lambda _root, _spec=None: None, create=True), \
+                patch.object(cli, "_install_with_sdkman", lambda _root, _spec=None: call_order.append("sdkman") or None, create=True), \
+                patch.object(cli, "_find_with_jenv", lambda _spec: call_order.append("jenv") or None, create=True), \
+                patch.object(cli, "_find_with_gradle_jdks", lambda _spec: call_order.append("gradle") or None, create=True), \
+                patch.object(cli, "_download_and_install_graalvm", lambda _root, _spec=None: call_order.append("download") or expected, create=True):
                 resolved = cli._ensure_graalvm_java_home()
 
         self.assertEqual(str(expected), resolved)
-        self.assertEqual(["sdkman", "download"], call_order)
+        self.assertEqual(["sdkman", "jenv", "gradle", "download"], call_order)
 
     def test_ensure_graalvm_java_home_is_idempotent_after_first_resolution(self):
-        counts = {"sdkman": 0, "download": 0}
+        counts = {"sdkman": 0, "jenv": 0, "gradle": 0, "download": 0}
         with tempfile.TemporaryDirectory() as temp_dir:
             expected = Path(temp_dir) / "download-home"
         with patch.object(cli, "_provisioned_graalvm_home", None, create=True), \
                 patch.object(cli, "_read_env", lambda name: None, create=True), \
-                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
-                patch.object(cli, "_find_compatible_cached_jdk", lambda _root: None, create=True), \
-                patch.object(cli, "_install_with_sdkman", lambda _root: counts.__setitem__("sdkman", counts["sdkman"] + 1) or None, create=True), \
-                patch.object(cli, "_download_and_install_graalvm", lambda _root: counts.__setitem__("download", counts["download"] + 1) or expected, create=True):
+                patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "sdks", create=True), \
+                patch.object(cli, "_legacy_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
+                patch.object(cli, "_matches_requested_graalvm_home", lambda home, spec: str(home) == str(expected), create=True), \
+                patch.object(cli, "_find_compatible_cached_jdk", lambda _root, _spec=None: None, create=True), \
+                patch.object(cli, "_install_with_sdkman", lambda _root, _spec=None: counts.__setitem__("sdkman", counts["sdkman"] + 1) or None, create=True), \
+                patch.object(cli, "_find_with_jenv", lambda _spec: counts.__setitem__("jenv", counts["jenv"] + 1) or None, create=True), \
+                patch.object(cli, "_find_with_gradle_jdks", lambda _spec: counts.__setitem__("gradle", counts["gradle"] + 1) or None, create=True), \
+                patch.object(cli, "_download_and_install_graalvm", lambda _root, _spec=None: counts.__setitem__("download", counts["download"] + 1) or expected, create=True):
                 first = cli._ensure_graalvm_java_home()
                 second = cli._ensure_graalvm_java_home()
 
         self.assertEqual(str(expected), first)
         self.assertEqual(str(expected), second)
         self.assertEqual(1, counts["sdkman"])
+        self.assertEqual(1, counts["jenv"])
+        self.assertEqual(1, counts["gradle"])
         self.assertEqual(1, counts["download"])
+
+    def test_read_pyproject_toolchain_spec_supports_dev_builds(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+
+[tool.pyronaut]
+version = "5.0.0-SNAPSHOT"
+
+[tool.pyronaut.toolchain]
+distribution = "dev"
+version = "25.1.0-dev+10.1"
+java-version = 25
+release-tag = "jdk-25.1.0-dev-20260429_0111"
+download-url = "https://example.invalid/graalvm-dev.tar.gz"
+                """.strip(),
+                encoding="utf-8",
+            )
+
+            spec = cli._read_pyproject_toolchain_spec(project_dir)
+
+        self.assertEqual("dev", spec.distribution)
+        self.assertEqual("25.1.0-dev+10.1", spec.version)
+        self.assertEqual(25, spec.java_version)
+        self.assertEqual("jdk-25.1.0-dev-20260429_0111", spec.release_tag)
+        self.assertEqual("https://example.invalid/graalvm-dev.tar.gz", spec.download_url)
+        self.assertTrue(spec.explicit)
 
     def test_tui_smoke_delegates_install_process_run(self):
         executed = []

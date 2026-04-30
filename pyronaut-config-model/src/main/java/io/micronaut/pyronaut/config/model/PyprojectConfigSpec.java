@@ -145,6 +145,37 @@ public final class PyprojectConfigSpec {
         "jit",
         List.of("jit", "native")
     );
+    public static final FieldSpec PYRONAUT_TOOLCHAIN_DISTRIBUTION = enumString(
+        "tool.pyronaut.toolchain.distribution",
+        "Desired GraalVM distribution/channel.",
+        "ce",
+        List.of("ce", "ee", "dev")
+    );
+    public static final FieldSpec PYRONAUT_TOOLCHAIN_VERSION = string(
+        "tool.pyronaut.toolchain.version",
+        "Desired GraalVM version string."
+    );
+    public static final FieldSpec PYRONAUT_TOOLCHAIN_JAVA_VERSION = integer(
+        "tool.pyronaut.toolchain.java-version",
+        "Minimum required Java major version for the GraalVM toolchain.",
+        Integer.valueOf(25),
+        List.of(),
+        List.of("tool.pyronaut.toolchain.javaVersion")
+    );
+    public static final FieldSpec PYRONAUT_TOOLCHAIN_RELEASE_TAG = string(
+        "tool.pyronaut.toolchain.release-tag",
+        "Release tag used to resolve GraalVM dev builds.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.toolchain.releaseTag")
+    );
+    public static final FieldSpec PYRONAUT_TOOLCHAIN_DOWNLOAD_URL = string(
+        "tool.pyronaut.toolchain.download-url",
+        "Explicit GraalVM archive URL override.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.toolchain.downloadUrl")
+    );
     public static final FieldSpec PYRONAUT_BUILD_METADATA_ENABLED = bool(
         "tool.pyronaut.build.metadata.enabled",
         "Whether native image metadata repository lookup is enabled."
@@ -601,6 +632,11 @@ public final class PyprojectConfigSpec {
         PYRONAUT_BUILD_MODE,
         PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_TEST_MODE,
+        PYRONAUT_TOOLCHAIN_DISTRIBUTION,
+        PYRONAUT_TOOLCHAIN_VERSION,
+        PYRONAUT_TOOLCHAIN_JAVA_VERSION,
+        PYRONAUT_TOOLCHAIN_RELEASE_TAG,
+        PYRONAUT_TOOLCHAIN_DOWNLOAD_URL,
         PYRONAUT_BUILD_METADATA_ENABLED,
         PYRONAUT_BUILD_METADATA_VERSION,
         PYRONAUT_BUILD_METADATA_REPOSITORY_URL,
@@ -675,6 +711,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.dependencies", true),
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.processor", true),
+        section("tool.pyronaut.toolchain", true),
         section("tool.pyronaut.build.metadata", true),
         section("tool.pyronaut.build.docker", true),
         PYRONAUT_IDE_STUBS_SECTION,

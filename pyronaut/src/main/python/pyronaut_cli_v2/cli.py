@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import json
 import shlex
 import shutil
 import subprocess
@@ -17,7 +18,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Callable, Protocol, Sequence
+from typing import Callable, NamedTuple, Protocol, Sequence
 
 SUCCESS = 0
 USAGE_ERROR = 2
@@ -89,7 +90,23 @@ JavaHomeProvider = Callable[[], str | None]
 
 _provisioned_graalvm_home: str | None = None
 _GRAALVM_MIN_JDK_MAJOR = 25
-_GRAALVM_SDKMAN_CANDIDATE = "25-graal"
+_DEFAULT_GRAALVM_DOWNLOAD_VERSION = "25.0.2"
+_DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION = "ce"
+
+
+class _ToolchainSpec(NamedTuple):
+    distribution: str | None
+    version: str | None
+    java_version: int
+    release_tag: str | None = None
+    download_url: str | None = None
+    explicit: bool = False
+
+
+class _GraalVmMetadata(NamedTuple):
+    version: str | None
+    java_version: int | None
+    distribution: str | None
 
 
 def main() -> None:
@@ -168,6 +185,7 @@ def run(
         runner=runner,
         runner_with_env=runner_with_env,
         process_runner=process_runner,
+        project_dir=Path(project_dir),
     )
 
     if command == "build":
@@ -1189,7 +1207,7 @@ def main() -> None:
             "run",
             ["--project-dir", str(PROJECT_DIR), "--main-class", MAIN_CLASS, *sys.argv[1:]],
             pyronaut_cli._resolve_executable,
-            java_home_provider=pyronaut_cli._ensure_graalvm_java_home,
+            java_home_provider=lambda: pyronaut_cli._ensure_graalvm_java_home(PROJECT_DIR),
         )
     except RuntimeError as exc:
         raise SystemExit(str(exc))
@@ -1282,7 +1300,7 @@ def _extract_build_mode_flag(args: Sequence[str]) -> str | None:
     return None
 
 
-def _read_pyproject_build_mode(project_dir: Path) -> str | None:
+def _read_pyproject_pyronaut_table(project_dir: Path) -> dict[str, object] | None:
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.exists():
         return None
@@ -1300,6 +1318,80 @@ def _read_pyproject_build_mode(project_dir: Path) -> str | None:
     if not isinstance(tool, dict):
         return None
     pyronaut = tool.get("pyronaut")
+    if not isinstance(pyronaut, dict):
+        return None
+    return pyronaut
+
+
+def _read_pyproject_string(table: dict[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = table.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"Invalid value for [tool.pyronaut]: expected string for {key}")
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _normalize_toolchain_distribution(value: str) -> str:
+    normalized = value.strip().lower()
+    aliases = {
+        "ce": "ce",
+        "community": "ce",
+        "graalce": "ce",
+        "ee": "ee",
+        "oracle": "ee",
+        "graal": "ee",
+        "dev": "dev",
+    }
+    resolved = aliases.get(normalized)
+    if resolved is None:
+        raise ValueError("Invalid toolchain distribution in pyproject.toml. Use tool.pyronaut.toolchain.distribution = 'ce', 'ee', or 'dev'")
+    return resolved
+
+
+def _read_pyproject_toolchain_spec(project_dir: Path | None) -> _ToolchainSpec:
+    if project_dir is None:
+        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    if not isinstance(pyronaut, dict):
+        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+    toolchain = pyronaut.get("toolchain")
+    if not isinstance(toolchain, dict):
+        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+
+    distribution_raw = toolchain.get("distribution")
+    distribution = None
+    if distribution_raw is not None:
+        if not isinstance(distribution_raw, str):
+            raise ValueError("Invalid toolchain distribution in pyproject.toml. Use tool.pyronaut.toolchain.distribution = 'ce', 'ee', or 'dev'")
+        distribution = _normalize_toolchain_distribution(distribution_raw)
+
+    version = _read_pyproject_string(toolchain, "version")
+    release_tag = _read_pyproject_string(toolchain, "release-tag", "releaseTag")
+    download_url = _read_pyproject_string(toolchain, "download-url", "downloadUrl")
+
+    java_version_raw = toolchain.get("java-version", toolchain.get("javaVersion"))
+    java_version = _GRAALVM_MIN_JDK_MAJOR
+    if java_version_raw is not None:
+        if isinstance(java_version_raw, bool) or not isinstance(java_version_raw, int):
+            raise ValueError("Invalid toolchain java version in pyproject.toml. Use tool.pyronaut.toolchain.java-version = 25")
+        java_version = int(java_version_raw)
+
+    explicit = any(
+        key in toolchain
+        for key in ("distribution", "version", "java-version", "javaVersion", "release-tag", "releaseTag", "download-url", "downloadUrl")
+    )
+    if explicit and distribution is None:
+        distribution = _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION
+    return _ToolchainSpec(distribution, version, java_version, release_tag, download_url, explicit)
+
+
+def _read_pyproject_build_mode(project_dir: Path) -> str | None:
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
         return None
     build = pyronaut.get("build")
@@ -1315,23 +1407,7 @@ def _read_pyproject_build_mode(project_dir: Path) -> str | None:
 
 
 def _read_pyproject_processor_mode(project_dir: Path) -> str:
-    pyproject = project_dir / "pyproject.toml"
-    if not pyproject.exists():
-        return "jit"
-    try:
-        import tomllib
-    except Exception:
-        return "jit"
-    try:
-        with pyproject.open("rb") as fp:
-            data = tomllib.load(fp)
-    except Exception:
-        return "jit"
-
-    tool = data.get("tool")
-    if not isinstance(tool, dict):
-        return "jit"
-    pyronaut = tool.get("pyronaut")
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
         return "jit"
     processor = pyronaut.get("processor")
@@ -1347,23 +1423,7 @@ def _read_pyproject_processor_mode(project_dir: Path) -> str:
 
 
 def _read_pyproject_test_mode(project_dir: Path) -> str:
-    pyproject = project_dir / "pyproject.toml"
-    if not pyproject.exists():
-        return "jit"
-    try:
-        import tomllib
-    except Exception:
-        return "jit"
-    try:
-        with pyproject.open("rb") as fp:
-            data = tomllib.load(fp)
-    except Exception:
-        return "jit"
-
-    tool = data.get("tool")
-    if not isinstance(tool, dict):
-        return "jit"
-    pyronaut = tool.get("pyronaut")
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
         return "jit"
     test = pyronaut.get("test")
@@ -1379,23 +1439,7 @@ def _read_pyproject_test_mode(project_dir: Path) -> str:
 
 
 def _read_pyproject_test_resources_table(project_dir: Path) -> dict[str, object] | None:
-    pyproject = project_dir / "pyproject.toml"
-    if not pyproject.exists():
-        return None
-    try:
-        import tomllib
-    except Exception:
-        return None
-    try:
-        with pyproject.open("rb") as fp:
-            data = tomllib.load(fp)
-    except Exception:
-        return None
-
-    tool = data.get("tool")
-    if not isinstance(tool, dict):
-        return None
-    pyronaut = tool.get("pyronaut")
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
         return None
     test_resources = pyronaut.get("testResources")
@@ -1736,8 +1780,9 @@ def _default_java_home_provider(
     runner: Runner | None,
     runner_with_env: RunnerWithEnv | None,
     process_runner: ProcessRunner | None,
+    project_dir: Path,
 ) -> JavaHomeProvider | None:
-    return None
+    return lambda: _ensure_graalvm_java_home(project_dir)
 
 
 def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
@@ -1784,30 +1829,49 @@ def _build_test_resources_jvm_args(env_overrides: dict[str, str] | None) -> list
     return jvm_args
 
 
-def _ensure_graalvm_java_home() -> str | None:
+def _ensure_graalvm_java_home(project_dir: Path | None = None) -> str | None:
     global _provisioned_graalvm_home
-    if _provisioned_graalvm_home is not None:
+    toolchain = _read_pyproject_toolchain_spec(project_dir)
+
+    if _provisioned_graalvm_home is not None and _matches_requested_graalvm_home(Path(_provisioned_graalvm_home), toolchain):
         return _provisioned_graalvm_home
 
     env_java_home = _read_env("JAVA_HOME")
-    if env_java_home and _is_compatible_graalvm_home(Path(env_java_home)):
+    if env_java_home and _matches_requested_graalvm_home(Path(env_java_home), toolchain):
         _provisioned_graalvm_home = env_java_home
         return env_java_home
 
     pyronaut_jdks = _graalvm_jdks_root()
     pyronaut_jdks.mkdir(parents=True, exist_ok=True)
 
-    cached = _find_compatible_cached_jdk(pyronaut_jdks)
+    cached = _find_compatible_cached_jdk(pyronaut_jdks, toolchain)
     if cached is not None:
         _provisioned_graalvm_home = str(cached)
         return _provisioned_graalvm_home
 
-    sdkman_home = _install_with_sdkman(pyronaut_jdks)
+    legacy_jdks = _legacy_graalvm_jdks_root()
+    if legacy_jdks.exists():
+        legacy = _find_compatible_cached_jdk(legacy_jdks, toolchain)
+        if legacy is not None:
+            _provisioned_graalvm_home = str(legacy)
+            return _provisioned_graalvm_home
+
+    sdkman_home = _install_with_sdkman(pyronaut_jdks, toolchain)
     if sdkman_home is not None:
         _provisioned_graalvm_home = str(sdkman_home)
         return _provisioned_graalvm_home
 
-    downloaded = _download_and_install_graalvm(pyronaut_jdks)
+    jenv_home = _find_with_jenv(toolchain)
+    if jenv_home is not None:
+        _provisioned_graalvm_home = str(jenv_home)
+        return _provisioned_graalvm_home
+
+    gradle_home = _find_with_gradle_jdks(toolchain)
+    if gradle_home is not None:
+        _provisioned_graalvm_home = str(gradle_home)
+        return _provisioned_graalvm_home
+
+    downloaded = _download_and_install_graalvm(pyronaut_jdks, toolchain)
     if downloaded is not None:
         _provisioned_graalvm_home = str(downloaded)
         return _provisioned_graalvm_home
@@ -1815,15 +1879,26 @@ def _ensure_graalvm_java_home() -> str | None:
 
 
 def _graalvm_jdks_root() -> Path:
+    return Path.home() / ".pyronaut" / "sdks"
+
+
+def _legacy_graalvm_jdks_root() -> Path:
     return Path.home() / ".pyronaut" / "jdks"
 
 
-def _find_compatible_cached_jdk(jdks_root: Path) -> Path | None:
-    for child in sorted(jdks_root.iterdir(), key=lambda path: path.name):
+def _find_compatible_cached_jdk(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
+    spec = toolchain or _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+    return _find_matching_home(jdks_root, spec)
+
+
+def _find_matching_home(root: Path, toolchain: _ToolchainSpec) -> Path | None:
+    if not root.exists():
+        return None
+    for child in sorted(root.iterdir(), key=lambda path: path.name):
         if not child.is_dir():
             continue
         home = _normalize_extracted_home(child)
-        if home is not None and _is_compatible_graalvm_home(home):
+        if home is not None and _matches_requested_graalvm_home(home, toolchain):
             return home
     return None
 
@@ -1847,9 +1922,27 @@ def _normalize_extracted_home(path: Path) -> Path | None:
 
 
 def _is_compatible_graalvm_home(java_home: Path) -> bool:
+    metadata = _read_graalvm_metadata(java_home)
+    return metadata is not None and metadata.java_version is not None and metadata.java_version >= _GRAALVM_MIN_JDK_MAJOR
+
+
+def _matches_requested_graalvm_home(java_home: Path, toolchain: _ToolchainSpec) -> bool:
+    metadata = _read_graalvm_metadata(java_home)
+    if metadata is None or metadata.java_version is None or metadata.java_version < toolchain.java_version:
+        return False
+    if not toolchain.explicit:
+        return True
+    if toolchain.distribution is not None and metadata.distribution != toolchain.distribution:
+        return False
+    if toolchain.version is not None and metadata.version != toolchain.version:
+        return False
+    return True
+
+
+def _read_graalvm_metadata(java_home: Path) -> _GraalVmMetadata | None:
     java_bin = java_home / "bin" / "java"
     if not java_bin.exists():
-        return False
+        return None
     try:
         completed = subprocess.run(
             [str(java_bin), "-version"],
@@ -1858,19 +1951,48 @@ def _is_compatible_graalvm_home(java_home: Path) -> bool:
             text=True,
         )
     except Exception:
-        return False
+        _warn_if_quarantined_graalvm(java_home)
+        return None
 
     if completed.returncode != 0:
-        return False
+        _warn_if_quarantined_graalvm(java_home)
+        return None
     output = (completed.stdout or "") + "\n" + (completed.stderr or "")
     lower = output.lower()
     if "graalvm" not in lower:
-        return False
+        return None
+    version = _extract_java_version_string(output)
     major = _parse_java_major_version(output)
-    return major is not None and major >= _GRAALVM_MIN_JDK_MAJOR
+    distribution = _detect_graalvm_distribution(output, java_home, version)
+    return _GraalVmMetadata(version, major, distribution)
 
 
-def _parse_java_major_version(version_output: str) -> int | None:
+def _warn_if_quarantined_graalvm(java_home: Path) -> None:
+    if platform.system().lower() != "darwin":
+        return
+    xattr = shutil.which("xattr")
+    if xattr is None:
+        return
+    targets = [java_home, java_home.parent.parent if java_home.name == "Home" and java_home.parent.name == "Contents" else java_home]
+    for target in targets:
+        try:
+            result = subprocess.run(
+                [xattr, "-p", "com.apple.quarantine", str(target)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except Exception:
+            return
+        if result.returncode == 0:
+            sys.stderr.write(
+                "Detected a macOS-quarantined GraalVM toolchain. "
+                f"Run `sudo xattr -r -d com.apple.quarantine {shlex.quote(str(target))}` and try again.\n"
+            )
+            return
+
+
+def _extract_java_version_string(version_output: str) -> str | None:
     for line in version_output.splitlines():
         if "version" not in line:
             continue
@@ -1880,59 +2002,62 @@ def _parse_java_major_version(version_output: str) -> int | None:
         end_quote = line.find('"', quote_index + 1)
         if end_quote < 0:
             continue
-        raw_version = line[quote_index + 1:end_quote]
-        if raw_version.startswith("1."):
-            try:
-                return int(raw_version.split(".")[1])
-            except Exception:
-                return None
-        first = raw_version.split(".")[0]
-        try:
-            return int(first)
-        except Exception:
-            return None
+        return line[quote_index + 1:end_quote]
     return None
 
 
-def _install_with_sdkman(jdks_root: Path) -> Path | None:
-    sdkman_dir = _read_env("SDKMAN_DIR") or str(Path.home() / ".sdkman")
-    init_script = Path(sdkman_dir) / "bin" / "sdkman-init.sh"
-    if not init_script.exists():
-        return None
+def _detect_graalvm_distribution(version_output: str, java_home: Path, version: str | None) -> str | None:
+    lowered = (version_output + "\n" + str(java_home)).lower()
+    if version is not None and "dev" in version.lower():
+        return "dev"
+    if "oracle graalvm" in lowered or "graalvm-jdk" in lowered:
+        return "ee"
+    if "graalvm community" in lowered or "graalvm ce" in lowered or "graalce" in lowered or "graalvm-community" in lowered:
+        return "ce"
+    if "dev" in lowered:
+        return "dev"
+    if "graalvm" in lowered:
+        return "ce"
+    return None
 
-    install_command = (
-        f"source {shlex.quote(str(init_script))} && "
-        f"sdk install java {_GRAALVM_SDKMAN_CANDIDATE}"
-    )
-    install_result = subprocess.run(["bash", "-lc", install_command], check=False, capture_output=True, text=True)
-    if install_result.returncode != 0:
-        return None
 
-    home_command = (
-        f"source {shlex.quote(str(init_script))} && "
-        f"sdk home java {_GRAALVM_SDKMAN_CANDIDATE}"
-    )
-    home_result = subprocess.run(["bash", "-lc", home_command], check=False, capture_output=True, text=True)
-    if home_result.returncode != 0:
+def _parse_java_major_version(version_output: str) -> int | None:
+    raw_version = _extract_java_version_string(version_output)
+    if raw_version is None:
         return None
-
-    installed_home = Path((home_result.stdout or "").strip())
-    if not installed_home.exists() or not _is_compatible_graalvm_home(installed_home):
-        return None
-
-    link_target = jdks_root / installed_home.name
-    if not link_target.exists():
+    if raw_version.startswith("1."):
         try:
-            link_target.symlink_to(installed_home)
+            return int(raw_version.split(".")[1])
         except Exception:
-            shutil.copytree(installed_home, link_target, dirs_exist_ok=True)
+            return None
+    first = raw_version.split(".")[0]
+    try:
+        return int(first)
+    except Exception:
+        return None
+    return None
 
-    normalized = _normalize_extracted_home(link_target) or link_target
-    return normalized if _is_compatible_graalvm_home(normalized) else None
+
+def _install_with_sdkman(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
+    sdkman_dir = _read_env("SDKMAN_DIR") or str(Path.home() / ".sdkman")
+    candidates_root = Path(sdkman_dir) / "candidates" / "java"
+    if not candidates_root.exists():
+        return None
+    spec = toolchain or _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+    return _find_matching_home(candidates_root, spec)
 
 
-def _download_and_install_graalvm(jdks_root: Path) -> Path | None:
-    archive_url = _resolve_graalvm_archive_url()
+def _find_with_jenv(toolchain: _ToolchainSpec) -> Path | None:
+    return _find_matching_home(Path.home() / ".jenv" / "versions", toolchain)
+
+
+def _find_with_gradle_jdks(toolchain: _ToolchainSpec) -> Path | None:
+    return _find_matching_home(Path.home() / ".gradle" / "jdks", toolchain)
+
+
+def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
+    spec = toolchain or _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+    archive_url = _resolve_graalvm_archive_url(spec)
     if archive_url is None:
         return None
 
@@ -1963,24 +2088,28 @@ def _download_and_install_graalvm(jdks_root: Path) -> Path | None:
                 extracted_homes.append(normalized)
 
         for home in extracted_homes:
-            if not _is_compatible_graalvm_home(home):
+            if not _matches_requested_graalvm_home(home, spec):
                 continue
             destination = jdks_root / home.parent.name if (home.parent / "bin" / "java").exists() and home.name == "Home" else jdks_root / home.name
             if destination.exists():
                 normalized_existing = _normalize_extracted_home(destination) or destination
-                if _is_compatible_graalvm_home(normalized_existing):
+                if _matches_requested_graalvm_home(normalized_existing, spec):
                     return normalized_existing
                 shutil.rmtree(destination, ignore_errors=True)
 
             source_root = home.parent if home.name == "Home" and home.parent.name == "Contents" else home
             shutil.copytree(source_root, destination, dirs_exist_ok=True)
             normalized_destination = _normalize_extracted_home(destination) or destination
-            if _is_compatible_graalvm_home(normalized_destination):
+            if _matches_requested_graalvm_home(normalized_destination, spec):
+                _warn_if_quarantined_graalvm(normalized_destination)
                 return normalized_destination
     return None
 
 
-def _resolve_graalvm_archive_url() -> str | None:
+def _resolve_graalvm_archive_url(toolchain: _ToolchainSpec) -> str | None:
+    if toolchain.download_url is not None:
+        return toolchain.download_url
+
     system = platform.system().lower()
     machine = platform.machine().lower()
 
@@ -2006,8 +2135,49 @@ def _resolve_graalvm_archive_url() -> str | None:
     if os_segment == "macos" and arch == "x64":
         return None
 
-    base = f"graalvm-community-jdk-25.0.2_{os_segment}-{arch}_bin.{ext}"
-    return f"https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.2/{base}"
+    distribution = toolchain.distribution or _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION
+    version = toolchain.version or (_DEFAULT_GRAALVM_DOWNLOAD_VERSION if not toolchain.explicit else None)
+    if distribution == "dev":
+        return _resolve_dev_build_archive_url(os_segment, arch, ext, toolchain)
+    if version is None:
+        return None
+    if distribution == "ce":
+        base = f"graalvm-community-jdk-{version}_{os_segment}-{arch}_bin.{ext}"
+        return f"https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-{version}/{base}"
+    if distribution == "ee":
+        base = f"graalvm-jdk-{version}_{os_segment}-{arch}_bin.{ext}"
+        return f"https://download.oracle.com/graalvm/{version}/latest/{base}"
+    return None
+
+
+def _resolve_dev_build_archive_url(os_segment: str, arch: str, ext: str, toolchain: _ToolchainSpec) -> str | None:
+    release_tag = toolchain.release_tag
+    if release_tag is None:
+        return None
+    suffix = f"{os_segment}-{arch}_bin.{ext}"
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/graalvm/graalvm-ce-dev-builds/releases/tags/{urllib.parse.quote(release_tag)}",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "pyronaut-cli-v2",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request) as response:
+            payload = json.load(response)
+    except Exception:
+        return None
+    assets = payload.get("assets")
+    if not isinstance(assets, list):
+        return None
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = asset.get("name")
+        download_url = asset.get("browser_download_url")
+        if isinstance(name, str) and isinstance(download_url, str) and name.endswith(suffix):
+            return download_url
+    return None
 
 
 def _extract_debug_vm(args: Sequence[str]) -> bool:

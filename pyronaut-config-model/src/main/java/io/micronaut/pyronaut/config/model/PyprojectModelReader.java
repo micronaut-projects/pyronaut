@@ -98,6 +98,7 @@ public final class PyprojectModelReader {
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
             new PyprojectModel.Processor(resolveProcessorMode(parsed)),
             new PyprojectModel.Test(resolveTestMode(parsed)),
+            resolveToolchain(parsed),
             resolveIdeStubs(parsed),
             resolveValidation(parsed),
             resolveTestResources(parsed)
@@ -206,6 +207,16 @@ public final class PyprojectModelReader {
         throw new PyprojectModelException(
             "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_TEST_MODE.canonicalPath()
                 + "': expected one of " + PyprojectConfigSpec.PYRONAUT_TEST_MODE.enumValues()
+        );
+    }
+
+    private static PyprojectModel.Toolchain resolveToolchain(TomlParseResult parsed) {
+        return new PyprojectModel.Toolchain(
+            readEnum(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_DISTRIBUTION),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_VERSION),
+            readInteger(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_JAVA_VERSION),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_RELEASE_TAG),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_DOWNLOAD_URL)
         );
     }
 

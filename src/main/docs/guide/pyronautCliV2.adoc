@@ -63,6 +63,7 @@ Managed runtime defaults:
 - `pyronaut install` also adds `io.micronaut:micronaut-context-python` to `runtime` by default.
 - `pyronaut install` also adds `io.micronaut:micronaut-inject-python` and `io.micronaut:micronaut-context-python` to `build` by default.
 - `pyronaut install` also adds `org.junit.platform:junit-platform-launcher` and `org.junit.jupiter:junit-jupiter-engine` to `test` by default.
+- Commands that need a GraalVM JDK resolve one through the shared toolchain flow described in <<graalvm-toolchains>>.
 
 Editor support:
 
@@ -337,6 +338,63 @@ Fallback semantics:
 - `auto`: opt-in CDS by default; if Leyden args are supplied and unsupported, prints one fallback warning and continues.
 - `leyden`: best effort; prints one deterministic fallback warning and continues with CDS/plain startup.
 - `cds`: best effort CDS, fallback to plain startup when unavailable.
+
+[[graalvm-toolchains]]
+=== GraalVM toolchains
+
+Pyronaut CLI resolves a GraalVM JDK for commands that need Java delegation, including `install`, `process`, `run`, `test`, `validate-config`, `build`, and `--tui`.
+
+Optional `pyproject.toml` settings:
+
+[source,toml]
+----
+[tool.pyronaut.toolchain]
+distribution = "dev" # ce|ee|dev
+version = "25.1.0-dev+10.1"
+java-version = 25
+release-tag = "jdk-25.1.0-dev-20260429_0111"
+----
+
+Supported keys:
+
+- `distribution`: requested GraalVM distribution. Supported values are `ce`, `ee`, and `dev`.
+- `version`: exact GraalVM version string to match or download.
+- `java-version`: minimum Java major version. Pyronaut CLI currently requires GraalVM JDK 25 or newer.
+- `release-tag`: required for `distribution = "dev"` unless `download-url` is provided directly. This must match the GitHub release tag from `graalvm-ce-dev-builds`.
+- `download-url`: optional explicit archive URL override.
+
+Discovery order:
+
+. `JAVA_HOME` when it already points at a matching GraalVM.
+. `~/.pyronaut/sdks`
+. legacy `~/.pyronaut/jdks`
+. SDKMAN candidates under `~/.sdkman/candidates/java`
+. jEnv versions under `~/.jenv/versions`
+. Gradle-provisioned toolchains under `~/.gradle/jdks`
+. download and install into `~/.pyronaut/sdks`
+
+Distribution sources:
+
+- `ce`: downloads from `https://github.com/graalvm/graalvm-ce-builds/releases`.
+- `ee`: downloads from `https://www.graalvm.org/downloads/`.
+- `dev`: resolves assets from `https://github.com/graalvm/graalvm-ce-dev-builds/releases` using `release-tag`.
+
+Behavior notes:
+
+- If no explicit toolchain is configured, Pyronaut CLI accepts any compatible GraalVM JDK 25+ already available on the machine.
+- If an explicit toolchain is configured, Pyronaut only reuses an installed JDK when the distribution, version, and Java major version match the requested spec.
+- Downloaded JDKs are cached under `~/.pyronaut/sdks` for reuse across projects.
+- The generated `pyproject.toml` schema supports the canonical kebab-case keys and also accepts the compatibility aliases `javaVersion`, `releaseTag`, and `downloadUrl`.
+
+macOS note:
+
+- Development builds downloaded from GitHub may be quarantined by Gatekeeper.
+- When Pyronaut detects a quarantined GraalVM, it prints the command you should run:
++
+[source,bash]
+----
+sudo xattr -r -d com.apple.quarantine /path/to/graalvm
+----
 
 === Native-image argument passthrough
 

@@ -60,6 +60,7 @@ public record PyprojectModel(Project project,
      * @param build build defaults/settings
      * @param processor processor execution settings
      * @param test test execution settings
+     * @param toolchain toolchain resolution settings
      * @param ideStubs IDE stub generation settings
      * @param validation validation settings
      * @param testResources test resources settings
@@ -70,6 +71,7 @@ public record PyprojectModel(Project project,
                            Build build,
                            Processor processor,
                            Test test,
+                           Toolchain toolchain,
                            IdeStubs ideStubs,
                            Validation validation,
                            TestResources testResources) {
@@ -89,6 +91,22 @@ public record PyprojectModel(Project project,
      * @param mode test execution mode (for example jit or native)
      */
     public record Test(String mode) {
+    }
+
+    /**
+     * tool.pyronaut.toolchain table.
+     *
+     * @param distribution desired GraalVM distribution/channel (for example ce, ee, or dev)
+     * @param version desired GraalVM version string
+     * @param javaVersion minimum required Java major version
+     * @param releaseTag release tag used to resolve dev builds
+     * @param downloadUrl explicit archive URL override
+     */
+    public record Toolchain(String distribution,
+                            String version,
+                            Integer javaVersion,
+                            String releaseTag,
+                            String downloadUrl) {
     }
 
     /**

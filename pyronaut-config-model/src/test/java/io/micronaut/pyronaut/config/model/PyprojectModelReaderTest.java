@@ -38,6 +38,8 @@ class PyprojectModelReaderTest {
         assertEquals(4, model.pyronaut().dependencies().test().size());
         assertEquals("jvm", model.pyronaut().build().mode());
         assertEquals("jit", model.pyronaut().processor().mode());
+        assertEquals("ce", model.pyronaut().toolchain().distribution());
+        assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
         assertNotNull(model.pyronaut().ideStubs());
         assertEquals(Boolean.TRUE, model.pyronaut().ideStubs().enabled());
         assertEquals("vscode", model.pyronaut().ideStubs().ide());
@@ -278,6 +280,64 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals("native", model.pyronaut().test().mode());
+    }
+
+    @Test
+    void parseToolchainConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [build-system]
+            requires = ["setuptools"]
+            build-backend = "setuptools.build_meta"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.toolchain]
+            distribution = "dev"
+            version = "25.1.0-dev+10.1"
+            java-version = 25
+            release-tag = "jdk-25.1.0-dev-20260429_0111"
+            download-url = "https://example.invalid/graalvm-dev.tar.gz"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("dev", model.pyronaut().toolchain().distribution());
+        assertEquals("25.1.0-dev+10.1", model.pyronaut().toolchain().version());
+        assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
+        assertEquals("jdk-25.1.0-dev-20260429_0111", model.pyronaut().toolchain().releaseTag());
+        assertEquals("https://example.invalid/graalvm-dev.tar.gz", model.pyronaut().toolchain().downloadUrl());
+    }
+
+    @Test
+    void parseToolchainCamelCaseAliases() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [build-system]
+            requires = ["setuptools"]
+            build-backend = "setuptools.build_meta"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.toolchain]
+            distribution = "ee"
+            javaVersion = 25
+            releaseTag = "jdk-25.1.0-dev-20260429_0111"
+            downloadUrl = "https://example.invalid/graalvm-ee.tar.gz"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("ee", model.pyronaut().toolchain().distribution());
+        assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
+        assertEquals("jdk-25.1.0-dev-20260429_0111", model.pyronaut().toolchain().releaseTag());
+        assertEquals("https://example.invalid/graalvm-ee.tar.gz", model.pyronaut().toolchain().downloadUrl());
     }
 
     @Test

@@ -51,6 +51,40 @@ The SDK wheel now stages native `pyronaut-install` and `pyronaut-processor` laun
 mode = "native"
 ```
 
+## GraalVM toolchain configuration
+
+The orchestrator can resolve a GraalVM JDK from local toolchains or download one on demand based on `pyproject.toml`:
+
+```toml
+[tool.pyronaut.toolchain]
+distribution = "dev" # ce|ee|dev
+version = "25.1.0-dev+10.1"
+java-version = 25
+release-tag = "jdk-25.1.0-dev-20260429_0111"
+```
+
+Discovery order:
+
+1. `JAVA_HOME`
+2. `~/.pyronaut/sdks`
+3. legacy `~/.pyronaut/jdks`
+4. SDKMAN (`~/.sdkman/candidates/java`)
+5. jEnv (`~/.jenv/versions`)
+6. Gradle toolchains (`~/.gradle/jdks`)
+7. download into `~/.pyronaut/sdks`
+
+Notes:
+
+- `distribution = "ce"` resolves Community builds from `graalvm-ce-builds`.
+- `distribution = "ee"` resolves Oracle GraalVM builds.
+- `distribution = "dev"` resolves development builds from `graalvm-ce-dev-builds` and normally needs `release-tag`.
+- `download-url` can be used as an explicit archive override.
+- On macOS, downloaded dev builds may need:
+
+```bash
+sudo xattr -r -d com.apple.quarantine /path/to/graalvm
+```
+
 ## Install command usability flags
 
 `pyronaut install` supports additional diagnostics and output controls:
