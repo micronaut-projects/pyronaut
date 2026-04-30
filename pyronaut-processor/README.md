@@ -43,8 +43,8 @@ pyronaut-processor --project-dir /path/to/app --progress auto
 
 By default, one `pyronaut-processor` invocation performs two processing passes:
 
-- `src` + `src-java` → `__pyronaut__/classes`
-- merged (`src` overlaid by `tests`) + merged (`src-java` overlaid by `test-java`) → `__pyronaut__/test-classes`
+- configured Python source dir (default `src`) + configured Java source dir (default `src-java`) → `__pyronaut__/classes`
+- merged main+test sources using the configured Python/Java test dirs (defaults `tests` and `test-java`) → `__pyronaut__/test-classes`
 
 The test pass uses `resolved-test-dependencies` and compiles a fused source tree so `__pyronaut__/test-classes` contains everything needed for isolated test execution.
 If only main sources are present, they are still compiled into `__pyronaut__/test-classes`; if no processable Python/Java sources exist at all, the directory is created empty.

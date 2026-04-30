@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.processor;
 
+import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import picocli.CommandLine;
 
@@ -82,6 +83,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     @CommandLine.Option(names = {"-v", "--verbose"}, description = "Verbose output with stacktraces on failures")
     boolean verbose;
 
+    @CommandLine.Spec
+    CommandLine.Model.CommandSpec commandSpec;
+
     private final PyprojectModelReader modelReader;
     private final PyronautCompilerExecutor compilerExecutor;
 
@@ -107,7 +111,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         Path mergedTestRoot = null;
         try {
-            modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
+            PyprojectModel model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
 
             List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()
@@ -131,12 +135,12 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             )
                 : testClasspath;
 
-            Path resolvedMainPythonSrc = root.resolve(pythonSrc).normalize();
-            Path resolvedMainJavaSrc = root.resolve(javaSrc).normalize();
+            Path resolvedMainPythonSrc = resolveConfiguredPath(root, pythonSrc, DEFAULT_PYTHON_SRC, model.pyronaut().sources().python(), "--python-src");
+            Path resolvedMainJavaSrc = resolveConfiguredPath(root, javaSrc, DEFAULT_JAVA_SRC, model.pyronaut().sources().java(), "--java-src");
             Path resolvedMainTargetDir = root.resolve(targetDir).normalize();
 
-            Path resolvedTestPythonSrc = root.resolve(testPythonSrc).normalize();
-            Path resolvedTestJavaSrc = root.resolve(testJavaSrc).normalize();
+            Path resolvedTestPythonSrc = resolveConfiguredPath(root, testPythonSrc, DEFAULT_TEST_PYTHON_SRC, model.pyronaut().sources().pythonTest(), "--test-python-src");
+            Path resolvedTestJavaSrc = resolveConfiguredPath(root, testJavaSrc, DEFAULT_TEST_JAVA_SRC, model.pyronaut().sources().javaTest(), "--test-java-src");
             Path resolvedTestTargetDir = root.resolve(testTargetDir).normalize();
             Path resolvedCacheDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
 
@@ -255,6 +259,27 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautProcessorMain()).execute(args);
         System.exit(exitCode);
+    }
+
+    private Path resolveConfiguredPath(Path root,
+                                       Path cliValue,
+                                       String defaultValue,
+                                       String configuredValue,
+                                       String optionName) {
+        if (isExplicitlyConfigured(optionName)) {
+            return root.resolve(cliValue).normalize();
+        }
+        if (Path.of(defaultValue).equals(cliValue)) {
+            return root.resolve(configuredValue).normalize();
+        }
+        return root.resolve(cliValue).normalize();
+    }
+
+    private boolean isExplicitlyConfigured(String optionName) {
+        return commandSpec != null
+            && commandSpec.commandLine() != null
+            && commandSpec.commandLine().getParseResult() != null
+            && commandSpec.commandLine().getParseResult().hasMatchedOption(optionName);
     }
 
     private static void mergeSourceTrees(Path primarySource, Path overlaySource, Path targetDirectory) {

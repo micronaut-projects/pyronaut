@@ -30,6 +30,7 @@ dependencies {
 
     implementation(mn.micronaut.context)
     implementation(mn.micronaut.context.python)
+    implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mnPicocli.picocli)
     runtimeOnly(mn.micronaut.http.server)
     runtimeOnly(mn.micronaut.http.server.netty)

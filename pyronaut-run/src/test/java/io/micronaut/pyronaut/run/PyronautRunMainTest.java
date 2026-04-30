@@ -1,5 +1,6 @@
 package io.micronaut.pyronaut.run;
 
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,9 +27,11 @@ class PyronautRunMainTest {
         Path project = tempDir.resolve("project");
         Path classes = project.resolve("__pyronaut__/classes");
         Files.createDirectories(classes);
+        writeMinimalPyproject(project);
 
         AtomicReference<Class<?>> resolvedMainClass = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
+            new PyprojectModelReader(),
             (className, classLoader) -> {
                 if (SampleApp.class.getName().equals(className)) {
                     return SampleApp.class;
@@ -53,6 +56,7 @@ class PyronautRunMainTest {
         Path project = tempDir.resolve("project-missing-classes");
         Files.createDirectories(project.resolve("__pyronaut__/classes"));
         Files.delete(project.resolve("__pyronaut__/classes"));
+        writeMinimalPyproject(project);
 
         PyronautRunMain runMain = new PyronautRunMain();
         runMain.projectDir = project;
@@ -71,9 +75,11 @@ class PyronautRunMainTest {
         Path project = tempDir.resolve("project-missing-default-main");
         Path classes = project.resolve("__pyronaut__/classes");
         Files.createDirectories(classes);
+        writeMinimalPyproject(project);
 
         AtomicReference<Path> startedClassesDir = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
+            new PyprojectModelReader(),
             (className, classLoader) -> {
                 throw new ClassNotFoundException(className);
             },
@@ -154,6 +160,75 @@ class PyronautRunMainTest {
                     || java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().endsWith("/config"))
             );
         }
+    }
+
+    @Test
+    void usesConfiguredResourcesDirectoryWhenConfigDirNotOverridden() throws Exception {
+        Path project = tempDir.resolve("project-custom-config");
+        Path classes = project.resolve("__pyronaut__/classes");
+        Files.createDirectories(classes);
+        Files.createDirectories(project.resolve("app-config"));
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            """
+                [project]
+                name = "demo"
+                version = "1.0.0"
+
+                [tool.pyronaut]
+                repositories = ["mavenCentral"]
+
+                [tool.pyronaut.dependencies]
+                runtime = []
+                build = []
+                test = []
+
+                [tool.pyronaut.sources]
+                resources = "app-config"
+                """,
+            StandardCharsets.UTF_8
+        );
+
+        AtomicReference<Path> startedClassesDir = new AtomicReference<>();
+        AtomicReference<java.net.URLClassLoader> applicationClassLoader = new AtomicReference<>();
+        PyronautRunMain runMain = new PyronautRunMain(
+            new PyprojectModelReader(),
+            (className, classLoader) -> null,
+            classLoader -> applicationClassLoader.set((java.net.URLClassLoader) classLoader),
+            (loadedClass, resolvedClassesDir, appArgs) -> {
+                startedClassesDir.set(resolvedClassesDir);
+                return false;
+            }
+        );
+        runMain.projectDir = project;
+
+        assertEquals(0, runMain.call());
+        assertEquals(classes.toAbsolutePath().normalize(), startedClassesDir.get());
+        assertTrue(
+            java.util.Arrays.stream(applicationClassLoader.get().getURLs())
+                .anyMatch(url -> url.toString().contains("app-config"))
+        );
+    }
+
+    private static void writeMinimalPyproject(Path project) throws Exception {
+        Files.createDirectories(project);
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            """
+                [project]
+                name = "demo"
+                version = "1.0.0"
+
+                [tool.pyronaut]
+                repositories = ["mavenCentral"]
+
+                [tool.pyronaut.dependencies]
+                runtime = []
+                build = []
+                test = []
+                """,
+            StandardCharsets.UTF_8
+        );
     }
 
     private static void restoreProperty(String name, String value) {

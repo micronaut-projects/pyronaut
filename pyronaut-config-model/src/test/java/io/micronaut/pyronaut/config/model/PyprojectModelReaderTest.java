@@ -38,6 +38,12 @@ class PyprojectModelReaderTest {
         assertEquals(4, model.pyronaut().dependencies().test().size());
         assertEquals("jvm", model.pyronaut().build().mode());
         assertEquals("jit", model.pyronaut().processor().mode());
+        assertEquals("src", model.pyronaut().sources().python());
+        assertEquals("tests", model.pyronaut().sources().pythonTest());
+        assertEquals("src-java", model.pyronaut().sources().java());
+        assertEquals("test-java", model.pyronaut().sources().javaTest());
+        assertEquals("config", model.pyronaut().sources().resources());
+        assertEquals("tests-config", model.pyronaut().sources().testResources());
         assertEquals("ce", model.pyronaut().toolchain().distribution());
         assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
         assertNotNull(model.pyronaut().ideStubs());
@@ -63,6 +69,36 @@ class PyprojectModelReaderTest {
         assertEquals(Integer.valueOf(60), model.pyronaut().testResources().clientTimeout());
         assertEquals(Boolean.FALSE, model.pyronaut().testResources().sharedServer());
         assertEquals("none", model.pyronaut().testResources().startupOptimization());
+    }
+
+    @Test
+    void parseCustomSourcesConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.sources]
+            python = "app"
+            python-test = "spec"
+            java = "java-src"
+            java-test = "java-test"
+            resources = "app-config"
+            test-resources = "test-config"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("app", model.pyronaut().sources().python());
+        assertEquals("spec", model.pyronaut().sources().pythonTest());
+        assertEquals("java-src", model.pyronaut().sources().java());
+        assertEquals("java-test", model.pyronaut().sources().javaTest());
+        assertEquals("app-config", model.pyronaut().sources().resources());
+        assertEquals("test-config", model.pyronaut().sources().testResources());
+        assertEquals(List.of("app-config", "src/main/resources"), model.pyronaut().validation().run().resourcesDirs());
+        assertEquals(List.of("app-config", "src/main/resources", "test-config"), model.pyronaut().validation().test().resourcesDirs());
     }
 
     @Test

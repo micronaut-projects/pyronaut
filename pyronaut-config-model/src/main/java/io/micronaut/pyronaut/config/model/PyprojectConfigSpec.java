@@ -145,6 +145,52 @@ public final class PyprojectConfigSpec {
         "jit",
         List.of("jit", "native")
     );
+    public static final SectionSpec PYRONAUT_SOURCES_SECTION = section(
+        "tool.pyronaut.sources",
+        true
+    );
+    public static final FieldSpec PYRONAUT_SOURCES_PYTHON = string(
+        "tool.pyronaut.sources.python",
+        "Python application sources directory.",
+        "src",
+        List.of(),
+        List.of()
+    );
+    public static final FieldSpec PYRONAUT_SOURCES_PYTHON_TEST = string(
+        "tool.pyronaut.sources.python-test",
+        "Python test sources directory.",
+        "tests",
+        List.of(),
+        List.of("tool.pyronaut.sources.pythonTest")
+    );
+    public static final FieldSpec PYRONAUT_SOURCES_JAVA = string(
+        "tool.pyronaut.sources.java",
+        "Java application sources directory.",
+        "src-java",
+        List.of(),
+        List.of()
+    );
+    public static final FieldSpec PYRONAUT_SOURCES_JAVA_TEST = string(
+        "tool.pyronaut.sources.java-test",
+        "Java test sources directory.",
+        "test-java",
+        List.of(),
+        List.of("tool.pyronaut.sources.javaTest")
+    );
+    public static final FieldSpec PYRONAUT_SOURCES_RESOURCES = string(
+        "tool.pyronaut.sources.resources",
+        "Application resources directory.",
+        "config",
+        List.of(),
+        List.of()
+    );
+    public static final FieldSpec PYRONAUT_SOURCES_TEST_RESOURCES = string(
+        "tool.pyronaut.sources.test-resources",
+        "Test resources directory.",
+        "tests-config",
+        List.of(),
+        List.of("tool.pyronaut.sources.testResources")
+    );
     public static final FieldSpec PYRONAUT_TOOLCHAIN_DISTRIBUTION = enumString(
         "tool.pyronaut.toolchain.distribution",
         "Desired GraalVM distribution/channel.",
@@ -632,6 +678,12 @@ public final class PyprojectConfigSpec {
         PYRONAUT_BUILD_MODE,
         PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_TEST_MODE,
+        PYRONAUT_SOURCES_PYTHON,
+        PYRONAUT_SOURCES_PYTHON_TEST,
+        PYRONAUT_SOURCES_JAVA,
+        PYRONAUT_SOURCES_JAVA_TEST,
+        PYRONAUT_SOURCES_RESOURCES,
+        PYRONAUT_SOURCES_TEST_RESOURCES,
         PYRONAUT_TOOLCHAIN_DISTRIBUTION,
         PYRONAUT_TOOLCHAIN_VERSION,
         PYRONAUT_TOOLCHAIN_JAVA_VERSION,
@@ -711,6 +763,8 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.dependencies", true),
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.processor", true),
+        section("tool.pyronaut.test", true),
+        PYRONAUT_SOURCES_SECTION,
         section("tool.pyronaut.toolchain", true),
         section("tool.pyronaut.build.metadata", true),
         section("tool.pyronaut.build.docker", true),

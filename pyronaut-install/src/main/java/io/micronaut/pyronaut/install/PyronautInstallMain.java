@@ -111,7 +111,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
             PyprojectModel model = modelReader.readFile(pyproject);
             Path cacheDir = root.resolve(DEFAULT_PYRONAUT_DIR);
-            editorSupport.ensureWritten(root, cacheDir);
+            editorSupport.ensureWritten(root, cacheDir, model.pyronaut().sources());
             String hash = ResolutionCache.pyprojectHash(pyproject);
             try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
                 if (dependencies) {
@@ -147,7 +147,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
                 }
                 if (resolved.containsKey(InstallScope.RUNTIME)) {
-                    var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, resolved.get(InstallScope.RUNTIME));
+                    var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(), resolved.get(InstallScope.RUNTIME));
                     if (schemaResult.status() == MicronautApplicationJsonSchemaBundler.Status.GENERATED) {
                         progressReporter.generatedApplicationSchema(schemaResult.mergedSchemas());
                     }

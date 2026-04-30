@@ -51,6 +51,33 @@ The SDK wheel now stages native `pyronaut-install` and `pyronaut-processor` laun
 mode = "native"
 ```
 
+## Configurable source and resource directories
+
+Project layout is configured in `pyproject.toml` under `[tool.pyronaut.sources]`. All directories are relative to the project root.
+
+Defaults:
+
+- `python = "src"`
+- `python-test = "tests"`
+- `java = "src-java"`
+- `java-test = "test-java"`
+- `resources = "config"`
+- `test-resources = "tests-config"`
+
+Example:
+
+```toml
+[tool.pyronaut.sources]
+python = "app"
+python-test = "test/python"
+java = "src/main/java"
+java-test = "src/test/java"
+resources = "app-config"
+test-resources = "tests-config"
+```
+
+These settings are honored by install/process/run/test, lifecycle validation defaults, auto-restart file watching, and build staging.
+
 ## GraalVM toolchain configuration
 
 The orchestrator can resolve a GraalVM JDK from local toolchains or download one on demand based on `pyproject.toml`:

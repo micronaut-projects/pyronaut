@@ -66,6 +66,12 @@ _TEST_RESOURCES_STDIO_LOG_FILE = "launcher-stdio.log"
 _TEST_RESOURCES_IMAGE_PULL_MARKER = "Pulling docker image:"
 _TEST_RESOURCES_CONTAINER_CREATE_MARKER = "Creating container for image:"
 _TEST_RESOURCES_CONTAINER_STARTED_MARKER = " started in PT"
+_DEFAULT_PYTHON_SOURCE_DIR = "src"
+_DEFAULT_PYTHON_TEST_DIR = "tests"
+_DEFAULT_JAVA_SOURCE_DIR = "src-java"
+_DEFAULT_JAVA_TEST_DIR = "test-java"
+_DEFAULT_RESOURCES_DIR = "config"
+_DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 
 Runner = Callable[[list[str]], int]
 RunnerWithEnv = Callable[[list[str], dict[str, str] | None], int]
@@ -107,6 +113,15 @@ class _GraalVmMetadata(NamedTuple):
     version: str | None
     java_version: int | None
     distribution: str | None
+
+
+class _ProjectLayout(NamedTuple):
+    python_source_dir: str = _DEFAULT_PYTHON_SOURCE_DIR
+    python_test_dir: str = _DEFAULT_PYTHON_TEST_DIR
+    java_source_dir: str = _DEFAULT_JAVA_SOURCE_DIR
+    java_test_dir: str = _DEFAULT_JAVA_TEST_DIR
+    resources_dir: str = _DEFAULT_RESOURCES_DIR
+    test_resources_dir: str = _DEFAULT_TEST_RESOURCES_DIR
 
 
 def main() -> None:
@@ -462,12 +477,16 @@ def _delegate_lib_entries(executable_path: str) -> list[str]:
 
 def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
     cache_dir = project_dir / "__pyronaut__"
+    layout = _read_pyproject_sources(project_dir)
     if command == "run":
         entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
         entries.append(str(classes_dir))
+        resources_dir = _resolve_layout_dir(project_dir, layout.resources_dir)
+        if resources_dir.is_dir():
+            entries.append(str(resources_dir))
     else:
         entries = _read_manifest_entries(cache_dir / "resolved-test-dependencies")
         for extra in (cache_dir / "resolved-runtime-dependencies", cache_dir / "resolved-build-dependencies"):
@@ -481,10 +500,12 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             entries.append(str(classes_dir))
         if not test_classes_dir.is_dir() and not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
-
-    config_dir = project_dir / "config"
-    if config_dir.is_dir():
-        entries.append(str(config_dir.resolve()))
+        test_resources_dir = _resolve_layout_dir(project_dir, layout.test_resources_dir)
+        if test_resources_dir.is_dir():
+            entries.append(str(test_resources_dir))
+        resources_dir = _resolve_layout_dir(project_dir, layout.resources_dir)
+        if resources_dir.is_dir():
+            entries.append(str(resources_dir))
 
     override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
     if override_jar:
@@ -690,19 +711,9 @@ def _run_build(
 
 
 def _read_pyproject_project_metadata(project_dir: Path) -> tuple[str, str]:
-    pyproject = project_dir / "pyproject.toml"
-    if not pyproject.exists():
+    data = _read_pyproject_data(project_dir)
+    if not isinstance(data, dict):
         return project_dir.name, "0.1.0"
-    try:
-        import tomllib
-    except Exception:
-        return project_dir.name, "0.1.0"
-    try:
-        with pyproject.open("rb") as fp:
-            data = tomllib.load(fp)
-    except Exception:
-        return project_dir.name, "0.1.0"
-
     project = data.get("project")
     if not isinstance(project, dict):
         return project_dir.name, "0.1.0"
@@ -711,6 +722,22 @@ def _read_pyproject_project_metadata(project_dir: Path) -> tuple[str, str]:
     resolved_name = name.strip() if isinstance(name, str) and name.strip() else project_dir.name
     resolved_version = version.strip() if isinstance(version, str) and version.strip() else "0.1.0"
     return resolved_name, resolved_version
+
+
+def _read_pyproject_data(project_dir: Path) -> dict[str, object] | None:
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    try:
+        import tomllib
+    except Exception:
+        return None
+    try:
+        with pyproject.open("rb") as fp:
+            data = tomllib.load(fp)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _prepare_build_wheel_staging(
@@ -725,6 +752,7 @@ def _prepare_build_wheel_staging(
     if mode not in {"jvm", "native"}:
         raise ValueError(f"Unsupported build wheel staging mode: {mode}")
 
+    layout = _read_pyproject_sources(project_dir)
     launcher_package = _launcher_package_name(project_name)
     launcher_dir = staging_dir / launcher_package
     app_dir = launcher_dir / "app"
@@ -741,7 +769,7 @@ def _prepare_build_wheel_staging(
         project_version=project_version,
         native=(mode == "native"),
     )
-    _copytree_if_exists(project_dir / "config", app_dir / "config")
+    _copy_layout_dir_if_exists(project_dir, layout.resources_dir, app_dir)
 
     if mode == "native":
         binary_name = project_name
@@ -847,17 +875,8 @@ def _extract_build_static(args: Sequence[str]) -> bool:
 
 
 def _read_pyproject_build_docker_config(project_dir: Path) -> dict[str, str]:
-    pyproject = project_dir / "pyproject.toml"
-    if not pyproject.exists():
-        return {}
-    try:
-        import tomllib
-    except Exception:
-        return {}
-    try:
-        with pyproject.open("rb") as fp:
-            data = tomllib.load(fp)
-    except Exception:
+    data = _read_pyproject_data(project_dir)
+    if not isinstance(data, dict):
         return {}
 
     tool = data.get("tool")
@@ -936,7 +955,8 @@ def _prepare_common_docker_app_context(project_dir: Path, context_dir: Path) -> 
     app_dir = context_dir / "app"
     pyronaut_dir = app_dir / "__pyronaut__"
     pyronaut_dir.mkdir(parents=True, exist_ok=True)
-    _copytree_if_exists(project_dir / "config", app_dir / "config")
+    layout = _read_pyproject_sources(project_dir)
+    _copy_layout_dir_if_exists(project_dir, layout.resources_dir, app_dir)
     if (project_dir / "pyproject.toml").exists():
         shutil.copy2(project_dir / "pyproject.toml", app_dir / "pyproject.toml")
     return app_dir
@@ -1301,17 +1321,8 @@ def _extract_build_mode_flag(args: Sequence[str]) -> str | None:
 
 
 def _read_pyproject_pyronaut_table(project_dir: Path) -> dict[str, object] | None:
-    pyproject = project_dir / "pyproject.toml"
-    if not pyproject.exists():
-        return None
-    try:
-        import tomllib
-    except Exception:
-        return None
-    try:
-        with pyproject.open("rb") as fp:
-            data = tomllib.load(fp)
-    except Exception:
+    data = _read_pyproject_data(project_dir)
+    if not isinstance(data, dict):
         return None
 
     tool = data.get("tool")
@@ -1334,6 +1345,34 @@ def _read_pyproject_string(table: dict[str, object], *keys: str) -> str | None:
         if stripped:
             return stripped
     return None
+
+
+def _read_pyproject_sources(project_dir: Path) -> _ProjectLayout:
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    if not isinstance(pyronaut, dict):
+        return _ProjectLayout()
+    sources = pyronaut.get("sources")
+    if not isinstance(sources, dict):
+        return _ProjectLayout()
+    return _ProjectLayout(
+        python_source_dir=_read_pyproject_string(sources, "python") or _DEFAULT_PYTHON_SOURCE_DIR,
+        python_test_dir=_read_pyproject_string(sources, "python-test", "pythonTest") or _DEFAULT_PYTHON_TEST_DIR,
+        java_source_dir=_read_pyproject_string(sources, "java") or _DEFAULT_JAVA_SOURCE_DIR,
+        java_test_dir=_read_pyproject_string(sources, "java-test", "javaTest") or _DEFAULT_JAVA_TEST_DIR,
+        resources_dir=_read_pyproject_string(sources, "resources") or _DEFAULT_RESOURCES_DIR,
+        test_resources_dir=_read_pyproject_string(sources, "test-resources", "testResources") or _DEFAULT_TEST_RESOURCES_DIR,
+    )
+
+
+def _resolve_layout_dir(project_dir: Path, configured_dir: str) -> Path:
+    path = Path(configured_dir)
+    return path.resolve() if path.is_absolute() else (project_dir / path).resolve()
+
+
+def _copy_layout_dir_if_exists(project_dir: Path, configured_dir: str, app_dir: Path) -> None:
+    source_dir = _resolve_layout_dir(project_dir, configured_dir)
+    target_dir = app_dir / Path(configured_dir)
+    _copytree_if_exists(source_dir, target_dir)
 
 
 def _normalize_toolchain_distribution(value: str) -> str:
@@ -1744,12 +1783,24 @@ def _stop_managed_process(process: ManagedProcess) -> bool:
 
 
 def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ...]:
-    watched_roots = ("src", "tests", "config")
+    layout = _read_pyproject_sources(project_dir)
+    watched_roots = (
+        layout.python_source_dir,
+        layout.python_test_dir,
+        layout.java_source_dir,
+        layout.java_test_dir,
+        layout.resources_dir,
+        layout.test_resources_dir,
+    )
     ignored_dirs = {"__pyronaut__", ".pytest_cache", "build", ".gradle", "__pycache__", ".git"}
     entries: list[tuple[str, int, int]] = []
+    seen_roots: set[Path] = set()
 
     for root_name in watched_roots:
-        root = project_dir / root_name
+        root = _resolve_layout_dir(project_dir, root_name)
+        if root in seen_roots:
+            continue
+        seen_roots.add(root)
         if not root.is_dir():
             continue
 
@@ -1764,7 +1815,10 @@ def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ..
                     stat = file_path.stat()
                 except OSError:
                     continue
-                relative = file_path.relative_to(project_dir).as_posix()
+                try:
+                    relative = file_path.relative_to(project_dir).as_posix()
+                except ValueError:
+                    relative = file_path.as_posix()
                 entries.append((relative, int(stat.st_mtime_ns), int(stat.st_size)))
 
     entries.sort(key=lambda item: item[0])

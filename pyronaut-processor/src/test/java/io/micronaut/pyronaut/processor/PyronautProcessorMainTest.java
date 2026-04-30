@@ -264,6 +264,51 @@ class PyronautProcessorMainTest {
     }
 
     @Test
+    void usesConfiguredSourceDirectoriesFromPyproject() throws Exception {
+        Path project = tempDir.resolve("project-custom-sources");
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(project.resolve("python"));
+        Files.createDirectories(project.resolve("python-tests"));
+        Files.createDirectories(project.resolve("src/main/java"));
+        Files.createDirectories(project.resolve("src/test/java"));
+        Files.writeString(project.resolve("python-tests").resolve("sample_test.py"), "def test_example():\n    assert True\n", StandardCharsets.UTF_8);
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            """
+                [project]
+                name = "processor-test"
+                version = "1.0.0"
+
+                [tool.pyronaut]
+                repositories = ["mavenCentral"]
+
+                [tool.pyronaut.dependencies]
+                runtime = []
+                build = []
+                test = []
+
+                [tool.pyronaut.sources]
+                python = "python"
+                python-test = "python-tests"
+                java = "src/main/java"
+                java-test = "src/test/java"
+                """,
+            StandardCharsets.UTF_8
+        );
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"), List.of("/tmp/runtime-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-test-dependencies"), List.of("/tmp/test-a.jar"), StandardCharsets.UTF_8);
+
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(project.resolve("python").toAbsolutePath().normalize(), executor.requests.get(0).pythonSrc());
+        assertEquals(project.resolve("src/main/java").toAbsolutePath().normalize(), executor.requests.get(0).javaSrc());
+    }
+
+    @Test
     void invalidProgressModeReturnsUsageError() throws Exception {
         Path project = tempDir.resolve("project-invalid-progress");
         Files.createDirectories(project);

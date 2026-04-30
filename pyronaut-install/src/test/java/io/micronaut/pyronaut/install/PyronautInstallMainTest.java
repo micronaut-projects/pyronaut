@@ -516,6 +516,48 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void installUsesConfiguredResourcesDirectoryForApplicationSchemaDirective() throws Exception {
+        Path repository = tempDir.resolve("repo-custom-app-schema");
+        writeArtifactWithEntries(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "META-INF/micronaut-configuration-schemas/example.ApplicationConfiguration.json", """
+                {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "$id": "urn:test:application",
+                  "title": "ApplicationConfiguration",
+                  "type": "object",
+                  "x-micronaut": {
+                    "prefix": "micronaut.application",
+                    "kind": "configuration-properties"
+                  },
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-custom-app-schema");
+        Files.createDirectories(project.resolve("app-config"));
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository) + """
+
+            [tool.pyronaut.sources]
+            resources = "app-config"
+            """);
+        Files.writeString(project.resolve("app-config/application.toml"), "micronaut.application.name = \"demo\"\n");
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String applicationToml = Files.readString(project.resolve("app-config/application.toml"), StandardCharsets.UTF_8);
+        assertTrue(applicationToml.startsWith("#:schema ../__pyronaut__/schemas/" + MicronautApplicationJsonSchemaBundler.SCHEMA_FILE_NAME));
+    }
+
+    @Test
     void installMergesApplicationEachPropertySchemasByPrefix() throws Exception {
         Path repository = tempDir.resolve("repo-app-schema-merge");
         writeArtifactWithEntries(repository, "com.example", "runtime-a", "1.0.0", Map.of(

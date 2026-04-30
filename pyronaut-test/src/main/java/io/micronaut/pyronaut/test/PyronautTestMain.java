@@ -16,6 +16,8 @@
 package io.micronaut.pyronaut.test;
 
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
@@ -99,13 +101,18 @@ public final class PyronautTestMain implements Callable<Integer> {
     )
     boolean debugVm;
 
+    @CommandLine.Spec
+    CommandLine.Model.CommandSpec commandSpec;
+
     private final ContextBootstrapper contextBootstrapper;
+    private final PyprojectModelReader modelReader;
 
     public PyronautTestMain() {
-        this(GraalPyContextFactory::bootstrapReusableContext);
+        this(new PyprojectModelReader(), GraalPyContextFactory::bootstrapReusableContext);
     }
 
-    PyronautTestMain(ContextBootstrapper contextBootstrapper) {
+    PyronautTestMain(PyprojectModelReader modelReader, ContextBootstrapper contextBootstrapper) {
+        this.modelReader = modelReader;
         this.contextBootstrapper = contextBootstrapper;
     }
 
@@ -113,10 +120,14 @@ public final class PyronautTestMain implements Callable<Integer> {
     public Integer call() {
         initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
         Path root = projectDir.toAbsolutePath().normalize();
+        PyprojectModel model;
         ResolvedProjectLayout layout;
         try {
             applyTestResourcesProperties(System.getenv());
-            layout = resolveProjectLayout(root, classesDir, testClassesDir, configDir);
+            model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
+            Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
+            Path resolvedTestResourcesDir = root.resolve(model.pyronaut().sources().testResources()).normalize();
+            layout = resolveProjectLayout(root, classesDir, testClassesDir, resolvedConfigDir, resolvedTestResourcesDir);
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -134,7 +145,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                 boolean publishReports = false;
                 if (selectClasses == null || selectClasses.isEmpty()) {
                     requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(layout.processedClassesRoot())));
-                    Path resolvedTestsDir = root.resolve(testsDir).normalize();
+                    Path resolvedTestsDir = resolveConfiguredPath(root, testsDir, DEFAULT_TESTS_DIR, model.pyronaut().sources().pythonTest(), "--tests-dir");
                     Optional<String> pytestTests = buildPytestTestsParameter(tests);
                     if (Files.isDirectory(resolvedTestsDir)) {
                         List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
@@ -212,7 +223,7 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
     }
 
-    static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path testClassesDir, Path configDir) throws IOException {
+    static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path testClassesDir, Path configDir, Path testResourcesDir) throws IOException {
         Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
         Path resolvedTestClassesDir = root.resolve(testClassesDir).normalize();
         Path resolvedClassesDir = root.resolve(classesDir).normalize();
@@ -235,11 +246,33 @@ public final class PyronautTestMain implements Callable<Integer> {
         } else {
             addPathIfDirectory(urls, resolvedClassesDir);
         }
-        addPathIfDirectory(urls, root.resolve(configDir).normalize());
+        addPathIfDirectory(urls, configDir);
+        addPathIfDirectory(urls, testResourcesDir);
         return new ResolvedProjectLayout(
             processedClassesRoot,
             new URLClassLoader(urls.toArray(URL[]::new), resolveApplicationClassLoader())
         );
+    }
+
+    private Path resolveConfiguredPath(Path root,
+                                       Path cliValue,
+                                       String defaultValue,
+                                       String configuredValue,
+                                       String optionName) {
+        if (isExplicitlyConfigured(optionName)) {
+            return root.resolve(cliValue).normalize();
+        }
+        if (Path.of(defaultValue).equals(cliValue)) {
+            return root.resolve(configuredValue).normalize();
+        }
+        return root.resolve(cliValue).normalize();
+    }
+
+    private boolean isExplicitlyConfigured(String optionName) {
+        return commandSpec != null
+            && commandSpec.commandLine() != null
+            && commandSpec.commandLine().getParseResult() != null
+            && commandSpec.commandLine().getParseResult().hasMatchedOption(optionName);
     }
 
     private static void addManifestEntries(LinkedHashSet<URL> urls, Path manifest) throws IOException {

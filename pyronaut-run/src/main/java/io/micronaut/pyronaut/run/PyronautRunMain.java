@@ -16,6 +16,8 @@
 package io.micronaut.pyronaut.run;
 
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
@@ -67,20 +69,31 @@ public final class PyronautRunMain implements Callable<Integer> {
     )
     boolean debugVm;
 
+    @CommandLine.Spec
+    CommandLine.Model.CommandSpec commandSpec;
+
     @CommandLine.Parameters
     List<String> appArgs = List.of();
 
     private final ClassResolver classResolver;
     private final ContextBootstrapper contextBootstrapper;
     private final ApplicationStarter applicationStarter;
+    private final PyprojectModelReader modelReader;
 
     public PyronautRunMain() {
-        this((className, classLoader) -> Class.forName(className, true, classLoader), GraalPyContextFactory::bootstrapReusableContext, PyronautRunMain::startMicronautApplication);
+        this(
+            new PyprojectModelReader(),
+            (className, classLoader) -> Class.forName(className, true, classLoader),
+            GraalPyContextFactory::bootstrapReusableContext,
+            PyronautRunMain::startMicronautApplication
+        );
     }
 
-    PyronautRunMain(ClassResolver classResolver,
+    PyronautRunMain(PyprojectModelReader modelReader,
+                    ClassResolver classResolver,
                     ContextBootstrapper contextBootstrapper,
                     ApplicationStarter applicationStarter) {
+        this.modelReader = modelReader;
         this.classResolver = classResolver;
         this.contextBootstrapper = contextBootstrapper;
         this.applicationStarter = applicationStarter;
@@ -93,7 +106,9 @@ public final class PyronautRunMain implements Callable<Integer> {
         ResolvedProjectLayout layout;
         try {
             applyTestResourcesProperties(System.getenv());
-            layout = resolveProjectLayout(root, classesDir, configDir);
+            PyprojectModel model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
+            Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
+            layout = resolveProjectLayout(root, classesDir, resolvedConfigDir);
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -179,6 +194,27 @@ public final class PyronautRunMain implements Callable<Integer> {
             resolvedClassesDir,
             new URLClassLoader(urls.toArray(URL[]::new), resolveApplicationClassLoader())
         );
+    }
+
+    private Path resolveConfiguredPath(Path root,
+                                       Path cliValue,
+                                       String defaultValue,
+                                       String configuredValue,
+                                       String optionName) {
+        if (isExplicitlyConfigured(optionName)) {
+            return root.resolve(cliValue).normalize();
+        }
+        if (Path.of(defaultValue).equals(cliValue)) {
+            return root.resolve(configuredValue).normalize();
+        }
+        return root.resolve(cliValue).normalize();
+    }
+
+    private boolean isExplicitlyConfigured(String optionName) {
+        return commandSpec != null
+            && commandSpec.commandLine() != null
+            && commandSpec.commandLine().getParseResult() != null
+            && commandSpec.commandLine().getParseResult().hasMatchedOption(optionName);
     }
 
     private static ClassLoader resolveApplicationClassLoader() {

@@ -1,5 +1,6 @@
 package io.micronaut.pyronaut.test;
 
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -25,7 +26,7 @@ class PyronautTestMainTest {
     Path tempDir;
 
     private PyronautTestMain newCommand() {
-        return new PyronautTestMain(classLoader -> { });
+        return new PyronautTestMain(new PyprojectModelReader(), classLoader -> { });
     }
 
     @Test
@@ -53,6 +54,7 @@ class PyronautTestMainTest {
         Path project = tempDir.resolve("project-missing-classes");
         Files.createDirectories(project.resolve("__pyronaut__/classes"));
         Files.delete(project.resolve("__pyronaut__/classes"));
+        writeMinimalPyproject(project);
         PyronautTestMain command = newCommand();
         command.projectDir = project;
         command.selectClasses = java.util.List.of(PassingTest.class.getName());
@@ -246,7 +248,37 @@ class PyronautTestMainTest {
         Path project = tempDir.resolve("project");
         Path classes = project.resolve("__pyronaut__/classes");
         Files.createDirectories(classes);
+        writeMinimalPyproject(project);
         return project;
+    }
+
+    @Test
+    void resolveProjectLayoutIncludesConfiguredTestResourcesDirectory() throws Exception {
+        Path project = tempDir.resolve("project-layout");
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        Path configDir = project.resolve("app-config");
+        Path testResourcesDir = project.resolve("src/integration/resources");
+        Files.createDirectories(classesDir);
+        Files.createDirectories(configDir);
+        Files.createDirectories(testResourcesDir);
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("__pyronaut__/resolved-build-dependencies"), "/tmp/build.jar\n", StandardCharsets.UTF_8);
+
+        PyronautTestMain.ResolvedProjectLayout layout = PyronautTestMain.resolveProjectLayout(
+            project,
+            Path.of("__pyronaut__/classes"),
+            Path.of("__pyronaut__/test-classes"),
+            configDir,
+            testResourcesDir
+        );
+
+        try (var classLoader = layout.applicationClassLoader()) {
+            List<String> urls = java.util.Arrays.stream(classLoader.getURLs()).map(Object::toString).toList();
+            assertTrue(urls.stream().anyMatch(url -> url.contains("app-config")));
+            assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
+        }
     }
 
     private void compileGeneratedTestClass(Path outputDir) throws Exception {
@@ -277,6 +309,27 @@ class PyronautTestMainTest {
             sourceFile.toString()
         );
         assertEquals(0, exit);
+    }
+
+    private static void writeMinimalPyproject(Path project) throws Exception {
+        Files.createDirectories(project);
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            """
+                [project]
+                name = "demo"
+                version = "1.0.0"
+
+                [tool.pyronaut]
+                repositories = ["mavenCentral"]
+
+                [tool.pyronaut.dependencies]
+                runtime = []
+                build = []
+                test = []
+                """,
+            StandardCharsets.UTF_8
+        );
     }
 
     private static void restoreProperty(String name, String value) {

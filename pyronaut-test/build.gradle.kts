@@ -28,6 +28,7 @@ dependencies {
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)
 
+    implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mn.micronaut.context.python)
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)

@@ -33,9 +33,6 @@ import java.util.Map;
  * Reader that validates and maps {@code pyproject.toml} into {@link PyprojectModel}.
  */
 public final class PyprojectModelReader {
-    private static final List<String> DEFAULT_MAIN_VALIDATION_RESOURCE_DIRS = List.of("config", "src/main/resources");
-    private static final List<String> DEFAULT_TEST_VALIDATION_RESOURCE_DIRS = List.of("config", "src/main/resources", "src/test/resources");
-
     public static final String FILE_NAME = "pyproject.toml";
 
     public PyprojectModel readProjectDirectory(Path projectDirectory) {
@@ -83,6 +80,7 @@ public final class PyprojectModelReader {
             readStringList(parsed, PyprojectConfigSpec.BUILD_SYSTEM_REQUIRES),
             readString(parsed, PyprojectConfigSpec.BUILD_SYSTEM_BUILD_BACKEND)
         );
+        PyprojectModel.Sources sources = resolveSources(parsed);
 
         List<String> runtime = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_RUNTIME);
         List<String> build = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_BUILD);
@@ -98,9 +96,10 @@ public final class PyprojectModelReader {
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
             new PyprojectModel.Processor(resolveProcessorMode(parsed)),
             new PyprojectModel.Test(resolveTestMode(parsed)),
+            sources,
             resolveToolchain(parsed),
             resolveIdeStubs(parsed),
-            resolveValidation(parsed),
+            resolveValidation(parsed, sources),
             resolveTestResources(parsed)
         );
 
@@ -122,6 +121,17 @@ public final class PyprojectModelReader {
             return defaultValue;
         }
         return null;
+    }
+
+    private static PyprojectModel.Sources resolveSources(TomlParseResult parsed) {
+        return new PyprojectModel.Sources(
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_PYTHON),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_PYTHON_TEST),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_JAVA),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_JAVA_TEST),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_RESOURCES),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_TEST_RESOURCES)
+        );
     }
 
     private static List<String> readStringList(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
@@ -243,7 +253,7 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static PyprojectModel.Validation resolveValidation(TomlParseResult parsed) {
+    private static PyprojectModel.Validation resolveValidation(TomlParseResult parsed, PyprojectModel.Sources sources) {
         Boolean enabled = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_ENABLED);
         Boolean failOnNotPresent = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_FAIL_ON_NOT_PRESENT);
         Boolean deduceEnvironments = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_DEDUCE_ENVIRONMENTS);
@@ -266,7 +276,7 @@ public final class PyprojectModelReader {
             PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_RESOURCES_DIRS,
             PyprojectConfigSpec.PYRONAUT_VALIDATION_RUN_OUTPUT_DIR,
             List.of("dev"),
-            DEFAULT_MAIN_VALIDATION_RESOURCE_DIRS
+            defaultMainValidationResourceDirs(sources)
         );
         PyprojectModel.ValidationScenario test = resolveValidationScenario(
             parsed,
@@ -279,7 +289,7 @@ public final class PyprojectModelReader {
             PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_RESOURCES_DIRS,
             PyprojectConfigSpec.PYRONAUT_VALIDATION_TEST_OUTPUT_DIR,
             List.of("test"),
-            DEFAULT_TEST_VALIDATION_RESOURCE_DIRS
+            defaultTestValidationResourceDirs(sources)
         );
         PyprojectModel.ValidationScenario production = resolveValidationScenario(
             parsed,
@@ -292,7 +302,7 @@ public final class PyprojectModelReader {
             PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_RESOURCES_DIRS,
             PyprojectConfigSpec.PYRONAUT_VALIDATION_PRODUCTION_OUTPUT_DIR,
             List.of(),
-            DEFAULT_MAIN_VALIDATION_RESOURCE_DIRS
+            defaultMainValidationResourceDirs(sources)
         );
 
         return new PyprojectModel.Validation(
@@ -310,6 +320,14 @@ public final class PyprojectModelReader {
             test,
             production
         );
+    }
+
+    private static List<String> defaultMainValidationResourceDirs(PyprojectModel.Sources sources) {
+        return List.of(sources.resources(), "src/main/resources");
+    }
+
+    private static List<String> defaultTestValidationResourceDirs(PyprojectModel.Sources sources) {
+        return List.of(sources.resources(), "src/main/resources", sources.testResources());
     }
 
     private static PyprojectModel.ValidationScenario resolveValidationScenario(

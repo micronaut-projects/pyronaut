@@ -69,7 +69,14 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(main_class, command_line[cp_index + 2])
         self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
 
-    def _assert_run_delegate(self, command_line, project_dir: str, extra_args: list[str] | None = None) -> None:
+    def _assert_run_delegate(
+        self,
+        command_line,
+        project_dir: str,
+        extra_args: list[str] | None = None,
+        *,
+        resources_dir: str = "config",
+    ) -> None:
         self.assertTrue(command_line[0].endswith("/bin/java") or command_line[0] == "java")
         cp_index = command_line.index("-cp")
         self.assertEqual(self._DELEGATE_JVM_FLAGS, command_line[1:3])
@@ -78,10 +85,23 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn(str(Path(project_root) / "__pyronaut__" / "classes"), classpath)
         self.assertIn("/tmp/runtime.jar", classpath)
         self.assertIn("/tmp/pyronaut-run.jar", classpath)
+        resources_path = str(Path(project_root) / resources_dir)
+        if Path(project_root, resources_dir).is_dir():
+            self.assertIn(resources_path, classpath)
+        else:
+            self.assertNotIn(resources_path, classpath)
         self.assertEqual(self._RUN_MAIN, command_line[cp_index + 2])
         self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
 
-    def _assert_test_delegate(self, command_line, project_dir: str, extra_args: list[str] | None = None) -> None:
+    def _assert_test_delegate(
+        self,
+        command_line,
+        project_dir: str,
+        extra_args: list[str] | None = None,
+        *,
+        resources_dir: str = "config",
+        test_resources_dir: str = "tests-config",
+    ) -> None:
         self.assertTrue(command_line[0].endswith("/bin/java") or command_line[0] == "java")
         cp_index = command_line.index("-cp")
         self.assertEqual(self._DELEGATE_JVM_FLAGS, command_line[1:3])
@@ -95,6 +115,16 @@ class OrchestratorTest(unittest.TestCase):
             str(Path(project_root) / "__pyronaut__" / "test-classes") in classpath
             or str(Path(project_root) / "__pyronaut__" / "classes") in classpath
         )
+        resources_path = str(Path(project_root) / resources_dir)
+        test_resources_path = str(Path(project_root) / test_resources_dir)
+        if Path(project_root, resources_dir).is_dir():
+            self.assertIn(resources_path, classpath)
+        else:
+            self.assertNotIn(resources_path, classpath)
+        if Path(project_root, test_resources_dir).is_dir():
+            self.assertIn(test_resources_path, classpath)
+        else:
+            self.assertNotIn(test_resources_path, classpath)
         self.assertEqual(self._TEST_MAIN, command_line[cp_index + 2])
         self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
 
@@ -974,6 +1004,116 @@ logsDir = "var/custom-test-resources-logs"
             self.assertIn(str((lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").resolve()), entries)
             self.assertIn(str((lib_dir / "picocli-4.7.7.jar").resolve()), entries)
             self.assertIn(str((lib_dir / "slf4j-api-2.0.17.jar").resolve()), entries)
+
+    def test_run_delegate_classpath_honors_configured_resources_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut]
+repositories = ["mavenCentral"]
+
+[tool.pyronaut.dependencies]
+runtime = []
+build = []
+test = []
+
+[tool.pyronaut.sources]
+resources = "app-config"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classpath = cli._build_delegate_classpath("run", project_dir.resolve(), self._resolver())  # noqa: SLF001
+            entries = classpath.split(os.pathsep)
+            self.assertIn(str((project_dir / "app-config").resolve()), entries)
+            self.assertNotIn(str((project_dir / "config").resolve()), entries)
+
+    def test_test_delegate_classpath_honors_configured_test_resources_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
+            (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
+            (project_dir / "test-resources").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut]
+repositories = ["mavenCentral"]
+
+[tool.pyronaut.dependencies]
+runtime = []
+build = []
+test = []
+
+[tool.pyronaut.sources]
+resources = "app-config"
+test-resources = "test-resources"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classpath = cli._build_delegate_classpath("test", project_dir.resolve(), self._resolver())  # noqa: SLF001
+            entries = classpath.split(os.pathsep)
+            self.assertIn(str((project_dir / "app-config").resolve()), entries)
+            self.assertIn(str((project_dir / "test-resources").resolve()), entries)
+            self.assertNotIn(str((project_dir / "config").resolve()), entries)
+
+    def test_snapshot_watched_files_honors_configured_layout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "app").mkdir(parents=True, exist_ok=True)
+            (project_dir / "app-tests").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src/main/java").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src/test/java").mkdir(parents=True, exist_ok=True)
+            (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
+            (project_dir / "test-resources").mkdir(parents=True, exist_ok=True)
+            (project_dir / "app" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            (project_dir / "app-tests" / "test_main.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+            (project_dir / "src/main/java" / "Main.java").write_text("class Main {}\n", encoding="utf-8")
+            (project_dir / "src/test/java" / "MainTest.java").write_text("class MainTest {}\n", encoding="utf-8")
+            (project_dir / "app-config" / "application.toml").write_text("micronaut.server.port = 8080\n", encoding="utf-8")
+            (project_dir / "test-resources" / "test.properties").write_text("key=value\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.sources]
+python = "app"
+python-test = "app-tests"
+java = "src/main/java"
+java-test = "src/test/java"
+resources = "app-config"
+test-resources = "test-resources"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot = cli._snapshot_watched_files(project_dir.resolve())  # noqa: SLF001
+            watched_files = {entry[0] for entry in snapshot}
+            self.assertIn("app/main.py", watched_files)
+            self.assertIn("app-tests/test_main.py", watched_files)
+            self.assertIn("src/main/java/Main.java", watched_files)
+            self.assertIn("src/test/java/MainTest.java", watched_files)
+            self.assertIn("app-config/application.toml", watched_files)
+            self.assertIn("test-resources/test.properties", watched_files)
 
     def test_run_delegate_classpath_prefers_development_runtime_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -60,6 +60,7 @@ public record PyprojectModel(Project project,
      * @param build build defaults/settings
      * @param processor processor execution settings
      * @param test test execution settings
+     * @param sources project source/resource directory settings
      * @param toolchain toolchain resolution settings
      * @param ideStubs IDE stub generation settings
      * @param validation validation settings
@@ -71,6 +72,7 @@ public record PyprojectModel(Project project,
                            Build build,
                            Processor processor,
                            Test test,
+                           Sources sources,
                            Toolchain toolchain,
                            IdeStubs ideStubs,
                            Validation validation,
@@ -91,6 +93,24 @@ public record PyprojectModel(Project project,
      * @param mode test execution mode (for example jit or native)
      */
     public record Test(String mode) {
+    }
+
+    /**
+     * tool.pyronaut.sources table.
+     *
+     * @param python Python application sources directory
+     * @param pythonTest Python test sources directory
+     * @param java Java application sources directory
+     * @param javaTest Java test sources directory
+     * @param resources application resources directory
+     * @param testResources test resources directory
+     */
+    public record Sources(String python,
+                          String pythonTest,
+                          String java,
+                          String javaTest,
+                          String resources,
+                          String testResources) {
     }
 
     /**
