@@ -30,6 +30,7 @@ micronaut-views = { module = "io.micronaut.views:micronaut-views-bom", version.r
 micronaut-validation = { module = "io.micronaut.validation:micronaut-validation-bom", version.ref = "micronaut-validation" }
 micronaut-picocli = { module = 'io.micronaut.picocli:micronaut-picocli-bom', version.ref = 'micronaut-picocli' }
 micronaut-projectgen = { module = 'io.micronaut.projectgen:micronaut-projectgen-bom', version.ref = 'micronaut-projectgen' }
+micronaut-test = { module = "io.micronaut.test:micronaut-test-bom", version.ref = "micronaut-test" }
 micronaut-projectgen-core = { module = 'io.micronaut.projectgen:micronaut-projectgen-core' }
 micronaut-projectgen-http-server = { module = 'io.micronaut.projectgen:micronaut-projectgen-http-server' }
 micronaut-projectgen-test = { module = 'io.micronaut.projectgen:micronaut-projectgen-test' }

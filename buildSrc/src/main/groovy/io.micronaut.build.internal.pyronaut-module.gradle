@@ -22,7 +22,18 @@ micronautBuild {
 }
 
 repositories {
-    mavenLocal()
+    def graalPyBundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
+    if (graalPyBundleRepo != null && !graalPyBundleRepo.isBlank()) {
+        maven {
+            url = uri(graalPyBundleRepo)
+        }
+    }
+    maven {
+        url = uri("https://central.sonatype.com/repository/maven-snapshots/")
+        mavenContent {
+            snapshotsOnly()
+        }
+    }
 }
 
 tasks.withType(Checkstyle).configureEach {

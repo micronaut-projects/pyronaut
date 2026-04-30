@@ -32,7 +32,7 @@ class PyprojectModelReaderTest {
         assertEquals("1.0.0", model.project().version());
         assertEquals("setuptools.build_meta", model.buildSystem().buildBackend());
         assertEquals("5.0.0-SNAPSHOT", model.pyronaut().version());
-        assertEquals(3, model.pyronaut().repositories().size());
+        assertEquals(2, model.pyronaut().repositories().size());
         assertEquals(8, model.pyronaut().dependencies().runtime().size());
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());

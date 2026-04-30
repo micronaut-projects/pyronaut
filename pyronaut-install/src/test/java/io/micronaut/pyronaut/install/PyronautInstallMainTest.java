@@ -888,6 +888,43 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void mavenLocalAliasUsesConfiguredMavenRepoLocal() throws Exception {
+        Path repository = tempDir.resolve("custom-m2-repository");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-custom-m2");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "custom-m2"
+
+            [tool.pyronaut]
+            version = "1.0.0"
+            repositories = ["mavenLocal"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0"]
+            build = []
+            test = []
+            """);
+
+        String previousMavenRepoLocal = System.getProperty("maven.repo.local");
+        try {
+            System.setProperty("maven.repo.local", repository.toString());
+            PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+            command.projectDir = project;
+
+            assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+            Path cacheDir = project.resolve("__pyronaut__");
+            List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+            assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
+        } finally {
+            restoreSystemProperty("maven.repo.local", previousMavenRepoLocal);
+        }
+    }
+
+    @Test
     void resolvesVersionlessDependenciesUsingManagedBoms() throws Exception {
         Path repository = tempDir.resolve("repo-managed");
         writeBom(
@@ -2763,6 +2800,14 @@ class PyronautInstallMainTest {
             System.clearProperty("java.home");
         } else {
             System.setProperty("java.home", previousJavaHome);
+        }
+    }
+
+    private static void restoreSystemProperty(String key, String previousValue) {
+        if (previousValue == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, previousValue);
         }
     }
 

@@ -649,7 +649,7 @@ final class MavenClasspathResolver {
             if ("mavencentral".equals(lower)) {
                 resolved.put("mavenCentral", new RemoteRepository.Builder("mavenCentral", "default", "https://repo1.maven.org/maven2/").build());
             } else if ("mavenlocal".equals(lower)) {
-                String localPath = Path.of(System.getProperty("user.home"), ".m2", "repository").toUri().toString();
+                String localPath = resolveLocalMavenRepository().toUri().toString();
                 resolved.put("mavenLocal", new RemoteRepository.Builder("mavenLocal", "default", localPath).build());
             } else {
                 String id = "repo-" + resolved.size();
@@ -658,6 +658,14 @@ final class MavenClasspathResolver {
             }
         }
         return List.copyOf(resolved.values());
+    }
+
+    private static Path resolveLocalMavenRepository() {
+        String configuredLocalRepo = System.getProperty("maven.repo.local");
+        if (configuredLocalRepo != null && !configuredLocalRepo.isBlank()) {
+            return Path.of(configuredLocalRepo).toAbsolutePath().normalize();
+        }
+        return Path.of(System.getProperty("user.home"), ".m2", "repository");
     }
 
     private ResolvedEditorArtifact toResolvedEditorArtifact(Artifact artifact,

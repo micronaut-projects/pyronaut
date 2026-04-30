@@ -78,7 +78,7 @@ build-backend = 'setuptools.build_meta'
 
 [tool.pyronaut]
 version = '5.0.0-SNAPSHOT'
-repositories = ['mavenCentral', 'mavenLocal', 'https://repo.gradle.org/gradle/libs-releases']
+repositories = ['mavenCentral', 'https://repo.gradle.org/gradle/libs-releases']
 
 [tool.pyronaut.dependencies]
 compile = ['io.micronaut:micronaut-inject-python', 'io.micronaut:micronaut-context-python', 'io.micronaut:micronaut-http-server-netty', 'io.micronaut:micronaut-json-core', 'io.micronaut:micronaut-jackson-databind', 'ch.qos.logback:logback-classic', 'org.bouncycastle:bcprov-jdk18on', 'org.apache.commons:commons-lang3:3.20.0']

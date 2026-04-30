@@ -51,7 +51,7 @@ class PyProjectToml implements Feature {
         config.put("build-system.requires", List.of("setuptools", "wheel", "tomli"));
         config.put("build-system.build-backend", "setuptools.build_meta");
         config.put("tool.pyronaut.version", "5.0.0-SNAPSHOT");
-        config.put("tool.pyronaut.repositories", List.of("mavenCentral", "mavenLocal", "https://repo.gradle.org/gradle/libs-releases"));
+        config.put("tool.pyronaut.repositories", List.of("mavenCentral", "https://repo.gradle.org/gradle/libs-releases"));
         config.put("tool.pyronaut.dependencies.compile", List.of("io.micronaut:micronaut-inject-python",
             "io.micronaut:micronaut-context-python",
             "io.micronaut:micronaut-http-server-netty", "io.micronaut:micronaut-json-core",
