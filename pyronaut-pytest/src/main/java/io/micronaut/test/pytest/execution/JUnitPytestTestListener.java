@@ -166,7 +166,11 @@ public class JUnitPytestTestListener implements PytestTestListener {
         writeNodeId(testId);
         outcomes.add(new TestOutcome(testId, result));
         var payload = new LinkedHashMap<String, String>();
-        result.getThrowable().ifPresent(throwable -> payload.put("failure", throwable.toString()));
+        if (result.getStatus() == TestExecutionResult.Status.FAILED) {
+            result.getThrowable().ifPresent(throwable -> payload.put("failure", throwable.toString()));
+        } else if (result.getStatus() == TestExecutionResult.Status.ABORTED) {
+            result.getThrowable().ifPresent(throwable -> payload.put("reason", throwable.toString()));
+        }
         writeEvent("test_finished", testId, result.getStatus().name(), payload);
         if (result.getStatus() == TestExecutionResult.Status.FAILED && renderFailureOutputEnabled()) {
             emitFailureDiagnostics(testId, result);
@@ -403,6 +407,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
             long total = outcomes.size();
             long passed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.SUCCESSFUL).count();
             long failed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.FAILED).count();
+            long skipped = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.ABORTED).count();
 
             StringBuilder html = new StringBuilder(4096);
             html.append("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n");
@@ -429,14 +434,14 @@ public class JUnitPytestTestListener implements PytestTestListener {
                 .append("<span class=\"badge text-bg-secondary\">Total: ").append(total).append("</span>")
                 .append("<span class=\"badge text-bg-success\">Passed: ").append(passed).append("</span>")
                 .append("<span class=\"badge text-bg-danger\">Failed: ").append(failed).append("</span>")
+                .append("<span class=\"badge text-bg-warning\">Skipped: ").append(skipped).append("</span>")
                 .append("</div>\n");
 
             for (TestOutcome outcome : outcomes) {
-                boolean isSuccess = outcome.result().getStatus() == TestExecutionResult.Status.SUCCESSFUL;
-                String status = isSuccess ? "PASSED" : "FAILED";
+                String status = displayStatus(outcome.result().getStatus());
                 TestStreamOutput details = outputByTest.getOrDefault(outcome.testId(), new TestStreamOutput());
                 String failure = outcome.result().getThrowable().map(Throwable::toString).orElse("");
-                String badgeClass = isSuccess ? "text-bg-success" : "text-bg-danger";
+                String badgeClass = badgeClass(outcome.result().getStatus());
 
                 html.append("<details class=\"card mb-2\">\n")
                     .append("<summary class=\"card-header d-flex justify-content-between align-items-center\">\n")
@@ -491,6 +496,22 @@ public class JUnitPytestTestListener implements PytestTestListener {
         if (!content.endsWith("\n")) {
             message.append('\n');
         }
+    }
+
+    private static String displayStatus(TestExecutionResult.Status status) {
+        return switch (status) {
+            case SUCCESSFUL -> "PASSED";
+            case ABORTED -> "SKIPPED";
+            case FAILED -> "FAILED";
+        };
+    }
+
+    private static String badgeClass(TestExecutionResult.Status status) {
+        return switch (status) {
+            case SUCCESSFUL -> "text-bg-success";
+            case ABORTED -> "text-bg-warning";
+            case FAILED -> "text-bg-danger";
+        };
     }
 
     private void ensureNodeIdFileExists() {

@@ -173,6 +173,39 @@ class JUnitPytestTestListenerTest {
     }
 
     @Test
+    void reportsAbortedTestsAsSkippedInEventsAndHtmlReport() throws Exception {
+        Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
+        Path eventsReport = reportsDir.resolve("events.ndjson");
+        Path htmlReport = reportsDir.resolve("index.html");
+
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of(),
+            htmlReport.toString(),
+            reportsDir.resolve(".pyronaut-last-nodeid.txt").toString(),
+            eventsReport.toString()
+        );
+
+        listener.beforeTest("tests/test_pending.py::test_pending_fix", null);
+        listener.afterTest(
+            "tests/test_pending.py::test_pending_fix",
+            null,
+            TestExecutionResult.aborted(new RuntimeException("Pending fix"))
+        );
+        listener.onResult(TestExecutionResult.successful());
+
+        String events = Files.readString(eventsReport, StandardCharsets.UTF_8);
+        assertTrue(events.contains("\"status\":\"ABORTED\""));
+        assertTrue(events.contains("\"skipped\":\"1\""));
+        assertFalse(events.contains("\"failure\":\"java.lang.RuntimeException: Pending fix\""));
+
+        String html = Files.readString(htmlReport, StandardCharsets.UTF_8);
+        assertTrue(html.contains("Skipped: 1"));
+        assertTrue(html.contains(">SKIPPED<"));
+        assertFalse(html.contains("Failed: 1"));
+    }
+
+    @Test
     void writesFailedTestDiagnosticsToStandardError() throws Exception {
         JUnitPytestTestListener listener = new JUnitPytestTestListener(
             EngineExecutionListener.NOOP,

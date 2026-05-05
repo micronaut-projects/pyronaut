@@ -19,6 +19,22 @@ That task does all of the following against the fixture app:
 - starts the test-resources server
 - runs `pyronaut-test`
 
+## Native Tool Mode
+
+The functional fixture can opt into native executables for the tools that currently support native execution:
+
+```bash
+./gradlew :micronaut-functional-test:test -Pnative=true
+```
+
+This mode builds and uses native executables for `pyronaut-install`, `pyronaut-validate-config`, and `pyronaut-processor`. `pyronaut-test-resources-server` and `pyronaut-test` continue to run through their JIT launchers because the native `pyronaut-run` and `pyronaut-test` executables are not currently expected to work.
+
+The default command does not build native images:
+
+```bash
+./gradlew :micronaut-functional-test:test
+```
+
 ## Prerequisites
 
 The Gradle build assumes the following environment is already set up before you run the functional tests.

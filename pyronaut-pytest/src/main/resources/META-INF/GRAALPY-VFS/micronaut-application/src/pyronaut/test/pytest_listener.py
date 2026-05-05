@@ -36,6 +36,12 @@ def _filter_internal_traceback_frames(text: str) -> str:
 
     return "\n".join(filtered)
 
+
+class _ExpectedFailure:
+    def __init__(self, reason: str):
+        self.reason = reason or "Expected failure"
+
+
 class MicronautPytestPlugin:
     """
     Pytest plugin that communicates with Java PytestTestListener.
@@ -188,6 +194,15 @@ class MicronautPytestPlugin:
                     self._pending_wrap = None
 
         # On failure, forward framework-formatted details similar to terminal output (once per test)
+        was_xfail = getattr(report, "wasxfail", None)
+        if phase == "call" and was_xfail:
+            if getattr(report, "skipped", False):
+                self.test_results[test_id] = _ExpectedFailure(str(was_xfail))
+                return
+            if getattr(report, "failed", False):
+                # Strict XPASS is a real failure: preserve it so PendingFeature-style tests fail when fixed.
+                self.test_results[test_id] = f"XPASS(strict): {was_xfail}"
+
         if getattr(report, "failed", False) and test_id not in self._failure_reported:
             self._failure_reported.add(test_id)
             failure_text = getattr(report, "longreprtext", None)
@@ -221,7 +236,9 @@ class MicronautPytestPlugin:
         test_id = self._get_test_id(item)
         exception = self.test_results.get(test_id)
 
-        if exception is not None:
+        if isinstance(exception, _ExpectedFailure):
+            result = self.listener.abortedResult(exception.reason)
+        elif exception is not None:
             result = self.listener.failedAssertionResult(f"{exception}")
         else:
             result = self.listener.successfulResult()

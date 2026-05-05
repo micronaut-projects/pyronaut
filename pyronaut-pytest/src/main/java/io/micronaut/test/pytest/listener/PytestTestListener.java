@@ -103,4 +103,14 @@ public interface PytestTestListener {
     default TestExecutionResult failedAssertionResult(String message) {
         return TestExecutionResult.failed(new PythonAssertionError(message));
     }
+
+    /**
+     * Build an aborted test execution result for pytest skip/xfail outcomes.
+     *
+     * @param message The skip or xfail reason
+     * @return An aborted result
+     */
+    default TestExecutionResult abortedResult(String message) {
+        return TestExecutionResult.aborted(new RuntimeException(message));
+    }
 }

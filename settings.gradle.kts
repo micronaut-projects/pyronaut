@@ -308,14 +308,26 @@ val graalPyBundleRepo = if (includeGraalPyExtensions) {
 }
 
 if (includeMicronautCore) {
-    gitRepositories {
-        useGitCli = true
-        include("micronaut-core-python") {
-            uri.set("https://github.com/graemerocher/micronaut-core.git")
-            branch.set("python-ast-experiments")
-            includeBuild {
-                name = "micronaut-core"
-                substituteMicronautCore()
+    val localOverride = providers.gradleProperty("local.git.micronaut-core").orNull
+    if (!localOverride.isNullOrBlank()) {
+        val localDir = file(localOverride)
+        if (!isUsableGitCheckout(localDir)) {
+            throw GradleException("Configured local.git.micronaut-core path is not a valid git checkout: ${localDir.absolutePath}")
+        }
+        includeBuild(localDir) {
+            name = "micronaut-core"
+            substituteMicronautCore()
+        }
+    } else {
+        gitRepositories {
+            useGitCli = true
+            include("micronaut-core-python") {
+                uri.set("https://github.com/graemerocher/micronaut-core.git")
+                branch.set("python-ast-experiments")
+                includeBuild {
+                    name = "micronaut-core"
+                    substituteMicronautCore()
+                }
             }
         }
     }

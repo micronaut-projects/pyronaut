@@ -31,15 +31,26 @@ val fixtureConfigValidationReportDir = fixtureCacheDir.dir("reports/config-valid
 val fixtureProcessedClassesDir = fixtureCacheDir.dir("classes")
 val fixtureProcessedTestClassesDir = fixtureCacheDir.dir("test-classes")
 val pytestRequirement = "pytest==9.0.3"
+val useNativeExecutables = providers
+    .gradleProperty("native")
+    .map(String::toBoolean)
+    .orElse(false)
+val nativeExecutableSuffix = if (System.getProperty("os.name").lowercase().contains("windows")) ".exe" else ""
 
 val pyronautInstallExecutable = project(":micronaut-pyronaut-install")
     .layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install")
+val pyronautInstallNativeExecutable = project(":micronaut-pyronaut-install")
+    .layout.buildDirectory.file("native/nativeCompile/pyronaut-install$nativeExecutableSuffix")
 val pyronautProcessorExecutable = project(":micronaut-pyronaut-processor")
     .layout.buildDirectory.file("install/micronaut-pyronaut-processor/bin/pyronaut-processor")
+val pyronautProcessorNativeExecutable = project(":micronaut-pyronaut-processor")
+    .layout.buildDirectory.file("native/nativeCompile/pyronaut-processor$nativeExecutableSuffix")
 val pyronautTestExecutable = project(":micronaut-pyronaut-test")
     .layout.buildDirectory.file("install/micronaut-pyronaut-test/bin/pyronaut-test")
 val pyronautValidateConfigExecutable = project(":micronaut-pyronaut-validate-config")
     .layout.buildDirectory.file("install/micronaut-pyronaut-validate-config/bin/pyronaut-validate-config")
+val pyronautValidateConfigNativeExecutable = project(":micronaut-pyronaut-validate-config")
+    .layout.buildDirectory.file("native/nativeCompile/pyronaut-validate-config$nativeExecutableSuffix")
 val pyronautTestResourcesServerExecutable = project(":micronaut-pyronaut-test-resources-server")
     .layout.buildDirectory.file("install/micronaut-pyronaut-test-resources-server/bin/pyronaut-test-resources-server")
 
@@ -50,6 +61,80 @@ data class FixturePublishedArtifact(
     val jarFile: java.io.File,
     val pomFile: java.io.File,
 )
+
+data class IncludedBuildPublishedArtifact(
+    val projectDirName: String,
+    val artifactId: String,
+    val hasJar: Boolean = true,
+)
+
+val functionalTestMicronautVersion = versionFromCatalog("micronaut")
+val fixturePlatformPom by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+
+dependencies.add(fixturePlatformPom.name, "io.micronaut.platform:micronaut-platform:$functionalTestMicronautVersion@pom")
+
+val stagedPyronautProjectPaths = listOf(
+    ":micronaut-pyronaut-logback",
+    ":micronaut-pyronaut-pytest",
+    ":micronaut-pyronaut-requests",
+)
+
+val includedCoreArtifacts = listOf(
+    IncludedBuildPublishedArtifact("aop", "micronaut-aop"),
+    IncludedBuildPublishedArtifact("buffer-netty", "micronaut-buffer-netty"),
+    IncludedBuildPublishedArtifact("context", "micronaut-context"),
+    IncludedBuildPublishedArtifact("context-propagation", "micronaut-context-propagation"),
+    IncludedBuildPublishedArtifact("context-python", "micronaut-context-python"),
+    IncludedBuildPublishedArtifact("core", "micronaut-core"),
+    IncludedBuildPublishedArtifact("core-bom", "micronaut-core-bom", hasJar = false),
+    IncludedBuildPublishedArtifact("core-processor", "micronaut-core-processor"),
+    IncludedBuildPublishedArtifact("core-reactive", "micronaut-core-reactive"),
+    IncludedBuildPublishedArtifact("discovery-core", "micronaut-discovery-core"),
+    IncludedBuildPublishedArtifact("function", "micronaut-function"),
+    IncludedBuildPublishedArtifact("function-client", "micronaut-function-client"),
+    IncludedBuildPublishedArtifact("function-web", "micronaut-function-web"),
+    IncludedBuildPublishedArtifact("graal", "micronaut-graal"),
+    IncludedBuildPublishedArtifact("http", "micronaut-http"),
+    IncludedBuildPublishedArtifact("http-client", "micronaut-http-client"),
+    IncludedBuildPublishedArtifact("http-client-core", "micronaut-http-client-core"),
+    IncludedBuildPublishedArtifact("http-client-jdk", "micronaut-http-client-jdk"),
+    IncludedBuildPublishedArtifact("http-netty", "micronaut-http-netty"),
+    IncludedBuildPublishedArtifact("http-netty-http3", "micronaut-http-netty-http3"),
+    IncludedBuildPublishedArtifact("http-server", "micronaut-http-server"),
+    IncludedBuildPublishedArtifact("http-server-netty", "micronaut-http-server-netty"),
+    IncludedBuildPublishedArtifact("http-validation", "micronaut-http-validation"),
+    IncludedBuildPublishedArtifact("inject", "micronaut-inject"),
+    IncludedBuildPublishedArtifact("inject-groovy", "micronaut-inject-groovy"),
+    IncludedBuildPublishedArtifact("inject-java", "micronaut-inject-java"),
+    IncludedBuildPublishedArtifact("inject-kotlin", "micronaut-inject-kotlin"),
+    IncludedBuildPublishedArtifact("inject-python", "micronaut-inject-python"),
+    IncludedBuildPublishedArtifact("jackson-core", "micronaut-jackson-core"),
+    IncludedBuildPublishedArtifact("jackson-databind", "micronaut-jackson-databind"),
+    IncludedBuildPublishedArtifact("json-core", "micronaut-json-core"),
+    IncludedBuildPublishedArtifact("management", "micronaut-management"),
+    IncludedBuildPublishedArtifact("messaging", "micronaut-messaging"),
+    IncludedBuildPublishedArtifact("module-info", "micronaut-module-info"),
+    IncludedBuildPublishedArtifact("module-info-runtime", "micronaut-module-info-runtime"),
+    IncludedBuildPublishedArtifact("retry", "micronaut-retry"),
+    IncludedBuildPublishedArtifact("router", "micronaut-router"),
+    IncludedBuildPublishedArtifact("runtime", "micronaut-runtime"),
+    IncludedBuildPublishedArtifact("runtime-osx", "micronaut-runtime-osx"),
+    IncludedBuildPublishedArtifact("websocket", "micronaut-websocket"),
+)
+
+fun versionFromCatalog(file: java.io.File, key: String): String {
+    val pattern = Regex("""^${Regex.escape(key)}\s*=\s*"([^"]+)"""", RegexOption.MULTILINE)
+    return pattern.find(file.readText())?.groupValues?.get(1)
+        ?: throw GradleException("Unable to find version '$key' in ${file.absolutePath}")
+}
+
+fun versionFromCatalog(key: String): String {
+    return versionFromCatalog(rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile, key)
+}
 
 fun defaultFixtureEnv(): Map<String, String> {
     val environment = linkedMapOf<String, String>()
@@ -171,6 +256,30 @@ fun resolveFixturePythonExecutable(): String {
     return "python"
 }
 
+fun pyronautInstallExecutableFile(): java.io.File {
+    return if (useNativeExecutables.get()) {
+        pyronautInstallNativeExecutable.get().asFile
+    } else {
+        pyronautInstallExecutable.get().asFile
+    }
+}
+
+fun pyronautProcessorExecutableFile(): java.io.File {
+    return if (useNativeExecutables.get()) {
+        pyronautProcessorNativeExecutable.get().asFile
+    } else {
+        pyronautProcessorExecutable.get().asFile
+    }
+}
+
+fun pyronautValidateConfigExecutableFile(): java.io.File {
+    return if (useNativeExecutables.get()) {
+        pyronautValidateConfigNativeExecutable.get().asFile
+    } else {
+        pyronautValidateConfigExecutable.get().asFile
+    }
+}
+
 fun Project.fixturePublishedArtifact(projectPath: String): FixturePublishedArtifact {
     val dependencyProject = project(projectPath)
     val jarTask = dependencyProject.tasks.named("jar", Jar::class.java).get()
@@ -181,6 +290,124 @@ fun Project.fixturePublishedArtifact(projectPath: String): FixturePublishedArtif
         jarFile = jarTask.archiveFile.get().asFile,
         pomFile = dependencyProject.layout.buildDirectory.file("publications/maven/pom-default.xml").get().asFile,
     )
+}
+
+fun readProperties(file: java.io.File): Properties {
+    if (!file.isFile) {
+        throw GradleException("Missing properties file: ${file.absolutePath}")
+    }
+    val properties = Properties()
+    FileInputStream(file).use(properties::load)
+    return properties
+}
+
+fun copyMavenArtifact(
+    groupId: String,
+    artifactId: String,
+    version: String,
+    pomFile: java.io.File,
+    jarFile: java.io.File? = null,
+) {
+    if (!pomFile.isFile) {
+        throw GradleException("Missing generated POM for $groupId:$artifactId:$version: ${pomFile.absolutePath}")
+    }
+    if (jarFile != null && !jarFile.isFile) {
+        throw GradleException("Missing generated JAR for $groupId:$artifactId:$version: ${jarFile.absolutePath}")
+    }
+    val artifactDir = fixtureStagedRepoDir.asFile
+        .resolve(groupId.replace('.', '/'))
+        .resolve(artifactId)
+        .resolve(version)
+    artifactDir.mkdirs()
+    artifactDir.resolve("$artifactId-$version.pom").writeText(mavenPomContent(artifactId, pomFile))
+    jarFile?.copyTo(
+        artifactDir.resolve("$artifactId-$version.jar"),
+        overwrite = true
+    )
+}
+
+fun mavenPomContent(artifactId: String, pomFile: java.io.File): String {
+    var content = pomFile.readText()
+    val sourcegenPlaceholder = "${'$'}{micronaut.sourcegen.version}"
+    if (artifactId == "micronaut-core-bom" && content.contains(sourcegenPlaceholder)) {
+        val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
+            ?: throw GradleException("Unable to resolve micronaut.sourcegen.version without the included micronaut-core build")
+        val sourcegenVersion = versionFromCatalog(
+            includedBuild.projectDir.resolve("gradle/libs.versions.toml"),
+            "micronaut-sourcegen"
+        )
+        content = content.replace(
+            "  </properties>",
+            "    <micronaut.sourcegen.version>$sourcegenVersion</micronaut.sourcegen.version>\n  </properties>"
+        )
+    }
+    return content
+}
+
+fun Project.stageLocalPyronautFixtureArtifacts() {
+    val bomProject = project(":micronaut-pyronaut-bom")
+    val bomVersion = bomProject.version.toString()
+    copyMavenArtifact(
+        groupId = bomProject.group.toString(),
+        artifactId = bomProject.name,
+        version = bomVersion,
+        pomFile = bomProject.layout.buildDirectory.file("publications/maven/pom-default.xml").get().asFile,
+    )
+    for (projectPath in stagedPyronautProjectPaths) {
+        val artifact = fixturePublishedArtifact(projectPath)
+        copyMavenArtifact(
+            groupId = artifact.groupId,
+            artifactId = artifact.artifactId,
+            version = artifact.version,
+            pomFile = artifact.pomFile,
+            jarFile = artifact.jarFile,
+        )
+    }
+}
+
+fun Project.stageMicronautPlatformFixtureArtifact() {
+    copyMavenArtifact(
+        groupId = "io.micronaut.platform",
+        artifactId = "micronaut-platform",
+        version = functionalTestMicronautVersion,
+        pomFile = fixturePlatformPom.singleFile,
+    )
+}
+
+fun Project.stageIncludedMicronautCoreFixtureArtifacts() {
+    val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
+        ?: throw GradleException("functional-test requires the included micronaut-core build when using $functionalTestMicronautVersion")
+    val properties = readProperties(includedBuild.projectDir.resolve("gradle.properties"))
+    val coreGroupId = properties.getProperty("projectGroupId")
+    val version = properties.getProperty("projectVersion")
+    for (artifact in includedCoreArtifacts) {
+        val projectDir = includedBuild.projectDir.resolve(artifact.projectDirName)
+        copyMavenArtifact(
+            groupId = coreGroupId,
+            artifactId = artifact.artifactId,
+            version = version,
+            pomFile = projectDir.resolve("build/publications/maven/pom-default.xml"),
+            jarFile = if (artifact.hasJar) {
+                projectDir.resolve("build/libs/${artifact.artifactId}-$version.jar")
+            } else {
+                null
+            },
+        )
+    }
+}
+
+fun Project.stageGraalPyFixtureArtifacts() {
+    val bundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { java.io.File(it) }
+        ?: throw GradleException("Missing pyronaut.graalpy.bundle.repo system property for GraalPy fixture artifacts")
+    if (!bundleRepo.isDirectory) {
+        throw GradleException("Missing GraalPy fixture repository: ${bundleRepo.absolutePath}")
+    }
+    copy {
+        from(bundleRepo)
+        into(fixtureStagedRepoDir)
+    }
 }
 
 fun isGraalPyVenv(configFile: java.io.File): Boolean {
@@ -274,66 +501,86 @@ fun buildPyronautTestCommand(): List<String> {
     )
 }
 
-val publishFixtureArtifactsToMavenLocal by tasks.registering {
+val stagePyronautFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages local Pyronaut fixture modules into the functional-test file repository."
     val bomProject = project(":micronaut-pyronaut-bom")
-    val logbackProject = project(":micronaut-pyronaut-logback")
-    val pytestProject = project(":micronaut-pyronaut-pytest")
+    val taskDependencies = mutableListOf<Any>()
+    for (projectPath in stagedPyronautProjectPaths) {
+        val stagedProject = project(projectPath)
+        val jarTask = stagedProject.tasks.named("jar", Jar::class.java)
+        taskDependencies.add(jarTask)
+        taskDependencies.add(stagedProject.tasks.named("generatePomFileForMavenPublication"))
+        inputs.files(jarTask.flatMap { it.archiveFile })
+        inputs.file(stagedProject.layout.buildDirectory.file("publications/maven/pom-default.xml"))
+    }
+    inputs.file(bomProject.layout.buildDirectory.file("publications/maven/pom-default.xml"))
     dependsOn(
         bomProject.tasks.named("generatePomFileForMavenPublication"),
-        logbackProject.tasks.named("jar"),
-        logbackProject.tasks.named("generatePomFileForMavenPublication"),
-        pytestProject.tasks.named("jar"),
-        pytestProject.tasks.named("generatePomFileForMavenPublication"),
+        taskDependencies,
     )
-    val bomVersion = bomProject.version.toString()
-    val logbackVersion = logbackProject.version.toString()
-    val pytestVersion = pytestProject.version.toString()
-    inputs.files(
-        bomProject.layout.buildDirectory.file("publications/maven/pom-default.xml"),
-        logbackProject.layout.buildDirectory.file("libs/${logbackProject.name}-${logbackVersion}.jar"),
-        logbackProject.layout.buildDirectory.file("publications/maven/pom-default.xml"),
-        pytestProject.layout.buildDirectory.file("libs/${pytestProject.name}-${pytestVersion}.jar"),
-        pytestProject.layout.buildDirectory.file("publications/maven/pom-default.xml"),
-    )
-    outputs.files(
-        fixtureStagedRepoDir.file("io/micronaut/pyronaut/${bomProject.name}/${bomVersion}/${bomProject.name}-${bomVersion}.pom"),
-        fixtureStagedRepoDir.file("io/micronaut/pyronaut/${logbackProject.name}/${logbackVersion}/${logbackProject.name}-${logbackVersion}.jar"),
-        fixtureStagedRepoDir.file("io/micronaut/pyronaut/${logbackProject.name}/${logbackVersion}/${logbackProject.name}-${logbackVersion}.pom"),
-        fixtureStagedRepoDir.file("io/micronaut/pyronaut/${pytestProject.name}/${pytestVersion}/${pytestProject.name}-${pytestVersion}.jar"),
-        fixtureStagedRepoDir.file("io/micronaut/pyronaut/${pytestProject.name}/${pytestVersion}/${pytestProject.name}-${pytestVersion}.pom"),
+    outputs.dir(fixtureStagedRepoDir)
+    doLast {
+        project.stageLocalPyronautFixtureArtifacts()
+    }
+}
+
+val stageMicronautPlatformFixtureArtifact by tasks.registering {
+    group = "build setup"
+    description = "Stages the Micronaut Platform BOM used by the functional-test file repository."
+    inputs.files(fixturePlatformPom)
+    outputs.file(
+        fixtureStagedRepoDir.file(
+            "io/micronaut/platform/micronaut-platform/$functionalTestMicronautVersion/micronaut-platform-$functionalTestMicronautVersion.pom"
+        )
     )
     doLast {
-        val bomArtifactDir = fixtureStagedRepoDir.asFile
-            .resolve("io/micronaut/pyronaut")
-            .resolve(bomProject.name)
-            .resolve(bomVersion)
-        bomArtifactDir.mkdirs()
-        bomProject.layout.buildDirectory.file("publications/maven/pom-default.xml").get().asFile.copyTo(
-            bomArtifactDir.resolve("${bomProject.name}-${bomVersion}.pom"),
-            overwrite = true
-        )
-        val stagedArtifacts = listOf(
-            project.fixturePublishedArtifact(":micronaut-pyronaut-logback"),
-            project.fixturePublishedArtifact(":micronaut-pyronaut-pytest"),
-        )
-        stagedArtifacts.forEach { artifact ->
-            val artifactDir = fixtureStagedRepoDir.asFile
-                .resolve(artifact.groupId.replace('.', '/'))
-                .resolve(artifact.artifactId)
-                .resolve(artifact.version)
-            artifactDir.mkdirs()
-            artifact.jarFile.copyTo(
-                artifactDir.resolve("${artifact.artifactId}-${artifact.version}.jar"),
-                overwrite = true
-            )
-            artifact.pomFile.copyTo(
-                artifactDir.resolve("${artifact.artifactId}-${artifact.version}.pom"),
-                overwrite = true
-            )
+        project.stageMicronautPlatformFixtureArtifact()
+    }
+}
+
+val stageMicronautCoreFixtureArtifacts by tasks.registering {
+    group = "build setup"
+    description = "Stages included Micronaut Core artifacts into the functional-test file repository."
+    val micronautCoreIncludedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
+    val taskDependencies = mutableListOf<Any>()
+    if (micronautCoreIncludedBuild != null) {
+        for (artifact in includedCoreArtifacts) {
+            taskDependencies.add(micronautCoreIncludedBuild.task(":${artifact.artifactId}:generatePomFileForMavenPublication"))
+            if (artifact.hasJar) {
+                taskDependencies.add(micronautCoreIncludedBuild.task(":${artifact.artifactId}:jar"))
+            }
         }
     }
+    dependsOn(taskDependencies)
+    outputs.dir(fixtureStagedRepoDir)
+    doLast {
+        project.stageIncludedMicronautCoreFixtureArtifacts()
+    }
+}
+
+val stageGraalPyFixtureArtifacts by tasks.registering {
+    group = "build setup"
+    description = "Stages GraalPy snapshot artifacts into the functional-test file repository."
+    val bundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
+    if (!bundleRepo.isNullOrBlank()) {
+        inputs.dir(java.io.File(bundleRepo))
+    }
+    outputs.dir(fixtureStagedRepoDir)
+    doLast {
+        project.stageGraalPyFixtureArtifacts()
+    }
+}
+
+val publishFixtureArtifactsToMavenLocal by tasks.registering {
+    group = "build setup"
+    description = "Stages local fixture artifacts into the functional-test file repository."
+    dependsOn(
+        stagePyronautFixtureArtifacts,
+        stageMicronautPlatformFixtureArtifact,
+        stageMicronautCoreFixtureArtifacts,
+        stageGraalPyFixtureArtifacts,
+    )
 }
 
 val installFixtureLaunchers by tasks.registering {
@@ -346,6 +593,13 @@ val installFixtureLaunchers by tasks.registering {
         project(":micronaut-pyronaut-validate-config").tasks.named("installDist"),
         project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"),
     )
+    if (useNativeExecutables.get()) {
+        dependsOn(
+            project(":micronaut-pyronaut-install").tasks.named("nativeCompile"),
+            project(":micronaut-pyronaut-processor").tasks.named("nativeCompile"),
+            project(":micronaut-pyronaut-validate-config").tasks.named("nativeCompile"),
+        )
+    }
 }
 
 val prepareVenv by tasks.registering {
@@ -410,18 +664,26 @@ val installApp by tasks.registering {
         fixtureAppDir.file("pyproject.toml"),
         fixtureAppDir.file("setup.py"),
         pytestInstallMarker,
-        pyronautInstallExecutable,
     )
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jit" })
+    inputs.file(providers.provider { pyronautInstallExecutableFile() })
+    inputs.dir(fixtureStagedRepoDir)
     outputs.file(installAppMarker)
     outputs.upToDateWhen {
         installAppMarker.get().asFile.isFile && installAppOutputsPresent()
     }
-    onlyIf {
-        !(installAppMarker.get().asFile.isFile && installAppOutputsPresent())
-    }
     doLast {
+        val installExecutable = pyronautInstallExecutableFile()
+        if (!installExecutable.isFile) {
+            throw GradleException("Missing pyronaut-install executable: ${installExecutable.absolutePath}")
+        }
+        logger.lifecycle(
+            "Using {} pyronaut-install executable: {}",
+            if (useNativeExecutables.get()) "native" else "JIT",
+            installExecutable.absolutePath
+        )
         project.runFixtureCommand(
-            listOf(pyronautInstallExecutable.get().asFile.absolutePath, "--project-dir", fixtureAppDir.asFile.absolutePath)
+            listOf(installExecutable.absolutePath, "--project-dir", fixtureAppDir.asFile.absolutePath)
         )
         installAppMarker.get().asFile.parentFile.mkdirs()
         installAppMarker.get().asFile.writeText("ready\n")
@@ -452,12 +714,12 @@ val verifyEditorSupport by tasks.registering {
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi").asFile,
-            "Get: _GetDecorator",
+            "def Get(value: str = ...",
             "Micronaut annotation stubs"
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi").asFile,
-            "class _GetDecorator(Protocol):\n    \"\"\"",
+            "def Get(target: _T, /) -> _T: ...",
             "Micronaut annotation stub docstrings"
         )
         requireFixtureFileContains(
@@ -467,12 +729,12 @@ val verifyEditorSupport by tasks.registering {
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
-            "Inject: _InjectDecorator",
+            "def Inject() -> Callable[[_T], _T]: ...",
             "Jakarta inject stubs"
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
-            "class _InjectDecorator(Protocol):\n    \"\"\"",
+            "Identifies injectable constructors, methods, and fields.",
             "Jakarta annotation stub docstrings"
         )
     }
@@ -488,12 +750,23 @@ val validateConfig by tasks.registering {
         fixtureResolvedRuntimeDependencies,
         fixtureSchemasDir,
     )
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jit" })
+    inputs.file(providers.provider { pyronautValidateConfigExecutableFile() })
     outputs.files(fixtureConfigValidationCache)
     outputs.dir(fixtureConfigValidationReportDir)
     doLast {
+        val validateConfigExecutable = pyronautValidateConfigExecutableFile()
+        if (!validateConfigExecutable.isFile) {
+            throw GradleException("Missing pyronaut-validate-config executable: ${validateConfigExecutable.absolutePath}")
+        }
+        logger.lifecycle(
+            "Using {} pyronaut-validate-config executable: {}",
+            if (useNativeExecutables.get()) "native" else "JIT",
+            validateConfigExecutable.absolutePath
+        )
         project.runFixtureCommand(
             listOf(
-                pyronautValidateConfigExecutable.get().asFile.absolutePath,
+                validateConfigExecutable.absolutePath,
                 "--project-dir",
                 fixtureAppDir.asFile.absolutePath,
                 "--scenario",
@@ -509,18 +782,32 @@ val process by tasks.registering {
     dependsOn(validateConfig)
     inputs.dir(fixtureAppDir.dir("src"))
     inputs.dir(fixtureAppDir.dir("tests"))
+    inputs.property(
+        "pyronautExecutableMode",
+        providers.provider { if (useNativeExecutables.get()) "native" else "jit" }
+    )
     inputs.files(
         fixtureResolvedBuildDependencies,
         fixtureResolvedRuntimeDependencies,
         fixtureResolvedTestDependencies,
     )
+    inputs.file(providers.provider { pyronautProcessorExecutableFile() })
     outputs.dirs(
         fixtureProcessedClassesDir,
         fixtureProcessedTestClassesDir,
     )
     doLast {
+        val processorExecutable = pyronautProcessorExecutableFile()
+        if (!processorExecutable.isFile) {
+            throw GradleException("Missing pyronaut-processor executable: ${processorExecutable.absolutePath}")
+        }
+        logger.lifecycle(
+            "Using {} pyronaut-processor executable: {}",
+            if (useNativeExecutables.get()) "native" else "JIT",
+            processorExecutable.absolutePath
+        )
         project.runFixtureCommand(
-            listOf(pyronautProcessorExecutable.get().asFile.absolutePath, "--project-dir", fixtureAppDir.asFile.absolutePath)
+            listOf(processorExecutable.absolutePath, "--project-dir", fixtureAppDir.asFile.absolutePath)
         )
     }
 }

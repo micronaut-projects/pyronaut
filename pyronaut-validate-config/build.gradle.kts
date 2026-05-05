@@ -15,6 +15,7 @@ dependencies {
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mnPicocli.picocli)
     implementation(libs.micronaut.json.schema.configuration.validator)
+    implementation(mnSerde.micronaut.serde.jackson)
     runtimeOnly(libs.slf4j.simple)
 
     testImplementation(mnTest.junit.jupiter.api)
@@ -52,8 +53,10 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "-H:EnableURLProtocols=jar",
     "-H:+RuntimeClassLoading",
     "-H:+AllowJRTFileSystem",
+    "-H:Preserve=package=java.io",
     "-H:Preserve=package=java.lang.*",
     "-H:Preserve=package=java.lang.invoke.*",
+    "-H:Preserve=package=java.nio.charset.*",
     "-H:Preserve=package=java.text.*",
     "-H:Preserve=package=java.time.*",
     "-H:Preserve=package=java.util.*",
@@ -68,7 +71,9 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "-H:Preserve=package=io.micronaut.core.io.service.*",
     "-H:Preserve=package=io.micronaut.inject.*",
     "-H:Preserve=package=io.micronaut.context.*",
+    "-H:Preserve=package=io.micronaut.json.tree.*",
     "-H:Preserve=package=io.micronaut.jsonschema.*",
+    "-H:Preserve=package=io.micronaut.serde.*",
     "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
     "--initialize-at-run-time=io.micronaut.core.io.socket.SocketUtils",
     "--initialize-at-run-time=io.micronaut.core.util.KotlinUtils",

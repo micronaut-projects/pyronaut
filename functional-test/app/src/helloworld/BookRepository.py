@@ -1,25 +1,17 @@
 from micronaut.data.jdbc.annotation import JdbcRepository
-from abc import ABC, abstractmethod
-from typing import List, Annotated
+from typing import List
 from jakarta.data.repository import Save
+from micronaut.data.repository import CrudRepository
 from .Book import Book
 
 @JdbcRepository(dialect = "MYSQL")
-class BookRepository(ABC):
+class BookRepository(CrudRepository[Book, int]):
 
     @Save
-    @abstractmethod
-    def saveBook(self, book : Book) -> None:
-        pass
+    def saveBook(self, book : Book) -> None: ...
 
-    @abstractmethod
-    def findAll(self) -> List[Book]:
-        pass
+    def findAll(self) -> List[Book]: ...
 
-    @abstractmethod
-    def findById(self, id: int) -> Book:
-        pass
+    def findById(self, id: int) -> Book: ...
 
-    @abstractmethod
-    def findByTitle(self, title: str) -> Book:
-        pass
+    def findByTitle(self, title: str) -> Book: ...
