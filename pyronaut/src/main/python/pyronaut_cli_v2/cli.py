@@ -478,17 +478,13 @@ def _delegate_lib_entries(executable_path: str) -> list[str]:
 
 def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
     cache_dir = project_dir / "__pyronaut__"
-    layout = _read_pyproject_sources(project_dir)
     if command == "run":
-        entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
-        entries.append(str(classes_dir))
-        resources_dir = _resolve_layout_dir(project_dir, layout.resources_dir)
-        if resources_dir.is_dir():
-            entries.append(str(resources_dir))
+        entries = []
     else:
+        layout = _read_pyproject_sources(project_dir)
         entries = _read_manifest_entries(cache_dir / "resolved-test-dependencies")
         for extra in (cache_dir / "resolved-runtime-dependencies", cache_dir / "resolved-build-dependencies"):
             if extra.exists():

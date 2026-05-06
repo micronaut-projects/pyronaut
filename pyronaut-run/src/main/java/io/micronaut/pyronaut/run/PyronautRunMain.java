@@ -44,6 +44,8 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
+    private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
+    private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
@@ -187,7 +189,7 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
 
         LinkedHashSet<URL> urls = new LinkedHashSet<>();
-        addManifestEntries(urls, pyronautDir.resolve("resolved-runtime-dependencies"));
+        addManifestEntries(urls, resolveRunManifest(pyronautDir));
         urls.add(archiveProcessedClasses(pyronautDir, resolvedClassesDir).toUri().toURL());
         addPathIfDirectory(urls, root.resolve(configDir).normalize());
         return new ResolvedProjectLayout(
@@ -233,6 +235,14 @@ public final class PyronautRunMain implements Callable<Integer> {
             }
             urls.add(Path.of(trimmed).toAbsolutePath().normalize().toUri().toURL());
         }
+    }
+
+    private static Path resolveRunManifest(Path pyronautDir) {
+        Path developmentManifest = pyronautDir.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST);
+        if (Files.exists(developmentManifest)) {
+            return developmentManifest;
+        }
+        return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
     }
 
     private static void addPathIfDirectory(LinkedHashSet<URL> urls, Path path) throws IOException {

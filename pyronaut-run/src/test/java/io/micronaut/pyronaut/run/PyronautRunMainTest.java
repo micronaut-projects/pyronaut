@@ -6,9 +6,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -159,6 +162,32 @@ class PyronautRunMainTest {
                 java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("config/"))
                     || java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().endsWith("/config"))
             );
+        }
+    }
+
+    @Test
+    void resolveProjectLayoutPrefersDevelopmentRuntimeDependencies() throws Exception {
+        Path project = tempDir.resolve("project-development-layout");
+        Path pyronautDir = project.resolve("__pyronaut__");
+        Path classesDir = pyronautDir.resolve("classes");
+        Path configDir = project.resolve("config");
+        Path runtimeJar = tempDir.resolve("runtime.jar");
+        Path developmentRuntimeJar = tempDir.resolve("runtime-dev.jar");
+        Files.createDirectories(classesDir);
+        Files.createDirectories(configDir);
+        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
+        Files.writeString(developmentRuntimeJar, "", StandardCharsets.UTF_8);
+        Files.createDirectories(pyronautDir);
+        Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
+        Files.writeString(pyronautDir.resolve("resolved-development-runtime-dependencies"), developmentRuntimeJar + "\n", StandardCharsets.UTF_8);
+
+        PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
+        try (var classLoader = layout.applicationClassLoader()) {
+            List<String> urls = Arrays.stream(classLoader.getURLs())
+                .map(URL::toString)
+                .toList();
+            assertTrue(urls.stream().anyMatch(url -> url.contains(developmentRuntimeJar.getFileName().toString())));
+            assertFalse(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
         }
     }
 

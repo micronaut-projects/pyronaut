@@ -38,7 +38,7 @@ dependencies {
     runtimeOnly(mn.micronaut.json.core)
     runtimeOnly(mnSerde.micronaut.serde.jackson)
     runtimeOnly("io.micronaut.serde:micronaut-serde-api")
-    runtimeOnly(project(":micronaut-pyronaut-logback"))
+    runtimeOnly(mnLogging.logback.classic)
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
