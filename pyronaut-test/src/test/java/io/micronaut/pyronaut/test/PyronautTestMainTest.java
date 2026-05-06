@@ -26,7 +26,7 @@ class PyronautTestMainTest {
     Path tempDir;
 
     private PyronautTestMain newCommand() {
-        return new PyronautTestMain(new PyprojectModelReader(), classLoader -> { });
+        return new PyronautTestMain(new PyprojectModelReader(), (classLoader, applicationMain) -> { });
     }
 
     @Test
@@ -161,6 +161,23 @@ class PyronautTestMainTest {
     void mixedSelectorsAreNotTreatedAsOnlyDirectFiles() {
         assertTrue(PyronautTestMain.hasOnlyDirectFileSelectors(List.of("test_mycontroller", "tests/test_a.py::test_x")));
         assertFalse(PyronautTestMain.hasOnlyDirectFileSelectors(List.of("test_mycontroller", "*integration*")));
+    }
+
+    @Test
+    void selectsTestsBootstrapWhenRootTestsScriptExists() throws Exception {
+        Path testsDir = tempDir.resolve("tests-bootstrap");
+        Files.createDirectories(testsDir);
+        Files.writeString(testsDir.resolve("tests.py"), "print('test bootstrap')\n", StandardCharsets.UTF_8);
+
+        assertEquals("tests.py", PyronautTestMain.selectApplicationMain(testsDir));
+    }
+
+    @Test
+    void selectsApplicationMainWhenRootTestsScriptDoesNotExist() throws Exception {
+        Path testsDir = tempDir.resolve("default-bootstrap");
+        Files.createDirectories(testsDir);
+
+        assertEquals("main.py", PyronautTestMain.selectApplicationMain(testsDir));
     }
 
     @Test

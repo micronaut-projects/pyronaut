@@ -1,4 +1,11 @@
 
+import builtins
+
+
+def test_root_tests_bootstrap_script_runs():
+    assert builtins.PYRONAUT_TEST_BOOTSTRAP == "tests.py"
+
+
 def test_simple_assertion():
     """A simple test that should pass."""
     assert 1 + 1 == 2

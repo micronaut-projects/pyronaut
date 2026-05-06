@@ -35,6 +35,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
@@ -55,6 +56,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_TEST_CLASSES_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String DEFAULT_TESTS_DIR = "tests";
+    private static final String TEST_APPLICATION_MAIN = "tests.py";
     private static final String DEFAULT_REPORTS_DIR = "__pyronaut__/reports/tests";
     private static final String DEFAULT_JUNIT_XML_REPORT = "junit.xml";
     private static final String DEFAULT_HTML_REPORT = "index.html";
@@ -108,7 +110,9 @@ public final class PyronautTestMain implements Callable<Integer> {
     private final PyprojectModelReader modelReader;
 
     public PyronautTestMain() {
-        this(new PyprojectModelReader(), GraalPyContextFactory::bootstrapReusableContext);
+        this(new PyprojectModelReader(), (classLoader, applicationMain) ->
+            GraalPyContextFactory.bootstrapReusableContext(classLoader, Map.of(), applicationMain)
+        );
     }
 
     PyronautTestMain(PyprojectModelReader modelReader, ContextBootstrapper contextBootstrapper) {
@@ -122,11 +126,13 @@ public final class PyronautTestMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         PyprojectModel model;
         ResolvedProjectLayout layout;
+        Path resolvedTestsDir;
         try {
             applyTestResourcesProperties(System.getenv());
             model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
             Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
             Path resolvedTestResourcesDir = root.resolve(model.pyronaut().sources().testResources()).normalize();
+            resolvedTestsDir = resolveConfiguredPath(root, testsDir, DEFAULT_TESTS_DIR, model.pyronaut().sources().pythonTest(), "--tests-dir");
             layout = resolveProjectLayout(root, classesDir, testClassesDir, resolvedConfigDir, resolvedTestResourcesDir);
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
@@ -140,12 +146,11 @@ public final class PyronautTestMain implements Callable<Integer> {
         try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             try {
-                contextBootstrapper.bootstrap(applicationClassLoader);
+                contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedTestsDir));
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
                 boolean publishReports = false;
                 if (selectClasses == null || selectClasses.isEmpty()) {
                     requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(layout.processedClassesRoot())));
-                    Path resolvedTestsDir = resolveConfiguredPath(root, testsDir, DEFAULT_TESTS_DIR, model.pyronaut().sources().pythonTest(), "--tests-dir");
                     Optional<String> pytestTests = buildPytestTestsParameter(tests);
                     if (Files.isDirectory(resolvedTestsDir)) {
                         List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
@@ -205,6 +210,13 @@ public final class PyronautTestMain implements Callable<Integer> {
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
         }
+    }
+
+    static String selectApplicationMain(Path resolvedTestsDir) {
+        if (Files.isRegularFile(resolvedTestsDir.resolve(TEST_APPLICATION_MAIN))) {
+            return TEST_APPLICATION_MAIN;
+        }
+        return GraalPyContextFactory.APPLICATION_MAIN;
     }
 
     private static ClassLoader resolveApplicationClassLoader() {
@@ -296,7 +308,7 @@ public final class PyronautTestMain implements Callable<Integer> {
 
     @FunctionalInterface
     interface ContextBootstrapper {
-        void bootstrap(ClassLoader classLoader) throws Exception;
+        void bootstrap(ClassLoader classLoader, String applicationMain) throws Exception;
     }
 
     static void applyTestResourcesProperties(java.util.Map<String, String> environment) {

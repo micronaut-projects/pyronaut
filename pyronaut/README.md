@@ -78,6 +78,8 @@ test-resources = "tests-config"
 
 These settings are honored by install/process/run/test, lifecycle validation defaults, auto-restart file watching, and build staging.
 
+When running tests, Pyronaut normally bootstraps the processed application by evaluating `src/main.py`. If the configured Python test directory contains a root `tests.py` file, `pyronaut test` evaluates that file instead of `main.py` for the test process. This allows test-specific bootstrap such as alternate logging setup while leaving application runtime bootstrap unchanged.
+
 ## IDE stub configuration
 
 `pyronaut install` generates Python IDE stubs for configured Micronaut and Jakarta Java APIs and writes them to `__pyronaut__/ide-stubs` by default. It also extracts Python sources embedded in resolved GraalPy virtual filesystem artifacts, such as `pyronaut.test` and `logback.config`, so editor imports match runtime imports. Generated editor support is cached under `~/.pyronaut/ide-stubs` and reused across projects when the resolved artifact set and stub configuration are unchanged.
