@@ -2,6 +2,8 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.PyprojectJsonSchemaGenerator;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -32,6 +34,19 @@ class PyronautInstallMainTest {
 
     @TempDir
     Path tempDir;
+
+    private String previousIdeStubsCacheDir;
+
+    @BeforeEach
+    void setSharedIdeStubsCacheDir() {
+        previousIdeStubsCacheDir = System.getProperty("pyronaut.ide-stubs.cache-dir");
+        System.setProperty("pyronaut.ide-stubs.cache-dir", tempDir.resolve("shared-ide-stubs-cache").toString());
+    }
+
+    @AfterEach
+    void restoreSharedIdeStubsCacheDir() {
+        restoreSystemProperty("pyronaut.ide-stubs.cache-dir", previousIdeStubsCacheDir);
+    }
 
     @Test
     void initializesJavaHomeFromEnvironmentWhenMissing() {
@@ -948,6 +963,9 @@ class PyronautInstallMainTest {
             runtime = ["com.example:runtime-dep:1.0.0"]
             build = []
             test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
             """);
 
         String previousMavenRepoLocal = System.getProperty("maven.repo.local");
@@ -1686,6 +1704,186 @@ class PyronautInstallMainTest {
         assertTrue(injectStub.contains("def Inject(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n    \"\"\""));
         assertTrue(injectStub.contains("    Injects a dependency from the Micronaut context."));
         assertTrue(settings.contains("__pyronaut__/ide-stubs"));
+    }
+
+    @Test
+    void installCopiesPythonIdeStubsFromSharedCacheForEquivalentArtifacts() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-shared-cache");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpResponse", """
+                package io.micronaut.http;
+
+                public class HttpResponse {
+                    public static HttpResponse ok() {
+                        return new HttpResponse();
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path firstProject = tempDir.resolve("project-python-ide-shared-cache-a");
+        Path secondProject = tempDir.resolve("project-python-ide-shared-cache-b");
+        Files.createDirectories(firstProject);
+        Files.createDirectories(secondProject);
+        Files.writeString(firstProject.resolve("pyproject.toml"), pyproject(repository));
+        Files.writeString(secondProject.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain firstCommand = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        firstCommand.projectDir = firstProject;
+        assertEquals(InstallExitCode.SUCCESS.code(), firstCommand.call());
+
+        PyronautInstallMain secondCommand = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        secondCommand.projectDir = secondProject;
+        assertEquals(InstallExitCode.SUCCESS.code(), secondCommand.call());
+
+        Path firstState = firstProject.resolve("__pyronaut__/ide-stubs").resolve(PythonIdeStubGenerator.STATE_FILE_NAME);
+        Path secondState = secondProject.resolve("__pyronaut__/ide-stubs").resolve(PythonIdeStubGenerator.STATE_FILE_NAME);
+        assertEquals(Files.readString(firstState), Files.readString(secondState));
+        assertTrue(Files.exists(secondProject.resolve("__pyronaut__/ide-stubs/micronaut/http/__init__.pyi")));
+        try (Stream<Path> cacheFiles = Files.walk(tempDir.resolve("shared-ide-stubs-cache"))) {
+            assertTrue(cacheFiles.anyMatch(path -> path.getFileName().toString().equals(".generated")));
+        }
+    }
+
+    @Test
+    void installGeneratesPyronautTestStubsFromPackagedPythonVfs() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-pyronaut-test-vfs");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifactWithEntries(repository, "io.micronaut.pyronaut", "micronaut-pyronaut-pytest", "1.0.0", Map.of(
+            "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/__init__.py", "",
+            "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/__init__.py", "from .test import MicronautTest, micronaut_test_fixture\n",
+            "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py", "class MicronautTest:\n    pass\n"
+        ));
+
+        Path project = tempDir.resolve("project-python-ide-pyronaut-test-vfs");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0"]
+            build = ["com.example:build-dep:1.0.0"]
+            test = ["io.micronaut.pyronaut:micronaut-pyronaut-pytest:1.0.0"]
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String pyronautTestStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("pyronaut/test/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(pyronautTestStub.contains("class MicronautTest:"));
+        assertTrue(pyronautTestStub.contains("from micronaut.context import ApplicationContext"));
+        assertTrue(pyronautTestStub.contains("class ApplicationContextWrapper(ApplicationContext):"));
+        assertTrue(pyronautTestStub.contains("def micronaut_test_fixture(request: Any, micronaut_test: MicronautTest | None = ...) -> ApplicationContextWrapper: ..."));
+    }
+
+    @Test
+    void vscodeSettingsIncludePythonInterpreterAndSitePackagesWhenKnown() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-vscode-python");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpResponse", """
+                package io.micronaut.http;
+
+                public class HttpResponse {
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+        Path pythonExecutable = tempDir.resolve("venv/bin/python");
+        Path sitePackages = tempDir.resolve("venv/lib/python/site-packages");
+        Files.createDirectories(pythonExecutable.getParent());
+        Files.createDirectories(sitePackages);
+        Files.writeString(pythonExecutable, "#!/usr/bin/env python\n", StandardCharsets.UTF_8);
+        String previousExecutable = System.getProperty("pyronaut.python.executable");
+        String previousSitePackages = System.getProperty("pyronaut.python.site-packages");
+        try {
+            System.setProperty("pyronaut.python.executable", pythonExecutable.toString());
+            System.setProperty("pyronaut.python.site-packages", sitePackages.toString());
+
+            Path project = tempDir.resolve("project-python-ide-vscode-python");
+            Files.createDirectories(project);
+            Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+            PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+            command.projectDir = project;
+
+            assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+            String settings = Files.readString(project.resolve(".vscode/settings.json"), StandardCharsets.UTF_8);
+            assertTrue(settings.contains("\"python.defaultInterpreterPath\":\"" + pythonExecutable.toAbsolutePath().normalize()));
+            assertTrue(settings.contains(sitePackages.toAbsolutePath().normalize().toString()));
+        } finally {
+            restoreSystemProperty("pyronaut.python.executable", previousExecutable);
+            restoreSystemProperty("pyronaut.python.site-packages", previousSitePackages);
+        }
+    }
+
+    @Test
+    void charSequenceEnumsRetainEnumTypeInMethodParameters() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-charsequence-enum");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.HttpStatus", """
+                package io.micronaut.http;
+
+                public enum HttpStatus implements CharSequence {
+                    OK,
+                    NOT_FOUND;
+
+                    @Override
+                    public int length() {
+                        return name().length();
+                    }
+
+                    @Override
+                    public char charAt(int index) {
+                        return name().charAt(index);
+                    }
+
+                    @Override
+                    public CharSequence subSequence(int start, int end) {
+                        return name().subSequence(start, end);
+                    }
+                }
+                """,
+            "io.micronaut.http.HttpResponse", """
+                package io.micronaut.http;
+
+                public class HttpResponse {
+                    public static HttpResponse status(HttpStatus status) {
+                        return new HttpResponse();
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-charsequence-enum");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String httpStub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(httpStub.contains("class HttpStatus(Enum):"));
+        assertTrue(httpStub.contains("def status(status: HttpStatus) -> HttpResponse: ..."));
+        assertFalse(httpStub.contains("def status(status: str) -> HttpResponse: ..."));
     }
 
     @Test

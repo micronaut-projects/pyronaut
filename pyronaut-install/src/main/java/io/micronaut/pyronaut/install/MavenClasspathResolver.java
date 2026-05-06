@@ -674,6 +674,9 @@ final class MavenClasspathResolver {
         Path binaryPath = artifact.getPath();
         Path sourcePath = resolveSourceArtifact(artifact, repositories, session);
         return new ResolvedEditorArtifact(
+            artifact.getGroupId(),
+            artifact.getArtifactId(),
+            artifact.getVersion(),
             binaryPath == null ? null : binaryPath.toAbsolutePath(),
             sourcePath == null ? null : sourcePath.toAbsolutePath()
         );
@@ -705,6 +708,6 @@ final class MavenClasspathResolver {
     record ResolvedScopeDetails(List<Path> classpath, DependencyNode root, List<ResolvedEditorArtifact> editorArtifacts) {
     }
 
-    record ResolvedEditorArtifact(Path binaryJar, Path sourceJar) {
+    record ResolvedEditorArtifact(String groupId, String artifactId, String version, Path binaryJar, Path sourceJar) {
     }
 }

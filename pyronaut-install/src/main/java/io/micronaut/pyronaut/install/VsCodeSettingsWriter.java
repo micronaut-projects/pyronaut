@@ -37,6 +37,11 @@ final class VsCodeSettingsWriter implements EditorSettingsWriter {
     private static final String PYRIGHT_CONFIG_FILE = "pyrightconfig.json";
     private static final String TOOL_PYRIGHT_MARKER = "[tool.pyright]";
     private static final String EXTRA_PATHS_KEY = "python.analysis.extraPaths";
+    private static final String DEFAULT_INTERPRETER_PATH_KEY = "python.defaultInterpreterPath";
+    private static final String PYTHON_EXECUTABLE_ENV = "PYRONAUT_PYTHON_EXECUTABLE";
+    private static final String PYTHON_SITE_PACKAGES_ENV = "PYRONAUT_PYTHON_SITE_PACKAGES";
+    private static final String PYTHON_EXECUTABLE_PROPERTY = "pyronaut.python.executable";
+    private static final String PYTHON_SITE_PACKAGES_PROPERTY = "pyronaut.python.site-packages";
 
     private final JsonMapper jsonMapper;
 
@@ -89,15 +94,56 @@ final class VsCodeSettingsWriter implements EditorSettingsWriter {
             ));
             return new SettingsResult(SettingsStatus.UNCHANGED, warnings);
         }
+        boolean updated = false;
         if (!extraPaths.contains(stubPath)) {
             extraPaths.add(stubPath);
-        } else if (Files.exists(settingsFile)) {
+            updated = true;
+        }
+        String sitePackages = configuredPath(PYTHON_SITE_PACKAGES_PROPERTY, PYTHON_SITE_PACKAGES_ENV);
+        if (sitePackages != null && Files.isDirectory(Path.of(sitePackages)) && !extraPaths.contains(sitePackages)) {
+            extraPaths.add(sitePackages);
+            updated = true;
+        }
+        updated |= ensureDefaultInterpreter(settings, warnings);
+        if (!updated && Files.exists(settingsFile)) {
             return new SettingsResult(SettingsStatus.UNCHANGED, warnings);
         }
         settings.put(EXTRA_PATHS_KEY, extraPaths);
         Files.createDirectories(settingsFile.getParent());
         Files.writeString(settingsFile, jsonMapper.writeValueAsString(settings), StandardCharsets.UTF_8);
         return new SettingsResult(SettingsStatus.UPDATED, warnings);
+    }
+
+    private static boolean ensureDefaultInterpreter(Map<String, Object> settings,
+                                                    List<PythonIdeStubGenerator.WarningDetail> warnings) {
+        String pythonExecutable = configuredPath(PYTHON_EXECUTABLE_PROPERTY, PYTHON_EXECUTABLE_ENV);
+        if (pythonExecutable == null || !Files.isRegularFile(Path.of(pythonExecutable))) {
+            return false;
+        }
+        Object current = settings.get(DEFAULT_INTERPRETER_PATH_KEY);
+        if (current instanceof String text && !text.isBlank()) {
+            return false;
+        }
+        if (current != null) {
+            warnings.add(PythonIdeStubGenerator.WarningDetail.of(
+                "Skipped VS Code Python interpreter update because python.defaultInterpreterPath is not a string."
+            ));
+            return false;
+        }
+        settings.put(DEFAULT_INTERPRETER_PATH_KEY, pythonExecutable);
+        return true;
+    }
+
+    private static String configuredPath(String propertyName, String envName) {
+        String propertyValue = System.getProperty(propertyName);
+        if (propertyValue != null && !propertyValue.isBlank()) {
+            return Path.of(propertyValue).toAbsolutePath().normalize().toString();
+        }
+        String envValue = System.getenv(envName);
+        if (envValue != null && !envValue.isBlank()) {
+            return Path.of(envValue).toAbsolutePath().normalize().toString();
+        }
+        return null;
     }
 
     @SuppressWarnings("unchecked")

@@ -139,6 +139,10 @@ fun versionFromCatalog(key: String): String {
 fun defaultFixtureEnv(): Map<String, String> {
     val environment = linkedMapOf<String, String>()
     environment["VIRTUAL_ENV"] = venvDir.asFile.absolutePath
+    environment["PYRONAUT_PYTHON_EXECUTABLE"] = venvPython.asFile.absolutePath
+    resolveFixtureSitePackagesDir()?.let {
+        environment["PYRONAUT_PYTHON_SITE_PACKAGES"] = it.absolutePath
+    }
     val pyEnvVersion = System.getenv("PYENV_VERSION").orEmpty()
     if (pyEnvVersion.isNotBlank()) {
         environment["PYENV_VERSION"] = pyEnvVersion
@@ -425,21 +429,26 @@ fun markerContains(file: java.io.File, expected: String): Boolean {
 }
 
 fun pytestInstalled(): Boolean {
+    val sitePackagesDir = resolveFixtureSitePackagesDir() ?: return false
+    val pytestPackageDir = sitePackagesDir.resolve("pytest")
+    val privatePytestPackageDir = sitePackagesDir.resolve("_pytest")
+    return pytestPackageDir.isDirectory && privatePytestPackageDir.isDirectory
+}
+
+fun resolveFixtureSitePackagesDir(): java.io.File? {
     val libDir = venvDir.dir("lib").asFile
     if (!libDir.isDirectory) {
-        return false
+        return null
     }
     val pythonLibDir = libDir.listFiles { file -> file.isDirectory && file.name.startsWith("python") }
         ?.sortedBy { it.name }
         ?.lastOrNull()
-        ?: return false
+        ?: return null
     val sitePackagesDir = pythonLibDir.resolve("site-packages")
     if (!sitePackagesDir.isDirectory) {
-        return false
+        return null
     }
-    val pytestPackageDir = sitePackagesDir.resolve("pytest")
-    val privatePytestPackageDir = sitePackagesDir.resolve("_pytest")
-    return pytestPackageDir.isDirectory && privatePytestPackageDir.isDirectory
+    return sitePackagesDir
 }
 
 fun installAppOutputsPresent(): Boolean {
@@ -699,6 +708,7 @@ val verifyEditorSupport by tasks.registering {
         fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi"),
         fixtureIdeStubsDir.file("micronaut/http/__init__.pyi"),
         fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi"),
+        fixtureIdeStubsDir.file("pyronaut/test/__init__.pyi"),
         fixtureAppDir.file(".vscode/settings.json"),
     )
     doLast {
@@ -711,6 +721,11 @@ val verifyEditorSupport by tasks.registering {
             fixtureAppDir.file(".vscode/settings.json").asFile,
             "__pyronaut__/ide-stubs",
             "VS Code settings"
+        )
+        requireFixtureFileContains(
+            fixtureAppDir.file(".vscode/settings.json").asFile,
+            "site-packages",
+            "VS Code pytest resolution"
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi").asFile,
@@ -728,6 +743,11 @@ val verifyEditorSupport by tasks.registering {
             "Micronaut HTTP stubs"
         )
         requireFixtureFileContains(
+            fixtureIdeStubsDir.file("micronaut/http/__init__.pyi").asFile,
+            "def status(status: HttpStatus)",
+            "Micronaut HTTP response status stubs"
+        )
+        requireFixtureFileContains(
             fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
             "def Inject() -> Callable[[_T], _T]: ...",
             "Jakarta inject stubs"
@@ -736,6 +756,11 @@ val verifyEditorSupport by tasks.registering {
             fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
             "Identifies injectable constructors, methods, and fields.",
             "Jakarta annotation stub docstrings"
+        )
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("pyronaut/test/__init__.pyi").asFile,
+            "def micronaut_test_fixture(request: Any, micronaut_test: MicronautTest | None = ...)",
+            "Pyronaut pytest support stubs"
         )
     }
 }

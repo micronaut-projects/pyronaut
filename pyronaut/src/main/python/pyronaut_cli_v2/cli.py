@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import sysconfig
 import socket
 import os
 import platform
@@ -1851,6 +1852,10 @@ def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | No
         raise RuntimeError("Unable to locate or provision compatible GraalVM JDK (requires JDK 25+)")
 
     env["JAVA_HOME"] = java_home
+    env.setdefault("PYRONAUT_PYTHON_EXECUTABLE", sys.executable)
+    site_packages = sysconfig.get_paths().get("purelib")
+    if site_packages:
+        env.setdefault("PYRONAUT_PYTHON_SITE_PACKAGES", site_packages)
     java_bin = str(Path(java_home) / "bin")
     path_value = env.get("PATH", "")
     if path_value:

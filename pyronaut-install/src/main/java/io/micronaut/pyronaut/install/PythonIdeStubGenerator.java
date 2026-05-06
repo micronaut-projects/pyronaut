@@ -65,7 +65,10 @@ import java.util.zip.ZipException;
 final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
-    private static final String GENERATOR_VERSION = "4";
+    private static final String GENERATOR_VERSION = "6";
+    private static final String SHARED_CACHE_DIR_PROPERTY = "pyronaut.ide-stubs.cache-dir";
+    private static final String SHARED_CACHE_DIR_NAME = "ide-stubs";
+    private static final String VFS_PYTHON_SOURCE_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/src/";
 
     private static final List<PackageMapping> SUPPORTED_PACKAGE_MAPPINGS = List.of(
         new PackageMapping("io.micronaut", "micronaut"),
@@ -86,13 +89,23 @@ final class PythonIdeStubGenerator {
         List<Pattern> excludePatterns = configuredExcludePatterns(ideStubs.excludePatterns(), warnings);
         Path outputDir = resolveOutputDirectory(projectDir, ideStubs.destinationDir());
         List<ResolvedArtifact> jars = normalizedArtifacts(artifacts);
-        String state = hashClasspath(jars, outputDir, packageMappings, excludePatterns);
+        String state = hashClasspath(jars, packageMappings, excludePatterns);
         Path stateFile = outputDir.resolve(STATE_FILE_NAME);
         if (Files.exists(stateFile) && Files.exists(outputDir.resolve(".generated")) && Files.readString(stateFile, StandardCharsets.UTF_8).trim().equals(state)) {
             return new WriteResult(Status.CACHED, 0, 0, List.of());
         }
 
+        Path sharedOutputDir = sharedCacheDirectory(state);
+        Path sharedStateFile = sharedOutputDir.resolve(STATE_FILE_NAME);
+        if (Files.exists(sharedStateFile)
+            && Files.exists(sharedOutputDir.resolve(".generated"))
+            && Files.readString(sharedStateFile, StandardCharsets.UTF_8).trim().equals(state)) {
+            replaceDirectory(outputDir, sharedOutputDir);
+            return new WriteResult(Status.CACHED, 0, 0, List.of());
+        }
+
         Map<String, Map<String, TypeDescriptor>> packages = collectPackages(jars, packageMappings, excludePatterns, warnings);
+        collectPythonVfsStubs(jars, packages, warnings);
         if (packages.isEmpty()) {
             deleteDirectoryIfExists(outputDir);
             Files.createDirectories(outputDir);
@@ -100,18 +113,19 @@ final class PythonIdeStubGenerator {
             return new WriteResult(Status.NONE, 0, 0, warnings);
         }
 
-        deleteDirectoryIfExists(outputDir);
-        Files.createDirectories(outputDir);
+        deleteDirectoryIfExists(sharedOutputDir);
+        Files.createDirectories(sharedOutputDir);
         int symbolCount = 0;
         Set<Path> packageFiles = new TreeSet<>();
         for (Map.Entry<String, Map<String, TypeDescriptor>> entry : packages.entrySet()) {
-            Path packageFile = writePackage(outputDir, entry.getKey(), entry.getValue());
+            Path packageFile = writePackage(sharedOutputDir, entry.getKey(), entry.getValue());
             packageFiles.add(packageFile);
             symbolCount += entry.getValue().size();
         }
-        ensureParentPackages(outputDir, packageFiles);
-        Files.writeString(outputDir.resolve(".generated"), "generated\n", StandardCharsets.UTF_8);
-        Files.writeString(stateFile, state, StandardCharsets.UTF_8);
+        ensureParentPackages(sharedOutputDir, packageFiles);
+        Files.writeString(sharedOutputDir.resolve(".generated"), "generated\n", StandardCharsets.UTF_8);
+        Files.writeString(sharedStateFile, state, StandardCharsets.UTF_8);
+        replaceDirectory(outputDir, sharedOutputDir);
         return new WriteResult(Status.GENERATED, packages.size(), symbolCount, warnings);
     }
 
@@ -132,7 +146,13 @@ final class PythonIdeStubGenerator {
             if (sourcePath != null && !Files.isRegularFile(sourcePath)) {
                 sourcePath = null;
             }
-            jars.putIfAbsent(binaryPath, new ResolvedArtifact(binaryPath, sourcePath));
+            jars.putIfAbsent(binaryPath, new ResolvedArtifact(
+                binaryPath,
+                sourcePath,
+                blankToNull(entry.groupId()),
+                blankToNull(entry.artifactId()),
+                blankToNull(entry.version())
+            ));
         }
         return jars.values().stream()
             .distinct()
@@ -140,20 +160,30 @@ final class PythonIdeStubGenerator {
             .toList();
     }
 
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
     private static Path resolveOutputDirectory(Path projectDir, String destinationDir) {
         Path configured = Path.of(destinationDir);
         return configured.isAbsolute() ? configured.normalize() : projectDir.resolve(configured).normalize();
     }
 
+    private static Path sharedCacheDirectory(String state) {
+        String configured = System.getProperty(SHARED_CACHE_DIR_PROPERTY);
+        Path root = configured == null || configured.isBlank()
+            ? Path.of(System.getProperty("user.home"), ".pyronaut", SHARED_CACHE_DIR_NAME)
+            : Path.of(configured);
+        return root.resolve(state.substring(0, 2)).resolve(state).normalize();
+    }
+
     private static String hashClasspath(List<ResolvedArtifact> jars,
-                                        Path outputDir,
                                         List<PackageMapping> packageMappings,
                                         List<Pattern> excludePatterns) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(("generator-version=" + GENERATOR_VERSION + "\n").getBytes(StandardCharsets.UTF_8));
             digest.update("scopes=runtime,test\n".getBytes(StandardCharsets.UTF_8));
-            digest.update(("output-dir=" + outputDir.toAbsolutePath() + "\n").getBytes(StandardCharsets.UTF_8));
             for (PackageMapping mapping : packageMappings) {
                 digest.update(("package-mapping=" + mapping.javaPrefix() + "->" + mapping.pythonPrefix() + "\n")
                     .getBytes(StandardCharsets.UTF_8));
@@ -162,6 +192,15 @@ final class PythonIdeStubGenerator {
                 digest.update(("exclude-pattern=" + excludePattern.pattern() + "\n").getBytes(StandardCharsets.UTF_8));
             }
             for (ResolvedArtifact jar : jars) {
+                if (jar.groupId() != null && jar.artifactId() != null && jar.version() != null) {
+                    digest.update(("artifact=" + jar.groupId() + ":" + jar.artifactId() + ":" + jar.version() + "\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                    digest.update(("artifact-sha256=" + fileHash(jar.binaryJar()) + "\n").getBytes(StandardCharsets.UTF_8));
+                    if (jar.sourceJar() != null && Files.exists(jar.sourceJar())) {
+                        digest.update(("source-sha256=" + fileHash(jar.sourceJar()) + "\n").getBytes(StandardCharsets.UTF_8));
+                    }
+                    continue;
+                }
                 digest.update(jar.binaryJar().toAbsolutePath().toString().getBytes(StandardCharsets.UTF_8));
                 digest.update((byte) '\n');
                 digest.update(Long.toString(Files.size(jar.binaryJar())).getBytes(StandardCharsets.UTF_8));
@@ -181,6 +220,18 @@ final class PythonIdeStubGenerator {
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("SHA-256 algorithm is unavailable", e);
         }
+    }
+
+    private static String fileHash(Path file) throws IOException, NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream inputStream = Files.newInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = inputStream.read(buffer)) > -1) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private static Map<String, Map<String, TypeDescriptor>> collectPackages(List<ResolvedArtifact> jars,
@@ -273,6 +324,64 @@ final class PythonIdeStubGenerator {
             }
         }
         return packages;
+    }
+
+    private static void collectPythonVfsStubs(List<ResolvedArtifact> jars,
+                                              Map<String, Map<String, TypeDescriptor>> packages,
+                                              List<WarningDetail> warnings) throws IOException {
+        boolean hasPyronautTestPackage = false;
+        for (ResolvedArtifact artifact : jars) {
+            try (ZipFile zipFile = new ZipFile(artifact.binaryJar().toFile())) {
+                hasPyronautTestPackage |= zipFile.getEntry(VFS_PYTHON_SOURCE_PREFIX + "pyronaut/test/__init__.py") != null
+                    && zipFile.getEntry(VFS_PYTHON_SOURCE_PREFIX + "pyronaut/test/test.py") != null;
+            } catch (ZipException ignored) {
+                // collectPackages already reports invalid archive inputs.
+            }
+        }
+        if (!hasPyronautTestPackage) {
+            return;
+        }
+        packages.computeIfAbsent("pyronaut.test", ignored -> new TreeMap<>())
+            .putIfAbsent(
+                "MicronautTest",
+                new TypeDescriptor(
+                    "pyronaut.test",
+                    "MicronautTest",
+                    renderPyronautTestStub(),
+                    Set.of(new ImportRef("micronaut.context", "ApplicationContext")),
+                    Set.of(),
+                    false,
+                    false
+                )
+            );
+    }
+
+    private static String renderPyronautTestStub() {
+        return """
+            class MicronautTest:
+                environments: list[str]
+                packages: list[str]
+                transactional: bool
+                rollback: bool
+                rebuild_context: bool
+                start_application: bool
+                resolve_parameters: bool
+                context_builder: Any
+                properties: dict[str, Any]
+                def __init__(self, environments: list[str] = ..., packages: list[str] = ..., transactional: bool = ..., rollback: bool = ..., rebuild_context: bool = ..., start_application: bool = ..., resolve_parameters: bool = ..., context_builder: Any = ..., properties: dict[str, Any] = ...) -> None: ...
+
+            class ApplicationContextWrapper(ApplicationContext):
+                java_ctx: Any
+                def __init__(self, java_app_context: Any) -> None: ...
+                def __getitem__(self, key: Any) -> Any: ...
+                def __contains__(self, key: Any) -> bool: ...
+                def get(self, key: Any, default: Any = ...) -> Any: ...
+
+            def micronaut_test_fixture(request: Any, micronaut_test: MicronautTest | None = ...) -> ApplicationContextWrapper: ...
+            def create_plugin(*args: Any, **kwargs: Any) -> Any: ...
+            def run_pytest(*args: Any, **kwargs: Any) -> Any: ...
+            __all__: list[str]
+            """;
     }
 
     private static List<URL> optionalSupportUrls() {
@@ -1207,21 +1316,11 @@ final class PythonIdeStubGenerator {
         if (cls == float.class || cls == double.class || cls == Float.class || cls == Double.class) {
             return new MappedType("float", Set.of());
         }
-        if (cls == String.class || CharSequence.class.isAssignableFrom(cls) || cls == char.class || cls == Character.class) {
+        if (cls == String.class || cls == char.class || cls == Character.class) {
             return new MappedType("str", Set.of());
         }
         if (cls.isAnnotation()) {
             return new MappedType("Callable[..., Any]", Set.of());
-        }
-        if (cls == Class.class) {
-            return new MappedType("type[Any]", Set.of());
-        }
-        if (cls.isArray()) {
-            MappedType componentType = mapClass(cls.getComponentType(), currentModule, symbolRegistry);
-            return new MappedType("list[" + componentType.rendered() + "]", componentType.imports());
-        }
-        if (cls == Object.class) {
-            return MappedType.any();
         }
         SymbolRef symbolRef = symbolRegistry.get(cls.getName());
         if (symbolRef != null) {
@@ -1232,6 +1331,19 @@ final class PythonIdeStubGenerator {
                 symbolRef.symbolName(),
                 Set.of(new ImportRef(symbolRef.moduleName(), symbolRef.symbolName()))
             );
+        }
+        if (CharSequence.class.isAssignableFrom(cls)) {
+            return new MappedType("str", Set.of());
+        }
+        if (cls == Class.class) {
+            return new MappedType("type[Any]", Set.of());
+        }
+        if (cls.isArray()) {
+            MappedType componentType = mapClass(cls.getComponentType(), currentModule, symbolRegistry);
+            return new MappedType("list[" + componentType.rendered() + "]", componentType.imports());
+        }
+        if (cls == Object.class) {
+            return MappedType.any();
         }
         return MappedType.any();
     }
@@ -1452,6 +1564,26 @@ final class PythonIdeStubGenerator {
         }
     }
 
+    private static void replaceDirectory(Path target, Path source) throws IOException {
+        deleteDirectoryIfExists(target);
+        Files.createDirectories(target);
+        try (var walk = Files.walk(source)) {
+            for (Path sourcePath : walk.sorted().toList()) {
+                Path relative = source.relativize(sourcePath);
+                if (relative.toString().isEmpty()) {
+                    continue;
+                }
+                Path targetPath = target.resolve(relative);
+                if (Files.isDirectory(sourcePath)) {
+                    Files.createDirectories(targetPath);
+                } else {
+                    Files.createDirectories(targetPath.getParent());
+                    Files.copy(sourcePath, targetPath);
+                }
+            }
+        }
+    }
+
     enum Status {
         GENERATED,
         CACHED,
@@ -1561,6 +1693,6 @@ final class PythonIdeStubGenerator {
         builder.append(indent).append("    ...\n");
     }
 
-    private record ResolvedArtifact(Path binaryJar, Path sourceJar) {
+    private record ResolvedArtifact(Path binaryJar, Path sourceJar, String groupId, String artifactId, String version) {
     }
 }

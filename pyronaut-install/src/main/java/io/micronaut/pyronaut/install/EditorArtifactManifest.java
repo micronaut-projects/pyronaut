@@ -102,6 +102,9 @@ final class EditorArtifactManifest {
             }
             entries.add(new Entry(
                 scope.cliValue(),
+                null,
+                null,
+                null,
                 binaryJar.toString(),
                 probeSourceJar(binaryJar)
             ));
@@ -121,6 +124,9 @@ final class EditorArtifactManifest {
             Path sourcePath = artifact.sourceJar();
             entries.add(new Entry(
                 scope.cliValue(),
+                artifact.groupId(),
+                artifact.artifactId(),
+                artifact.version(),
                 artifact.binaryJar().toAbsolutePath().normalize().toString(),
                 sourcePath != null && Files.isRegularFile(sourcePath)
                     ? sourcePath.toAbsolutePath().normalize().toString()
@@ -142,6 +148,15 @@ final class EditorArtifactManifest {
     private static Map<String, Object> toMap(Entry entry) {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("scope", entry.scope());
+        if (entry.groupId() != null && !entry.groupId().isBlank()) {
+            values.put("groupId", entry.groupId());
+        }
+        if (entry.artifactId() != null && !entry.artifactId().isBlank()) {
+            values.put("artifactId", entry.artifactId());
+        }
+        if (entry.version() != null && !entry.version().isBlank()) {
+            values.put("version", entry.version());
+        }
         values.put("binaryJar", entry.binaryJar());
         if (entry.sourceJar() != null && !entry.sourceJar().isBlank()) {
             values.put("sourceJar", entry.sourceJar());
@@ -158,12 +173,22 @@ final class EditorArtifactManifest {
         if (!(scope instanceof String scopeValue) || !(binaryJar instanceof String binaryJarValue)) {
             return null;
         }
+        Object groupId = map.get("groupId");
+        Object artifactId = map.get("artifactId");
+        Object version = map.get("version");
         Object sourceJar = map.get("sourceJar");
         String sourceJarValue = sourceJar instanceof String text && !text.isBlank() ? text : null;
-        return new Entry(scopeValue, binaryJarValue, sourceJarValue);
+        return new Entry(
+            scopeValue,
+            groupId instanceof String text && !text.isBlank() ? text : null,
+            artifactId instanceof String text && !text.isBlank() ? text : null,
+            version instanceof String text && !text.isBlank() ? text : null,
+            binaryJarValue,
+            sourceJarValue
+        );
     }
 
-    record Entry(String scope, String binaryJar, String sourceJar) {
+    record Entry(String scope, String groupId, String artifactId, String version, String binaryJar, String sourceJar) {
         Path binaryPath() {
             return Path.of(binaryJar).toAbsolutePath().normalize();
         }

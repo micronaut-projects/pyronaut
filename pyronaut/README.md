@@ -78,6 +78,31 @@ test-resources = "tests-config"
 
 These settings are honored by install/process/run/test, lifecycle validation defaults, auto-restart file watching, and build staging.
 
+## IDE stub configuration
+
+`pyronaut install` generates Python IDE stubs for configured Micronaut and Jakarta Java APIs and writes them to `__pyronaut__/ide-stubs` by default. Generated stubs are cached under `~/.pyronaut/ide-stubs` and reused across projects when the resolved artifact set and stub configuration are unchanged.
+
+Defaults:
+
+- `enabled = true`
+- `ide = "vscode"`
+- `packages = ["io.micronaut", "jakarta"]`
+- `exclude-patterns = ["*ModuleInfo"]`
+- `destination-dir = "__pyronaut__/ide-stubs"`
+
+Example:
+
+```toml
+[tool.pyronaut.ide-stubs]
+enabled = true
+ide = "vscode" # vscode|pycharm
+packages = ["io.micronaut.http", "jakarta.inject"]
+exclude-patterns = ["*ModuleInfo", "io.micronaut.http.internal.*"]
+destination-dir = "__pyronaut__/ide-stubs"
+```
+
+For VS Code, Pyronaut updates `.vscode/settings.json` unless `pyrightconfig.json` or `[tool.pyright]` is already present. The settings include the generated stub directory and, when the CLI launches `pyronaut install`, the active Python interpreter and site-packages path so imports such as `pytest` and `pyronaut.test` resolve in Pylance.
+
 ## GraalVM toolchain configuration
 
 The orchestrator can resolve a GraalVM JDK from local toolchains or download one on demand based on `pyproject.toml`:
