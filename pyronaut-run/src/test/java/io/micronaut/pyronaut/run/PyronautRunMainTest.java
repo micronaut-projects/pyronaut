@@ -197,6 +197,8 @@ class PyronautRunMainTest {
         Path classes = project.resolve("__pyronaut__/classes");
         Files.createDirectories(classes);
         Files.createDirectories(project.resolve("app-config"));
+        Files.createDirectories(project.resolve("views"));
+        Files.createDirectories(project.resolve("assets"));
         Files.writeString(
             project.resolve("pyproject.toml"),
             """
@@ -214,6 +216,7 @@ class PyronautRunMainTest {
 
                 [tool.pyronaut.sources]
                 resources = "app-config"
+                additional-resources = ["views", "assets"]
                 """,
             StandardCharsets.UTF_8
         );
@@ -236,6 +239,14 @@ class PyronautRunMainTest {
         assertTrue(
             java.util.Arrays.stream(applicationClassLoader.get().getURLs())
                 .anyMatch(url -> url.toString().contains("app-config"))
+        );
+        assertTrue(
+            java.util.Arrays.stream(applicationClassLoader.get().getURLs())
+                .anyMatch(url -> url.toString().contains("views"))
+        );
+        assertTrue(
+            java.util.Arrays.stream(applicationClassLoader.get().getURLs())
+                .anyMatch(url -> url.toString().contains("assets"))
         );
     }
 

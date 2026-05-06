@@ -21,6 +21,8 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"ide\""));
         assertTrue(schema.contains("\"python-test\""));
         assertTrue(schema.contains("\"test-resources\""));
+        assertTrue(schema.contains("\"additional-resources\""));
+        assertTrue(schema.contains("\"additional-test-resources\""));
         assertTrue(schema.contains("\"enum\": [\"vscode\", \"pycharm\"]"));
         assertTrue(schema.contains("\"image-name\""));
         assertTrue(schema.contains("\"destination-dir\""));
@@ -44,6 +46,8 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"testResources\""));
         assertTrue(schema.contains("\"ideStubs\""));
         assertTrue(schema.contains("\"pythonTest\""));
+        assertTrue(schema.contains("\"additionalResources\""));
+        assertTrue(schema.contains("\"additionalTestResources\""));
         assertTrue(schema.contains("\"failOnNotPresent\""));
         assertTrue(schema.contains("\"imageName\""));
         assertTrue(schema.contains("\"destinationDir\""));

@@ -191,6 +191,20 @@ public final class PyprojectConfigSpec {
         List.of(),
         List.of("tool.pyronaut.sources.testResources")
     );
+    public static final FieldSpec PYRONAUT_SOURCES_ADDITIONAL_RESOURCES = stringArray(
+        "tool.pyronaut.sources.additional-resources",
+        "Additional application resources directories included for run and test scopes.",
+        List.of(),
+        List.of(),
+        List.of("tool.pyronaut.sources.additionalResources")
+    );
+    public static final FieldSpec PYRONAUT_SOURCES_ADDITIONAL_TEST_RESOURCES = stringArray(
+        "tool.pyronaut.sources.additional-test-resources",
+        "Additional test resources directories included for test scope.",
+        List.of(),
+        List.of(),
+        List.of("tool.pyronaut.sources.additionalTestResources")
+    );
     public static final FieldSpec PYRONAUT_TOOLCHAIN_DISTRIBUTION = enumString(
         "tool.pyronaut.toolchain.distribution",
         "Desired GraalVM distribution/channel.",
@@ -684,6 +698,8 @@ public final class PyprojectConfigSpec {
         PYRONAUT_SOURCES_JAVA_TEST,
         PYRONAUT_SOURCES_RESOURCES,
         PYRONAUT_SOURCES_TEST_RESOURCES,
+        PYRONAUT_SOURCES_ADDITIONAL_RESOURCES,
+        PYRONAUT_SOURCES_ADDITIONAL_TEST_RESOURCES,
         PYRONAUT_TOOLCHAIN_DISTRIBUTION,
         PYRONAUT_TOOLCHAIN_VERSION,
         PYRONAUT_TOOLCHAIN_JAVA_VERSION,

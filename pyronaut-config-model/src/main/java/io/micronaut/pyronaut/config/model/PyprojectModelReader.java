@@ -130,7 +130,9 @@ public final class PyprojectModelReader {
             readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_JAVA),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_JAVA_TEST),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_RESOURCES),
-            readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_TEST_RESOURCES)
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_TEST_RESOURCES),
+            readStringList(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_ADDITIONAL_RESOURCES),
+            readStringList(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_ADDITIONAL_TEST_RESOURCES)
         );
     }
 
@@ -323,11 +325,21 @@ public final class PyprojectModelReader {
     }
 
     private static List<String> defaultMainValidationResourceDirs(PyprojectModel.Sources sources) {
-        return List.of(sources.resources(), "src/main/resources");
+        List<String> resourcesDirs = new ArrayList<>(2 + sources.additionalResources().size());
+        resourcesDirs.add(sources.resources());
+        resourcesDirs.addAll(sources.additionalResources());
+        resourcesDirs.add("src/main/resources");
+        return List.copyOf(resourcesDirs);
     }
 
     private static List<String> defaultTestValidationResourceDirs(PyprojectModel.Sources sources) {
-        return List.of(sources.resources(), "src/main/resources", sources.testResources());
+        List<String> resourcesDirs = new ArrayList<>(3 + sources.additionalResources().size() + sources.additionalTestResources().size());
+        resourcesDirs.add(sources.resources());
+        resourcesDirs.addAll(sources.additionalResources());
+        resourcesDirs.add("src/main/resources");
+        resourcesDirs.add(sources.testResources());
+        resourcesDirs.addAll(sources.additionalTestResources());
+        return List.copyOf(resourcesDirs);
     }
 
     private static PyprojectModel.ValidationScenario resolveValidationScenario(

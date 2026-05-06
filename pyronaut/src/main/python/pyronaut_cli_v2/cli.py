@@ -123,6 +123,8 @@ class _ProjectLayout(NamedTuple):
     java_test_dir: str = _DEFAULT_JAVA_TEST_DIR
     resources_dir: str = _DEFAULT_RESOURCES_DIR
     test_resources_dir: str = _DEFAULT_TEST_RESOURCES_DIR
+    additional_resources_dirs: tuple[str, ...] = ()
+    additional_test_resources_dirs: tuple[str, ...] = ()
 
 
 def main() -> None:
@@ -500,9 +502,17 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
         test_resources_dir = _resolve_layout_dir(project_dir, layout.test_resources_dir)
         if test_resources_dir.is_dir():
             entries.append(str(test_resources_dir))
+        for test_resource_dir in layout.additional_test_resources_dirs:
+            resolved_test_resource_dir = _resolve_layout_dir(project_dir, test_resource_dir)
+            if resolved_test_resource_dir.is_dir():
+                entries.append(str(resolved_test_resource_dir))
         resources_dir = _resolve_layout_dir(project_dir, layout.resources_dir)
         if resources_dir.is_dir():
             entries.append(str(resources_dir))
+        for resource_dir in layout.additional_resources_dirs:
+            resolved_resource_dir = _resolve_layout_dir(project_dir, resource_dir)
+            if resolved_resource_dir.is_dir():
+                entries.append(str(resolved_resource_dir))
 
     override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
     if override_jar:
@@ -767,6 +777,8 @@ def _prepare_build_wheel_staging(
         native=(mode == "native"),
     )
     _copy_layout_dir_if_exists(project_dir, layout.resources_dir, app_dir)
+    for resource_dir in layout.additional_resources_dirs:
+        _copy_layout_dir_if_exists(project_dir, resource_dir, app_dir)
 
     if mode == "native":
         binary_name = project_name
@@ -954,6 +966,8 @@ def _prepare_common_docker_app_context(project_dir: Path, context_dir: Path) -> 
     pyronaut_dir.mkdir(parents=True, exist_ok=True)
     layout = _read_pyproject_sources(project_dir)
     _copy_layout_dir_if_exists(project_dir, layout.resources_dir, app_dir)
+    for resource_dir in layout.additional_resources_dirs:
+        _copy_layout_dir_if_exists(project_dir, resource_dir, app_dir)
     if (project_dir / "pyproject.toml").exists():
         shutil.copy2(project_dir / "pyproject.toml", app_dir / "pyproject.toml")
     return app_dir
@@ -1344,6 +1358,24 @@ def _read_pyproject_string(table: dict[str, object], *keys: str) -> str | None:
     return None
 
 
+def _read_pyproject_string_list(table: dict[str, object], *keys: str) -> tuple[str, ...]:
+    for key in keys:
+        value = table.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list):
+            raise ValueError(f"Invalid value for [tool.pyronaut]: expected string array for {key}")
+        values: list[str] = []
+        for index, item in enumerate(value):
+            if not isinstance(item, str):
+                raise ValueError(f"Invalid value for [tool.pyronaut]: expected string for {key}[{index}]")
+            stripped = item.strip()
+            if stripped:
+                values.append(stripped)
+        return tuple(values)
+    return ()
+
+
 def _read_pyproject_sources(project_dir: Path) -> _ProjectLayout:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
@@ -1358,6 +1390,8 @@ def _read_pyproject_sources(project_dir: Path) -> _ProjectLayout:
         java_test_dir=_read_pyproject_string(sources, "java-test", "javaTest") or _DEFAULT_JAVA_TEST_DIR,
         resources_dir=_read_pyproject_string(sources, "resources") or _DEFAULT_RESOURCES_DIR,
         test_resources_dir=_read_pyproject_string(sources, "test-resources", "testResources") or _DEFAULT_TEST_RESOURCES_DIR,
+        additional_resources_dirs=_read_pyproject_string_list(sources, "additional-resources", "additionalResources"),
+        additional_test_resources_dirs=_read_pyproject_string_list(sources, "additional-test-resources", "additionalTestResources"),
     )
 
 
@@ -1788,6 +1822,8 @@ def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ..
         layout.java_test_dir,
         layout.resources_dir,
         layout.test_resources_dir,
+        *layout.additional_resources_dirs,
+        *layout.additional_test_resources_dirs,
     )
     ignored_dirs = {"__pyronaut__", ".pytest_cache", "build", ".gradle", "__pycache__", ".git"}
     entries: list[tuple[str, int, int]] = []

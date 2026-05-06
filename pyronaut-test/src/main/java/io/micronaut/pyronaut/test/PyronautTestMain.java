@@ -133,7 +133,15 @@ public final class PyronautTestMain implements Callable<Integer> {
             Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
             Path resolvedTestResourcesDir = root.resolve(model.pyronaut().sources().testResources()).normalize();
             resolvedTestsDir = resolveConfiguredPath(root, testsDir, DEFAULT_TESTS_DIR, model.pyronaut().sources().pythonTest(), "--tests-dir");
-            layout = resolveProjectLayout(root, classesDir, testClassesDir, resolvedConfigDir, resolvedTestResourcesDir);
+            layout = resolveProjectLayout(
+                root,
+                classesDir,
+                testClassesDir,
+                resolvedConfigDir,
+                resolvedTestResourcesDir,
+                resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()),
+                resolveConfiguredPaths(root, model.pyronaut().sources().additionalTestResources())
+            );
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -236,6 +244,16 @@ public final class PyronautTestMain implements Callable<Integer> {
     }
 
     static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path testClassesDir, Path configDir, Path testResourcesDir) throws IOException {
+        return resolveProjectLayout(root, classesDir, testClassesDir, configDir, testResourcesDir, List.of(), List.of());
+    }
+
+    static ResolvedProjectLayout resolveProjectLayout(Path root,
+                                                      Path classesDir,
+                                                      Path testClassesDir,
+                                                      Path configDir,
+                                                      Path testResourcesDir,
+                                                      List<Path> additionalResourceDirs,
+                                                      List<Path> additionalTestResourceDirs) throws IOException {
         Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
         Path resolvedTestClassesDir = root.resolve(testClassesDir).normalize();
         Path resolvedClassesDir = root.resolve(classesDir).normalize();
@@ -259,7 +277,9 @@ public final class PyronautTestMain implements Callable<Integer> {
             addPathIfDirectory(urls, resolvedClassesDir);
         }
         addPathIfDirectory(urls, configDir);
+        addResourceDirectories(urls, additionalResourceDirs);
         addPathIfDirectory(urls, testResourcesDir);
+        addResourceDirectories(urls, additionalTestResourceDirs);
         return new ResolvedProjectLayout(
             processedClassesRoot,
             new URLClassLoader(urls.toArray(URL[]::new), resolveApplicationClassLoader())
@@ -287,6 +307,16 @@ public final class PyronautTestMain implements Callable<Integer> {
             && commandSpec.commandLine().getParseResult().hasMatchedOption(optionName);
     }
 
+    private static List<Path> resolveConfiguredPaths(Path root, List<String> configuredDirs) {
+        if (configuredDirs == null || configuredDirs.isEmpty()) {
+            return List.of();
+        }
+        return configuredDirs.stream()
+            .map(Path::of)
+            .map(path -> path.isAbsolute() ? path.normalize() : root.resolve(path).normalize())
+            .toList();
+    }
+
     private static void addManifestEntries(LinkedHashSet<URL> urls, Path manifest) throws IOException {
         if (!Files.exists(manifest)) {
             return;
@@ -303,6 +333,12 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static void addPathIfDirectory(LinkedHashSet<URL> urls, Path path) throws IOException {
         if (Files.isDirectory(path)) {
             urls.add(path.toAbsolutePath().normalize().toUri().toURL());
+        }
+    }
+
+    private static void addResourceDirectories(LinkedHashSet<URL> urls, List<Path> resourceDirs) throws IOException {
+        for (Path resourceDir : resourceDirs) {
+            addPathIfDirectory(urls, resourceDir);
         }
     }
 

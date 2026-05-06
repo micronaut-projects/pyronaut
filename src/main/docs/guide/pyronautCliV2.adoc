@@ -45,6 +45,8 @@ Defaults:
 - `java-test = "test-java"`
 - `resources = "config"`
 - `test-resources = "tests-config"`
+- `additional-resources = []`
+- `additional-test-resources = []`
 
 Example:
 
@@ -57,7 +59,13 @@ java = "src/main/java"
 java-test = "src/test/java"
 resources = "app-config"
 test-resources = "tests-config"
+additional-resources = ["views", "assets"]
+additional-test-resources = ["tests-fixtures"]
 ----
+
+`additional-resources` is a list of extra application resource directories. These directories are included for `run` and `test` scopes, watched by auto-restart, included in lifecycle validation defaults, and staged into JVM wheels and Docker images.
+
+`additional-test-resources` is a list of extra test-only resource directories. These directories are included for `test` scope, watched by auto-restart, and included in test lifecycle validation defaults.
 
 These settings are used by `pyronaut process`, `pyronaut run`, `pyronaut test`, lifecycle validation, auto-restart file watching, and build staging for wheels and Docker images.
 
@@ -146,7 +154,7 @@ Behavior:
 - Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
 - Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
 - Uses runtime classpath manifests plus processed classes.
-- Includes the configured resources directory on the classpath if present.
+- Includes the configured resources directory and any `additional-resources` directories on the classpath when present.
 
 === `pyronaut test`
 
@@ -168,7 +176,7 @@ Behavior:
 - Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
 - Uses test classpath manifest and processed test classes when available.
 - Uses the configured Python test directory for pytest discovery unless `--tests-dir` overrides it.
-- Includes both the configured resources directory and configured test resources directory on the classpath when present.
+- Includes the configured resources directory, any `additional-resources` directories, the configured test resources directory, and any `additional-test-resources` directories on the classpath when present.
 - Writes reports under `__pyronaut__/reports/tests`.
 
 Report artifacts:
@@ -208,7 +216,7 @@ JVM Docker mode (`pyronaut build --docker`):
 
 - Runs `pyronaut-validate-config --scenario production` before install/process preflight by default.
 - Runs install/process preflight.
-- Stages a compact build context under a temporary `app/` root containing the configured resources directory, `pyproject.toml`, processed classes, the project-local Maven cache, and the delegated `pyronaut-run` distribution.
+- Stages a compact build context under a temporary `app/` root containing the configured resources directory, any `additional-resources` directories, `pyproject.toml`, processed classes, the project-local Maven cache, and the delegated `pyronaut-run` distribution.
 - Generates a default Dockerfile when `Dockerfile` is not present.
 - Builds an image tagged `<image-name>:<project-version>`.
 - Uses `tool.pyronaut.build.docker.jvm-base-image` when configured, otherwise defaults to `container-registry.oracle.com/graalvm/jdk:25`.

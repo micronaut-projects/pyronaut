@@ -104,13 +104,30 @@ public record PyprojectModel(Project project,
      * @param javaTest Java test sources directory
      * @param resources application resources directory
      * @param testResources test resources directory
+     * @param additionalResources additional application resources directories
+     * @param additionalTestResources additional test resources directories
      */
     public record Sources(String python,
                           String pythonTest,
                           String java,
                           String javaTest,
                           String resources,
-                          String testResources) {
+                          String testResources,
+                          List<String> additionalResources,
+                          List<String> additionalTestResources) {
+        public Sources {
+            additionalResources = additionalResources == null ? List.of() : List.copyOf(additionalResources);
+            additionalTestResources = additionalTestResources == null ? List.of() : List.copyOf(additionalTestResources);
+        }
+
+        public Sources(String python,
+                       String pythonTest,
+                       String java,
+                       String javaTest,
+                       String resources,
+                       String testResources) {
+            this(python, pythonTest, java, javaTest, resources, testResources, List.of(), List.of());
+        }
     }
 
     /**

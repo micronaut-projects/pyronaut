@@ -274,10 +274,14 @@ class PyronautTestMainTest {
         Path project = tempDir.resolve("project-layout");
         Path classesDir = project.resolve("__pyronaut__/classes");
         Path configDir = project.resolve("app-config");
+        Path viewsDir = project.resolve("views");
         Path testResourcesDir = project.resolve("src/integration/resources");
+        Path testFixturesDir = project.resolve("src/integration/fixtures");
         Files.createDirectories(classesDir);
         Files.createDirectories(configDir);
+        Files.createDirectories(viewsDir);
         Files.createDirectories(testResourcesDir);
+        Files.createDirectories(testFixturesDir);
         Files.createDirectories(project.resolve("__pyronaut__"));
         Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n", StandardCharsets.UTF_8);
         Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n", StandardCharsets.UTF_8);
@@ -288,13 +292,17 @@ class PyronautTestMainTest {
             Path.of("__pyronaut__/classes"),
             Path.of("__pyronaut__/test-classes"),
             configDir,
-            testResourcesDir
+            testResourcesDir,
+            List.of(viewsDir),
+            List.of(testFixturesDir)
         );
 
         try (var classLoader = layout.applicationClassLoader()) {
             List<String> urls = java.util.Arrays.stream(classLoader.getURLs()).map(Object::toString).toList();
             assertTrue(urls.stream().anyMatch(url -> url.contains("app-config")));
+            assertTrue(urls.stream().anyMatch(url -> url.contains("views")));
             assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
+            assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/fixtures")));
         }
     }
 

@@ -110,7 +110,7 @@ public final class PyronautRunMain implements Callable<Integer> {
             applyTestResourcesProperties(System.getenv());
             PyprojectModel model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
             Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
-            layout = resolveProjectLayout(root, classesDir, resolvedConfigDir);
+            layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -182,6 +182,10 @@ public final class PyronautRunMain implements Callable<Integer> {
     }
 
     static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir) throws IOException {
+        return resolveProjectLayout(root, classesDir, configDir, List.of());
+    }
+
+    static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir, List<Path> additionalResourceDirs) throws IOException {
         Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
         Path resolvedClassesDir = root.resolve(classesDir).normalize();
         if (!Files.isDirectory(resolvedClassesDir)) {
@@ -192,6 +196,7 @@ public final class PyronautRunMain implements Callable<Integer> {
         addManifestEntries(urls, resolveRunManifest(pyronautDir));
         urls.add(archiveProcessedClasses(pyronautDir, resolvedClassesDir).toUri().toURL());
         addPathIfDirectory(urls, root.resolve(configDir).normalize());
+        addResourceDirectories(urls, additionalResourceDirs);
         return new ResolvedProjectLayout(
             resolvedClassesDir,
             new URLClassLoader(urls.toArray(URL[]::new), resolveApplicationClassLoader())
@@ -217,6 +222,16 @@ public final class PyronautRunMain implements Callable<Integer> {
             && commandSpec.commandLine() != null
             && commandSpec.commandLine().getParseResult() != null
             && commandSpec.commandLine().getParseResult().hasMatchedOption(optionName);
+    }
+
+    private static List<Path> resolveConfiguredPaths(Path root, List<String> configuredDirs) {
+        if (configuredDirs == null || configuredDirs.isEmpty()) {
+            return List.of();
+        }
+        return configuredDirs.stream()
+            .map(Path::of)
+            .map(path -> path.isAbsolute() ? path.normalize() : root.resolve(path).normalize())
+            .toList();
     }
 
     private static ClassLoader resolveApplicationClassLoader() {
@@ -248,6 +263,12 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static void addPathIfDirectory(LinkedHashSet<URL> urls, Path path) throws IOException {
         if (Files.isDirectory(path)) {
             urls.add(path.toAbsolutePath().normalize().toUri().toURL());
+        }
+    }
+
+    private static void addResourceDirectories(LinkedHashSet<URL> urls, List<Path> resourceDirs) throws IOException {
+        for (Path resourceDir : resourceDirs) {
+            addPathIfDirectory(urls, resourceDir);
         }
     }
 

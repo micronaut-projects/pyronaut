@@ -1006,6 +1006,7 @@ logsDir = "var/custom-test-resources-logs"
             project_dir = Path(temp_dir) / "demo"
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
             (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
+            (project_dir / "views").mkdir(parents=True, exist_ok=True)
             self._write_manifests(project_dir)
             (project_dir / "pyproject.toml").write_text(
                 """
@@ -1023,6 +1024,7 @@ test = []
 
 [tool.pyronaut.sources]
 resources = "app-config"
+additional-resources = ["views"]
 """.strip()
                 + "\n",
                 encoding="utf-8",
@@ -1031,6 +1033,7 @@ resources = "app-config"
             classpath = cli._build_delegate_classpath("run", project_dir.resolve(), self._resolver())  # noqa: SLF001
             entries = classpath.split(os.pathsep)
             self.assertNotIn(str((project_dir / "app-config").resolve()), entries)
+            self.assertNotIn(str((project_dir / "views").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
 
     def test_test_delegate_classpath_honors_configured_test_resources_directory(self):
@@ -1039,7 +1042,10 @@ resources = "app-config"
             cache_dir = project_dir / "__pyronaut__"
             (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
             (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
+            (project_dir / "views").mkdir(parents=True, exist_ok=True)
+            (project_dir / "assets").mkdir(parents=True, exist_ok=True)
             (project_dir / "test-resources").mkdir(parents=True, exist_ok=True)
+            (project_dir / "test-fixtures").mkdir(parents=True, exist_ok=True)
             self._write_manifests(project_dir)
             (project_dir / "pyproject.toml").write_text(
                 """
@@ -1058,6 +1064,8 @@ test = []
 [tool.pyronaut.sources]
 resources = "app-config"
 test-resources = "test-resources"
+additional-resources = ["views", "assets"]
+additional-test-resources = ["test-fixtures"]
 """.strip()
                 + "\n",
                 encoding="utf-8",
@@ -1066,7 +1074,10 @@ test-resources = "test-resources"
             classpath = cli._build_delegate_classpath("test", project_dir.resolve(), self._resolver())  # noqa: SLF001
             entries = classpath.split(os.pathsep)
             self.assertIn(str((project_dir / "app-config").resolve()), entries)
+            self.assertIn(str((project_dir / "views").resolve()), entries)
+            self.assertIn(str((project_dir / "assets").resolve()), entries)
             self.assertIn(str((project_dir / "test-resources").resolve()), entries)
+            self.assertIn(str((project_dir / "test-fixtures").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
 
     def test_snapshot_watched_files_honors_configured_layout(self):
@@ -1077,13 +1088,17 @@ test-resources = "test-resources"
             (project_dir / "src/main/java").mkdir(parents=True, exist_ok=True)
             (project_dir / "src/test/java").mkdir(parents=True, exist_ok=True)
             (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
+            (project_dir / "assets").mkdir(parents=True, exist_ok=True)
             (project_dir / "test-resources").mkdir(parents=True, exist_ok=True)
+            (project_dir / "test-fixtures").mkdir(parents=True, exist_ok=True)
             (project_dir / "app" / "main.py").write_text("print('ok')\n", encoding="utf-8")
             (project_dir / "app-tests" / "test_main.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
             (project_dir / "src/main/java" / "Main.java").write_text("class Main {}\n", encoding="utf-8")
             (project_dir / "src/test/java" / "MainTest.java").write_text("class MainTest {}\n", encoding="utf-8")
             (project_dir / "app-config" / "application.toml").write_text("micronaut.server.port = 8080\n", encoding="utf-8")
+            (project_dir / "assets" / "logo.svg").write_text("<svg />\n", encoding="utf-8")
             (project_dir / "test-resources" / "test.properties").write_text("key=value\n", encoding="utf-8")
+            (project_dir / "test-fixtures" / "book.json").write_text("{}\n", encoding="utf-8")
             (project_dir / "pyproject.toml").write_text(
                 """
 [project]
@@ -1097,6 +1112,8 @@ java = "src/main/java"
 java-test = "src/test/java"
 resources = "app-config"
 test-resources = "test-resources"
+additional-resources = ["assets"]
+additional-test-resources = ["test-fixtures"]
 """.strip()
                 + "\n",
                 encoding="utf-8",
@@ -1109,7 +1126,9 @@ test-resources = "test-resources"
             self.assertIn("src/main/java/Main.java", watched_files)
             self.assertIn("src/test/java/MainTest.java", watched_files)
             self.assertIn("app-config/application.toml", watched_files)
+            self.assertIn("assets/logo.svg", watched_files)
             self.assertIn("test-resources/test.properties", watched_files)
+            self.assertIn("test-fixtures/book.json", watched_files)
 
     def test_run_delegate_classpath_leaves_runtime_manifest_to_run_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:

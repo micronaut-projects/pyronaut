@@ -44,6 +44,8 @@ class PyprojectModelReaderTest {
         assertEquals("test-java", model.pyronaut().sources().javaTest());
         assertEquals("config", model.pyronaut().sources().resources());
         assertEquals("tests-config", model.pyronaut().sources().testResources());
+        assertEquals(List.of(), model.pyronaut().sources().additionalResources());
+        assertEquals(List.of(), model.pyronaut().sources().additionalTestResources());
         assertEquals("ce", model.pyronaut().toolchain().distribution());
         assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
         assertNotNull(model.pyronaut().ideStubs());
@@ -88,6 +90,8 @@ class PyprojectModelReaderTest {
             java-test = "java-test"
             resources = "app-config"
             test-resources = "test-config"
+            additional-resources = ["assets", "views"]
+            additional-test-resources = ["test-assets", "test-fixtures"]
             """);
 
         PyprojectModel model = reader.readFile(file);
@@ -97,8 +101,10 @@ class PyprojectModelReaderTest {
         assertEquals("java-test", model.pyronaut().sources().javaTest());
         assertEquals("app-config", model.pyronaut().sources().resources());
         assertEquals("test-config", model.pyronaut().sources().testResources());
-        assertEquals(List.of("app-config", "src/main/resources"), model.pyronaut().validation().run().resourcesDirs());
-        assertEquals(List.of("app-config", "src/main/resources", "test-config"), model.pyronaut().validation().test().resourcesDirs());
+        assertEquals(List.of("assets", "views"), model.pyronaut().sources().additionalResources());
+        assertEquals(List.of("test-assets", "test-fixtures"), model.pyronaut().sources().additionalTestResources());
+        assertEquals(List.of("app-config", "assets", "views", "src/main/resources"), model.pyronaut().validation().run().resourcesDirs());
+        assertEquals(List.of("app-config", "assets", "views", "src/main/resources", "test-config", "test-assets", "test-fixtures"), model.pyronaut().validation().test().resourcesDirs());
     }
 
     @Test
