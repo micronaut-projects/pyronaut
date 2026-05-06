@@ -1789,6 +1789,42 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void installCopiesPackagedPythonVfsSourcesIntoIdeStubs() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-vfs-sources");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifactWithEntries(repository, "io.micronaut.pyronaut", "micronaut-pyronaut-logback", "1.0.0", Map.of(
+            "META-INF/GRAALPY-VFS/micronaut-application/src/logback/__init__.py", "from .config import dictConfig\n",
+            "META-INF/GRAALPY-VFS/micronaut-application/src/logback/config.py", "def dictConfig(config):\n    return config\n"
+        ));
+
+        Path project = tempDir.resolve("project-python-ide-vfs-sources");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.micronaut.pyronaut:micronaut-pyronaut-logback:1.0.0"]
+            build = ["com.example:build-dep:1.0.0"]
+            test = []
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        Path stubsRoot = project.resolve("__pyronaut__/ide-stubs");
+        String logbackInit = Files.readString(stubsRoot.resolve("logback/__init__.py"), StandardCharsets.UTF_8);
+        String logbackConfig = Files.readString(stubsRoot.resolve("logback/config.py"), StandardCharsets.UTF_8);
+        assertTrue(logbackInit.contains("from .config import dictConfig"));
+        assertTrue(logbackConfig.contains("def dictConfig(config):"));
+    }
+
+    @Test
     void vscodeSettingsIncludePythonInterpreterAndSitePackagesWhenKnown() throws Exception {
         Path repository = tempDir.resolve("repo-python-ide-vscode-python");
         writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(

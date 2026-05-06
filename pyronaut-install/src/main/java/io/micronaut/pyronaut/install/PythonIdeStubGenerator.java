@@ -65,7 +65,7 @@ import java.util.zip.ZipException;
 final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
-    private static final String GENERATOR_VERSION = "6";
+    private static final String GENERATOR_VERSION = "7";
     private static final String SHARED_CACHE_DIR_PROPERTY = "pyronaut.ide-stubs.cache-dir";
     private static final String SHARED_CACHE_DIR_NAME = "ide-stubs";
     private static final String VFS_PYTHON_SOURCE_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/src/";
@@ -105,8 +105,8 @@ final class PythonIdeStubGenerator {
         }
 
         Map<String, Map<String, TypeDescriptor>> packages = collectPackages(jars, packageMappings, excludePatterns, warnings);
-        collectPythonVfsStubs(jars, packages, warnings);
-        if (packages.isEmpty()) {
+        collectSyntheticPythonVfsStubs(jars, packages, warnings);
+        if (packages.isEmpty() && !hasPythonVfsSources(jars)) {
             deleteDirectoryIfExists(outputDir);
             Files.createDirectories(outputDir);
             Files.writeString(stateFile, state, StandardCharsets.UTF_8);
@@ -115,6 +115,7 @@ final class PythonIdeStubGenerator {
 
         deleteDirectoryIfExists(sharedOutputDir);
         Files.createDirectories(sharedOutputDir);
+        copyPythonVfsSources(jars, sharedOutputDir, warnings);
         int symbolCount = 0;
         Set<Path> packageFiles = new TreeSet<>();
         for (Map.Entry<String, Map<String, TypeDescriptor>> entry : packages.entrySet()) {
@@ -326,9 +327,71 @@ final class PythonIdeStubGenerator {
         return packages;
     }
 
-    private static void collectPythonVfsStubs(List<ResolvedArtifact> jars,
-                                              Map<String, Map<String, TypeDescriptor>> packages,
-                                              List<WarningDetail> warnings) throws IOException {
+    private static boolean hasPythonVfsSources(List<ResolvedArtifact> jars) throws IOException {
+        for (ResolvedArtifact artifact : jars) {
+            try (ZipFile zipFile = new ZipFile(artifact.binaryJar().toFile())) {
+                if (zipFile.stream()
+                    .map(ZipEntry::getName)
+                    .anyMatch(PythonIdeStubGenerator::isPythonVfsSourceEntry)) {
+                    return true;
+                }
+            } catch (ZipException ignored) {
+                // collectPackages already reports invalid archive inputs.
+            }
+        }
+        return false;
+    }
+
+    private static void copyPythonVfsSources(List<ResolvedArtifact> jars,
+                                             Path outputDir,
+                                             List<WarningDetail> warnings) throws IOException {
+        for (ResolvedArtifact artifact : jars) {
+            try (ZipFile zipFile = new ZipFile(artifact.binaryJar().toFile())) {
+                List<? extends ZipEntry> entries = zipFile.stream()
+                    .filter(entry -> isPythonVfsSourceEntry(entry.getName()))
+                    .sorted(Comparator.comparing(ZipEntry::getName))
+                    .toList();
+                for (ZipEntry entry : entries) {
+                    copyPythonVfsSource(zipFile, entry, outputDir);
+                }
+            } catch (ZipException ignored) {
+                // collectPackages already reports invalid archive inputs.
+            } catch (IOException e) {
+                warnings.add(WarningDetail.fromThrowable(
+                    "Skipped Python VFS source extraction for " + artifact.binaryJar().getFileName(),
+                    e
+                ));
+            }
+        }
+    }
+
+    private static void copyPythonVfsSource(ZipFile zipFile,
+                                            ZipEntry entry,
+                                            Path outputDir) throws IOException {
+        String relativeName = entry.getName().substring(VFS_PYTHON_SOURCE_PREFIX.length());
+        Path relativePath = Path.of(relativeName).normalize();
+        if (relativePath.isAbsolute() || relativePath.startsWith("..")) {
+            return;
+        }
+        Path target = outputDir.resolve(relativePath);
+        if (Files.exists(target)) {
+            return;
+        }
+        Files.createDirectories(target.getParent());
+        try (InputStream inputStream = zipFile.getInputStream(entry)) {
+            Files.copy(inputStream, target);
+        }
+    }
+
+    private static boolean isPythonVfsSourceEntry(String name) {
+        return name.startsWith(VFS_PYTHON_SOURCE_PREFIX)
+            && name.endsWith(".py")
+            && !name.endsWith("/");
+    }
+
+    private static void collectSyntheticPythonVfsStubs(List<ResolvedArtifact> jars,
+                                                       Map<String, Map<String, TypeDescriptor>> packages,
+                                                       List<WarningDetail> warnings) throws IOException {
         boolean hasPyronautTestPackage = false;
         for (ResolvedArtifact artifact : jars) {
             try (ZipFile zipFile = new ZipFile(artifact.binaryJar().toFile())) {

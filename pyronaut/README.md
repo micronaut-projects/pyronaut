@@ -80,7 +80,7 @@ These settings are honored by install/process/run/test, lifecycle validation def
 
 ## IDE stub configuration
 
-`pyronaut install` generates Python IDE stubs for configured Micronaut and Jakarta Java APIs and writes them to `__pyronaut__/ide-stubs` by default. Generated stubs are cached under `~/.pyronaut/ide-stubs` and reused across projects when the resolved artifact set and stub configuration are unchanged.
+`pyronaut install` generates Python IDE stubs for configured Micronaut and Jakarta Java APIs and writes them to `__pyronaut__/ide-stubs` by default. It also extracts Python sources embedded in resolved GraalPy virtual filesystem artifacts, such as `pyronaut.test` and `logback.config`, so editor imports match runtime imports. Generated editor support is cached under `~/.pyronaut/ide-stubs` and reused across projects when the resolved artifact set and stub configuration are unchanged.
 
 Defaults:
 
