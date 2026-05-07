@@ -8,40 +8,9 @@ on:
   schedule:
     - cron: "0 1 * * 1-5" # Mon-Fri at 1am UTC
 jobs:
-  build_matrix:
-    if: github.repository != 'micronaut-projects/micronaut-project-template'
-    runs-on: ubuntu-latest
-    env:
-      DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
-      DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
-      DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
-      PYRONAUT_GIT_TOKEN: ${{ secrets.PYRONAUT_GIT_TOKEN || secrets.GH_TOKEN }}
-      PYRONAUT_GIT_USERNAME: ${{ secrets.PYRONAUT_GIT_USERNAME || secrets.GH_USERNAME || 'x-access-token' }}
-      PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
-    outputs:
-      matrix: ${{ steps.build-matrix.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Build Matrix
-        uses: micronaut-projects/github-actions/graalvm/build-matrix@master
-        id: build-matrix
-        with:
-          java-version: '25'
   build:
-    needs: build_matrix
     if: github.repository != 'micronaut-projects/micronaut-project-template'
     runs-on: ubuntu-latest
-    strategy:
-      max-parallel: 6
-      matrix:
-        java: ['dev', 'latest-ea']
-        distribution: ['graalvm-community', 'graalvm']
-        native_test_task: ${{ fromJson(needs.build_matrix.outputs.matrix).native_test_task }}
-        exclude:
-          - java: 'dev'
-            distribution: 'graalvm'
-          - java: 'latest-ea'
-            distribution: 'graalvm-community'
     env:
       DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
       DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
@@ -60,9 +29,14 @@ jobs:
         uses: micronaut-projects/github-actions/graalvm/pre-build@master
         id: pre-build
         with:
-          java: ${{ matrix.java }}
-          distribution: ${{ matrix.distribution }}
-          nativeTestTask: ${{ matrix.native_test_task }}
+          java: '25'
+          distribution: 'graalvm'
+          gradle-java: '25'
+          nativeTestTask: ':micronaut-functional-test:test -Pnative=true'
+      - name: "💾 Cache source dependency checkouts"
+        uses: ./.github/actions/cache-source-dependencies
+      - name: "🔧 Setup GraalPy pyenv virtualenv"
+        uses: ./.github/actions/setup-graalpy-pyenv
       - name: Build Steps
         uses: micronaut-projects/github-actions/graalvm/build@master
         id: build
@@ -71,9 +45,9 @@ jobs:
           GH_USERNAME: ${{ secrets.GH_USERNAME }}
           GRAALVM_QUICK_BUILD: true
         with:
-          nativeTestTask: ${{ matrix.native_test_task }}
+          nativeTestTask: ':micronaut-functional-test:test -Pnative=true'
       - name: Post-Build Steps
         uses: micronaut-projects/github-actions/graalvm/post-build@master
         id: post-build
         with:
-          java: ${{ matrix.java }}
+          java: '25'

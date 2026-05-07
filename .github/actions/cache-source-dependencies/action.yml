@@ -1,0 +1,92 @@
+name: Cache source dependency checkouts
+description: Restore caches for source-built upstream dependencies keyed by their upstream revisions.
+inputs:
+  micronaut-core-repository:
+    description: Micronaut Core repository used by the include-git checkout.
+    required: false
+    default: https://github.com/graemerocher/micronaut-core.git
+  micronaut-core-branch:
+    description: Micronaut Core branch used by the include-git checkout.
+    required: false
+    default: python-ast-experiments
+  graalpy-extensions-repository:
+    description: GraalPy extensions repository used to build embedding snapshot artifacts.
+    required: false
+    default: https://github.com/oracle/graalpy-extensions.git
+  graalpy-extensions-branch:
+    description: GraalPy extensions branch used to build embedding snapshot artifacts.
+    required: false
+    default: main
+outputs:
+  micronaut-core-sha:
+    description: Resolved Micronaut Core revision.
+    value: ${{ steps.source-dependency-refs.outputs.micronaut-core-sha }}
+  graalpy-extensions-sha:
+    description: Resolved GraalPy extensions revision.
+    value: ${{ steps.source-dependency-refs.outputs.graalpy-extensions-sha }}
+  graalpy-version:
+    description: GraalPy Maven artifact version from the version catalog.
+    value: ${{ steps.source-dependency-refs.outputs.graalpy-version }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve source dependency revisions
+      id: source-dependency-refs
+      shell: bash
+      env:
+        MICRONAUT_CORE_REPOSITORY: ${{ inputs.micronaut-core-repository }}
+        MICRONAUT_CORE_BRANCH: ${{ inputs.micronaut-core-branch }}
+        GRAALPY_EXTENSIONS_REPOSITORY: ${{ inputs.graalpy-extensions-repository }}
+        GRAALPY_EXTENSIONS_BRANCH: ${{ inputs.graalpy-extensions-branch }}
+      run: |
+        set -euo pipefail
+
+        resolve_git_sha() {
+          local repository="$1"
+          local branch="$2"
+          shift 2
+          local sha
+          sha="$(git "$@" ls-remote "$repository" "refs/heads/$branch" | awk '{ print $1 }')"
+          if [ -z "$sha" ]; then
+            echo "Unable to resolve refs/heads/$branch from $repository" >&2
+            exit 1
+          fi
+          printf '%s' "$sha"
+        }
+
+        git_auth_config=()
+        if [ -n "${PYRONAUT_GIT_TOKEN:-}" ]; then
+          git_username="${PYRONAUT_GIT_USERNAME:-x-access-token}"
+          credentials="$(printf '%s:%s' "$git_username" "$PYRONAUT_GIT_TOKEN" | base64 | tr -d '\n')"
+          git_auth_config=(-c "http.https://github.com/.extraheader=AUTHORIZATION: Basic $credentials")
+        fi
+
+        micronaut_core_sha="$(resolve_git_sha "$MICRONAUT_CORE_REPOSITORY" "$MICRONAUT_CORE_BRANCH" "${git_auth_config[@]}")"
+        graalpy_extensions_sha="$(resolve_git_sha "$GRAALPY_EXTENSIONS_REPOSITORY" "$GRAALPY_EXTENSIONS_BRANCH")"
+        graalpy_version="$(awk -F '"' '/^graalpy[[:space:]]*=/{ print $2; exit }' gradle/libs.versions.toml)"
+        if [ -z "$graalpy_version" ]; then
+          echo "Unable to resolve graalpy version from gradle/libs.versions.toml" >&2
+          exit 1
+        fi
+
+        {
+          echo "micronaut-core-sha=$micronaut_core_sha"
+          echo "graalpy-extensions-sha=$graalpy_extensions_sha"
+          echo "graalpy-version=$graalpy_version"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Cache Micronaut Core checkout
+      uses: actions/cache@v4
+      with:
+        path: |
+          checkouts/micronaut-core-python
+          checkouts/checkouts.bin
+        key: ${{ runner.os }}-java25-source-deps-micronaut-core-${{ steps.source-dependency-refs.outputs.micronaut-core-sha }}
+
+    - name: Cache GraalPy extension artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          checkouts/graalpy-extensions
+          checkouts/maven-bundles/graalpy/${{ steps.source-dependency-refs.outputs.graalpy-extensions-sha }}
+        key: ${{ runner.os }}-java25-source-deps-graalpy-${{ steps.source-dependency-refs.outputs.graalpy-version }}-${{ steps.source-dependency-refs.outputs.graalpy-extensions-sha }}
