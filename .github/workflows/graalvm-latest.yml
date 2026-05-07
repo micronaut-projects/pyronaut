@@ -21,9 +21,14 @@ jobs:
       DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
       DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
       DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
+      GH_TOKEN_PUBLIC_REPOS_READONLY: ${{ secrets.GH_TOKEN_PUBLIC_REPOS_READONLY }}
+      GH_USERNAME: ${{ secrets.GH_USERNAME }}
       PYRONAUT_GIT_TOKEN: ${{ secrets.PYRONAUT_GIT_TOKEN || secrets.GH_TOKEN }}
       PYRONAUT_GIT_USERNAME: ${{ secrets.PYRONAUT_GIT_USERNAME || secrets.GH_USERNAME || 'x-access-token' }}
       PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GRAALVM_QUICK_BUILD: true
+      TESTCONTAINERS_RYUK_DISABLED: true
     steps:
       - name: Remove system JDKs
         run: |
@@ -31,29 +36,22 @@ jobs:
           unset JAVA_HOME
           export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '/usr/lib/jvm' | paste -sd:)
       - uses: actions/checkout@v6
-      - name: Pre-Build Steps
-        uses: micronaut-projects/github-actions/graalvm/pre-build@master
-        id: pre-build
+
+      - name: "🔧 Setup Java"
+        uses: actions/setup-java@v4
         with:
-          distribution: 'graalvm'
-          gradle-java: '25'
-          java: '25'
-          nativeTestTask: ':micronaut-functional-test:test -Pnative=true'
+          distribution: 'oracle'
+          java-version: '25'
+
       - name: "💾 Cache source dependency checkouts"
         uses: ./.github/actions/cache-source-dependencies
+
       - name: "🔧 Setup GraalPy pyenv virtualenv"
         uses: ./.github/actions/setup-graalpy-pyenv
-      - name: Build Steps
-        uses: micronaut-projects/github-actions/graalvm/build@master
-        id: build
-        env:
-          GH_TOKEN_PUBLIC_REPOS_READONLY: ${{ secrets.GH_TOKEN_PUBLIC_REPOS_READONLY }}
-          GH_USERNAME: ${{ secrets.GH_USERNAME }}
-          GRAALVM_QUICK_BUILD: true
-        with:
-          nativeTestTask: ':micronaut-functional-test:test -Pnative=true'
-      - name: Post-Build Steps
-        uses: micronaut-projects/github-actions/graalvm/post-build@master
-        id: post-build
-        with:
-          java: '25'
+
+      - name: "🔧 Setup Gradle"
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: "🧪 Run focused native functional tests"
+        run: |
+          ./gradlew :micronaut-functional-test:test -Pnative=true --no-daemon --continue
