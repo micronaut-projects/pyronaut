@@ -5,6 +5,10 @@ inputs:
     description: pyenv GraalPy version to install and activate.
     required: false
     default: graalpy-25.0.2
+  pytest-version:
+    description: pytest version to install into the GraalPy virtual environment.
+    required: false
+    default: 9.0.3
   venv-dir:
     description: Directory where the virtual environment should be created.
     required: false
@@ -12,12 +16,21 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Restore GraalPy pyenv cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.pyenv
+          ${{ inputs.venv-dir }}
+        key: ${{ runner.os }}-graalpy-pyenv-${{ inputs.graalpy-version }}-pytest-${{ inputs.pytest-version }}
+
     - name: Create GraalPy virtualenv
       shell: bash
       run: |
         set -euo pipefail
 
         graalpy_version="${{ inputs.graalpy-version }}"
+        pytest_version="${{ inputs.pytest-version }}"
         venv_dir="${{ inputs.venv-dir }}"
         export PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
         export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
@@ -31,11 +44,17 @@ runs:
         pyenv rehash
 
         python_executable="$(PYENV_VERSION="$graalpy_version" pyenv which python)"
-        rm -rf "$venv_dir"
-        "$python_executable" -m venv "$venv_dir"
-        "$venv_dir/bin/python" -m pip install --upgrade pip
-        "$venv_dir/bin/python" -m pip install --no-compile pytest==9.0.3
+        venv_marker="$venv_dir/.pyronaut-graalpy-cache-marker"
+        expected_marker="$graalpy_version pytest==$pytest_version"
+        if [ ! -x "$venv_dir/bin/python" ] || [ ! -f "$venv_marker" ] || [ "$(cat "$venv_marker")" != "$expected_marker" ]; then
+          rm -rf "$venv_dir"
+          "$python_executable" -m venv "$venv_dir"
+          "$venv_dir/bin/python" -m pip install --upgrade pip
+          "$venv_dir/bin/python" -m pip install --no-compile "pytest==$pytest_version"
+          echo "$expected_marker" > "$venv_marker"
+        fi
         "$venv_dir/bin/python" -c "import sys; assert 'graal' in sys.version.lower(), sys.version; print(sys.version)"
+        "$venv_dir/bin/python" -c "import pytest; print(pytest.__version__)"
 
         echo "PYENV_ROOT=$PYENV_ROOT" >> "$GITHUB_ENV"
         echo "PYENV_VERSION=$graalpy_version" >> "$GITHUB_ENV"
