@@ -30,6 +30,6 @@ runtime = [
 build = [
 ]
 test = [
-  "io.micronaut:micronaut-pytest-engine:5.0.0-SNAPSHOT",
+  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
   "io.micronaut.test:micronaut-test-junit5"
 ]

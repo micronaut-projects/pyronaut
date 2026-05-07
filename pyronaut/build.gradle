@@ -11,6 +11,9 @@ plugins {
 
 def wheelStagingDir = layout.buildDirectory.dir("wheel/staging")
 def wheelDistDir = layout.buildDirectory.dir("wheel/dist")
+def e2eFixtureSourceDir = layout.projectDirectory.dir("src/test/resources/e2e-app")
+def e2eFixtureDir = layout.buildDirectory.dir("e2e-fixture/app")
+def e2eFixtureRepositoryDir = project(":micronaut-functional-test").layout.buildDirectory.dir("fixture-repo")
 def wheelVersion = providers.provider {
     def configuredVersion = project.findProperty("projectVersion")?.toString() ?: project.version.toString()
     configuredVersion.replace("-SNAPSHOT", ".dev0")
@@ -235,10 +238,38 @@ tasks.register("testPythonOrchestrator", Exec) {
     environment("PYTHONPATH", file("src/main/python").absolutePath)
 }
 
+tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
+    group = "build setup"
+    description = "Prepares the Python orchestrator e2e fixture with locally staged snapshot artifacts"
+    dependsOn(project(":micronaut-functional-test").tasks.named("publishFixtureArtifactsToMavenLocal"))
+    from(e2eFixtureSourceDir)
+    into(e2eFixtureDir)
+    inputs.dir(e2eFixtureRepositoryDir)
+    inputs.property("e2eFixtureRepository", e2eFixtureRepositoryDir.map { it.asFile.absolutePath })
+    doLast {
+        def repositoryDir = e2eFixtureRepositoryDir.get().asFile
+        if (!repositoryDir.isDirectory()) {
+            throw new GradleException("Missing staged e2e fixture repository: ${repositoryDir.absolutePath}")
+        }
+        def pyprojectFile = e2eFixtureDir.get().file("pyproject.toml").asFile
+        def content = pyprojectFile.getText("UTF-8")
+        def marker = "repositories = [\n"
+        if (!content.contains(marker)) {
+            throw new GradleException("Unexpected e2e pyproject fixture format: ${pyprojectFile.absolutePath}")
+        }
+        def repository = repositoryDir.absolutePath.replace("\\", "\\\\").replace("\"", "\\\"")
+        def repositoryEntry = "  \"${repository}\",\n"
+        if (!content.contains(repositoryEntry)) {
+            pyprojectFile.setText(content.replace(marker, marker + repositoryEntry), "UTF-8")
+        }
+    }
+}
+
 tasks.register("testPythonOrchestratorE2E", Exec) {
     group = "verification"
     description = "Runs fast smoke orchestrator e2e checks"
 
+    dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
@@ -252,7 +283,6 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     environment("PYRONAUT_E2E_FULL", "false")
     environment("PYRONAUT_E2E_MYSQL", "false")
     environment("PYRONAUT_E2E_PYTHON", "python3")
-    environment("PYRONAUT_E2E_FIXTURE_DIR", file("src/test/resources/e2e-app").absolutePath)
     environment(
         "PYRONAUT_INSTALL_EXECUTABLE",
         project(":micronaut-pyronaut-install").layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install").get().asFile.absolutePath
@@ -278,6 +308,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
         project(":micronaut-pyronaut-test-resources-server").layout.buildDirectory.file("install/micronaut-pyronaut-test-resources-server/bin/pyronaut-test-resources-server").get().asFile.absolutePath
     )
     doFirst {
+        environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
         if (graalVmHomeProvider.present) {
             def graalVmHome = graalVmHomeProvider.get()
             ensureMacOsGatekeeperDoesNotBlock(file(graalVmHome))
@@ -291,6 +322,7 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     group = "verification"
     description = "Runs full Docker-backed orchestrator e2e integration checks"
 
+    dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
@@ -304,7 +336,6 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     environment("PYRONAUT_E2E_FULL", "true")
     environment("PYRONAUT_E2E_MYSQL", "true")
     environment("PYRONAUT_E2E_PYTHON", "python3")
-    environment("PYRONAUT_E2E_FIXTURE_DIR", file("src/test/resources/e2e-app").absolutePath)
     environment(
         "PYRONAUT_INSTALL_EXECUTABLE",
         project(":micronaut-pyronaut-install").layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install").get().asFile.absolutePath
@@ -330,6 +361,7 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
         project(":micronaut-pyronaut-test-resources-server").layout.buildDirectory.file("install/micronaut-pyronaut-test-resources-server/bin/pyronaut-test-resources-server").get().asFile.absolutePath
     )
     doFirst {
+        environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
         Process dockerProcess
         try {
             dockerProcess = new ProcessBuilder("docker", "info")
