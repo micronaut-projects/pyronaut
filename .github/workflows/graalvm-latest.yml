@@ -51,6 +51,13 @@ jobs:
 
       - name: "🔧 Setup Gradle"
         uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: false
+          gradle-home-cache-includes: |
+            caches
+            notifications
+            wrapper/dists
+            jdks
 
       - name: "🧪 Run focused native functional tests"
         run: |
