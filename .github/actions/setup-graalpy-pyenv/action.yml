@@ -1,0 +1,45 @@
+name: Setup GraalPy pyenv virtual environment
+description: Install GraalPy with pyenv and expose a GraalPy-backed virtualenv to Gradle.
+inputs:
+  graalpy-version:
+    description: pyenv GraalPy version to install and activate.
+    required: false
+    default: graalpy-25.0.2
+  venv-dir:
+    description: Directory where the virtual environment should be created.
+    required: false
+    default: ${{ runner.temp }}/pyronaut-graalpy-venv
+runs:
+  using: composite
+  steps:
+    - name: Create GraalPy virtualenv
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        graalpy_version="${{ inputs.graalpy-version }}"
+        venv_dir="${{ inputs.venv-dir }}"
+        export PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
+        export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
+
+        if ! command -v pyenv >/dev/null 2>&1 && [ ! -x "$PYENV_ROOT/bin/pyenv" ]; then
+          git clone --depth 1 https://github.com/pyenv/pyenv.git "$PYENV_ROOT"
+        fi
+
+        eval "$(pyenv init -)"
+        pyenv install --skip-existing "$graalpy_version"
+        pyenv rehash
+
+        python_executable="$(PYENV_VERSION="$graalpy_version" pyenv which python)"
+        rm -rf "$venv_dir"
+        "$python_executable" -m venv "$venv_dir"
+        "$venv_dir/bin/python" -m pip install --upgrade pip
+        "$venv_dir/bin/python" -m pip install --no-compile pytest==9.0.3
+        "$venv_dir/bin/python" -c "import sys; assert 'graalpy' in sys.version.lower(), sys.version; print(sys.version)"
+
+        echo "PYENV_ROOT=$PYENV_ROOT" >> "$GITHUB_ENV"
+        echo "PYENV_VERSION=$graalpy_version" >> "$GITHUB_ENV"
+        echo "VIRTUAL_ENV=$venv_dir" >> "$GITHUB_ENV"
+        echo "$venv_dir/bin" >> "$GITHUB_PATH"
+        echo "$PYENV_ROOT/bin" >> "$GITHUB_PATH"
+        echo "$PYENV_ROOT/shims" >> "$GITHUB_PATH"
