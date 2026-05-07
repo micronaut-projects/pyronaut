@@ -35,7 +35,7 @@ runs:
         "$python_executable" -m venv "$venv_dir"
         "$venv_dir/bin/python" -m pip install --upgrade pip
         "$venv_dir/bin/python" -m pip install --no-compile pytest==9.0.3
-        "$venv_dir/bin/python" -c "import sys; assert 'graalpy' in sys.version.lower(), sys.version; print(sys.version)"
+        "$venv_dir/bin/python" -c "import sys; assert 'graal' in sys.version.lower(), sys.version; print(sys.version)"
 
         echo "PYENV_ROOT=$PYENV_ROOT" >> "$GITHUB_ENV"
         echo "PYENV_VERSION=$graalpy_version" >> "$GITHUB_ENV"
