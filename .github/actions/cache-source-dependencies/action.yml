@@ -46,7 +46,7 @@ runs:
           local branch="$2"
           shift 2
           local sha
-          sha="$(git "$@" ls-remote "$repository" "refs/heads/$branch" | awk '{ print $1 }')"
+          sha="$(git -C "${RUNNER_TEMP:-/tmp}" "$@" ls-remote "$repository" "refs/heads/$branch" | awk '{ print $1 }')"
           if [ -z "$sha" ]; then
             echo "Unable to resolve refs/heads/$branch from $repository" >&2
             exit 1
