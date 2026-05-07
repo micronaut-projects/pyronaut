@@ -2,6 +2,32 @@ plugins {
     id "io.micronaut.build.internal.parent"
 }
 
+def disabledSonatypePublishingTasks = [
+    "publishToSonatype",
+    "closeSonatypeStagingRepository",
+    "releaseSonatypeStagingRepository",
+    "closeAndReleaseSonatypeStagingRepository"
+] as Set
+
+disabledSonatypePublishingTasks.each { taskName ->
+    if (tasks.findByName(taskName) == null) {
+        tasks.register(taskName) {
+            group = "publishing"
+            description = "Temporarily disabled until Pyronaut Sonatype publishing is enabled."
+            enabled = false
+        }
+    }
+}
+
+allprojects {
+    tasks.configureEach { task ->
+        def lowerCaseTaskName = task.name.toLowerCase(Locale.ROOT)
+        if (task.name in disabledSonatypePublishingTasks || (lowerCaseTaskName.startsWith("publish") && lowerCaseTaskName.contains("sonatype"))) {
+            enabled = false
+        }
+    }
+}
+
 repositories {
     def graalPyBundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
     if (graalPyBundleRepo != null && !graalPyBundleRepo.isBlank()) {
