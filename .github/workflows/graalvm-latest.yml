@@ -60,7 +60,26 @@ jobs:
             wrapper/dists
             jdks
 
-      - name: "🧪 Run focused native functional tests"
-        timeout-minutes: 60
+      - name: "🧱 Build native pyronaut-install"
+        timeout-minutes: 25
         run: |
+          trap './gradlew --stop' EXIT
+          ./gradlew :micronaut-pyronaut-install:nativeCompile --max-workers=1 --no-daemon
+
+      - name: "🧱 Build native pyronaut-processor"
+        timeout-minutes: 25
+        run: |
+          trap './gradlew --stop' EXIT
+          ./gradlew :micronaut-pyronaut-processor:nativeCompile --max-workers=1 --no-daemon
+
+      - name: "🧱 Build native pyronaut-validate-config"
+        timeout-minutes: 25
+        run: |
+          trap './gradlew --stop' EXIT
+          ./gradlew :micronaut-pyronaut-validate-config:nativeCompile --max-workers=1 --no-daemon
+
+      - name: "🧪 Run focused native functional tests"
+        timeout-minutes: 30
+        run: |
+          trap './gradlew --stop' EXIT
           ./gradlew :micronaut-functional-test:test -Pnative=true --max-workers=1 --no-daemon --continue
