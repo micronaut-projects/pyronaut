@@ -1,39 +1,134 @@
 = Pyronaut Project Generator
 
-The Pyronaut project generator builds a default Pyronaut project using Micronaut ProjectGen.
-It is used by the project generator application to preview and download a starter project, and it can also be consumed by tools that embed Micronaut ProjectGen.
-
-The following dependency adds the Pyronaut generator feature set:
+The following dependency eases project generation for Pyronaut.
 
 dependency:micronaut-pyronaut-projectgen[groupId=io.micronaut.pyronaut]
 
-Generated projects include the standard Pyronaut layout:
-
-- `pyproject.toml`
-- `setup.py`
-- `src/controller.py`
-- `config/logback.xml`
-- `config/micronaut-banner.txt`
-
-The default generated controller is intentionally small:
-
-[source,python]
-----
-from micronaut.http.annotation import Controller, Get
-
-@Controller
-class MyController:
-    @Get(value="/", produces="text/plain")
-    def index(self) -> str:
-        return "Hello World"
-----
-
-After downloading or generating a project, run:
+`pyronaut create` is the user-facing generator command.
 
 [source,bash]
 ----
-pyronaut install
-pyronaut run
+pyronaut create demo
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+pyronaut create --list-features
 ----
 
-Use the generated project as a starting point, then add runtime, build, and test dependencies in `pyproject.toml` as application features are added.
+== Command syntax
+
+[source,bash]
+----
+pyronaut create [NAME] [options]
+----
+
+By default, `pyronaut create demo` writes a project under `./demo`. Use `--output <dir>` to choose the parent directory, or combine `--inplace` with `--output` to write directly into that directory.
+
+[source,bash]
+----
+pyronaut create demo --output /tmp/apps
+pyronaut create demo --inplace --output /tmp/demo
+----
+
+== Options
+
+`NAME`::
+The project name. Required unless `--inplace` is used. With `--inplace`, the name is derived from the selected output directory when `NAME` is omitted.
+
+`--features <f1,f2>`::
+Adds Pyronaut-compatible features to the generated project. Values are comma-separated, and the option may be repeated. Use feature names exactly as printed by `--list-features`.
+
+`--list-features`::
+Prints the selectable Pyronaut feature catalog and exits without generating files.
+
+`--output <dir>`::
+Selects the output directory. Without `--inplace`, this is the parent directory and the project is written under `<dir>/<name>`. If omitted, the current working directory is used as the parent.
+
+`--inplace`::
+Writes generated files directly into the selected output directory. Generation fails if an existing non-empty generated file would be overwritten.
+
+`--package <module>`::
+Sets the generated Python package/module name. If omitted, Pyronaut derives a valid Python package name from `NAME`.
+
+`--version <version>`::
+Sets the generated `[project].version` value in `pyproject.toml`. The default is `0.1.0`.
+
+`--micronaut-version <version>`::
+Sets the generated `tool.pyronaut.version` value. This is useful when generating against a local or snapshot Micronaut/Pyronaut platform.
+
+`--repository <repo>`::
+Overrides generated Maven repositories. Values may be repository aliases such as `mavenCentral` or `mavenLocal`, repository URLs, or local paths. Values are comma-separated, and the option may be repeated.
+
+`-h`, `--help`::
+Prints command help.
+
+== Choosing Features
+
+Run the following command to list the feature names supported for Pyronaut projects:
+
+[source,bash]
+----
+pyronaut create --list-features
+----
+
+Pass selected features with `--features`:
+
+[source,bash]
+----
+pyronaut create demo --features data-jdbc,mysql
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+----
+
+Pyronaut defaults already include the Netty HTTP server, Micronaut Serialization with Jackson, Pyronaut Logback integration, and pytest support. Those defaults can appear in the feature list, but they do not need to be explicitly selected for a standard HTTP application.
+
+The richer reference-style application can be reproduced by adding features:
+
+[source,bash]
+----
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+----
+
+That selection adds Micronaut Data JDBC, the MySQL driver and datasource configuration, JSON Schema annotations and processor support, and Pyronaut test-resources settings.
+
+== Examples
+
+[source,bash]
+----
+pyronaut create demo
+pyronaut create demo --package example.service --version 1.0.0
+pyronaut create demo --output /tmp/apps
+pyronaut create --inplace --output /tmp/demo
+pyronaut create demo --micronaut-version 5.0.0-SNAPSHOT --repository mavenLocal,mavenCentral
+----
+
+The generated project includes:
+
+* `pyproject.toml`
+* `config/application.toml`
+* `config/micronaut-banner.txt`
+* `src/main.py`
+* `src/<module>/controller.py`
+* `src/<module>/__init__.py`
+* `tests/test_<module>.py`
+* `tests-config/application-test.toml`
+* `.gitignore`
+
+Python, TOML configuration, and pytest are fixed defaults. There are no language, build tool, or Java test framework switches for Pyronaut projects.
+
+Pyronaut reuses compatible Micronaut ProjectGen starter features where their dependency and configuration behavior applies to Python projects. Upstream features often describe those changes as OpenRewrite recipes; Pyronaut translates compatible recipe contributions into `pyproject.toml` dependency arrays and TOML application configuration instead of generating Gradle or Maven build files.
+
+Feature dependencies are rendered into `pyproject.toml` using Pyronaut scopes:
+
+* ProjectGen `compile` and `runtime` dependencies become `tool.pyronaut.dependencies.runtime`.
+* `annotationProcessor` and `testAnnotationProcessor` dependencies become `tool.pyronaut.dependencies.build`.
+* `test` dependencies become `tool.pyronaut.dependencies.test`.
+
+Feature configuration is rendered to Pyronaut resource locations:
+
+* main configuration becomes `config/application.toml`
+* test configuration becomes `tests-config/application-test.toml`
+* environment-specific configuration becomes `config/application-<env>.toml`
+
+Compatible starter-style features keep their familiar names where the dependency or configuration contribution is meaningful for Python. The default visible feature set includes `http-server-netty`, `serde-jackson`, `pyronaut-logback`, and `pyronaut-pytest`; additional compatible upstream features include `data-jdbc`, `mysql`, `json-schema`, and `test-resources`.
+
+Pyronaut keeps local feature implementations only for Pyronaut-specific runtime, test, logging, and pyproject-only behavior. For example, `data-jdbc`, `mysql`, and `json-schema` are supplied by `micronaut-projectgen-micronaut`, while Pyronaut maps their recipe dependencies and configuration into the generated Python project.
+
+Build-tool, JVM-language, generated-source, CI/IaC, and JVM app-type features are hidden for Pyronaut. If an unsupported feature is explicitly requested, generation fails before writing the project with a clear unsupported-feature message.

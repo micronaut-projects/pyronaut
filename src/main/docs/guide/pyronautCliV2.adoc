@@ -6,6 +6,7 @@ Pyronaut CLI v2 is a process-oriented toolchain. The `pyronaut` command is a Pyt
 - `pyronaut-processor`
 - `pyronaut-run`
 - `pyronaut-test`
+- `pyronaut-create` (used by `pyronaut create`)
 - `pyronaut-native-build` (used by `pyronaut build --native`)
 - `pyronaut-validate-config` (used by `pyronaut validate-config`)
 - `pyronaut-test-resources-server` (used by `pyronaut test-resources-server`)
@@ -20,7 +21,7 @@ Phase 1 supports macOS and Linux.
 
 [source,bash]
 ----
-pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|validate-config|test-resources-server> [args...]
+pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|create|validate-config|test-resources-server> [args...]
 ----
 
 == Quickstart workflow
@@ -31,6 +32,7 @@ pyronaut install --project-dir /path/to/app
 pyronaut process --project-dir /path/to/app
 pyronaut run --project-dir /path/to/app
 pyronaut test --project-dir /path/to/app
+pyronaut create demo
 ----
 
 == Project layout
@@ -70,6 +72,47 @@ additional-test-resources = ["tests-fixtures"]
 These settings are used by `pyronaut process`, `pyronaut run`, `pyronaut test`, lifecycle validation, auto-restart file watching, and build staging for wheels and Docker images.
 
 == Command reference
+
+=== `pyronaut create`
+
+Creates a new Pyronaut application from the ProjectGen generator.
+
+[source,bash]
+----
+pyronaut create [NAME] [options]
+----
+
+Common options:
+
+- `--features <f1,f2>`: comma-separated Pyronaut-compatible feature names. The option may be repeated.
+- `--list-features`: print the selectable Pyronaut feature catalog and exit.
+- `--output <dir>`: parent output directory. Without `--inplace`, the project is written to `<dir>/<name>`.
+- `--inplace`: write generated files directly into the selected output directory.
+- `--package <module>`: Python package/module name. Defaults to a normalized form of `NAME`.
+- `--version <version>`: generated `[project].version` value. Defaults to `0.1.0`.
+- `--micronaut-version <version>`: generated `tool.pyronaut.version` value.
+- `--repository <repo>`: override generated Maven repositories. Values may be repository aliases such as `mavenCentral` or `mavenLocal`, URLs, or local paths. The option accepts comma-separated values and may be repeated.
+- `-h`, `--help`: print command help.
+
+Feature selection:
+
+- Run `pyronaut create --list-features` to see the supported feature names.
+- Pass features as a comma-separated list, for example `--features data-jdbc,mysql,json-schema,test-resources`.
+- Pyronaut defaults already include the Netty HTTP server, Micronaut Serialization with Jackson, Logback integration, and pytest support.
+- Unsupported JVM-language, build-tool, CI/IaC, generated-source, and JVM app-type starter features are hidden from `--list-features` and fail early if explicitly requested.
+
+Examples:
+
+[source,bash]
+----
+pyronaut create demo
+pyronaut create demo --features data-jdbc,mysql
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+pyronaut create demo --package example.service --version 1.0.0
+pyronaut create demo --output /tmp/apps
+pyronaut create --inplace --output /tmp/demo
+pyronaut create demo --micronaut-version 5.0.0-SNAPSHOT --repository mavenLocal,mavenCentral
+----
 
 === `pyronaut install`
 

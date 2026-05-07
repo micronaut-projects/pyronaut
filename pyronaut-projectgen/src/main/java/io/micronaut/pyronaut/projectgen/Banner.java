@@ -19,9 +19,8 @@ import io.micronaut.core.annotation.Internal;
 import io.micronaut.projectgen.core.feature.Feature;
 import io.micronaut.projectgen.core.generator.GeneratorContext;
 import io.micronaut.projectgen.core.generator.ModuleContext;
-import io.micronaut.projectgen.core.rocker.RockerTemplate;
+import io.micronaut.projectgen.core.template.StringTemplate;
 import jakarta.inject.Singleton;
-import io.micronaut.pyronaut.projectgen.template.banner;
 
 @Internal
 @Singleton
@@ -42,6 +41,16 @@ class Banner implements Feature {
     @Override
     public void apply(GeneratorContext generatorContext) {
         ModuleContext module = generatorContext.getRootModule();
-        module.addTemplate(TEMPLATE_NAME, new RockerTemplate(TEMPLATE_PATH, banner.template()));
+        module.addTemplate(TEMPLATE_NAME, new StringTemplate(TEMPLATE_PATH, """
+             (
+             )\\ )                                       )
+            (()/( (     (                   )    (   ( /(
+             /(_)))\\ )  )(    (    (     ( /(   ))\\  )\\())
+            (_)) (()/( (()\\   )\\   )\\ )  )(_)) /((_)(_))/
+            | _ \\ )(_)) ((_) ((_) _(_/( ((_)_ (_))( | |_
+            |  _/| || || '_|/ _ \\| ' \\))/ _` || || ||  _|
+            |_|   \\_, ||_|  \\___/|_||_| \\__,_| \\_,_| \\__|
+                  |__/
+            """));
     }
 }

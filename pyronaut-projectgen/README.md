@@ -1,0 +1,77 @@
+# Pyronaut Project Generator
+
+`micronaut-pyronaut-projectgen` provides the generator used by `pyronaut create`.
+
+## CLI Usage
+
+```bash
+pyronaut create demo
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+pyronaut create --list-features
+```
+
+The command writes to `<cwd>/<name>` by default. Use `--output <dir>` to choose a parent directory, or `--inplace` to write directly into the selected output directory.
+
+```bash
+pyronaut create demo --output /tmp/apps
+pyronaut create demo --inplace --output /tmp/demo
+```
+
+Useful options:
+
+- `--features f1,f2`: add Pyronaut-compatible starter features.
+- `--package <module>`: choose the Python package/module name.
+- `--version <version>`: set `[project].version`.
+- `--micronaut-version <version>`: override the generated `tool.pyronaut.version`.
+- `--repository <repo>`: override generated repositories. Values may be `mavenCentral`, `mavenLocal`, URLs, or local paths.
+
+## Generated Layout
+
+```text
+pyproject.toml
+.gitignore
+config/application.toml
+config/micronaut-banner.txt
+src/main.py
+src/<module>/__init__.py
+src/<module>/controller.py
+tests/test_<module>.py
+tests-config/application-test.toml
+```
+
+The default app includes a simple HTTP controller, Logback-backed Python logging setup, and a pytest/Micronaut test fixture.
+
+## Dependency And Configuration Contributions
+
+Pyronaut reuses compatible Micronaut ProjectGen starter features when possible. Upstream
+features often describe their dependency and configuration changes as OpenRewrite recipes;
+Pyronaut translates those recipe contributions into `pyproject.toml` dependency arrays and
+TOML application configuration instead of generating Gradle or Maven build files.
+
+- `compile` and `runtime` dependencies render to `tool.pyronaut.dependencies.runtime`.
+- `annotationProcessor` and `testAnnotationProcessor` dependencies render to `tool.pyronaut.dependencies.build`.
+- `test` dependencies render to `tool.pyronaut.dependencies.test`.
+- Main configuration renders to `config/application.toml`.
+- Test configuration renders to `tests-config/application-test.toml`.
+- Other environment configuration renders to `config/application-<env>.toml`.
+
+The default repository list is `["mavenCentral"]`. Snapshot Micronaut versions add `mavenLocal` first so local Pyronaut artifacts can be resolved during development.
+
+## Feature Compatibility
+
+Visible features are limited to behavior that makes sense for Python projects. Current compatible features include:
+
+- `http-server-netty`
+- `serde-jackson`
+- `pyronaut-logback`
+- `pyronaut-pytest`
+- `data-jdbc`
+- `mysql`
+- `json-schema`
+- `test-resources`
+
+`data-jdbc`, `mysql`, `json-schema`, and the underlying serialization/server features come from
+`micronaut-projectgen-micronaut`; Pyronaut keeps local features only for Pyronaut-specific runtime,
+test, logging, and pyproject-only behavior. Build-tool, JVM-language, generated-source, CI/IaC,
+and JVM app-type features are intentionally hidden. If such a feature is explicitly requested,
+generation fails early with a message that the feature is not supported for Pyronaut/Python projects.
