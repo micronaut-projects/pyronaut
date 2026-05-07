@@ -95,6 +95,9 @@ def ensureNativeImageLauncherIsUsable = { File javaHome ->
 }
 
 pluginManager.withPlugin("org.graalvm.buildtools.native") {
+    def ciNativeImageArgs = providers.gradleProperty("pyronautNativeImageCiArgs").map { value ->
+        value.trim().split(/\s+/).findAll { arg -> !arg.isBlank() }
+    }.orElse([])
     def graalVmDevTag = providers.gradleProperty("pyronautGraalVmDevTag")
     if (graalVmDevTag.present) {
         def matcher = (graalVmDevTag.get() =~ /(jdk-)?(\d+)/)
@@ -118,6 +121,7 @@ pluginManager.withPlugin("org.graalvm.buildtools.native") {
             toolchainDetection = true
             binaries.configureEach {
                 javaLauncher = graalVmLauncher
+                buildArgs.addAll(ciNativeImageArgs)
             }
         }
     }

@@ -23,8 +23,12 @@ import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
+/**
+ * Executes Micronaut HTTP client requests and converts failures into interop-friendly results.
+ */
 public final class HttpClientInvoker {
-    private HttpClientInvoker() {}
+    private HttpClientInvoker() {
+    }
 
     public static Result exchange(HttpClient client, MutableHttpRequest<?> request, Class<?> bodyType) {
         try {
@@ -32,7 +36,6 @@ public final class HttpClientInvoker {
             Object resp = blocking.exchange(request, bodyType);
             return Result.success(resp);
         } catch (Throwable t) {
-            // Convert response-carrying exceptions into a result with the response attached so Python never sees a foreign exception
             if (t instanceof HttpClientResponseException) {
                 HttpClientResponseException hre = (HttpClientResponseException) t;
                 if (hre.getResponse() != null) {
@@ -43,6 +46,18 @@ public final class HttpClientInvoker {
         }
     }
 
+    private static String stackTraceToString(Throwable t) {
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+        t.printStackTrace(pw);
+        pw.flush();
+        return sw.toString();
+    }
+
+    /**
+     * Interop-friendly HTTP client invocation result.
+     */
+    @SuppressWarnings("checkstyle:VisibilityModifier")
     public static final class Result {
         public final boolean success;
         public final Object response;
@@ -71,13 +86,5 @@ public final class HttpClientInvoker {
         static Result failure(Throwable t) {
             return new Result(false, null, t);
         }
-    }
-
-    private static String stackTraceToString(Throwable t) {
-        StringWriter sw = new StringWriter();
-        PrintWriter pw = new PrintWriter(sw);
-        t.printStackTrace(pw);
-        pw.flush();
-        return sw.toString();
     }
 }

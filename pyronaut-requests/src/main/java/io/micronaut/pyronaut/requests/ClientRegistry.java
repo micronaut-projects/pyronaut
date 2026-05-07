@@ -29,7 +29,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ClientRegistry {
     private static final Set<Closeable> CLIENTS = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
-    private ClientRegistry() {}
+    private ClientRegistry() {
+    }
 
     public static void register(HttpClient client) {
         if (client != null) {
@@ -44,8 +45,12 @@ public final class ClientRegistry {
     }
 
     public static void closeAll() {
-        for (Closeable c : CLIENTS) {
-            try { c.close(); } catch (IOException ignored) {}
+        for (Closeable client : CLIENTS) {
+            try {
+                client.close();
+            } catch (IOException ignored) {
+                // Ignore shutdown failures while closing all registered clients.
+            }
         }
         CLIENTS.clear();
     }

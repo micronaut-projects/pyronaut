@@ -11,7 +11,7 @@ jobs:
   build:
     if: github.repository != 'micronaut-projects/micronaut-project-template'
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 150
     env:
       DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
       DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
@@ -23,6 +23,7 @@ jobs:
       PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GRAALVM_QUICK_BUILD: true
+      ORG_GRADLE_PROJECT_pyronautNativeImageCiArgs: "--parallelism=1 -J-Xmx5g"
       TESTCONTAINERS_RYUK_DISABLED: true
     steps:
       - name: Remove system JDKs
@@ -55,19 +56,19 @@ jobs:
             jdks
 
       - name: "🧱 Build native pyronaut-install"
-        timeout-minutes: 25
+        timeout-minutes: 40
         run: |
           trap './gradlew --stop' EXIT
           ./gradlew :micronaut-pyronaut-install:nativeCompile --max-workers=1 --no-daemon
 
       - name: "🧱 Build native pyronaut-processor"
-        timeout-minutes: 25
+        timeout-minutes: 60
         run: |
           trap './gradlew --stop' EXIT
           ./gradlew :micronaut-pyronaut-processor:nativeCompile --max-workers=1 --no-daemon
 
       - name: "🧱 Build native pyronaut-validate-config"
-        timeout-minutes: 25
+        timeout-minutes: 40
         run: |
           trap './gradlew --stop' EXIT
           ./gradlew :micronaut-pyronaut-validate-config:nativeCompile --max-workers=1 --no-daemon
