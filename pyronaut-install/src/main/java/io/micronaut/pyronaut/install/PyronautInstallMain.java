@@ -38,6 +38,7 @@ import org.eclipse.aether.resolution.DependencyResolutionException;
 /**
  * Entry point for {@code pyronaut-install}.
  */
+@SuppressWarnings({"checkstyle:InnerTypeLast", "checkstyle:MissingSwitchDefault"})
 @CommandLine.Command(name = "pyronaut-install", mixinStandardHelpOptions = true, description = "Resolve and cache project dependencies")
 public final class PyronautInstallMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";

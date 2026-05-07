@@ -11,6 +11,7 @@ jobs:
   build:
     if: github.repository != 'micronaut-projects/micronaut-project-template'
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     env:
       DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
       DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
@@ -54,5 +55,6 @@ jobs:
             jdks
 
       - name: "🧪 Run focused native functional tests"
+        timeout-minutes: 60
         run: |
-          ./gradlew :micronaut-functional-test:test -Pnative=true --no-daemon --continue
+          ./gradlew :micronaut-functional-test:test -Pnative=true --max-workers=1 --no-daemon --continue

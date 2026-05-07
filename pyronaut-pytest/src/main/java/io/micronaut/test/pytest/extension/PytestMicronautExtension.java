@@ -142,6 +142,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
      *
      * @param node The pytest node.
      * @param testAnnotationValue The Micronaut test value.
+     * @return Null when startup succeeds, otherwise a rendered failure message.
      */
     @Nullable
     public String start(Value node, MicronautTestValue testAnnotationValue) {

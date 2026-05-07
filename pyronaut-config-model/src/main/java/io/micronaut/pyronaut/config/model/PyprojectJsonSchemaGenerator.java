@@ -75,6 +75,7 @@ public final class PyprojectJsonSchemaGenerator {
                 schema.put("type", "object");
                 schema.put("additionalProperties", Map.of("type", "string"));
             }
+            default -> throw new IllegalArgumentException("Unsupported field type: " + field.type());
         }
         if (field.description() != null && !field.description().isBlank()) {
             String description = field.description();
@@ -138,6 +139,12 @@ public final class PyprojectJsonSchemaGenerator {
             values.put("properties", new LinkedHashMap<String, Object>());
         }
 
+        private ObjectSchema(LinkedHashMap<String, Object> values) {
+            this.values = values;
+            this.values.putIfAbsent("type", "object");
+            this.values.putIfAbsent("properties", new LinkedHashMap<String, Object>());
+        }
+
         @SuppressWarnings("unchecked")
         private LinkedHashMap<String, Object> properties() {
             return (LinkedHashMap<String, Object>) values.get("properties");
@@ -151,12 +158,6 @@ public final class PyprojectJsonSchemaGenerator {
             ObjectSchema child = objectSchema(true);
             properties().put(name, child.values);
             return child;
-        }
-
-        private ObjectSchema(LinkedHashMap<String, Object> values) {
-            this.values = values;
-            this.values.putIfAbsent("type", "object");
-            this.values.putIfAbsent("properties", new LinkedHashMap<String, Object>());
         }
 
         private void setAdditionalProperties(Object value) {

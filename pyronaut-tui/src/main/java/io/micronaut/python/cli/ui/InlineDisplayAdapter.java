@@ -17,6 +17,7 @@ package io.micronaut.python.cli.ui;
 
 import dev.tamboui.inline.InlineDisplay;
 
+@SuppressWarnings("checkstyle:MissingJavadocType")
 public final class InlineDisplayAdapter implements ProgressDisplay {
     private final InlineDisplay display;
 

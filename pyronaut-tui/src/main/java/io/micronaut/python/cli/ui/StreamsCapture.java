@@ -223,6 +223,7 @@ public final class StreamsCapture {
         }
     }
 
+    @SuppressWarnings("checkstyle:MissingJavadocType")
     public static final class OutputNotificationThread extends Thread {
         private final BlockingQueue<String> queue;
         private final List<Consumer<? super String>> consumers = new ArrayList<>();

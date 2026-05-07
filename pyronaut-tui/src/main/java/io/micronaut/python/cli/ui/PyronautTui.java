@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
+@SuppressWarnings("checkstyle:MissingJavadocType")
 public final class PyronautTui {
     private static final String TEST_RESOURCES_IMAGE_PULL_MARKER = "Pulling docker image:";
     private static final String TEST_RESOURCES_CONTAINER_CREATE_MARKER = "Creating container for image:";

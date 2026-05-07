@@ -21,6 +21,7 @@ import picocli.CommandLine.Command;
 
 import java.util.concurrent.Callable;
 
+@SuppressWarnings("checkstyle:MissingJavadocType")
 @Command(
         name = "pyronaut-tui",
         description = "Pyronaut Tamboui TUI",

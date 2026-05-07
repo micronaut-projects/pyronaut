@@ -20,6 +20,7 @@ import java.util.List;
 /**
  * Shared specification for {@code pyproject.toml} parsing and JSON schema generation.
  */
+@SuppressWarnings({"checkstyle:DeclarationOrder", "checkstyle:InnerTypeLast"})
 public final class PyprojectConfigSpec {
 
     private PyprojectConfigSpec() {

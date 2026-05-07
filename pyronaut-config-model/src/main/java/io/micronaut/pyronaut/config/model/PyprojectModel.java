@@ -178,6 +178,8 @@ public record PyprojectModel(Project project,
      * tool.pyronaut.build table.
      *
      * @param mode default build mode (for example jvm or native)
+     * @param metadata native image metadata settings
+     * @param docker container image build settings
      */
     public record Build(String mode,
                         Metadata metadata,

@@ -39,6 +39,7 @@ import java.util.stream.Stream;
 /**
  * Entry point for {@code pyronaut-run}.
  */
+@SuppressWarnings("checkstyle:InnerTypeLast")
 @CommandLine.Command(name = "pyronaut-run", mixinStandardHelpOptions = true, description = "Run a processed Pyronaut application")
 public final class PyronautRunMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";

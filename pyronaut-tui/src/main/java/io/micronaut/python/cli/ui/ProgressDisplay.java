@@ -15,6 +15,7 @@
  */
 package io.micronaut.python.cli.ui;
 
+@SuppressWarnings("checkstyle:MissingJavadocType")
 public interface ProgressDisplay extends AutoCloseable {
     void println(String text);
 

@@ -20,6 +20,7 @@ import io.micronaut.python.cli.protocol.ProtocolConstants;
 import java.util.List;
 import java.util.function.Supplier;
 
+@SuppressWarnings("checkstyle:MissingJavadocType")
 public final class TuiEventSink implements ProtocolEventSink {
 
     private final UiController controller;

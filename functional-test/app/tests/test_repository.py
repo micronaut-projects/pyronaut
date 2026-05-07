@@ -63,7 +63,6 @@ def test_python_jdbc_repository_save_count_and_find_all(my_context):
     assert "Crud Save" in titles
 
 
-@pending_crud_repository_fix
 def test_python_jdbc_repository_exists_by_id(my_context):
     repository = my_context["helloworld.BookRepository"]
 
@@ -71,6 +70,7 @@ def test_python_jdbc_repository_exists_by_id(my_context):
     assert repository.existsById(crud_saved.id)
 
 
+@pending_crud_repository_fix
 def test_python_jdbc_repository_find_by_id(my_context):
     repository = my_context["helloworld.BookRepository"]
 
@@ -79,7 +79,6 @@ def test_python_jdbc_repository_find_by_id(my_context):
     assert found_by_id.title == "Crud Find By Id"
 
 
-@pending_crud_repository_fix
 def test_python_jdbc_repository_update(my_context):
     repository = my_context["helloworld.BookRepository"]
 
@@ -89,7 +88,6 @@ def test_python_jdbc_repository_update(my_context):
     assert repository.findByTitle("Crud Update").id == crud_saved.id
 
 
-@pending_crud_repository_fix
 def test_python_jdbc_repository_delete_by_id(my_context):
     repository = my_context["helloworld.BookRepository"]
 
@@ -106,7 +104,6 @@ def test_python_jdbc_repository_delete_entity(my_context):
     assert repository.count() == 0
 
 
-@pending_crud_repository_fix
 def test_python_jdbc_repository_delete_all(my_context):
     repository = my_context["helloworld.BookRepository"]
 
@@ -117,7 +114,6 @@ def test_python_jdbc_repository_delete_all(my_context):
     assert repository.count() == 0
 
 
-@pending_crud_repository_fix
 def test_python_jdbc_repository_bulk_crud_methods(my_context):
     repository = my_context["helloworld.BookRepository"]
 

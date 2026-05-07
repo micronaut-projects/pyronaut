@@ -15,6 +15,7 @@
  */
 package io.micronaut.python.cli.ui;
 
+@SuppressWarnings("checkstyle:MissingJavadocType")
 public enum Mode {
     RUN,
     TEST

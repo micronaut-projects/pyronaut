@@ -62,6 +62,7 @@ import java.util.zip.ZipException;
 /**
  * Generates best-effort Python stub files from resolved Java classpath entries.
  */
+@SuppressWarnings({"checkstyle:DeclarationOrder", "checkstyle:InnerTypeLast"})
 final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";

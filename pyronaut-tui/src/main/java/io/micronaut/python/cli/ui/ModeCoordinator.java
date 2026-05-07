@@ -17,6 +17,7 @@ package io.micronaut.python.cli.ui;
  
 import java.util.concurrent.locks.ReentrantLock;
 
+@SuppressWarnings({"checkstyle:InnerTypeLast", "checkstyle:MissingJavadocType"})
 public final class ModeCoordinator {
     private final ReentrantLock lock = new ReentrantLock();
     private Watcher fileWatcher;

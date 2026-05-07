@@ -41,6 +41,10 @@ application {
     applicationDefaultJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow", "--enable-native-access=ALL-UNNAMED")
 }
 
+tasks.withType<org.gradle.api.plugins.quality.Checkstyle>().configureEach {
+    exclude("**/PyronautDelegatingTuiCommand.java")
+}
+
 tasks {
     startScripts {
         applicationName = "pyronaut-tui"

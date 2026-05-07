@@ -17,6 +17,7 @@ package io.micronaut.python.cli.ui;
 
 import java.util.List;
 
+@SuppressWarnings("checkstyle:MissingJavadocType")
 public interface ProtocolEventSink {
     void onAppStarted();
 

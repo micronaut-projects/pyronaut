@@ -68,6 +68,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
+@SuppressWarnings({"checkstyle:FileLength", "checkstyle:InnerTypeLast"})
 @Command(name = "delegating-tui", description = "Runs the Tamboui TUI delegated to v2 standalone commands", mixinStandardHelpOptions = true)
 public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 

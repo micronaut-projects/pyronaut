@@ -22,6 +22,7 @@ import java.io.DataInputStream;
 import java.io.EOFException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+@SuppressWarnings("checkstyle:MissingJavadocType")
 public final class ProtocolEventLoop implements Runnable {
 
     private final DataInputStream in;

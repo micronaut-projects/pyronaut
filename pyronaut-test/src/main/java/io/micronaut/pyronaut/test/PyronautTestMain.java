@@ -34,7 +34,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
@@ -43,6 +42,7 @@ import java.util.function.Supplier;
 /**
  * Entry point for {@code pyronaut-test}.
  */
+@SuppressWarnings("checkstyle:InnerTypeLast")
 @CommandLine.Command(name = "pyronaut-test", mixinStandardHelpOptions = true, description = "Run tests for a processed Pyronaut application")
 public final class PyronautTestMain implements Callable<Integer> {
     static {

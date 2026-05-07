@@ -290,7 +290,9 @@ final class TestTreeView implements Element {
     }
 
     private void reapplySelection() {
-        if (selectedKey == null || rootNode == null) return;
+        if (selectedKey == null || rootNode == null) {
+            return;
+        }
         // linearize visible nodes by expansion
         var flat = new ArrayList<TreeNode<UiModel.TestTree>>();
         flattenVisible(rootNode, flat);

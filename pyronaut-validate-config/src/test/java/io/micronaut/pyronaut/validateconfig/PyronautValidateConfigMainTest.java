@@ -264,7 +264,7 @@ class PyronautValidateConfigMainTest {
             runResources.get()
         );
         assertEquals(
-            List.of(project.resolve("config"), project.resolve("src/main/resources"), project.resolve("src/test/resources")),
+            List.of(project.resolve("config"), project.resolve("src/main/resources"), project.resolve("tests-config")),
             testResources.get()
         );
     }

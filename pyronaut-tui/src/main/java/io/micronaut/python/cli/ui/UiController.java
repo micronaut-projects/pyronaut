@@ -334,7 +334,6 @@ public final class UiController {
         }
     }
 
-
     /**
      * Set controller to running mode (not compiling nor testing).
      */
@@ -868,6 +867,7 @@ public final class UiController {
     public record TestSummary(long passed, long failed, long skipped, long running, long pending) {
     }
 
+    @SuppressWarnings("checkstyle:MissingJavadocType")
     public enum TestResourcesStatus {
         LOADING,
         RUNNING,
@@ -876,6 +876,7 @@ public final class UiController {
         UNAVAILABLE
     }
 
+    @SuppressWarnings("checkstyle:MissingJavadocType")
     public record TestResourcesSnapshot(
         TestResourcesStatus status,
         String healthMessage,
