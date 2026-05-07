@@ -1,3 +1,13 @@
 plugins {
     id "io.micronaut.build.internal.parent"
 }
+
+repositories {
+    def graalPyBundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
+    if (graalPyBundleRepo != null && !graalPyBundleRepo.isBlank()) {
+        maven {
+            name = "graalPyBundle"
+            url = uri(graalPyBundleRepo)
+        }
+    }
+}

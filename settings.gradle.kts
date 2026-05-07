@@ -34,9 +34,19 @@ fun booleanGradleProperty(name: String): Boolean? {
         ?: throw GradleException("Expected Gradle property '$name' to be 'true' or 'false' but got '$value'")
 }
 
-fun runCommand(workingDir: java.io.File, vararg command: String): String {
+fun String?.takeIfNotBlank(): String? = this?.takeIf { it.isNotBlank() }
+
+fun configuredValue(gradlePropertyName: String, vararg environmentNames: String): String? {
+    providers.gradleProperty(gradlePropertyName).orNull.takeIfNotBlank()?.let { return it }
+    environmentNames.forEach { name ->
+        providers.environmentVariable(name).orNull.takeIfNotBlank()?.let { return it }
+    }
+    return null
+}
+
+fun runCommand(workingDir: java.io.File, command: List<String>, displayCommand: List<String> = command): String {
     val output = ByteArrayOutputStream()
-    val process = ProcessBuilder(*command)
+    val process = ProcessBuilder(command)
         .directory(workingDir)
         .redirectErrorStream(true)
         .start()
@@ -44,7 +54,7 @@ fun runCommand(workingDir: java.io.File, vararg command: String): String {
     if (process.waitFor() != 0) {
         throw GradleException(
             buildString {
-                append("Command failed in ${workingDir.absolutePath}: ${command.joinToString(" ")}")
+                append("Command failed in ${workingDir.absolutePath}: ${displayCommand.joinToString(" ")}")
                 val text = output.toString(Charsets.UTF_8).trim()
                 if (text.isNotEmpty()) {
                     append("\n$text")
@@ -54,6 +64,9 @@ fun runCommand(workingDir: java.io.File, vararg command: String): String {
     }
     return output.toString(Charsets.UTF_8).trim()
 }
+
+fun runCommand(workingDir: java.io.File, vararg command: String): String =
+    runCommand(workingDir, command.toList())
 
 fun mavenVersionDirReady(versionDir: java.io.File, artifactId: String): Boolean {
     if (!versionDir.isDirectory) {
@@ -99,16 +112,29 @@ fun isValidZip(file: java.io.File): Boolean {
 }
 
 fun resolveGraalPyBundleUrl(graalpyVersion: String): String {
-    providers.gradleProperty("pyronaut.graalpy.bundle.url").orNull
-        ?.takeIf { it.isNotBlank() }
+    configuredValue("pyronaut.graalpy.bundle.url", "PYRONAUT_GRAALPY_BUNDLE_URL")
         ?.let { return it }
 
     val releaseVersion = graalpyVersion.removeSuffix("-SNAPSHOT")
-    val releasesJson = runCommand(
-        layout.settingsDirectory.asFile,
+    val command = mutableListOf(
         "curl",
         "-sSL",
-        "https://api.github.com/repos/graalvm/oracle-graalvm-ea-builds/releases"
+        "-H",
+        "Accept: application/vnd.github+json",
+        "-H",
+        "X-GitHub-Api-Version: 2022-11-28",
+    )
+    val displayCommand = command.toMutableList()
+    gitHubApiToken?.let { token ->
+        command.addAll(listOf("-H", "Authorization: Bearer $token"))
+        displayCommand.addAll(listOf("-H", "Authorization: Bearer <redacted>"))
+    }
+    command.add("https://api.github.com/repos/graalvm/oracle-graalvm-ea-builds/releases")
+    displayCommand.add("https://api.github.com/repos/graalvm/oracle-graalvm-ea-builds/releases")
+    val releasesJson = runCommand(
+        layout.settingsDirectory.asFile,
+        command,
+        displayCommand
     )
     val pattern = Regex(
         """https://github\.com/graalvm/oracle-graalvm-ea-builds/releases/download/[^"\s]+/maven-resource-bundle-${Regex.escape(releaseVersion)}[^"\s]*\.zip"""
@@ -195,7 +221,11 @@ fun ensureGraalPyBundleRepo(checkoutDir: java.io.File, graalpyVersion: String): 
     }
     if (!isValidZip(zipFile)) {
         zipFile.delete()
-        runCommand(layout.settingsDirectory.asFile, "curl", "-L", "-o", zipFile.absolutePath, bundleUrl)
+        runCommand(
+            layout.settingsDirectory.asFile,
+            listOf("curl", "-L", "-o", zipFile.absolutePath, bundleUrl),
+            listOf("curl", "-L", "-o", zipFile.absolutePath, "<graalpy-bundle-url>")
+        )
     }
     if (!graalPyBundleReady(repoDir, graalpyVersion)) {
         runCommand(layout.settingsDirectory.asFile, "unzip", "-q", "-o", zipFile.absolutePath, "-d", repoDir.absolutePath)
@@ -297,6 +327,15 @@ val useSnapshotSourceDependencies = micronautVersion.isSnapshotVersion() && graa
 
 val includeMicronautCore = booleanGradleProperty("pyronaut.include.micronaut.core") ?: useSnapshotSourceDependencies
 val includeGraalPyExtensions = booleanGradleProperty("pyronaut.include.graalpy.extensions") ?: useSnapshotSourceDependencies
+val privateGitToken = configuredValue("pyronaut.git.token", "PYRONAUT_GIT_TOKEN", "GH_TOKEN")
+val gitHubApiToken = configuredValue(
+    "pyronaut.github.api.token",
+    "PYRONAUT_GIT_TOKEN",
+    "GH_TOKEN",
+    "GH_TOKEN_PUBLIC_REPOS_READONLY",
+    "GITHUB_TOKEN"
+)
+val gitHubUsername = configuredValue("pyronaut.git.username", "PYRONAUT_GIT_USERNAME", "GH_USERNAME") ?: "x-access-token"
 
 val graalPyBundleRepo = if (includeGraalPyExtensions) {
     ensureGraalPyBundleRepo(ensureGraalPyExtensionsCheckout(), graalpyVersion).also {
@@ -320,7 +359,15 @@ if (includeMicronautCore) {
         }
     } else {
         gitRepositories {
-            useGitCli = true
+            useGitCli = privateGitToken == null
+            privateGitToken?.let { token ->
+                defaultAuthentication {
+                    basic {
+                        username.set(gitHubUsername)
+                        password.set(token)
+                    }
+                }
+            }
             include("micronaut-core-python") {
                 uri.set("https://github.com/graemerocher/micronaut-core.git")
                 branch.set("python-ast-experiments")
