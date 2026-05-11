@@ -1,4 +1,10 @@
 import org.gradle.api.GradleException
+import org.gradle.api.artifacts.Configuration
+import org.gradle.api.attributes.Bundling
+import org.gradle.api.attributes.Category
+import org.gradle.api.attributes.LibraryElements
+import org.gradle.api.attributes.Usage
+import org.gradle.api.attributes.java.TargetJvmEnvironment
 import org.gradle.jvm.tasks.Jar
 import java.io.FileInputStream
 import java.security.MessageDigest
@@ -35,7 +41,9 @@ val pytestRequirement = "pytest==9.0.3"
 val functionalTestMicronautVersion = versionFromCatalog("micronaut")
 val functionalTestMicronautTestVersion = versionFromCatalog("micronaut-test")
 val functionalTestResourcesVersion = versionFromCatalog("micronaut-test-resources")
+val functionalTestGraalPyVersion = versionFromCatalog("graalpy")
 val includedCoreSourcegenVersion = versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen")
+val includedCoreJavaParserVersion = versionFromIncludedMicronautCoreCatalog("managed-java-parser-core")
 val useNativeExecutables = providers
     .gradleProperty("native")
     .map(String::toBoolean)
@@ -109,21 +117,56 @@ val fixtureSourcegenArtifacts by configurations.creating {
     isTransitive = false
 }
 
+val fixtureSourcegenRuntimeArtifacts by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = true
+    useJavaRuntimeClasspathAttributes()
+}
+
 val fixtureMicronautTestArtifacts by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true
     isTransitive = false
 }
 
+val fixtureMicronautTestRuntimeArtifacts by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = true
+    useJavaRuntimeClasspathAttributes()
+}
+
+val fixtureIncludedCoreExternalArtifacts by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+    useJavaRuntimeClasspathAttributes()
+}
+
 for (artifactId in sourcegenFixtureArtifactIds) {
     dependencies.add(fixtureSourcegenArtifacts.name, "io.micronaut.sourcegen:$artifactId:$includedCoreSourcegenVersion")
     dependencies.add(fixtureSourcegenArtifacts.name, "io.micronaut.sourcegen:$artifactId:$includedCoreSourcegenVersion@pom")
+    dependencies.add(fixtureSourcegenRuntimeArtifacts.name, "io.micronaut.sourcegen:$artifactId:$includedCoreSourcegenVersion")
 }
 
 for (artifactId in micronautTestFixtureArtifactIds) {
     dependencies.add(fixtureMicronautTestArtifacts.name, "io.micronaut.test:$artifactId:$functionalTestMicronautTestVersion")
     dependencies.add(fixtureMicronautTestArtifacts.name, "io.micronaut.test:$artifactId:$functionalTestMicronautTestVersion@pom")
 }
+dependencies.add(fixtureMicronautTestRuntimeArtifacts.name, mnTest.junit.jupiter.api)
+dependencies.add(fixtureMicronautTestRuntimeArtifacts.name, mnTest.junit.jupiter.engine)
+dependencies.add(fixtureMicronautTestRuntimeArtifacts.name, mnTest.junit.platform.engine)
+dependencies.add(fixtureMicronautTestRuntimeArtifacts.name, mnTest.junit.platform.launcher)
+
+dependencies.add(
+    fixtureIncludedCoreExternalArtifacts.name,
+    "com.github.javaparser:javaparser-symbol-solver-core:$includedCoreJavaParserVersion"
+)
+dependencies.add(
+    fixtureIncludedCoreExternalArtifacts.name,
+    "com.github.javaparser:javaparser-core:$includedCoreJavaParserVersion"
+)
 
 val stagedPyronautProjectPaths = listOf(
     ":micronaut-pyronaut-logback",
@@ -182,6 +225,19 @@ fun versionFromCatalog(file: java.io.File, key: String): String {
 
 fun versionFromCatalog(key: String): String {
     return versionFromCatalog(rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile, key)
+}
+
+fun Configuration.useJavaRuntimeClasspathAttributes() {
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage::class.java, Usage.JAVA_RUNTIME))
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category::class.java, Category.LIBRARY))
+        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements::class.java, LibraryElements.JAR))
+        attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling::class.java, Bundling.EXTERNAL))
+        attribute(
+            TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
+            objects.named(TargetJvmEnvironment::class.java, TargetJvmEnvironment.STANDARD_JVM)
+        )
+    }
 }
 
 fun versionFromIncludedMicronautCoreCatalog(key: String): String {
@@ -401,10 +457,13 @@ fun mavenPomContent(artifactId: String, pomFile: java.io.File): String {
         )
     }
     if (artifactId == "micronaut-core-bom") {
+        content = replacePomProperty(content, "graal.version", functionalTestGraalPyVersion)
         content = removeImportedBomDependencies(content)
     }
     if (artifactId == "micronaut-platform") {
         content = replacePomProperty(content, "micronaut.core.version", functionalTestMicronautVersion)
+        content = replacePomProperty(content, "graal.version", functionalTestGraalPyVersion)
+        content = replacePomProperty(content, "graalpy.embedding.version", functionalTestGraalPyVersion)
         content = replacePomProperty(content, "micronaut.sourcegen.version", versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen"))
         content = replacePomProperty(content, "micronaut.test.version", functionalTestMicronautTestVersion)
         content = replacePomProperty(content, "micronaut.test.resources.version", functionalTestResourcesVersion)
@@ -514,13 +573,35 @@ fun Project.stageIncludedMicronautCoreFixtureArtifacts() {
 
 fun Project.stageSourcegenFixtureArtifacts() {
     stageResolvedFixtureArtifacts(fixtureSourcegenArtifacts.resolvedConfiguration.resolvedArtifacts)
+    stageResolvedFixtureArtifacts(
+        fixtureSourcegenRuntimeArtifacts.resolvedConfiguration.resolvedArtifacts,
+        includeArtifact = ::isExternalFixtureArtifact,
+        includePom = true,
+    )
 }
 
 fun Project.stageMicronautTestFixtureArtifacts() {
     stageResolvedFixtureArtifacts(fixtureMicronautTestArtifacts.resolvedConfiguration.resolvedArtifacts)
+    stageResolvedFixtureArtifacts(
+        fixtureMicronautTestRuntimeArtifacts.resolvedConfiguration.resolvedArtifacts,
+        includeArtifact = ::isExternalFixtureArtifact,
+        includePom = true,
+    )
 }
 
-fun stageResolvedFixtureArtifacts(resolvedArtifacts: Set<org.gradle.api.artifacts.ResolvedArtifact>) {
+fun Project.stageIncludedCoreExternalFixtureArtifacts() {
+    stageResolvedFixtureArtifacts(
+        fixtureIncludedCoreExternalArtifacts.resolvedConfiguration.resolvedArtifacts,
+        includeArtifact = ::isExternalFixtureArtifact,
+        includePom = true,
+    )
+}
+
+fun Project.stageResolvedFixtureArtifacts(
+    resolvedArtifacts: Set<org.gradle.api.artifacts.ResolvedArtifact>,
+    includeArtifact: (ExternalFixtureArtifact) -> Boolean = { true },
+    includePom: Boolean = false,
+) {
     val artifacts = resolvedArtifacts.map { artifact ->
         val moduleVersion = artifact.moduleVersion.id
         ExternalFixtureArtifact(
@@ -533,8 +614,35 @@ fun stageResolvedFixtureArtifacts(resolvedArtifacts: Set<org.gradle.api.artifact
         )
     }
     for (artifact in artifacts) {
+        if (!includeArtifact(artifact)) {
+            continue
+        }
         copyMavenArtifactFile(artifact)
+        if (includePom && artifact.extension != "pom") {
+            resolveAndCopyMavenPom(artifact)
+        }
     }
+}
+
+fun isExternalFixtureArtifact(artifact: ExternalFixtureArtifact): Boolean {
+    return !artifact.groupId.startsWith("io.micronaut")
+}
+
+fun Project.resolveAndCopyMavenPom(artifact: ExternalFixtureArtifact) {
+    val pomConfiguration = configurations.detachedConfiguration(
+        dependencies.create("${artifact.groupId}:${artifact.artifactId}:${artifact.version}@pom")
+    )
+    pomConfiguration.isTransitive = false
+    copyMavenArtifactFile(
+        ExternalFixtureArtifact(
+            groupId = artifact.groupId,
+            artifactId = artifact.artifactId,
+            version = artifact.version,
+            extension = "pom",
+            classifier = null,
+            file = pomConfiguration.singleFile,
+        )
+    )
 }
 
 fun copyMavenArtifactFile(artifact: ExternalFixtureArtifact) {
@@ -727,7 +835,7 @@ val stageMicronautCoreFixtureArtifacts by tasks.registering {
 val stageSourcegenFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages SourceGen artifacts needed by included Micronaut Core Python artifacts."
-    inputs.files(fixtureSourcegenArtifacts)
+    inputs.files(fixtureSourcegenArtifacts, fixtureSourcegenRuntimeArtifacts)
     outputs.dir(fixtureStagedRepoDir)
     doLast {
         project.stageSourcegenFixtureArtifacts()
@@ -737,10 +845,20 @@ val stageSourcegenFixtureArtifacts by tasks.registering {
 val stageMicronautTestFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages Micronaut Test artifacts needed by the fixture test scope."
-    inputs.files(fixtureMicronautTestArtifacts)
+    inputs.files(fixtureMicronautTestArtifacts, fixtureMicronautTestRuntimeArtifacts)
     outputs.dir(fixtureStagedRepoDir)
     doLast {
         project.stageMicronautTestFixtureArtifacts()
+    }
+}
+
+val stageIncludedCoreExternalFixtureArtifacts by tasks.registering {
+    group = "build setup"
+    description = "Stages external artifacts referenced by included Micronaut Core POMs."
+    inputs.files(fixtureIncludedCoreExternalArtifacts)
+    outputs.dir(fixtureStagedRepoDir)
+    doLast {
+        project.stageIncludedCoreExternalFixtureArtifacts()
     }
 }
 
@@ -765,6 +883,7 @@ val publishFixtureArtifactsToMavenLocal by tasks.registering {
         stageMicronautPlatformFixtureArtifact,
         stageMicronautCoreFixtureArtifacts,
         stageSourcegenFixtureArtifacts,
+        stageIncludedCoreExternalFixtureArtifacts,
         stageMicronautTestFixtureArtifacts,
         stageGraalPyFixtureArtifacts,
     )
