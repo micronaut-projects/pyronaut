@@ -32,6 +32,10 @@ val fixtureConfigValidationReportDir = fixtureCacheDir.dir("reports/config-valid
 val fixtureProcessedClassesDir = fixtureCacheDir.dir("classes")
 val fixtureProcessedTestClassesDir = fixtureCacheDir.dir("test-classes")
 val pytestRequirement = "pytest==9.0.3"
+val functionalTestMicronautVersion = versionFromCatalog("micronaut")
+val functionalTestMicronautTestVersion = versionFromCatalog("micronaut-test")
+val functionalTestResourcesVersion = versionFromCatalog("micronaut-test-resources")
+val includedCoreSourcegenVersion = versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen")
 val useNativeExecutables = providers
     .gradleProperty("native")
     .map(String::toBoolean)
@@ -69,7 +73,15 @@ data class IncludedBuildPublishedArtifact(
     val hasJar: Boolean = true,
 )
 
-val functionalTestMicronautVersion = versionFromCatalog("micronaut")
+data class ExternalFixtureArtifact(
+    val groupId: String,
+    val artifactId: String,
+    val version: String,
+    val extension: String,
+    val classifier: String?,
+    val file: java.io.File,
+)
+
 val fixturePlatformPom by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true
@@ -77,6 +89,41 @@ val fixturePlatformPom by configurations.creating {
 }
 
 dependencies.add(fixturePlatformPom.name, "io.micronaut.platform:micronaut-platform:$functionalTestMicronautVersion@pom")
+
+val sourcegenFixtureArtifactIds = listOf(
+    "micronaut-sourcegen-annotations",
+    "micronaut-sourcegen-bytecode-writer",
+    "micronaut-sourcegen-generator",
+    "micronaut-sourcegen-generator-java",
+    "micronaut-sourcegen-model",
+)
+
+val micronautTestFixtureArtifactIds = listOf(
+    "micronaut-test-core",
+    "micronaut-test-junit5",
+)
+
+val fixtureSourcegenArtifacts by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+
+val fixtureMicronautTestArtifacts by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+
+for (artifactId in sourcegenFixtureArtifactIds) {
+    dependencies.add(fixtureSourcegenArtifacts.name, "io.micronaut.sourcegen:$artifactId:$includedCoreSourcegenVersion")
+    dependencies.add(fixtureSourcegenArtifacts.name, "io.micronaut.sourcegen:$artifactId:$includedCoreSourcegenVersion@pom")
+}
+
+for (artifactId in micronautTestFixtureArtifactIds) {
+    dependencies.add(fixtureMicronautTestArtifacts.name, "io.micronaut.test:$artifactId:$functionalTestMicronautTestVersion")
+    dependencies.add(fixtureMicronautTestArtifacts.name, "io.micronaut.test:$artifactId:$functionalTestMicronautTestVersion@pom")
+}
 
 val stagedPyronautProjectPaths = listOf(
     ":micronaut-pyronaut-logback",
@@ -135,6 +182,15 @@ fun versionFromCatalog(file: java.io.File, key: String): String {
 
 fun versionFromCatalog(key: String): String {
     return versionFromCatalog(rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile, key)
+}
+
+fun versionFromIncludedMicronautCoreCatalog(key: String): String {
+    val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
+        ?: throw GradleException("Unable to resolve $key without the included micronaut-core build")
+    return versionFromCatalog(
+        includedBuild.projectDir.resolve("gradle/libs.versions.toml"),
+        key
+    )
 }
 
 fun defaultFixtureEnv(): Map<String, String> {
@@ -338,28 +394,53 @@ fun mavenPomContent(artifactId: String, pomFile: java.io.File): String {
     var content = pomFile.readText()
     val sourcegenPlaceholder = "${'$'}{micronaut.sourcegen.version}"
     if (artifactId == "micronaut-core-bom" && content.contains(sourcegenPlaceholder)) {
-        val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
-            ?: throw GradleException("Unable to resolve micronaut.sourcegen.version without the included micronaut-core build")
-        val sourcegenVersion = versionFromCatalog(
-            includedBuild.projectDir.resolve("gradle/libs.versions.toml"),
-            "micronaut-sourcegen"
-        )
+        val sourcegenVersion = versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen")
         content = content.replace(
             "  </properties>",
             "    <micronaut.sourcegen.version>$sourcegenVersion</micronaut.sourcegen.version>\n  </properties>"
         )
     }
+    if (artifactId == "micronaut-core-bom") {
+        content = removeImportedBomDependencies(content)
+    }
     if (artifactId == "micronaut-platform") {
-        content = content.replace(
-            Regex("""<micronaut\.core\.version>[^<]+</micronaut\.core\.version>"""),
-            "<micronaut.core.version>$functionalTestMicronautVersion</micronaut.core.version>"
-        )
-        content = content.replace(
-            Regex("""(?s)\n\s*<dependency>\s*(?:(?!</dependency>).)*?<type>pom</type>\s*<scope>import</scope>\s*(?:(?!</dependency>).)*?</dependency>"""),
-            ""
-        )
+        content = replacePomProperty(content, "micronaut.core.version", functionalTestMicronautVersion)
+        content = replacePomProperty(content, "micronaut.sourcegen.version", versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen"))
+        content = replacePomProperty(content, "micronaut.test.version", functionalTestMicronautTestVersion)
+        content = replacePomProperty(content, "micronaut.test.resources.version", functionalTestResourcesVersion)
+        content = replacePomProperty(content, "micronaut.testresources.version", functionalTestResourcesVersion)
+        content = removeImportedBomDependencies(content)
+    }
+    if (artifactId.startsWith("micronaut-sourcegen-")) {
+        content = removeImportedBomDependencies(content)
+        content = removePomDependenciesByGroup(content, "io.micronaut")
+    }
+    if (artifactId.startsWith("micronaut-test-")) {
+        content = removeImportedBomDependencies(content)
+        content = removePomDependenciesByGroup(content, "io.micronaut")
     }
     return content
+}
+
+fun replacePomProperty(content: String, propertyName: String, value: String): String {
+    return content.replace(
+        Regex("""<${Regex.escape(propertyName)}>[^<]+</${Regex.escape(propertyName)}>"""),
+        "<$propertyName>$value</$propertyName>"
+    )
+}
+
+fun removeImportedBomDependencies(content: String): String {
+    return content.replace(
+        Regex("""(?s)\n\s*<dependency>\s*(?:(?!</dependency>).)*?<type>pom</type>\s*<scope>import</scope>\s*(?:(?!</dependency>).)*?</dependency>"""),
+        ""
+    )
+}
+
+fun removePomDependenciesByGroup(content: String, groupId: String): String {
+    return content.replace(
+        Regex("""(?s)\n\s*<dependency>\s*<groupId>${Regex.escape(groupId)}</groupId>\s*(?:(?!</dependency>).)*?</dependency>"""),
+        ""
+    )
 }
 
 fun writeSha1(file: java.io.File) {
@@ -429,6 +510,50 @@ fun Project.stageIncludedMicronautCoreFixtureArtifacts() {
             },
         )
     }
+}
+
+fun Project.stageSourcegenFixtureArtifacts() {
+    stageResolvedFixtureArtifacts(fixtureSourcegenArtifacts.resolvedConfiguration.resolvedArtifacts)
+}
+
+fun Project.stageMicronautTestFixtureArtifacts() {
+    stageResolvedFixtureArtifacts(fixtureMicronautTestArtifacts.resolvedConfiguration.resolvedArtifacts)
+}
+
+fun stageResolvedFixtureArtifacts(resolvedArtifacts: Set<org.gradle.api.artifacts.ResolvedArtifact>) {
+    val artifacts = resolvedArtifacts.map { artifact ->
+        val moduleVersion = artifact.moduleVersion.id
+        ExternalFixtureArtifact(
+            groupId = moduleVersion.group,
+            artifactId = artifact.name,
+            version = moduleVersion.version,
+            extension = artifact.extension ?: artifact.file.extension,
+            classifier = artifact.classifier,
+            file = artifact.file,
+        )
+    }
+    for (artifact in artifacts) {
+        copyMavenArtifactFile(artifact)
+    }
+}
+
+fun copyMavenArtifactFile(artifact: ExternalFixtureArtifact) {
+    if (!artifact.file.isFile) {
+        throw GradleException("Missing resolved artifact file: ${artifact.file.absolutePath}")
+    }
+    val artifactDir = fixtureStagedRepoDir.asFile
+        .resolve(artifact.groupId.replace('.', '/'))
+        .resolve(artifact.artifactId)
+        .resolve(artifact.version)
+    artifactDir.mkdirs()
+    val classifier = artifact.classifier?.takeIf { it.isNotBlank() }?.let { "-$it" }.orEmpty()
+    val stagedFile = artifactDir.resolve("${artifact.artifactId}-${artifact.version}$classifier.${artifact.extension}")
+    if (artifact.extension == "pom") {
+        stagedFile.writeText(mavenPomContent(artifact.artifactId, artifact.file))
+    } else {
+        artifact.file.copyTo(stagedFile, overwrite = true)
+    }
+    writeSha1(stagedFile)
 }
 
 fun Project.stageGraalPyFixtureArtifacts() {
@@ -599,6 +724,26 @@ val stageMicronautCoreFixtureArtifacts by tasks.registering {
     }
 }
 
+val stageSourcegenFixtureArtifacts by tasks.registering {
+    group = "build setup"
+    description = "Stages SourceGen artifacts needed by included Micronaut Core Python artifacts."
+    inputs.files(fixtureSourcegenArtifacts)
+    outputs.dir(fixtureStagedRepoDir)
+    doLast {
+        project.stageSourcegenFixtureArtifacts()
+    }
+}
+
+val stageMicronautTestFixtureArtifacts by tasks.registering {
+    group = "build setup"
+    description = "Stages Micronaut Test artifacts needed by the fixture test scope."
+    inputs.files(fixtureMicronautTestArtifacts)
+    outputs.dir(fixtureStagedRepoDir)
+    doLast {
+        project.stageMicronautTestFixtureArtifacts()
+    }
+}
+
 val stageGraalPyFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages GraalPy snapshot artifacts into the functional-test file repository."
@@ -619,6 +764,8 @@ val publishFixtureArtifactsToMavenLocal by tasks.registering {
         stagePyronautFixtureArtifacts,
         stageMicronautPlatformFixtureArtifact,
         stageMicronautCoreFixtureArtifacts,
+        stageSourcegenFixtureArtifacts,
+        stageMicronautTestFixtureArtifacts,
         stageGraalPyFixtureArtifacts,
     )
 }
