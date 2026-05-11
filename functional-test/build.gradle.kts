@@ -1,6 +1,7 @@
 import org.gradle.api.GradleException
 import org.gradle.jvm.tasks.Jar
 import java.io.FileInputStream
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -323,11 +324,14 @@ fun copyMavenArtifact(
         .resolve(artifactId)
         .resolve(version)
     artifactDir.mkdirs()
-    artifactDir.resolve("$artifactId-$version.pom").writeText(mavenPomContent(artifactId, pomFile))
-    jarFile?.copyTo(
-        artifactDir.resolve("$artifactId-$version.jar"),
-        overwrite = true
-    )
+    val stagedPom = artifactDir.resolve("$artifactId-$version.pom")
+    stagedPom.writeText(mavenPomContent(artifactId, pomFile))
+    writeSha1(stagedPom)
+    jarFile?.let {
+        val stagedJar = artifactDir.resolve("$artifactId-$version.jar")
+        it.copyTo(stagedJar, overwrite = true)
+        writeSha1(stagedJar)
+    }
 }
 
 fun mavenPomContent(artifactId: String, pomFile: java.io.File): String {
@@ -345,7 +349,34 @@ fun mavenPomContent(artifactId: String, pomFile: java.io.File): String {
             "    <micronaut.sourcegen.version>$sourcegenVersion</micronaut.sourcegen.version>\n  </properties>"
         )
     }
+    if (artifactId == "micronaut-platform") {
+        content = content.replace(
+            Regex("""<micronaut\.core\.version>[^<]+</micronaut\.core\.version>"""),
+            "<micronaut.core.version>$functionalTestMicronautVersion</micronaut.core.version>"
+        )
+        content = content.replace(
+            Regex("""(?s)\n\s*<dependency>\s*(?:(?!</dependency>).)*?<type>pom</type>\s*<scope>import</scope>\s*(?:(?!</dependency>).)*?</dependency>"""),
+            ""
+        )
+    }
     return content
+}
+
+fun writeSha1(file: java.io.File) {
+    val digest = MessageDigest.getInstance("SHA-1")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) {
+                break
+            }
+            digest.update(buffer, 0, read)
+        }
+    }
+    file.resolveSibling("${file.name}.sha1").writeText(
+        digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+    )
 }
 
 fun Project.stageLocalPyronautFixtureArtifacts() {

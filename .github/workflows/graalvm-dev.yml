@@ -23,7 +23,7 @@ jobs:
       PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GRAALVM_QUICK_BUILD: true
-      ORG_GRADLE_PROJECT_pyronautNativeImageCiArgs: "--parallelism=1 -J-Xmx5g"
+      ORG_GRADLE_PROJECT_pyronautNativeImageCiArgs: "--parallelism=1"
       TESTCONTAINERS_RYUK_DISABLED: true
     steps:
       - name: Remove system JDKs
@@ -58,23 +58,27 @@ jobs:
       - name: "🧱 Build native pyronaut-install"
         timeout-minutes: 40
         run: |
+          ./gradlew --stop
           trap './gradlew --stop' EXIT
           ./gradlew :micronaut-pyronaut-install:nativeCompile --max-workers=1 --no-daemon
 
       - name: "🧱 Build native pyronaut-processor"
         timeout-minutes: 60
         run: |
+          ./gradlew --stop
           trap './gradlew --stop' EXIT
           ./gradlew :micronaut-pyronaut-processor:nativeCompile --max-workers=1 --no-daemon
 
       - name: "🧱 Build native pyronaut-validate-config"
         timeout-minutes: 40
         run: |
+          ./gradlew --stop
           trap './gradlew --stop' EXIT
           ./gradlew :micronaut-pyronaut-validate-config:nativeCompile --max-workers=1 --no-daemon
 
       - name: "🧪 Run focused native functional tests"
         timeout-minutes: 30
         run: |
+          ./gradlew --stop
           trap './gradlew --stop' EXIT
           ./gradlew :micronaut-functional-test:test -Pnative=true --max-workers=1 --no-daemon --continue
