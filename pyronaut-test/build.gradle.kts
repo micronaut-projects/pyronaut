@@ -34,6 +34,13 @@ dependencies {
     implementation(mnTest.junit.platform.launcher)
     runtimeOnly(project(":micronaut-pyronaut-pytest"))
     runtimeOnly(project(":micronaut-pyronaut-logback"))
+    runtimeOnly(mn.micronaut.http.server)
+    runtimeOnly(mn.micronaut.http.server.netty)
+    runtimeOnly(mn.micronaut.discovery.core)
+    runtimeOnly(mn.micronaut.json.core)
+    runtimeOnly(mnSerde.micronaut.serde.jackson)
+    runtimeOnly(mnSerde.micronaut.serde.api)
+    runtimeOnly(mnLogging.logback.classic)
     runtimeOnly(mnTest.junit.jupiter.engine)
     runtimeOnly(mnTest.micronaut.test.junit5)
 
@@ -105,8 +112,17 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "-H:Preserve=package=io.micronaut.core.type.*",
     "-H:Preserve=package=io.micronaut.core.util.*",
     "-H:Preserve=package=io.micronaut.core.io.service.*",
+    "-H:Preserve=package=io.micronaut.buffer.netty.*",
+    "-H:Preserve=package=io.micronaut.aop.*",
     "-H:Preserve=package=io.micronaut.inject.*",
     "-H:Preserve=package=io.micronaut.context.*",
+    "-H:Preserve=package=io.micronaut.scheduling.*",
+    "-H:Preserve=package=io.micronaut.runtime.*",
+    "-H:Preserve=package=io.micronaut.http.*",
+    "-H:Preserve=package=io.micronaut.json.*",
+    "-H:Preserve=package=io.micronaut.jackson.*",
+    "-H:Preserve=package=io.micronaut.serde.*",
+    "-H:Preserve=package=io.micronaut.web.router.*",
     "-H:Preserve=package=io.micronaut.test.*",
     "-H:Preserve=package=io.micronaut.test.pytest.*",
     "-H:Preserve=package=io.micronaut.test.pytest.extension.*",

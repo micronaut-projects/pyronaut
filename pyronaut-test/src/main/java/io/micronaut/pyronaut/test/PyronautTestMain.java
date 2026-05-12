@@ -62,6 +62,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_HTML_REPORT = "index.html";
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
+    private static final String PROCESSED_CLASSES_DIR_PROPERTY = "pyronaut.test.processed.classes.dir";
     private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
 
     private static final String PYTEST_TESTS = "pytest.tests";
@@ -151,8 +152,10 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
+        String previousProcessedClassesDir = System.getProperty(PROCESSED_CLASSES_DIR_PROPERTY);
         try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
+            System.setProperty(PROCESSED_CLASSES_DIR_PROPERTY, layout.processedClassesRoot().toString());
             try {
                 contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedTestsDir));
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
@@ -216,6 +219,7 @@ public final class PyronautTestMain implements Callable<Integer> {
             System.err.println("Test execution failed: " + e.getMessage());
             return 7;
         } finally {
+            restoreProperty(PROCESSED_CLASSES_DIR_PROPERTY, previousProcessedClassesDir);
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
         }
     }
@@ -484,6 +488,14 @@ public final class PyronautTestMain implements Callable<Integer> {
             Files.deleteIfExists(projectRoot.resolve(DEFAULT_NODEID_REPORT).normalize());
         } catch (Exception e) {
             System.err.println("Unable to remove stale mirrored report: " + projectRoot.resolve(DEFAULT_NODEID_REPORT).normalize() + " (" + e.getMessage() + ")");
+        }
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
         }
     }
 

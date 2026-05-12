@@ -1,5 +1,10 @@
 package io.micronaut.pyronaut.run;
 
+import io.micronaut.context.BeanContext;
+import io.micronaut.context.BeanResolutionContext;
+import io.micronaut.core.annotation.AnnotationMetadata;
+import io.micronaut.inject.BeanDefinition;
+import io.micronaut.inject.BeanDefinitionReference;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -192,6 +197,22 @@ class PyronautRunMainTest {
     }
 
     @Test
+    void discoversProcessedBeanDefinitionReferences() throws Exception {
+        Path classesDir = tempDir.resolve("processed-classes");
+        Path referencesDir = classesDir.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference");
+        Files.createDirectories(referencesDir);
+        Files.writeString(referencesDir.resolve(SampleBeanDefinitionReference.class.getName()), "", StandardCharsets.UTF_8);
+
+        List<BeanDefinitionReference<?>> references = PyronautRunMain.loadProcessedBeanDefinitionReferences(
+            classesDir,
+            PyronautRunMainTest.class.getClassLoader()
+        );
+
+        assertEquals(1, references.size());
+        assertEquals(SampleBeanDefinitionReference.class, references.get(0).getClass());
+    }
+
+    @Test
     void usesConfiguredResourcesDirectoryWhenConfigDirNotOverridden() throws Exception {
         Path project = tempDir.resolve("project-custom-config");
         Path classes = project.resolve("__pyronaut__/classes");
@@ -283,6 +304,39 @@ class PyronautRunMainTest {
         public static void main(String[] args) throws Exception {
             Path target = Path.of(args[0]);
             Files.writeString(target, "started", StandardCharsets.UTF_8);
+        }
+    }
+
+    public static final class SampleBeanDefinitionReference implements BeanDefinitionReference<SampleApp> {
+
+        @Override
+        public String getBeanDefinitionName() {
+            return SampleApp.class.getName() + "$Definition";
+        }
+
+        @Override
+        public BeanDefinition<SampleApp> load() {
+            return null;
+        }
+
+        @Override
+        public boolean isPresent() {
+            return true;
+        }
+
+        @Override
+        public Class<SampleApp> getBeanType() {
+            return SampleApp.class;
+        }
+
+        @Override
+        public AnnotationMetadata getAnnotationMetadata() {
+            return AnnotationMetadata.EMPTY_METADATA;
+        }
+
+        @Override
+        public boolean isEnabled(BeanContext context, BeanResolutionContext resolutionContext) {
+            return true;
         }
     }
 }

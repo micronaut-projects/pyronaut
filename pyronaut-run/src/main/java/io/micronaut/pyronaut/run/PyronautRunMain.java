@@ -15,20 +15,26 @@
  */
 package io.micronaut.pyronaut.run;
 
+import io.micronaut.context.BeanDefinitionsProvider;
+import io.micronaut.context.DefaultBeanDefinitionsProvider;
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.inject.BeanDefinitionReference;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
 import java.io.IOException;
+import java.lang.reflect.Constructor;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
@@ -48,6 +54,7 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
+    private static final String BEAN_DEFINITION_REFERENCES_PATH = "META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -141,10 +148,9 @@ public final class PyronautRunMain implements Callable<Integer> {
                                                      Path resolvedClassesDir,
                                                      List<String> appArgs) {
         Micronaut micronaut = Micronaut.build(appArgs.toArray(String[]::new));
-        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
-        if (contextClassLoader != null) {
-            micronaut.classLoader(contextClassLoader);
-        }
+        ClassLoader contextClassLoader = resolveApplicationClassLoader();
+        micronaut.classLoader(contextClassLoader);
+        micronaut.beanDefinitionsProvider(new ProcessedClassesBeanDefinitionsProvider(resolvedClassesDir));
         List<Class<?>> applicationClasses = discoverApplicationClasses(resolvedClassesDir, contextClassLoader);
         if (!applicationClasses.isEmpty()) {
             micronaut.classes(applicationClasses.toArray(Class[]::new));
@@ -377,8 +383,63 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
+    static List<BeanDefinitionReference<?>> loadProcessedBeanDefinitionReferences(Path classesDirectory, ClassLoader classLoader) {
+        Path referencesDirectory = classesDirectory.resolve(BEAN_DEFINITION_REFERENCES_PATH);
+        if (!Files.isDirectory(referencesDirectory)) {
+            return List.of();
+        }
+        try (Stream<Path> stream = Files.list(referencesDirectory)) {
+            return stream
+                .filter(Files::isRegularFile)
+                .map(path -> path.getFileName().toString())
+                .filter(name -> !name.isBlank())
+                .sorted()
+                .<BeanDefinitionReference<?>>map(name -> loadBeanDefinitionReference(name, classLoader))
+                .toList();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read processed bean definition references from " + referencesDirectory, e);
+        }
+    }
+
+    private static BeanDefinitionReference<?> loadBeanDefinitionReference(String className, ClassLoader classLoader) {
+        try {
+            Class<?> loadedClass = Class.forName(className, false, classLoader);
+            if (!BeanDefinitionReference.class.isAssignableFrom(loadedClass)) {
+                throw new IllegalStateException("Processed bean definition reference is not a BeanDefinitionReference: " + className);
+            }
+            Constructor<?> constructor = loadedClass.getDeclaredConstructor();
+            if (!constructor.canAccess(null)) {
+                constructor.setAccessible(true);
+            }
+            return (BeanDefinitionReference<?>) constructor.newInstance();
+        } catch (ReflectiveOperationException | LinkageError e) {
+            throw new IllegalStateException("Failed to load processed bean definition reference: " + className, e);
+        }
+    }
+
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautRunMain()).execute(args);
         System.exit(exitCode);
+    }
+
+    private static final class ProcessedClassesBeanDefinitionsProvider implements BeanDefinitionsProvider {
+        private final BeanDefinitionsProvider delegate = new DefaultBeanDefinitionsProvider();
+        private final Path classesDirectory;
+
+        private ProcessedClassesBeanDefinitionsProvider(Path classesDirectory) {
+            this.classesDirectory = classesDirectory;
+        }
+
+        @Override
+        public List<BeanDefinitionReference<?>> provide(ClassLoader classLoader) {
+            Map<String, BeanDefinitionReference<?>> references = new LinkedHashMap<>();
+            for (BeanDefinitionReference<?> reference : loadProcessedBeanDefinitionReferences(classesDirectory, classLoader)) {
+                references.put(reference.getClass().getName(), reference);
+            }
+            for (BeanDefinitionReference<?> reference : delegate.provide(classLoader)) {
+                references.putIfAbsent(reference.getClass().getName(), reference);
+            }
+            return new ArrayList<>(references.values());
+        }
     }
 }
