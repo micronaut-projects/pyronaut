@@ -111,9 +111,139 @@ fun isValidZip(file: java.io.File): Boolean {
     }
 }
 
+fun isValidTarGz(file: java.io.File): Boolean {
+    if (!file.isFile || file.length() == 0L) {
+        return false
+    }
+    return try {
+        runCommand(layout.settingsDirectory.asFile, "tar", "-tzf", file.absolutePath)
+        true
+    } catch (e: GradleException) {
+        false
+    }
+}
+
+fun isValidArchive(file: java.io.File): Boolean =
+    if (file.name.endsWith(".zip")) {
+        isValidZip(file)
+    } else {
+        isValidTarGz(file)
+    }
+
+fun writeGraalPyMavenSettings(repoDir: java.io.File): java.io.File {
+    val settingsFile = repoDir.resolve("pyronaut-graalpy-maven-settings.xml")
+    val repoUrl = repoDir.toURI().toASCIIString()
+    settingsFile.writeText(
+        """
+        <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+          <profiles>
+            <profile>
+              <id>pyronaut-graalpy-bundle</id>
+              <repositories>
+                <repository>
+                  <id>pyronaut-graalpy-bundle</id>
+                  <url>$repoUrl</url>
+                  <releases>
+                    <enabled>true</enabled>
+                  </releases>
+                  <snapshots>
+                    <enabled>true</enabled>
+                  </snapshots>
+                </repository>
+              </repositories>
+              <pluginRepositories>
+                <pluginRepository>
+                  <id>pyronaut-graalpy-bundle</id>
+                  <url>$repoUrl</url>
+                  <releases>
+                    <enabled>true</enabled>
+                  </releases>
+                  <snapshots>
+                    <enabled>true</enabled>
+                  </snapshots>
+                </pluginRepository>
+              </pluginRepositories>
+            </profile>
+          </profiles>
+          <activeProfiles>
+            <activeProfile>pyronaut-graalpy-bundle</activeProfile>
+          </activeProfiles>
+        </settings>
+        """.trimIndent()
+    )
+    return settingsFile
+}
+
+fun configuredGraalVmDevTag(): String? =
+    providers.gradleProperty("pyronautGraalVmDevTag").orNull.takeIfNotBlank()
+        ?.removePrefix("jdk-")
+
+fun archiveExtension(url: String): String =
+    if (url.endsWith(".tar.gz")) {
+        "tar.gz"
+    } else {
+        "zip"
+    }
+
+fun safePathSegment(value: String): String =
+    value.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+fun downloadArchive(url: String, destination: java.io.File) {
+    destination.parentFile.mkdirs()
+    var lastFailure: GradleException? = null
+    for (attempt in 1..3) {
+        try {
+            runCommand(
+                layout.settingsDirectory.asFile,
+                listOf(
+                    "curl",
+                    "-fL",
+                    "--retry",
+                    "5",
+                    "--retry-all-errors",
+                    "--retry-delay",
+                    "2",
+                    "-C",
+                    "-",
+                    "-o",
+                    destination.absolutePath,
+                    url
+                ),
+                listOf(
+                    "curl",
+                    "-fL",
+                    "--retry",
+                    "5",
+                    "--retry-all-errors",
+                    "--retry-delay",
+                    "2",
+                    "-C",
+                    "-",
+                    "-o",
+                    destination.absolutePath,
+                    "<graalpy-bundle-url>"
+                )
+            )
+            if (isValidArchive(destination)) {
+                return
+            }
+        } catch (e: GradleException) {
+            lastFailure = e
+        }
+    }
+    destination.delete()
+    throw GradleException("Downloaded GraalPy bundle archive is invalid or incomplete: ${destination.absolutePath}", lastFailure)
+}
+
 fun resolveGraalPyBundleUrl(graalpyVersion: String): String {
     configuredValue("pyronaut.graalpy.bundle.url", "PYRONAUT_GRAALPY_BUNDLE_URL")
         ?.let { return it }
+
+    configuredGraalVmDevTag()?.let { tag ->
+        return "https://github.com/graalvm/graalvm-ce-dev-builds/releases/download/$tag/maven-resource-bundle-community-dev.tar.gz"
+    }
 
     val releaseVersion = graalpyVersion.removeSuffix("-SNAPSHOT")
     val command = mutableListOf(
@@ -206,31 +336,39 @@ fun ensureGraalPyBundleRepo(checkoutDir: java.io.File, graalpyVersion: String): 
     }
 
     val checkoutSha = runCommand(checkoutDir, "git", "rev-parse", "--verify", "HEAD").lineSequence().last().trim()
-    val repoDir = layout.settingsDirectory.dir("checkouts/maven-bundles/graalpy/$checkoutSha").asFile
-    if (graalPyExtensionsReady(repoDir, graalpyVersion)) {
+    val bundleKey = configuredGraalVmDevTag() ?: graalpyVersion
+    val repoDir = layout.settingsDirectory.dir("checkouts/maven-bundles/graalpy/$checkoutSha/${safePathSegment(bundleKey)}").asFile
+    val bundleUrl = resolveGraalPyBundleUrl(graalpyVersion)
+    val extractedBundleMarker = repoDir.resolve(".pyronaut-graalpy-bundle")
+    if (graalPyExtensionsReady(repoDir, graalpyVersion) && extractedBundleMarker.takeIf { it.isFile }?.readText()?.trim() == bundleUrl) {
         return repoDir
     }
 
     repoDir.mkdirs()
-    val bundleUrl = resolveGraalPyBundleUrl(graalpyVersion)
-    val zipFile = layout.settingsDirectory.file("checkouts/maven-bundles/graalpy/$checkoutSha.zip").asFile
-    zipFile.parentFile.mkdirs()
+    val archiveFile = layout.settingsDirectory.file("checkouts/maven-bundles/graalpy/$checkoutSha-${safePathSegment(bundleKey)}.${archiveExtension(bundleUrl)}").asFile
+    archiveFile.parentFile.mkdirs()
     val leftoverZip = checkoutDir.resolve("maven-resource-bundle.zip")
-    if (isValidZip(leftoverZip) && !zipFile.exists()) {
-        Files.move(leftoverZip.toPath(), zipFile.toPath())
+    if (archiveFile.name.endsWith(".zip") && isValidZip(leftoverZip) && !archiveFile.exists()) {
+        Files.move(leftoverZip.toPath(), archiveFile.toPath())
     }
-    if (!isValidZip(zipFile)) {
-        zipFile.delete()
-        runCommand(
-            layout.settingsDirectory.asFile,
-            listOf("curl", "-L", "-o", zipFile.absolutePath, bundleUrl),
-            listOf("curl", "-L", "-o", zipFile.absolutePath, "<graalpy-bundle-url>")
-        )
+    if (!isValidArchive(archiveFile)) {
+        downloadArchive(bundleUrl, archiveFile)
     }
-    if (!graalPyBundleReady(repoDir, graalpyVersion)) {
-        runCommand(layout.settingsDirectory.asFile, "unzip", "-q", "-o", zipFile.absolutePath, "-d", repoDir.absolutePath)
+    if (!isValidArchive(archiveFile)) {
+        archiveFile.delete()
+        throw GradleException("Downloaded GraalPy bundle archive is invalid or incomplete: ${archiveFile.absolutePath}")
     }
-    zipFile.delete()
+    if (!graalPyBundleReady(repoDir, graalpyVersion) || !extractedBundleMarker.isFile) {
+        deleteRecursively(repoDir)
+        repoDir.mkdirs()
+        if (archiveFile.name.endsWith(".zip")) {
+            runCommand(layout.settingsDirectory.asFile, "unzip", "-q", "-o", archiveFile.absolutePath, "-d", repoDir.absolutePath)
+        } else {
+            runCommand(layout.settingsDirectory.asFile, "tar", "-xzf", archiveFile.absolutePath, "-C", repoDir.absolutePath, "--strip-components", "1")
+        }
+        extractedBundleMarker.writeText(bundleUrl + System.lineSeparator())
+    }
+    archiveFile.delete()
 
     if (!graalPyBundleReady(repoDir, graalpyVersion)) {
         throw GradleException(
@@ -239,9 +377,12 @@ fun ensureGraalPyBundleRepo(checkoutDir: java.io.File, graalpyVersion: String): 
     }
 
     if (!graalPyExtensionsReady(repoDir, graalpyVersion)) {
+        val mavenSettingsFile = writeGraalPyMavenSettings(repoDir)
         runCommand(
             checkoutDir,
             "./mvnw",
+            "-s",
+            mavenSettingsFile.absolutePath,
             "-pl",
             "org.graalvm.python.embedding,org.graalvm.python.embedding.tools",
             "-am",
@@ -340,6 +481,8 @@ val gitHubUsername = configuredValue("pyronaut.git.username", "PYRONAUT_GIT_USER
 val graalPyBundleRepo = if (includeGraalPyExtensions) {
     ensureGraalPyBundleRepo(ensureGraalPyExtensionsCheckout(), graalpyVersion).also {
         System.setProperty("pyronaut.graalpy.bundle.repo", it.absolutePath)
+        System.setProperty("org.gradle.project.pyronaut.graalpy.bundle.repo", it.absolutePath)
+        System.setProperty("org.gradle.project.micronaut.graalpy.bundle.repo", it.absolutePath)
         System.setProperty("maven.repo.local", it.absolutePath)
     }
 } else {
