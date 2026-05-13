@@ -1,6 +1,7 @@
 [versions]
 micronaut = "5.0.0-SNAPSHOT"
 graalpy = "25.1.0-SNAPSHOT"
+micronaut-toml = "3.0.0-M2"
 
 [libraries]
 micronaut-context = { module = "io.micronaut:micronaut-context", version.ref = "micronaut" }
@@ -18,5 +19,6 @@ micronaut-jackson-databind = { module = "io.micronaut:micronaut-jackson-databind
 micronaut-json-core = { module = "io.micronaut:micronaut-json-core", version.ref = "micronaut" }
 micronaut-management = { module = "io.micronaut:micronaut-management", version.ref = "micronaut" }
 micronaut-router = { module = "io.micronaut:micronaut-router", version.ref = "micronaut" }
+micronaut-toml = { module = "io.micronaut.toml:micronaut-toml", version.ref = "micronaut-toml" }
 graalpy = { module = "org.graalvm.python:python", version.ref = "graalpy" }
 graalpy-embedding = { module = "org.graalvm.python:python-embedding", version.ref = "graalpy" }

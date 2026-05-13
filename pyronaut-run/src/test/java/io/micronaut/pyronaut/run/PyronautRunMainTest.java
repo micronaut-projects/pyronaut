@@ -6,6 +6,7 @@ import io.micronaut.core.annotation.AnnotationMetadata;
 import io.micronaut.inject.BeanDefinition;
 import io.micronaut.inject.BeanDefinitionReference;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.runtime.PyronautBeanDefinitionReferences;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -203,7 +204,7 @@ class PyronautRunMainTest {
         Files.createDirectories(referencesDir);
         Files.writeString(referencesDir.resolve(SampleBeanDefinitionReference.class.getName()), "", StandardCharsets.UTF_8);
 
-        List<BeanDefinitionReference<?>> references = PyronautRunMain.loadProcessedBeanDefinitionReferences(
+        List<BeanDefinitionReference<?>> references = PyronautBeanDefinitionReferences.loadProcessed(
             classesDir,
             PyronautRunMainTest.class.getClassLoader()
         );

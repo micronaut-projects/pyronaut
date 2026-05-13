@@ -26,6 +26,8 @@
         </encoder>
     </appender>
 
+    <logger name="io.micronaut.testresources.server.TestResourcesController" level="DEBUG" />
+
     <root level="INFO">
         <appender-ref ref="FILE" />
         <appender-ref ref="STDERR" />

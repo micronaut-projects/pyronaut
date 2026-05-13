@@ -31,13 +31,11 @@ dependencies {
     implementation(mn.micronaut.context)
     implementation(mn.micronaut.context.python)
     implementation(project(":micronaut-pyronaut-config-model"))
+    implementation(project(":micronaut-pyronaut-runtime-core"))
     implementation(mnPicocli.picocli)
     runtimeOnly(mn.micronaut.http.server)
     runtimeOnly(mn.micronaut.http.server.netty)
     runtimeOnly(mn.micronaut.discovery.core)
-    runtimeOnly(mn.micronaut.json.core)
-    runtimeOnly(mnSerde.micronaut.serde.jackson)
-    runtimeOnly(mnSerde.micronaut.serde.api)
     runtimeOnly(mnLogging.logback.classic)
 
     testImplementation(mnTest.junit.jupiter.api)
@@ -47,7 +45,6 @@ dependencies {
     testRuntimeOnly(mn.micronaut.http.server.netty)
     testRuntimeOnly(mn.micronaut.discovery.core)
     testRuntimeOnly(mn.micronaut.json.core)
-    testRuntimeOnly(mn.micronaut.jackson.databind)
     testRuntimeOnly(project(":micronaut-pyronaut-logback"))
 }
 
@@ -77,6 +74,7 @@ val nativeImageCLibraryPathArgs = providers.provider {
 
 val nativeImageRuntimeClassLoadingArgs = listOf(
     "--enable-native-access=org.graalvm.truffle",
+    "--add-modules=java.logging",
     "-H:+UnlockExperimentalVMOptions",
     "-H:EnableURLProtocols=jar",
     "-H:+RuntimeClassLoading",
@@ -93,15 +91,34 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValue",
     "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValueResolver",
     "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
+    "-H:Preserve=package=java.io.*",
     "-H:Preserve=package=java.lang.*",
     "-H:Preserve=package=java.lang.invoke.*",
+    "-H:Preserve=package=java.lang.ref.*",
+    "-H:Preserve=package=java.lang.reflect.*",
+    "-H:Preserve=package=java.math.*",
+    "-H:Preserve=package=java.net.*",
+    "-H:Preserve=package=java.nio.*",
+    "-H:Preserve=package=java.nio.channels.*",
+    "-H:Preserve=package=java.nio.charset.*",
+    "-H:Preserve=package=java.nio.file.*",
     "-H:Preserve=package=java.text.*",
     "-H:Preserve=package=java.time.*",
     "-H:Preserve=package=java.util.*",
+    "-H:Preserve=package=java.util.concurrent.*",
+    "-H:Preserve=package=java.util.function.*",
+    "-H:Preserve=package=java.util.logging.*",
+    "-H:Preserve=package=java.util.regex.*",
+    "-H:Preserve=package=java.util.stream.*",
+    "-H:Preserve=package=java.util.zip.*",
+    "-H:Preserve=package=javax.net.ssl.*",
     "-H:Preserve=package=jdk.internal.misc.*",
     "-H:Preserve=package=jdk.internal.access.*",
+    "-H:Preserve=package=jdk.internal.ref.*",
+    "-H:Preserve=package=sun.net.www",
     "-H:Preserve=package=io.micronaut.core.annotation.*",
     "-H:Preserve=package=io.micronaut.core.beans.*",
+    "-H:Preserve=package=io.micronaut.core.convert.*",
     "-H:Preserve=package=io.micronaut.core.naming.*",
     "-H:Preserve=package=io.micronaut.core.reflect.*",
     "-H:Preserve=package=io.micronaut.core.type.*",

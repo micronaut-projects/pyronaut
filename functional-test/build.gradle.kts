@@ -7,8 +7,15 @@ import org.gradle.api.attributes.Usage
 import org.gradle.api.attributes.java.TargetJvmEnvironment
 import org.gradle.jvm.tasks.Jar
 import java.io.FileInputStream
+import java.net.ServerSocket
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.security.MessageDigest
+import java.time.Duration
 import java.util.Properties
+import java.util.concurrent.TimeUnit
 
 plugins {
     base
@@ -35,6 +42,8 @@ val fixtureResolvedTestDependencies = fixtureCacheDir.file("resolved-test-depend
 val fixtureResolvedTestResourcesServerDependencies = fixtureCacheDir.file("resolved-test-resources-server-dependencies")
 val fixtureConfigValidationCache = fixtureCacheDir.file(".config-validation-cache.properties")
 val fixtureConfigValidationReportDir = fixtureCacheDir.dir("reports/config-validation/test")
+val fixtureRunReportDir = fixtureCacheDir.dir("reports/run")
+val fixtureRunLogFile = fixtureRunReportDir.file("pyronaut-run.log")
 val fixtureProcessedClassesDir = fixtureCacheDir.dir("classes")
 val fixtureProcessedTestClassesDir = fixtureCacheDir.dir("test-classes")
 val pytestRequirement = "pytest==9.0.3"
@@ -58,8 +67,14 @@ val pyronautProcessorExecutable = project(":micronaut-pyronaut-processor")
     .layout.buildDirectory.file("install/micronaut-pyronaut-processor/bin/pyronaut-processor")
 val pyronautProcessorNativeExecutable = project(":micronaut-pyronaut-processor")
     .layout.buildDirectory.file("native/nativeCompile/pyronaut-processor$nativeExecutableSuffix")
+val pyronautRunExecutable = project(":micronaut-pyronaut-run")
+    .layout.buildDirectory.file("install/micronaut-pyronaut-run/bin/pyronaut-run")
+val pyronautRunNativeExecutable = project(":micronaut-pyronaut-run")
+    .layout.buildDirectory.file("native/nativeCompile/pyronaut-run$nativeExecutableSuffix")
 val pyronautTestExecutable = project(":micronaut-pyronaut-test")
     .layout.buildDirectory.file("install/micronaut-pyronaut-test/bin/pyronaut-test")
+val pyronautTestNativeExecutable = project(":micronaut-pyronaut-test")
+    .layout.buildDirectory.file("native/nativeCompile/pyronaut-test$nativeExecutableSuffix")
 val pyronautValidateConfigExecutable = project(":micronaut-pyronaut-validate-config")
     .layout.buildDirectory.file("install/micronaut-pyronaut-validate-config/bin/pyronaut-validate-config")
 val pyronautValidateConfigNativeExecutable = project(":micronaut-pyronaut-validate-config")
@@ -169,6 +184,7 @@ dependencies.add(
 )
 
 val stagedPyronautProjectPaths = listOf(
+    ":micronaut-pyronaut-runtime-core",
     ":micronaut-pyronaut-logback",
     ":micronaut-pyronaut-pytest",
     ":micronaut-pyronaut-requests",
@@ -312,6 +328,111 @@ fun Project.runFixtureCommand(command: List<String>, extraEnvironment: Map<Strin
     }
 }
 
+fun Project.startFixtureBackgroundCommand(
+    command: List<String>,
+    extraEnvironment: Map<String, String> = emptyMap(),
+    logFile: java.io.File,
+): Process {
+    logFile.parentFile.mkdirs()
+    logFile.writeText("")
+    val renderedCommand = formatFixtureCommand(command)
+    logger.lifecycle(renderedCommand)
+    val processBuilder = ProcessBuilder(command)
+        .directory(fixtureAppDir.asFile)
+        .redirectInput(ProcessBuilder.Redirect.INHERIT)
+        .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+        .redirectErrorStream(true)
+    processBuilder.environment().putAll(defaultFixtureEnv() + extraEnvironment)
+    return processBuilder.start()
+}
+
+fun Project.withFixtureTestResourcesServer(action: (Map<String, String>) -> Unit) {
+    val startCommand = listOf(
+        pyronautTestResourcesServerExecutable.get().asFile.absolutePath,
+        "start",
+        "--project-dir",
+        fixtureAppDir.asFile.absolutePath,
+    )
+    val stopCommand = listOf(
+        pyronautTestResourcesServerExecutable.get().asFile.absolutePath,
+        "stop",
+        "--project-dir",
+        fixtureAppDir.asFile.absolutePath,
+    )
+    runFixtureCommand(startCommand)
+    try {
+        action(readFixtureTestResourcesEnvironment(fixtureTestResourcesSettingsFile.asFile))
+    } finally {
+        try {
+            runFixtureCommand(stopCommand)
+        } catch (e: Exception) {
+            logger.warn("Unable to stop fixture test resources server cleanly: ${e.message}")
+        }
+    }
+}
+
+fun reserveFixturePort(): Int {
+    ServerSocket(0).use { socket ->
+        socket.reuseAddress = true
+        return socket.localPort
+    }
+}
+
+fun stopFixtureProcess(process: Process) {
+    if (!process.isAlive) {
+        return
+    }
+    process.destroy()
+    if (!process.waitFor(10, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        process.waitFor(10, TimeUnit.SECONDS)
+    }
+}
+
+fun waitForHttpBody(process: Process, uri: URI, expectedBody: String, logFile: java.io.File) {
+    val client = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(2))
+        .build()
+    val request = HttpRequest.newBuilder(uri)
+        .timeout(Duration.ofSeconds(5))
+        .GET()
+        .build()
+    val deadline = System.nanoTime() + Duration.ofMinutes(2).toNanos()
+    var lastError = "no response received"
+    while (System.nanoTime() < deadline) {
+        if (!process.isAlive) {
+            throw GradleException(
+                "pyronaut-run exited before serving ${uri.path}.${fixtureLogTail(logFile)}"
+            )
+        }
+        try {
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            val body = response.body()
+            if (response.statusCode() == 200 && body.contains(expectedBody)) {
+                return
+            }
+            lastError = "HTTP ${response.statusCode()}: ${body.take(500).replace('\n', ' ')}"
+        } catch (e: Exception) {
+            lastError = "${e::class.java.simpleName}: ${e.message.orEmpty()}"
+        }
+        Thread.sleep(500)
+    }
+    throw GradleException(
+        "Timed out waiting for pyronaut-run to serve ${uri.path}. Last error: $lastError.${fixtureLogTail(logFile)}"
+    )
+}
+
+fun fixtureLogTail(logFile: java.io.File): String {
+    if (!logFile.isFile) {
+        return ""
+    }
+    val tail = logFile.readLines().takeLast(80).joinToString(System.lineSeparator())
+    if (tail.isBlank()) {
+        return ""
+    }
+    return System.lineSeparator() + "pyronaut-run log tail:" + System.lineSeparator() + tail
+}
+
 fun formatFixtureCommand(command: List<String>): String {
     if (command.isEmpty()) {
         return ">"
@@ -386,6 +507,22 @@ fun pyronautProcessorExecutableFile(): java.io.File {
         pyronautProcessorNativeExecutable.get().asFile
     } else {
         pyronautProcessorExecutable.get().asFile
+    }
+}
+
+fun pyronautRunExecutableFile(): java.io.File {
+    return if (useNativeExecutables.get()) {
+        pyronautRunNativeExecutable.get().asFile
+    } else {
+        pyronautRunExecutable.get().asFile
+    }
+}
+
+fun pyronautTestExecutableFile(): java.io.File {
+    return if (useNativeExecutables.get()) {
+        pyronautTestNativeExecutable.get().asFile
+    } else {
+        pyronautTestExecutable.get().asFile
     }
 }
 
@@ -737,6 +874,14 @@ fun requireFixtureFileContains(file: java.io.File, expected: String, description
 }
 
 fun buildPyronautTestCommand(): List<String> {
+    if (useNativeExecutables.get()) {
+        return listOf(
+            pyronautTestExecutableFile().absolutePath,
+            "--project-dir",
+            fixtureAppDir.asFile.absolutePath,
+        )
+    }
+
     val cacheDir = fixtureAppDir.dir("__pyronaut__").asFile
     val classpathEntries = mutableListOf<String>()
     classpathEntries += readManifestEntries(cacheDir.resolve("resolved-test-dependencies"))
@@ -895,6 +1040,7 @@ val installFixtureLaunchers by tasks.registering {
     dependsOn(
         project(":micronaut-pyronaut-install").tasks.named("installDist"),
         project(":micronaut-pyronaut-processor").tasks.named("installDist"),
+        project(":micronaut-pyronaut-run").tasks.named("installDist"),
         project(":micronaut-pyronaut-test").tasks.named("installDist"),
         project(":micronaut-pyronaut-validate-config").tasks.named("installDist"),
         project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"),
@@ -903,6 +1049,8 @@ val installFixtureLaunchers by tasks.registering {
         dependsOn(
             project(":micronaut-pyronaut-install").tasks.named("nativeCompile"),
             project(":micronaut-pyronaut-processor").tasks.named("nativeCompile"),
+            project(":micronaut-pyronaut-run").tasks.named("nativeCompile"),
+            project(":micronaut-pyronaut-test").tasks.named("nativeCompile"),
             project(":micronaut-pyronaut-validate-config").tasks.named("nativeCompile"),
         )
     }
@@ -1140,34 +1288,81 @@ val process by tasks.registering {
     }
 }
 
+val runApp by tasks.registering {
+    group = "verification"
+    description = "Runs the functional-test app through pyronaut-run using local project launchers."
+    dependsOn(process)
+    inputs.dir(fixtureAppDir.dir("config"))
+    inputs.files(
+        fixtureResolvedRuntimeDependencies,
+        fixtureProcessedClassesDir,
+    )
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jit" })
+    inputs.file(providers.provider { pyronautRunExecutableFile() })
+    doLast {
+        val runExecutable = pyronautRunExecutableFile()
+        if (!runExecutable.isFile) {
+            throw GradleException("Missing pyronaut-run executable: ${runExecutable.absolutePath}")
+        }
+        logger.lifecycle(
+            "Using {} pyronaut-run executable: {}",
+            if (useNativeExecutables.get()) "native" else "JIT",
+            runExecutable.absolutePath
+        )
+        val port = reserveFixturePort()
+        withFixtureTestResourcesServer { testResourcesEnv ->
+            val logFile = fixtureRunLogFile.asFile
+            val process = startFixtureBackgroundCommand(
+                listOf(
+                    runExecutable.absolutePath,
+                    "--project-dir",
+                    fixtureAppDir.asFile.absolutePath,
+                    "--",
+                    "-Dmicronaut.server.port=$port",
+                ),
+                testResourcesEnv,
+                logFile,
+            )
+            try {
+                waitForHttpBody(
+                    process,
+                    URI.create("http://localhost:$port/hello/John"),
+                    "Hello John!!!!!!",
+                    logFile,
+                )
+            } finally {
+                stopFixtureProcess(process)
+            }
+        }
+    }
+}
+
 tasks.register("test") {
     group = "verification"
     description = "Runs the functional-test app through pyronaut-test using local project launchers."
-    dependsOn(process, verifyEditorSupport)
+    dependsOn(runApp, verifyEditorSupport)
     inputs.dir(fixtureAppDir)
+    inputs.files(
+        fixtureResolvedBuildDependencies,
+        fixtureResolvedRuntimeDependencies,
+        fixtureResolvedTestDependencies,
+        fixtureProcessedClassesDir,
+        fixtureProcessedTestClassesDir,
+    )
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jit" })
+    inputs.file(providers.provider { pyronautTestExecutableFile() })
     doLast {
-        val startCommand = listOf(
-            pyronautTestResourcesServerExecutable.get().asFile.absolutePath,
-            "start",
-            "--project-dir",
-            fixtureAppDir.asFile.absolutePath,
+        val testExecutable = pyronautTestExecutableFile()
+        if (!testExecutable.isFile) {
+            throw GradleException("Missing pyronaut-test executable: ${testExecutable.absolutePath}")
+        }
+        logger.lifecycle(
+            "Using {} pyronaut-test executable: {}",
+            if (useNativeExecutables.get()) "native" else "JIT",
+            testExecutable.absolutePath
         )
-        val stopCommand = listOf(
-            pyronautTestResourcesServerExecutable.get().asFile.absolutePath,
-            "stop",
-            "--project-dir",
-            fixtureAppDir.asFile.absolutePath,
-        )
-        runFixtureCommand(startCommand)
-        try {
-            val testResourcesEnv = readFixtureTestResourcesEnvironment(fixtureTestResourcesSettingsFile.asFile)
+        withFixtureTestResourcesServer { testResourcesEnv ->
             runFixtureCommand(buildPyronautTestCommand(), testResourcesEnv)
-        } finally {
-            try {
-                runFixtureCommand(stopCommand)
-            } catch (e: Exception) {
-                logger.warn("Unable to stop fixture test resources server cleanly: ${e.message}")
-            }
         }
     }
 }
