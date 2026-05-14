@@ -34,6 +34,7 @@ dependencies {
     implementation(mnTest.junit.platform.launcher)
     runtimeOnly(project(":micronaut-pyronaut-pytest"))
     runtimeOnly(project(":micronaut-pyronaut-logback"))
+    runtimeOnly("io.projectreactor:reactor-core")
     runtimeOnly(mnTest.junit.jupiter.engine)
     runtimeOnly(mnTest.micronaut.test.junit5)
 
@@ -42,6 +43,7 @@ dependencies {
     testImplementation(project(":micronaut-pyronaut-processor"))
     testRuntimeOnly(project(":micronaut-pyronaut-pytest"))
     testRuntimeOnly(project(":micronaut-pyronaut-logback"))
+    testRuntimeOnly("io.projectreactor:reactor-core")
     testRuntimeOnly(mnTest.micronaut.test.junit5)
 }
 
