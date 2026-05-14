@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -68,6 +69,38 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void validateConfigPrintsOnlyPassedMessageWhenValidationSucceeds() throws Exception {
+        Path project = prepareProject();
+        PyronautValidateConfigMain command = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
+        PrintStream originalErr = System.err;
+        int exit;
+        try {
+            System.setOut(new PrintStream(out, true, UTF_8));
+            System.setErr(new PrintStream(err, true, UTF_8));
+            exit = new CommandLine(command).execute("--project-dir", project.toString(), "--no-cache");
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+
+        assertEquals(0, exit);
+        assertEquals("Configuration validation passed." + System.lineSeparator(), out.toString(UTF_8));
+        assertEquals("", err.toString(UTF_8));
+    }
+
+    @Test
     void validateConfigReturnsValidationErrorWhenDiErrorsPresentAndEnabled() throws Exception {
         Path project = prepareProject();
         PyronautValidateConfigMain command = new PyronautValidateConfigMain(
@@ -80,6 +113,42 @@ class PyronautValidateConfigMainTest {
         );
 
         assertEquals(1, exit);
+    }
+
+    @Test
+    void executorDoesNotPrintReportDiagnosticsWhenValidationSucceeds() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
+        PrintStream originalErr = System.err;
+        PyronautValidateConfigMain.ValidationExecutionResult result;
+        try {
+            System.setOut(new PrintStream(out, true, UTF_8));
+            System.setErr(new PrintStream(err, true, UTF_8));
+            result = new MicronautConfigurationValidatorExecutor().validate(new PyronautValidateConfigMain.ValidationSettings(
+                true,
+                false,
+                false,
+                false,
+                "reachable",
+                PyronautValidateConfigMain.ReportFormat.BOTH,
+                tempDir.resolve("reports"),
+                tempDir,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                "production"
+            ));
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+
+        assertFalse(result.hasErrors());
+        assertEquals("", out.toString(UTF_8));
+        assertEquals("", err.toString(UTF_8));
     }
 
     @Test
@@ -273,7 +342,7 @@ class PyronautValidateConfigMainTest {
     void executorPrintsCopyPasteablePyprojectSuppressionsForConfigurationErrors() throws Exception {
         var err = new ByteArrayOutputStream();
         PrintStream originalErr = System.err;
-        System.setErr(new PrintStream(err));
+        System.setErr(new PrintStream(err, true, UTF_8));
         try {
             Class<?> executorType = Class.forName("io.micronaut.pyronaut.validateconfig.MicronautConfigurationValidatorExecutor");
             var method = executorType.getDeclaredMethod("printSuppressionSnippet", PrintStream.class, List.class);
@@ -283,7 +352,7 @@ class PyronautValidateConfigMainTest {
             System.setErr(originalErr);
         }
 
-        String output = err.toString();
+        String output = err.toString(UTF_8);
         assertTrue(output.contains("Add the following to pyproject.toml to suppress these validation errors:"));
         assertTrue(output.contains("[tool.pyronaut.validation]"));
         assertTrue(output.contains("\"datasources.*.db-type\""));
@@ -301,7 +370,7 @@ class PyronautValidateConfigMainTest {
     void executorDoesNotPrintSuppressionSnippetWhenThereAreNoConfigurationErrors() throws Exception {
         var err = new ByteArrayOutputStream();
         PrintStream originalErr = System.err;
-        System.setErr(new PrintStream(err));
+        System.setErr(new PrintStream(err, true, UTF_8));
         try {
             Class<?> executorType = Class.forName("io.micronaut.pyronaut.validateconfig.MicronautConfigurationValidatorExecutor");
             var method = executorType.getDeclaredMethod("printSuppressionSnippet", PrintStream.class, List.class);
@@ -311,7 +380,7 @@ class PyronautValidateConfigMainTest {
             System.setErr(originalErr);
         }
 
-        assertFalse(err.toString().contains("[tool.pyronaut.validation]"));
+        assertFalse(err.toString(UTF_8).contains("[tool.pyronaut.validation]"));
     }
 
     @Test

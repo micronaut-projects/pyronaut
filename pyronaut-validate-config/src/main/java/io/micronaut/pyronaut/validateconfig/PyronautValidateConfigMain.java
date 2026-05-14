@@ -153,7 +153,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
                         System.err.println("Configuration validation failed (cached). Report directory: " + settings.outputDir());
                         return VALIDATION_ERROR;
                     }
-                    System.out.println("Configuration validation up to date (cache hit). Reports in " + settings.outputDir());
+                    System.out.println("Configuration validation passed.");
                     return SUCCESS;
                 }
             }
@@ -173,7 +173,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
                 System.err.println("Configuration validation failed. See reports in " + settings.outputDir());
                 return VALIDATION_ERROR;
             }
-            System.out.println("Configuration validation passed. Reports written to " + settings.outputDir());
+            System.out.println("Configuration validation passed.");
             return SUCCESS;
         } catch (PyprojectModelException e) {
             System.err.println(e.getMessage());

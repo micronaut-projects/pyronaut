@@ -42,7 +42,6 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
     public PyronautValidateConfigMain.ValidationExecutionResult validate(PyronautValidateConfigMain.ValidationSettings settings) throws Exception {
         Files.createDirectories(settings.outputDir());
         suppressDefaultEnvironmentLogging();
-        System.out.println(validationMessage(settings));
 
         ConfigurationJsonSchemaValidator validator = new ConfigurationJsonSchemaValidator();
         validator.setFailOnNotPresent(settings.failOnNotPresent());
@@ -85,12 +84,13 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
             }
         }
 
-        new SystemErrConfigurationErrorReporter(System.err, htmlFile, jsonFile, settings.projectBaseDir(), settings.resourcesDirs())
-            .report(errors, dependencyInjectionErrors);
-
-        printSuppressionSnippet(System.err, suppressionPatterns(errors));
-
         boolean hasErrors = errors.stream().anyMatch(e -> e.type() == ConfigurationError.Type.ERROR) || !dependencyInjectionErrors.isEmpty();
+        if (hasErrors) {
+            System.err.println(validationMessage(settings));
+            new SystemErrConfigurationErrorReporter(System.err, htmlFile, jsonFile, settings.projectBaseDir(), settings.resourcesDirs())
+                .report(errors, dependencyInjectionErrors);
+            printSuppressionSnippet(System.err, suppressionPatterns(errors));
+        }
         return new PyronautValidateConfigMain.ValidationExecutionResult(hasErrors);
     }
 
