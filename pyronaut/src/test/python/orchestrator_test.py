@@ -101,30 +101,28 @@ class OrchestratorTest(unittest.TestCase):
         *,
         resources_dir: str = "config",
         test_resources_dir: str = "tests-config",
+        expect_project_jars: bool = True,
     ) -> None:
         self.assertTrue(command_line[0].endswith("/bin/java") or command_line[0] == "java")
         cp_index = command_line.index("-cp")
         self.assertEqual(self._DELEGATE_JVM_FLAGS, command_line[1:3])
         classpath = command_line[cp_index + 1].split(os.pathsep)
         project_root = self._normalized_project_dir(project_dir)
-        self.assertIn("/tmp/test.jar", classpath)
-        self.assertIn("/tmp/runtime.jar", classpath)
-        self.assertIn("/tmp/build.jar", classpath)
         self.assertIn("/tmp/pyronaut-test.jar", classpath)
-        self.assertTrue(
-            str(Path(project_root) / "__pyronaut__" / "test-classes") in classpath
-            or str(Path(project_root) / "__pyronaut__" / "classes") in classpath
-        )
+        if expect_project_jars:
+            self.assertIn("/tmp/test.jar", classpath)
+            self.assertIn("/tmp/runtime.jar", classpath)
+            self.assertIn("/tmp/build.jar", classpath)
+        else:
+            self.assertNotIn("/tmp/test.jar", classpath)
+            self.assertNotIn("/tmp/runtime.jar", classpath)
+            self.assertNotIn("/tmp/build.jar", classpath)
+        self.assertNotIn(str(Path(project_root) / "__pyronaut__" / "test-classes"), classpath)
+        self.assertNotIn(str(Path(project_root) / "__pyronaut__" / "classes"), classpath)
         resources_path = str(Path(project_root) / resources_dir)
         test_resources_path = str(Path(project_root) / test_resources_dir)
-        if Path(project_root, resources_dir).is_dir():
-            self.assertIn(resources_path, classpath)
-        else:
-            self.assertNotIn(resources_path, classpath)
-        if Path(project_root, test_resources_dir).is_dir():
-            self.assertIn(test_resources_path, classpath)
-        else:
-            self.assertNotIn(test_resources_path, classpath)
+        self.assertNotIn(resources_path, classpath)
+        self.assertNotIn(test_resources_path, classpath)
         self.assertEqual(self._TEST_MAIN, command_line[cp_index + 2])
         self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
 
@@ -187,6 +185,14 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(self._normalized_project_dir(project_dir), command_line[3])
         self.assertEqual("--owner-token", command_line[4])
         self.assertIsInstance(command_line[5], str)
+
+    def _assert_no_classpath_artifact_prefix(self, classpath: list[str], prefix: str) -> None:
+        artifact_names = [Path(entry).name for entry in classpath]
+        self.assertFalse(
+            any(name.startswith(prefix) for name in artifact_names),
+            f"Classpath should not contain an artifact starting with {prefix}: {artifact_names}",
+        )
+
     def test_unknown_command_returns_usage_error(self):
         exit_code = cli.run(["unknown"], runner=self._runner_ok(), resolver=self._resolver(), platform_name="linux")
         self.assertEqual(cli.USAGE_ERROR, exit_code)
@@ -1005,9 +1011,12 @@ logsDir = "var/custom-test-resources-logs"
             lib_dir.mkdir(parents=True, exist_ok=True)
             executable = bin_dir / "pyronaut-run"
             executable.write_text("#!/bin/sh\n", encoding="utf-8")
-            (lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").write_text("", encoding="utf-8")
-            (lib_dir / "picocli-4.7.7.jar").write_text("", encoding="utf-8")
-            (lib_dir / "slf4j-api-2.0.17.jar").write_text("", encoding="utf-8")
+            pyronaut_run_jar = lib_dir / "micronaut-pyronaut-run-fixture.jar"
+            picocli_jar = lib_dir / "picocli-fixture.jar"
+            slf4j_jar = lib_dir / "slf4j-api-fixture.jar"
+            pyronaut_run_jar.write_text("", encoding="utf-8")
+            picocli_jar.write_text("", encoding="utf-8")
+            slf4j_jar.write_text("", encoding="utf-8")
 
             previous = os.environ.pop("PYRONAUT_RUN_JAR", None)
             try:
@@ -1022,9 +1031,9 @@ logsDir = "var/custom-test-resources-logs"
 
             entries = classpath.split(os.pathsep)
             self.assertEqual("/tmp/runtime.jar", entries[0])
-            self.assertIn(str((lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").resolve()), entries)
-            self.assertIn(str((lib_dir / "picocli-4.7.7.jar").resolve()), entries)
-            self.assertIn(str((lib_dir / "slf4j-api-2.0.17.jar").resolve()), entries)
+            self.assertIn(str(pyronaut_run_jar.resolve()), entries)
+            self.assertIn(str(picocli_jar.resolve()), entries)
+            self.assertIn(str(slf4j_jar.resolve()), entries)
 
     def test_run_delegate_classpath_leaves_application_resources_to_run_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1061,7 +1070,7 @@ additional-resources = ["views"]
             self.assertNotIn(str((project_dir / "views").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
 
-    def test_test_delegate_classpath_honors_configured_test_resources_directory(self):
+    def test_test_delegate_classpath_leaves_application_resources_to_test_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             cache_dir = project_dir / "__pyronaut__"
@@ -1072,6 +1081,16 @@ additional-resources = ["views"]
             (project_dir / "test-resources").mkdir(parents=True, exist_ok=True)
             (project_dir / "test-fixtures").mkdir(parents=True, exist_ok=True)
             self._write_manifests(project_dir)
+            bundled_pytest_entry = "/tmp/micronaut-pyronaut-pytest-fixture.jar"
+            bundled_logback_entry = "/tmp/micronaut-pyronaut-logback-fixture.jar"
+            (cache_dir / "resolved-test-dependencies").write_text(
+                f"/tmp/test.jar\n{bundled_pytest_entry}\n",
+                encoding="utf-8",
+            )
+            (cache_dir / "resolved-runtime-dependencies").write_text(
+                f"/tmp/runtime.jar\n{bundled_logback_entry}\n",
+                encoding="utf-8",
+            )
             (project_dir / "pyproject.toml").write_text(
                 """
 [project]
@@ -1098,11 +1117,19 @@ additional-test-resources = ["test-fixtures"]
 
             classpath = cli._build_delegate_classpath("test", project_dir.resolve(), self._resolver())  # noqa: SLF001
             entries = classpath.split(os.pathsep)
-            self.assertIn(str((project_dir / "app-config").resolve()), entries)
-            self.assertIn(str((project_dir / "views").resolve()), entries)
-            self.assertIn(str((project_dir / "assets").resolve()), entries)
-            self.assertIn(str((project_dir / "test-resources").resolve()), entries)
-            self.assertIn(str((project_dir / "test-fixtures").resolve()), entries)
+            self.assertIn("/tmp/pyronaut-test.jar", entries)
+            self.assertIn("/tmp/test.jar", entries)
+            self.assertIn("/tmp/runtime.jar", entries)
+            self.assertIn("/tmp/build.jar", entries)
+            self.assertNotIn(bundled_pytest_entry, entries)
+            self.assertNotIn(bundled_logback_entry, entries)
+            self._assert_no_classpath_artifact_prefix(entries, "micronaut-pyronaut-pytest-")
+            self._assert_no_classpath_artifact_prefix(entries, "micronaut-pyronaut-logback-")
+            self.assertNotIn(str((project_dir / "app-config").resolve()), entries)
+            self.assertNotIn(str((project_dir / "views").resolve()), entries)
+            self.assertNotIn(str((project_dir / "assets").resolve()), entries)
+            self.assertNotIn(str((project_dir / "test-resources").resolve()), entries)
+            self.assertNotIn(str((project_dir / "test-fixtures").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
 
     def test_snapshot_watched_files_honors_configured_layout(self):
@@ -1167,7 +1194,8 @@ additional-test-resources = ["test-fixtures"]
             lib_dir.mkdir(parents=True, exist_ok=True)
             executable = bin_dir / "pyronaut-run"
             executable.write_text("#!/bin/sh\n", encoding="utf-8")
-            (lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").write_text("", encoding="utf-8")
+            pyronaut_run_jar = lib_dir / "micronaut-pyronaut-run-fixture.jar"
+            pyronaut_run_jar.write_text("", encoding="utf-8")
 
             previous = os.environ.pop("PYRONAUT_RUN_JAR", None)
             try:
@@ -1183,7 +1211,7 @@ additional-test-resources = ["test-fixtures"]
             entries = classpath.split(os.pathsep)
             self.assertEqual("/tmp/runtime-dev.jar", entries[0])
             self.assertNotIn("/tmp/runtime.jar", entries)
-            self.assertEqual(str((lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").resolve()), entries[1])
+            self.assertEqual(str(pyronaut_run_jar.resolve()), entries[1])
 
     def test_run_delegation_preserves_server_port_env_without_java_home_provider(self):
         executed = []
@@ -3475,7 +3503,7 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(5, len(executed))
+        self.assertEqual(6, len(executed))
         self.assertEqual(
             ["/tmp/pyronaut-validate-config", "--project-dir", str(expected_project_dir), "--scenario", "test"],
             executed[0],
@@ -3483,7 +3511,8 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         self.assertEqual(["/tmp/pyronaut-install", "--project-dir", str(expected_project_dir)], executed[1])
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(expected_project_dir)], executed[2])
         self._assert_test_resources_start(executed[3], str(expected_project_dir))
-        self._assert_test_resources_stop(executed[4], str(expected_project_dir))
+        self._assert_test_delegate(executed[4], str(expected_project_dir), expect_project_jars=False)
+        self._assert_test_resources_stop(executed[5], str(expected_project_dir))
         self.assertIn("tests: 1 passed, 1 failed, 0 skipped", stderr.getvalue())
 
     def test_run_validates_run_scenario_before_preflight(self):

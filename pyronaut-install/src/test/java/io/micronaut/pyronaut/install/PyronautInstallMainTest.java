@@ -1778,6 +1778,11 @@ class PyronautInstallMainTest {
         command.projectDir = project;
 
         assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        List<String> testEntries = Files.readAllLines(
+            project.resolve("__pyronaut__/resolved-test-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(testEntries.stream().noneMatch(entry -> entry.contains("micronaut-pyronaut-pytest")));
         String pyronautTestStub = Files.readString(
             project.resolve("__pyronaut__/ide-stubs").resolve("pyronaut/test/__init__.pyi"),
             StandardCharsets.UTF_8

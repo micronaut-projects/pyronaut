@@ -277,14 +277,20 @@ class PyronautTestMainTest {
         Path viewsDir = project.resolve("views");
         Path testResourcesDir = project.resolve("src/integration/resources");
         Path testFixturesDir = project.resolve("src/integration/fixtures");
+        Path bundledPytestJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-pytest-fixture.jar");
+        Path bundledLogbackJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-logback-fixture.jar");
         Files.createDirectories(classesDir);
         Files.createDirectories(configDir);
         Files.createDirectories(viewsDir);
         Files.createDirectories(testResourcesDir);
         Files.createDirectories(testFixturesDir);
         Files.createDirectories(project.resolve("__pyronaut__"));
-        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n", StandardCharsets.UTF_8);
+        Files.createDirectories(bundledPytestJar.getParent());
+        Files.createDirectories(bundledLogbackJar.getParent());
+        Files.writeString(bundledPytestJar, "", StandardCharsets.UTF_8);
+        Files.writeString(bundledLogbackJar, "", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n" + bundledPytestJar + "\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n" + bundledLogbackJar + "\n", StandardCharsets.UTF_8);
         Files.writeString(project.resolve("__pyronaut__/resolved-build-dependencies"), "/tmp/build.jar\n", StandardCharsets.UTF_8);
 
         PyronautTestMain.ResolvedProjectLayout layout = PyronautTestMain.resolveProjectLayout(
@@ -303,6 +309,8 @@ class PyronautTestMainTest {
             assertTrue(urls.stream().anyMatch(url -> url.contains("views")));
             assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
             assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/fixtures")));
+            assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-pytest")));
+            assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-logback")));
         }
     }
 

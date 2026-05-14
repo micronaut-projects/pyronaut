@@ -32,6 +32,12 @@ import java.util.stream.Stream;
  */
 @CommandLine.Command(name = "pyronaut-processor", mixinStandardHelpOptions = true, description = "Process Python sources and generate Micronaut metadata")
 public final class PyronautProcessorMain implements Callable<Integer> {
+    static {
+        if (System.getProperty("org.slf4j.simpleLogger.defaultLogLevel") == null) {
+            System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn");
+        }
+    }
+
     private static final String DEFAULT_PYTHON_SRC = "src";
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_TARGET_DIR = "__pyronaut__/classes";

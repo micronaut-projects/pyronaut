@@ -1,3 +1,2 @@
 /META-INF/GRAALPY-VFS/micronaut-application/src/logback/config.py
 /META-INF/GRAALPY-VFS/micronaut-application/src/logback/__init__.py
-/META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/__init__.py

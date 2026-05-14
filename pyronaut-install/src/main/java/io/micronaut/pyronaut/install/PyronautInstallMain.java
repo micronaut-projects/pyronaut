@@ -42,6 +42,7 @@ import org.eclipse.aether.resolution.DependencyResolutionException;
 @CommandLine.Command(name = "pyronaut-install", mixinStandardHelpOptions = true, description = "Resolve and cache project dependencies")
 public final class PyronautInstallMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
+    private static final String BUNDLED_PYTEST_ARTIFACT_PREFIX = "micronaut-pyronaut-pytest-";
 
     static {
         if (System.getProperty("org.slf4j.simpleLogger.defaultLogLevel") == null) {
@@ -140,9 +141,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 for (InstallScope installScope : scopes) {
                     progressReporter.startScope(installScope);
                     MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline);
-                    List<String> classpath = details.classpath().stream()
-                        .map(path -> path.toAbsolutePath().toString())
-                        .toList();
+                    List<String> classpath = manifestClasspath(installScope, details.classpath());
                     progressReporter.finishScope(installScope, classpath.size());
                     resolved.put(installScope, classpath);
                     resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
@@ -182,6 +181,20 @@ public final class PyronautInstallMain implements Callable<Integer> {
             System.err.println("Unexpected install failure: " + e.getMessage());
             return InstallExitCode.INTERNAL_ERROR.code();
         }
+    }
+
+    private static List<String> manifestClasspath(InstallScope installScope, List<Path> resolvedClasspath) {
+        return resolvedClasspath.stream()
+            .filter(path -> includeInManifest(installScope, path))
+            .map(path -> path.toAbsolutePath().toString())
+            .toList();
+    }
+
+    private static boolean includeInManifest(InstallScope installScope, Path artifact) {
+        if (installScope != InstallScope.TEST || artifact == null || artifact.getFileName() == null) {
+            return true;
+        }
+        return !artifact.getFileName().toString().startsWith(BUNDLED_PYTEST_ARTIFACT_PREFIX);
     }
 
     private List<InstallScope> selectedScopes() {

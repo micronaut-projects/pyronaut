@@ -62,6 +62,10 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_HTML_REPORT = "index.html";
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
+    private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_PREFIXES = List.of(
+        "micronaut-pyronaut-logback-",
+        "micronaut-pyronaut-pytest-"
+    );
     private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
 
     private static final String PYTEST_TESTS = "pytest.tests";
@@ -326,8 +330,20 @@ public final class PyronautTestMain implements Callable<Integer> {
             if (trimmed.isEmpty()) {
                 continue;
             }
-            urls.add(Path.of(trimmed).toAbsolutePath().normalize().toUri().toURL());
+            Path path = Path.of(trimmed).toAbsolutePath().normalize();
+            if (isLauncherProvidedArtifact(path)) {
+                continue;
+            }
+            urls.add(path.toUri().toURL());
         }
+    }
+
+    static boolean isLauncherProvidedArtifact(Path path) {
+        if (path == null || path.getFileName() == null) {
+            return false;
+        }
+        String fileName = path.getFileName().toString();
+        return LAUNCHER_PROVIDED_ARTIFACT_PREFIXES.stream().anyMatch(fileName::startsWith);
     }
 
     private static void addPathIfDirectory(LinkedHashSet<URL> urls, Path path) throws IOException {

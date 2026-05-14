@@ -39,6 +39,8 @@ dependencies {
     implementation(mn.micronaut.context.python)
     implementation(mn.micronaut.inject.python)
 
+    runtimeOnly(libs.slf4j.simple)
+
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
     testImplementation(mn.micronaut.http)
@@ -49,6 +51,7 @@ dependencies {
 
 application {
     mainClass = "io.micronaut.pyronaut.processor.PyronautProcessorMain"
+    applicationDefaultJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow", "--enable-native-access=ALL-UNNAMED")
 }
 
 val nativeImageCLibraryPathArgs = providers.provider {

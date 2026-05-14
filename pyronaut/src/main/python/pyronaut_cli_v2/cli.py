@@ -486,33 +486,17 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
         entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
     else:
-        layout = _read_pyproject_sources(project_dir)
-        entries = _read_manifest_entries(cache_dir / "resolved-test-dependencies")
-        for extra in (cache_dir / "resolved-runtime-dependencies", cache_dir / "resolved-build-dependencies"):
-            if extra.exists():
-                entries.extend(_read_manifest_entries(extra))
-        test_classes_dir = cache_dir / "test-classes"
-        classes_dir = cache_dir / "classes"
-        if test_classes_dir.is_dir():
-            entries.append(str(test_classes_dir))
-        elif classes_dir.is_dir():
-            entries.append(str(classes_dir))
-        if not test_classes_dir.is_dir() and not classes_dir.is_dir():
-            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
-        test_resources_dir = _resolve_layout_dir(project_dir, layout.test_resources_dir)
-        if test_resources_dir.is_dir():
-            entries.append(str(test_resources_dir))
-        for test_resource_dir in layout.additional_test_resources_dirs:
-            resolved_test_resource_dir = _resolve_layout_dir(project_dir, test_resource_dir)
-            if resolved_test_resource_dir.is_dir():
-                entries.append(str(resolved_test_resource_dir))
-        resources_dir = _resolve_layout_dir(project_dir, layout.resources_dir)
-        if resources_dir.is_dir():
-            entries.append(str(resources_dir))
-        for resource_dir in layout.additional_resources_dirs:
-            resolved_resource_dir = _resolve_layout_dir(project_dir, resource_dir)
-            if resolved_resource_dir.is_dir():
-                entries.append(str(resolved_resource_dir))
+        entries = [
+            entry
+            for manifest in (
+                cache_dir / "resolved-test-dependencies",
+                cache_dir / "resolved-runtime-dependencies",
+                cache_dir / "resolved-build-dependencies",
+            )
+            if manifest.exists()
+            for entry in _read_manifest_entries(manifest)
+            if not _is_test_launcher_provided_artifact(entry)
+        ]
 
     override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
     if override_jar:
@@ -530,6 +514,11 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             deduped.append(entry)
             seen.add(entry)
     return os.pathsep.join(deduped)
+
+
+def _is_test_launcher_provided_artifact(entry: str) -> bool:
+    file_name = Path(entry).name
+    return file_name.startswith("micronaut-pyronaut-logback-") or file_name.startswith("micronaut-pyronaut-pytest-")
 
 
 def _run_preflight(
