@@ -1,5 +1,6 @@
 import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 import org.gradle.api.GradleException
+import java.util.regex.Pattern
 
 plugins {
     id 'io.micronaut.build.internal.pyronaut-module'
@@ -22,6 +23,26 @@ def graalVmHomeProvider = providers.gradleProperty("pyronautGraalVmHome").orElse
 def nativeSdkWheel = providers.gradleProperty("native")
     .map { it.toBoolean() }
     .orElse(false)
+def versionFromCatalog = { String key ->
+    def catalogFile = rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile
+    def matcher = catalogFile.getText("UTF-8") =~ /(?m)^${Pattern.quote(key)}\s*=\s*"([^"]+)"/
+    if (!matcher.find()) {
+        throw new GradleException("Unable to find version '${key}' in ${catalogFile.absolutePath}")
+    }
+    matcher.group(1)
+}
+def micronautVersion = providers.provider { versionFromCatalog("micronaut") }
+def graalPyVersion = providers.provider { versionFromCatalog("graalpy") }
+def effectiveMavenLocalRepositoryDir = providers.provider {
+    def configured = System.getProperty("maven.repo.local")
+    if (configured == null || configured.isBlank()) {
+        return new File(System.getProperty("user.home"), ".m2/repository")
+    }
+    file(configured)
+}
+def sdkMavenLocalRepositoryDir = providers.gradleProperty("pyronaut.sdk.mavenLocalRepository")
+    .map { file(it) }
+    .orElse(providers.provider { new File(System.getProperty("user.home"), ".m2/repository") })
 
 def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
@@ -40,6 +61,139 @@ def delegatedNativeCliProjects = [
     [path: ":micronaut-pyronaut-validate-config", command: "pyronaut-validate-config"],
     [path: ":micronaut-pyronaut-test-resources-server", command: "pyronaut-test-resources-server"]
 ]
+def includedMicronautCoreArtifactIds = [
+    "micronaut-aop",
+    "micronaut-buffer-netty",
+    "micronaut-context",
+    "micronaut-context-propagation",
+    "micronaut-context-python",
+    "micronaut-core",
+    "micronaut-core-bom",
+    "micronaut-core-processor",
+    "micronaut-core-reactive",
+    "micronaut-discovery-core",
+    "micronaut-function",
+    "micronaut-function-client",
+    "micronaut-function-web",
+    "micronaut-graal",
+    "micronaut-http",
+    "micronaut-http-client",
+    "micronaut-http-client-core",
+    "micronaut-http-client-jdk",
+    "micronaut-http-netty",
+    "micronaut-http-netty-http3",
+    "micronaut-http-server",
+    "micronaut-http-server-netty",
+    "micronaut-http-validation",
+    "micronaut-inject",
+    "micronaut-inject-groovy",
+    "micronaut-inject-java",
+    "micronaut-inject-kotlin",
+    "micronaut-inject-python",
+    "micronaut-jackson-core",
+    "micronaut-jackson-databind",
+    "micronaut-json-core",
+    "micronaut-management",
+    "micronaut-messaging",
+    "micronaut-module-info",
+    "micronaut-module-info-runtime",
+    "micronaut-retry",
+    "micronaut-router",
+    "micronaut-runtime",
+    "micronaut-runtime-osx",
+    "micronaut-websocket"
+]
+def mavenVersionDirReady = { File versionDir, String artifactId ->
+    if (!versionDir.isDirectory()) {
+        return false
+    }
+    if (new File(versionDir, "maven-metadata.xml").isFile() || new File(versionDir, "maven-metadata-local.xml").isFile()) {
+        return true
+    }
+    if (new File(versionDir, "${artifactId}-${versionDir.name}.pom").isFile()) {
+        return true
+    }
+    def files = versionDir.listFiles()
+    files != null && files.any { it.isFile() && (it.name.endsWith(".pom") || it.name.endsWith(".jar")) }
+}
+def requireMavenVersionDir = { File repositoryDir, String relativePath, String artifactId ->
+    def versionDir = new File(repositoryDir, relativePath)
+    if (!mavenVersionDirReady(versionDir, artifactId)) {
+        throw new GradleException("Expected ${artifactId} artifacts in ${versionDir.absolutePath}")
+    }
+}
+
+tasks.register("prepareSdkMavenLocalEnvironment") {
+    group = "build setup"
+    description = "Publishes local Pyronaut, included Micronaut Core, and GraalPy snapshot artifacts to the Maven local repository used by demo applications."
+    dependsOn({
+        rootProject.subprojects
+            .collect { it.tasks.findByName("publishToMavenLocal") }
+            .findAll { it != null }
+    })
+    def micronautCoreIncludedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
+    def includedMicronautCorePresent = micronautCoreIncludedBuild != null
+    if (micronautCoreIncludedBuild != null) {
+        dependsOn(includedMicronautCoreArtifactIds.collect { artifactId ->
+            micronautCoreIncludedBuild.task(":${artifactId}:publishToMavenLocal")
+        })
+    }
+    inputs.property("micronautVersion", micronautVersion)
+    inputs.property("graalPyVersion", graalPyVersion)
+    inputs.property("pyronautVersion", providers.provider { project.version.toString() })
+    inputs.property("includedMicronautCore", includedMicronautCorePresent)
+    inputs.dir(effectiveMavenLocalRepositoryDir).optional()
+    outputs.dir(sdkMavenLocalRepositoryDir)
+    doLast {
+        def sourceRepository = effectiveMavenLocalRepositoryDir.get().canonicalFile
+        def targetRepository = sdkMavenLocalRepositoryDir.get().canonicalFile
+        if (!sourceRepository.isDirectory()) {
+            throw new GradleException("Missing effective Maven local repository: ${sourceRepository.absolutePath}")
+        }
+        targetRepository.mkdirs()
+
+        if (sourceRepository != targetRepository) {
+            def relativePaths = ["io/micronaut/pyronaut"] +
+                includedMicronautCoreArtifactIds.collect { "io/micronaut/${it}" } +
+                ["org/graalvm"]
+            relativePaths.unique().each { relativePath ->
+                def sourceDir = new File(sourceRepository, relativePath)
+                if (sourceDir.isDirectory()) {
+                    copy {
+                        from(sourceDir)
+                        into(new File(targetRepository, relativePath))
+                    }
+                }
+            }
+        }
+
+        requireMavenVersionDir(
+            targetRepository,
+            "io/micronaut/pyronaut/micronaut-pyronaut-bom/${project.version}",
+            "micronaut-pyronaut-bom"
+        )
+        if (includedMicronautCorePresent) {
+            requireMavenVersionDir(
+                targetRepository,
+                "io/micronaut/micronaut-core/${micronautVersion.get()}",
+                "micronaut-core"
+            )
+        }
+        if (System.getProperty("pyronaut.graalpy.bundle.repo") != null) {
+            requireMavenVersionDir(
+                targetRepository,
+                "org/graalvm/python/python-embedding/${graalPyVersion.get()}",
+                "python-embedding"
+            )
+            requireMavenVersionDir(
+                targetRepository,
+                "org/graalvm/python/python-embedding-tools/${graalPyVersion.get()}",
+                "python-embedding-tools"
+            )
+        }
+        logger.lifecycle("Prepared SDK Maven local environment at ${targetRepository.absolutePath}")
+    }
+}
 
 tasks.register("prepareWheelSources", Sync) {
     from("src/main/python") {
@@ -179,6 +333,7 @@ tasks.register("installSdkWheel", Exec) {
     group = "build"
     description = "Builds and installs the Pyronaut SDK wheel with pyenv/pip. Use -Pnative=true to include native launchers."
     dependsOn(tasks.named("buildSdkWheel"))
+    dependsOn(tasks.named("prepareSdkMavenLocalEnvironment"))
     inputs.dir(wheelDistDir)
     inputs.property("native", nativeSdkWheel)
     doFirst {
