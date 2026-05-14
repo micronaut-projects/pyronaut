@@ -84,7 +84,11 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("/tmp/pyronaut-run.jar", classpath)
         project_root = self._normalized_project_dir(project_dir)
         self.assertNotIn(str(Path(project_root) / "__pyronaut__" / "classes"), classpath)
-        self.assertNotIn("/tmp/runtime.jar", classpath)
+        if (Path(project_root) / "__pyronaut__" / "resolved-development-runtime-dependencies").exists():
+            self.assertIn("/tmp/runtime-dev.jar", classpath)
+            self.assertNotIn("/tmp/runtime.jar", classpath)
+        else:
+            self.assertIn("/tmp/runtime.jar", classpath)
         self.assertNotIn(str(Path(project_root) / resources_dir), classpath)
         self.assertEqual(self._RUN_MAIN, command_line[cp_index + 2])
         self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
@@ -1017,6 +1021,7 @@ logsDir = "var/custom-test-resources-logs"
                     os.environ["PYRONAUT_RUN_JAR"] = previous
 
             entries = classpath.split(os.pathsep)
+            self.assertEqual("/tmp/runtime.jar", entries[0])
             self.assertIn(str((lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").resolve()), entries)
             self.assertIn(str((lib_dir / "picocli-4.7.7.jar").resolve()), entries)
             self.assertIn(str((lib_dir / "slf4j-api-2.0.17.jar").resolve()), entries)
@@ -1150,21 +1155,35 @@ additional-test-resources = ["test-fixtures"]
             self.assertIn("test-resources/test.properties", watched_files)
             self.assertIn("test-fixtures/book.json", watched_files)
 
-    def test_run_delegate_classpath_leaves_runtime_manifest_to_run_launcher(self):
+    def test_run_delegate_classpath_prefers_development_runtime_manifest_before_delegate_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
             self._write_manifests(project_dir, development_runtime=True)
+            tools_dir = Path(temp_dir) / "tools" / "pyronaut-run"
+            bin_dir = tools_dir / "bin"
+            lib_dir = tools_dir / "lib"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            executable = bin_dir / "pyronaut-run"
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            (lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").write_text("", encoding="utf-8")
 
-            classpath = cli._build_delegate_classpath(  # noqa: SLF001 - exercising internal helper directly
-                "run",
-                project_dir.resolve(),
-                lambda command_name: f"/tmp/{command_name}",
-            )
+            previous = os.environ.pop("PYRONAUT_RUN_JAR", None)
+            try:
+                classpath = cli._build_delegate_classpath(  # noqa: SLF001 - exercising internal helper directly
+                    "run",
+                    project_dir.resolve(),
+                    lambda command_name: str(executable) if command_name == "pyronaut-run" else f"/tmp/{command_name}",
+                )
+            finally:
+                if previous is not None:
+                    os.environ["PYRONAUT_RUN_JAR"] = previous
 
             entries = classpath.split(os.pathsep)
-            self.assertNotIn("/tmp/runtime-dev.jar", entries)
+            self.assertEqual("/tmp/runtime-dev.jar", entries[0])
             self.assertNotIn("/tmp/runtime.jar", entries)
+            self.assertEqual(str((lib_dir / "micronaut-pyronaut-run-0.0.1-SNAPSHOT.jar").resolve()), entries[1])
 
     def test_run_delegation_preserves_server_port_env_without_java_home_provider(self):
         executed = []

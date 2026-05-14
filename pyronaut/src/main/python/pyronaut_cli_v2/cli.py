@@ -484,7 +484,7 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
-        entries = []
+        entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
     else:
         layout = _read_pyproject_sources(project_dir)
         entries = _read_manifest_entries(cache_dir / "resolved-test-dependencies")
