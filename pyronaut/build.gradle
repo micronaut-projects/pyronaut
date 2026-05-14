@@ -19,6 +19,9 @@ def graalVmProvisionTask = graalVmDevTag.present ? PyronautGraalVmDevBuilds.regi
 def graalVmToolchainHomeProvider = PyronautGraalVmDevBuilds.javaHomeProvider(project, graalVmDevTag)
     .map { it.absolutePath }
 def graalVmHomeProvider = providers.gradleProperty("pyronautGraalVmHome").orElse(graalVmToolchainHomeProvider)
+def nativeSdkWheel = providers.gradleProperty("native")
+    .map { it.toBoolean() }
+    .orElse(false)
 
 def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
@@ -51,11 +54,15 @@ tasks.register("prepareWheelSources", Sync) {
             into("src/pyronaut_cli_v2/tools/${cliProject.command}")
         }
     }
-    delegatedNativeCliProjects.each { cliProject ->
-        def nativeCompileTask = project(cliProject.path).tasks.named("nativeCompile")
-        dependsOn(nativeCompileTask)
-        from(nativeCompileTask.map { it.outputFile.get().asFile }) {
-            into("src/pyronaut_cli_v2/tools/${cliProject.command}/native")
+    inputs.property("native", nativeSdkWheel)
+
+    if (nativeSdkWheel.get()) {
+        delegatedNativeCliProjects.each { cliProject ->
+            def nativeCompileTask = project(cliProject.path).tasks.named("nativeCompile")
+            dependsOn(nativeCompileTask)
+            from(nativeCompileTask.map { it.outputFile.get().asFile }) {
+                into("src/pyronaut_cli_v2/tools/${cliProject.command}/native")
+            }
         }
     }
 
@@ -76,10 +83,12 @@ tasks.register("prepareWheelSources", Sync) {
             }
         }
 
-        delegatedNativeCliProjects.each { cliProject ->
-            def nativeBinary = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/${cliProject.command}").asFile
-            if (nativeBinary.exists()) {
-                nativeBinary.setExecutable(true)
+        if (nativeSdkWheel.get()) {
+            delegatedNativeCliProjects.each { cliProject ->
+                def nativeBinary = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/${cliProject.command}").asFile
+                if (nativeBinary.exists()) {
+                    nativeBinary.setExecutable(true)
+                }
             }
         }
 
@@ -142,9 +151,10 @@ root_is_pure = false
 
 tasks.register("buildSdkWheel", Exec) {
     group = "build"
-    description = "Builds the Pyronaut SDK wheel"
+    description = "Builds the Pyronaut SDK wheel. Use -Pnative=true to include native launchers."
     dependsOn(tasks.named("prepareWheelSources"))
     inputs.dir(wheelStagingDir)
+    inputs.property("native", nativeSdkWheel)
     outputs.dir(wheelDistDir)
     doFirst {
         delete(wheelDistDir)
@@ -163,6 +173,32 @@ tasks.register("buildSdkWheel", Exec) {
         wheelDistDir.get().asFile.absolutePath,
         wheelStagingDir.get().asFile.absolutePath
     )
+}
+
+tasks.register("installSdkWheel", Exec) {
+    group = "build"
+    description = "Builds and installs the Pyronaut SDK wheel with pyenv/pip. Use -Pnative=true to include native launchers."
+    dependsOn(tasks.named("buildSdkWheel"))
+    inputs.dir(wheelDistDir)
+    inputs.property("native", nativeSdkWheel)
+    doFirst {
+        def wheels = fileTree(wheelDistDir).matching {
+            include("pyronaut-*.whl")
+        }.files.sort { it.name }
+        if (wheels.size() != 1) {
+            throw new GradleException("Expected exactly one Pyronaut SDK wheel in ${wheelDistDir.get().asFile.absolutePath}, found ${wheels.size()}")
+        }
+        commandLine(
+            "pyenv",
+            "exec",
+            "python",
+            "-m",
+            "pip",
+            "install",
+            "--force-reinstall",
+            wheels.first().absolutePath
+        )
+    }
 }
 
 tasks.register("testPythonOrchestrator", Exec) {

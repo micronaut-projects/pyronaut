@@ -37,6 +37,13 @@ tasks.withType(Checkstyle).configureEach {
     }
 }
 
+pluginManager.withPlugin("io.micronaut.build.internal.nullaway") {
+    micronautNullAway {
+        disableOnProjectNameContains.add(project.name)
+        disabledChecks.add("NullAway")
+    }
+}
+
 pluginManager.withPlugin("org.graalvm.buildtools.native") {
     def ciNativeImageArgs = providers.gradleProperty("pyronautNativeImageCiArgs").map { value ->
         value.trim().split(/\s+/).findAll { arg -> !arg.isBlank() }

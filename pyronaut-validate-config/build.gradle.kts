@@ -5,7 +5,7 @@ import java.io.File
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
     id("application")
-    id("org.graalvm.buildtools.native") version "0.11.1"
+    id("org.graalvm.buildtools.native")
 }
 
 dependencies {

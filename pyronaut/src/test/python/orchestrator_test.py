@@ -348,6 +348,26 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual([[str(native_install), "--project-dir", "/tmp/demo"]], executed)
 
+    def test_install_uses_jvm_delegate_when_no_bundled_native_executable(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        with patch.object(cli, "_bundled_native_executable", return_value=None), \
+                patch.object(cli.shutil, "which", return_value="/tmp/pyronaut-install-native") as which:
+            exit_code = cli.run(
+                ["install", "--project-dir", "/tmp/demo"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"]], executed)
+        which.assert_not_called()
+
     def test_validate_config_prefers_bundled_native_executable_when_available(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:

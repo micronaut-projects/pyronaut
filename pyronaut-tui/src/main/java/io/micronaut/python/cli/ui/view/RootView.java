@@ -108,6 +108,7 @@ public final class RootView extends Component<RootView> {
         id("root");
     }
 
+    @Override
     public Element render() {
         // Header (compact status bar)
         var headerPanel = header();

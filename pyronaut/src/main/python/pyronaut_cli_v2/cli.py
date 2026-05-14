@@ -2501,10 +2501,6 @@ def _resolve_native_preferred_executable(
     if bundled is not None and bundled.exists():
         return str(bundled)
 
-    discovered = shutil.which(f"{command_name}-native")
-    if discovered and Path(discovered).name == f"{command_name}-native":
-        return discovered
-
     if fallback_to_resolver:
         return resolver(command_name)
     return None
