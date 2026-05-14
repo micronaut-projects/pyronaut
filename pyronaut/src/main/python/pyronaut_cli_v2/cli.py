@@ -341,15 +341,19 @@ def _delegate(
             return PRECONDITION_FAILED
         default_executable = resolver(COMMAND_TO_EXECUTABLE[command])
         if executable_path != default_executable:
-            command_line = [executable_path, *args]
-            if _delegation_trace_enabled():
-                print(shlex.join(command_line), file=sys.stderr)
             try:
-                env = _build_non_test_resources_env(command, java_home_provider)
+                command_line, env = _build_native_delegate_invocation(
+                    command,
+                    args,
+                    executable_path,
+                    env_overrides=env_overrides,
+                    java_home_provider=java_home_provider,
+                )
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
                 return PRECONDITION_FAILED
-            env = _merge_env_overrides(env, env_overrides)
+            if _delegation_trace_enabled():
+                print(shlex.join(command_line), file=sys.stderr)
             return runner(command_line, env)
 
     if command in {"run", "test"}:
@@ -435,6 +439,23 @@ def _build_java_delegate_invocation(
     return command_line, env
 
 
+def _build_native_delegate_invocation(
+    command: str,
+    args: Sequence[str],
+    executable_path: str,
+    *,
+    env_overrides: dict[str, str] | None = None,
+    java_home_provider: JavaHomeProvider | None = None,
+) -> tuple[list[str], dict[str, str] | None]:
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    env = _build_non_test_resources_env(command, java_home_provider)
+    env = _merge_env_overrides(env, env_overrides)
+    classpath = _build_project_classpath(command, project_dir)
+    jvm_args = [f"-Djava.class.path={classpath}"]
+    jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
+    return [executable_path, *jvm_args, *args], env
+
+
 def _resolve_java_executable(env: dict[str, str] | None) -> str:
     if env is not None:
         java_home = env.get("JAVA_HOME")
@@ -478,15 +499,23 @@ def _delegate_lib_entries(executable_path: str) -> list[str]:
     raise RuntimeError(f"Unable to resolve delegate jars for {command_name} from {lib_dir}")
 
 
-def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
+def _build_project_classpath_entries(command: str, project_dir: Path) -> list[str]:
     cache_dir = project_dir / "__pyronaut__"
+    layout = _read_pyproject_sources(project_dir)
     if command == "run":
+        entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
-        entries = []
+        entries.append(str(classes_dir))
+        resources_dir = _resolve_layout_dir(project_dir, layout.resources_dir)
+        if resources_dir.is_dir():
+            entries.append(str(resources_dir))
+        for resource_dir in layout.additional_resources_dirs:
+            resolved_resource_dir = _resolve_layout_dir(project_dir, resource_dir)
+            if resolved_resource_dir.is_dir():
+                entries.append(str(resolved_resource_dir))
     else:
-        layout = _read_pyproject_sources(project_dir)
         entries = _read_manifest_entries(cache_dir / "resolved-test-dependencies")
         for extra in (cache_dir / "resolved-runtime-dependencies", cache_dir / "resolved-build-dependencies"):
             if extra.exists():
@@ -513,6 +542,25 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             resolved_resource_dir = _resolve_layout_dir(project_dir, resource_dir)
             if resolved_resource_dir.is_dir():
                 entries.append(str(resolved_resource_dir))
+    return entries
+
+
+def _dedupe_classpath_entries(entries: Sequence[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if entry not in seen:
+            deduped.append(entry)
+            seen.add(entry)
+    return deduped
+
+
+def _build_project_classpath(command: str, project_dir: Path) -> str:
+    return os.pathsep.join(_dedupe_classpath_entries(_build_project_classpath_entries(command, project_dir)))
+
+
+def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
+    entries = _build_project_classpath_entries(command, project_dir)
 
     override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
     if override_jar:
@@ -523,13 +571,7 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             raise RuntimeError(f"Missing delegated executable: {COMMAND_TO_EXECUTABLE[command]}")
         entries.extend(_delegate_lib_entries(delegate_executable))
 
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for entry in entries:
-        if entry not in seen:
-            deduped.append(entry)
-            seen.add(entry)
-    return os.pathsep.join(deduped)
+    return os.pathsep.join(_dedupe_classpath_entries(entries))
 
 
 def _run_preflight(

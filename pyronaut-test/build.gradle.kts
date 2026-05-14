@@ -82,6 +82,7 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "-H:EnableURLProtocols=jar",
     "-H:+RuntimeClassLoading",
     "-H:+AllowJRTFileSystem",
+    "-H:+ClassForNameRespectsClassLoader",
     "--initialize-at-build-time=io.micronaut.core.io",
     "--initialize-at-build-time=io.micronaut.core.optim",
     "--initialize-at-build-time=io.micronaut.core.util",

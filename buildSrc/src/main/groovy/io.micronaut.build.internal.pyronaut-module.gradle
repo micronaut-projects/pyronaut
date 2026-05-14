@@ -7,6 +7,7 @@ plugins {
     id "io.micronaut.build.internal.module"
 }
 micronautBuild {
+    javaVersion = 25
     descriptor {
         parentModuleId = "io.micronaut.pyronaut:micronaut-pyronaut"
     }

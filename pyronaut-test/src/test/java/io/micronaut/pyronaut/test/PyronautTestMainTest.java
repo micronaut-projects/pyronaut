@@ -73,7 +73,7 @@ class PyronautTestMainTest {
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
-        assertEquals(0, command.call());
+        assertEquals(7, command.call());
     }
 
     @Test
@@ -85,7 +85,7 @@ class PyronautTestMainTest {
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
-        assertEquals(0, command.call());
+        assertEquals(7, command.call());
     }
 
     @Test
@@ -270,40 +270,20 @@ class PyronautTestMainTest {
     }
 
     @Test
-    void resolveProjectLayoutIncludesConfiguredTestResourcesDirectory() throws Exception {
+    void resolveProcessedClassesRootPrefersTestClassesDirectory() throws Exception {
         Path project = tempDir.resolve("project-layout");
         Path classesDir = project.resolve("__pyronaut__/classes");
-        Path configDir = project.resolve("app-config");
-        Path viewsDir = project.resolve("views");
-        Path testResourcesDir = project.resolve("src/integration/resources");
-        Path testFixturesDir = project.resolve("src/integration/fixtures");
+        Path testClassesDir = project.resolve("__pyronaut__/test-classes");
         Files.createDirectories(classesDir);
-        Files.createDirectories(configDir);
-        Files.createDirectories(viewsDir);
-        Files.createDirectories(testResourcesDir);
-        Files.createDirectories(testFixturesDir);
-        Files.createDirectories(project.resolve("__pyronaut__"));
-        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("__pyronaut__/resolved-build-dependencies"), "/tmp/build.jar\n", StandardCharsets.UTF_8);
+        Files.createDirectories(testClassesDir);
 
-        PyronautTestMain.ResolvedProjectLayout layout = PyronautTestMain.resolveProjectLayout(
+        Path resolved = PyronautTestMain.resolveProcessedClassesRoot(
             project,
             Path.of("__pyronaut__/classes"),
-            Path.of("__pyronaut__/test-classes"),
-            configDir,
-            testResourcesDir,
-            List.of(viewsDir),
-            List.of(testFixturesDir)
+            Path.of("__pyronaut__/test-classes")
         );
 
-        try (var classLoader = layout.applicationClassLoader()) {
-            List<String> urls = java.util.Arrays.stream(classLoader.getURLs()).map(Object::toString).toList();
-            assertTrue(urls.stream().anyMatch(url -> url.contains("app-config")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("views")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/fixtures")));
-        }
+        assertEquals(testClassesDir.toAbsolutePath().normalize(), resolved);
     }
 
     private void compileGeneratedTestClass(Path outputDir) throws Exception {

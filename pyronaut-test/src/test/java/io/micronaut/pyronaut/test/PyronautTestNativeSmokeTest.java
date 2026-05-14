@@ -38,6 +38,7 @@ class PyronautTestNativeSmokeTest extends AbstractPyronautTestSmokeTest {
         Path binary = Path.of(System.getProperty("pyronaut.test.native.binary"));
         java.util.List<String> command = new java.util.ArrayList<>();
         command.add(binary.toString());
+        command.add("-Djava.class.path=" + String.join(java.io.File.pathSeparator, nativeTestClasspathEntries(project)));
         command.add("--project-dir");
         command.add(project.toString());
         if (className != null) {

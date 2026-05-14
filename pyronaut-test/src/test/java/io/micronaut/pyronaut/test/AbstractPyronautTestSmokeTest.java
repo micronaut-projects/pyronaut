@@ -8,11 +8,11 @@ import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.PrintStream;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -167,27 +167,99 @@ abstract class AbstractPyronautTestSmokeTest {
     }
 
     protected static RunResult runJvmTest(Path project, String className) throws Exception {
-        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
-        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
-        PrintStream originalOut = System.out;
-        PrintStream originalErr = System.err;
-        int exitCode;
-        try {
-            System.setOut(new PrintStream(stdout, true, StandardCharsets.UTF_8));
-            System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
-            java.util.List<String> args = new java.util.ArrayList<>();
-            args.add("--project-dir");
-            args.add(project.toString());
-            if (className != null) {
-                args.add("--select-class");
-                args.add(className);
-            }
-            exitCode = new picocli.CommandLine(new PyronautTestMain()).execute(args.toArray(String[]::new));
-        } finally {
-            System.setOut(originalOut);
-            System.setErr(originalErr);
+        List<String> classpathEntries = new ArrayList<>(nativeTestClasspathEntries(project));
+        classpathEntries.addAll(currentRuntimeClasspathEntries());
+        List<String> command = new ArrayList<>();
+        command.add(javaExecutable().toString());
+        command.add("--sun-misc-unsafe-memory-access=allow");
+        command.add("--enable-native-access=ALL-UNNAMED");
+        command.add("-cp");
+        command.add(String.join(File.pathSeparator, dedupeExistingClasspathEntries(classpathEntries)));
+        command.add(PyronautTestMain.class.getName());
+        command.add("--project-dir");
+        command.add(project.toString());
+        if (className != null) {
+            command.add("--select-class");
+            command.add(className);
         }
-        return new RunResult(exitCode, stdout.toString(StandardCharsets.UTF_8) + stderr.toString(StandardCharsets.UTF_8));
+        ProcessBuilder processBuilder = new ProcessBuilder(command)
+            .redirectErrorStream(true);
+        String javaHome = System.getenv("JAVA_HOME");
+        if (javaHome != null && !javaHome.isBlank()) {
+            processBuilder.environment().put("JAVA_HOME", javaHome);
+        }
+        Process process = processBuilder.start();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        process.getInputStream().transferTo(output);
+        int exitCode = process.waitFor();
+        return new RunResult(exitCode, output.toString(StandardCharsets.UTF_8));
+    }
+
+    protected static List<String> nativeTestClasspathEntries(Path project) throws Exception {
+        LinkedHashSet<String> entries = new LinkedHashSet<>();
+        addManifestEntries(entries, project.resolve("__pyronaut__/resolved-test-dependencies"));
+        addManifestEntries(entries, project.resolve("__pyronaut__/resolved-runtime-dependencies"));
+        addManifestEntries(entries, project.resolve("__pyronaut__/resolved-build-dependencies"));
+        addDirectory(entries, project.resolve("__pyronaut__/test-classes"));
+        if (!Files.isDirectory(project.resolve("__pyronaut__/test-classes"))) {
+            addDirectory(entries, project.resolve("__pyronaut__/classes"));
+        }
+        addDirectory(entries, project.resolve("tests-config"));
+        addDirectory(entries, project.resolve("config"));
+        return List.copyOf(entries);
+    }
+
+    private static void addManifestEntries(LinkedHashSet<String> entries, Path manifest) throws Exception {
+        if (!Files.exists(manifest)) {
+            return;
+        }
+        for (String line : Files.readAllLines(manifest, StandardCharsets.UTF_8)) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            Path path = Path.of(trimmed).toAbsolutePath().normalize();
+            if (Files.exists(path)) {
+                entries.add(path.toString());
+            }
+        }
+    }
+
+    private static void addDirectory(LinkedHashSet<String> entries, Path directory) {
+        Path normalized = directory.toAbsolutePath().normalize();
+        if (Files.isDirectory(normalized)) {
+            entries.add(normalized.toString());
+        }
+    }
+
+    private static List<String> dedupeExistingClasspathEntries(List<String> rawEntries) {
+        LinkedHashSet<String> entries = new LinkedHashSet<>();
+        for (String entry : rawEntries) {
+            String trimmed = entry == null ? "" : entry.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            Path path = Path.of(trimmed).toAbsolutePath().normalize();
+            if (Files.exists(path)) {
+                entries.add(path.toString());
+            }
+        }
+        return List.copyOf(entries);
+    }
+
+    private static Path javaExecutable() {
+        String javaHome = System.getProperty("java.home");
+        if (javaHome != null && !javaHome.isBlank()) {
+            Path java = Path.of(javaHome, "bin", isWindows() ? "java.exe" : "java");
+            if (Files.isExecutable(java)) {
+                return java;
+            }
+        }
+        return Path.of("java");
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
     }
 
     private static Path buildSupportJar(Path workDir) throws Exception {

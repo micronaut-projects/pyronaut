@@ -72,10 +72,16 @@ abstract class AbstractPyronautRunSmokeTest {
     }
 
     protected static RunResult runNative(Path binary, Path project) throws Exception {
+        List<String> classpathEntries = new ArrayList<>();
+        classpathEntries.addAll(readManifestEntries(project.resolve("__pyronaut__/resolved-runtime-dependencies")));
+        classpathEntries.add(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize().toString());
+        classpathEntries.addAll(currentRuntimeClasspathEntries());
+        classpathEntries.add(project.resolve("config").toAbsolutePath().normalize().toString());
         return runCommand(
             project,
             List.of(
                 binary.toString(),
+                "-Djava.class.path=" + String.join(File.pathSeparator, dedupeExistingClasspathEntries(classpathEntries)),
                 "--project-dir",
                 project.toString()
             ),
@@ -267,6 +273,21 @@ abstract class AbstractPyronautRunSmokeTest {
             }
         }
         return entries;
+    }
+
+    private static List<String> dedupeExistingClasspathEntries(List<String> rawEntries) {
+        LinkedHashSet<String> entries = new LinkedHashSet<>();
+        for (String entry : rawEntries) {
+            String trimmed = entry == null ? "" : entry.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            Path path = Path.of(trimmed).toAbsolutePath().normalize();
+            if (Files.exists(path)) {
+                entries.add(path.toString());
+            }
+        }
+        return new ArrayList<>(entries);
     }
 
     private static Path javaExecutable() {

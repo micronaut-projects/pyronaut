@@ -26,9 +26,6 @@ import org.junit.platform.launcher.core.LauncherFactory;
 import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
 import picocli.CommandLine;
 
-import java.io.IOException;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -51,7 +48,6 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
     }
 
-    private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_TEST_CLASSES_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
@@ -62,7 +58,6 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_HTML_REPORT = "index.html";
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
-    private static final String PROCESSED_CLASSES_DIR_PROPERTY = "pyronaut.test.processed.classes.dir";
     private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
 
     private static final String PYTEST_TESTS = "pytest.tests";
@@ -126,23 +121,13 @@ public final class PyronautTestMain implements Callable<Integer> {
         initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
         Path root = projectDir.toAbsolutePath().normalize();
         PyprojectModel model;
-        ResolvedProjectLayout layout;
+        Path processedClassesRoot;
         Path resolvedTestsDir;
         try {
             applyTestResourcesProperties(System.getenv());
             model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
-            Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
-            Path resolvedTestResourcesDir = root.resolve(model.pyronaut().sources().testResources()).normalize();
             resolvedTestsDir = resolveConfiguredPath(root, testsDir, DEFAULT_TESTS_DIR, model.pyronaut().sources().pythonTest(), "--tests-dir");
-            layout = resolveProjectLayout(
-                root,
-                classesDir,
-                testClassesDir,
-                resolvedConfigDir,
-                resolvedTestResourcesDir,
-                resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()),
-                resolveConfiguredPaths(root, model.pyronaut().sources().additionalTestResources())
-            );
+            processedClassesRoot = resolveProcessedClassesRoot(root, classesDir, testClassesDir);
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -152,16 +137,15 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
-        String previousProcessedClassesDir = System.getProperty(PROCESSED_CLASSES_DIR_PROPERTY);
-        try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
+        try {
+            ClassLoader applicationClassLoader = resolveApplicationClassLoader();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
-            System.setProperty(PROCESSED_CLASSES_DIR_PROPERTY, layout.processedClassesRoot().toString());
             try {
                 contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedTestsDir));
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
                 boolean publishReports = false;
                 if (selectClasses == null || selectClasses.isEmpty()) {
-                    requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(layout.processedClassesRoot())));
+                    requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(processedClassesRoot)));
                     Optional<String> pytestTests = buildPytestTestsParameter(tests);
                     if (Files.isDirectory(resolvedTestsDir)) {
                         List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
@@ -215,11 +199,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                 System.err.println("Test execution failed: " + e.getMessage());
                 return 7;
             }
-        } catch (IOException e) {
-            System.err.println("Test execution failed: " + e.getMessage());
-            return 7;
         } finally {
-            restoreProperty(PROCESSED_CLASSES_DIR_PROPERTY, previousProcessedClassesDir);
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
         }
     }
@@ -247,47 +227,16 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
     }
 
-    static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path testClassesDir, Path configDir, Path testResourcesDir) throws IOException {
-        return resolveProjectLayout(root, classesDir, testClassesDir, configDir, testResourcesDir, List.of(), List.of());
-    }
-
-    static ResolvedProjectLayout resolveProjectLayout(Path root,
-                                                      Path classesDir,
-                                                      Path testClassesDir,
-                                                      Path configDir,
-                                                      Path testResourcesDir,
-                                                      List<Path> additionalResourceDirs,
-                                                      List<Path> additionalTestResourceDirs) throws IOException {
-        Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
+    static Path resolveProcessedClassesRoot(Path root, Path classesDir, Path testClassesDir) {
         Path resolvedTestClassesDir = root.resolve(testClassesDir).normalize();
         Path resolvedClassesDir = root.resolve(classesDir).normalize();
-        boolean hasTestClassesDir = Files.isDirectory(resolvedTestClassesDir);
-        Path processedClassesRoot;
-        if (hasTestClassesDir) {
-            processedClassesRoot = resolvedTestClassesDir;
-        } else if (Files.isDirectory(resolvedClassesDir)) {
-            processedClassesRoot = resolvedClassesDir;
-        } else {
-            throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
+        if (Files.isDirectory(resolvedTestClassesDir)) {
+            return resolvedTestClassesDir;
         }
-
-        LinkedHashSet<URL> urls = new LinkedHashSet<>();
-        addManifestEntries(urls, pyronautDir.resolve("resolved-test-dependencies"));
-        addManifestEntries(urls, pyronautDir.resolve("resolved-runtime-dependencies"));
-        addManifestEntries(urls, pyronautDir.resolve("resolved-build-dependencies"));
-        if (hasTestClassesDir) {
-            addPathIfDirectory(urls, resolvedTestClassesDir);
-        } else {
-            addPathIfDirectory(urls, resolvedClassesDir);
+        if (Files.isDirectory(resolvedClassesDir)) {
+            return resolvedClassesDir;
         }
-        addPathIfDirectory(urls, configDir);
-        addResourceDirectories(urls, additionalResourceDirs);
-        addPathIfDirectory(urls, testResourcesDir);
-        addResourceDirectories(urls, additionalTestResourceDirs);
-        return new ResolvedProjectLayout(
-            processedClassesRoot,
-            new URLClassLoader(urls.toArray(URL[]::new), resolveApplicationClassLoader())
-        );
+        throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
     }
 
     private Path resolveConfiguredPath(Path root,
@@ -309,41 +258,6 @@ public final class PyronautTestMain implements Callable<Integer> {
             && commandSpec.commandLine() != null
             && commandSpec.commandLine().getParseResult() != null
             && commandSpec.commandLine().getParseResult().hasMatchedOption(optionName);
-    }
-
-    private static List<Path> resolveConfiguredPaths(Path root, List<String> configuredDirs) {
-        if (configuredDirs == null || configuredDirs.isEmpty()) {
-            return List.of();
-        }
-        return configuredDirs.stream()
-            .map(Path::of)
-            .map(path -> path.isAbsolute() ? path.normalize() : root.resolve(path).normalize())
-            .toList();
-    }
-
-    private static void addManifestEntries(LinkedHashSet<URL> urls, Path manifest) throws IOException {
-        if (!Files.exists(manifest)) {
-            return;
-        }
-        for (String line : Files.readAllLines(manifest)) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) {
-                continue;
-            }
-            urls.add(Path.of(trimmed).toAbsolutePath().normalize().toUri().toURL());
-        }
-    }
-
-    private static void addPathIfDirectory(LinkedHashSet<URL> urls, Path path) throws IOException {
-        if (Files.isDirectory(path)) {
-            urls.add(path.toAbsolutePath().normalize().toUri().toURL());
-        }
-    }
-
-    private static void addResourceDirectories(LinkedHashSet<URL> urls, List<Path> resourceDirs) throws IOException {
-        for (Path resourceDir : resourceDirs) {
-            addPathIfDirectory(urls, resourceDir);
-        }
     }
 
     @FunctionalInterface
@@ -491,20 +405,9 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
     }
 
-    private static void restoreProperty(String name, String value) {
-        if (value == null) {
-            System.clearProperty(name);
-        } else {
-            System.setProperty(name, value);
-        }
-    }
-
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautTestMain()).execute(args);
         System.exit(exitCode);
-    }
-
-    record ResolvedProjectLayout(Path processedClassesRoot, URLClassLoader applicationClassLoader) {
     }
 
     private record TestResourcesProperty(String environmentVariable, String systemProperty) {

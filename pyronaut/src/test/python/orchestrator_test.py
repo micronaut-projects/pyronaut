@@ -83,9 +83,13 @@ class OrchestratorTest(unittest.TestCase):
         classpath = command_line[cp_index + 1].split(os.pathsep)
         self.assertIn("/tmp/pyronaut-run.jar", classpath)
         project_root = self._normalized_project_dir(project_dir)
-        self.assertNotIn(str(Path(project_root) / "__pyronaut__" / "classes"), classpath)
-        self.assertNotIn("/tmp/runtime.jar", classpath)
-        self.assertNotIn(str(Path(project_root) / resources_dir), classpath)
+        self.assertIn(str(Path(project_root) / "__pyronaut__" / "classes"), classpath)
+        self.assertIn("/tmp/runtime.jar", classpath)
+        resources_path = str(Path(project_root) / resources_dir)
+        if Path(project_root, resources_dir).is_dir():
+            self.assertIn(resources_path, classpath)
+        else:
+            self.assertNotIn(resources_path, classpath)
         self.assertEqual(self._RUN_MAIN, command_line[cp_index + 2])
         self.assertEqual(["--project-dir", project_dir, *(extra_args or [])], command_line[cp_index + 3 :])
 
@@ -129,6 +133,18 @@ class OrchestratorTest(unittest.TestCase):
         cp_index = command_line.index("-cp")
         properties: dict[str, str | None] = {}
         for token in command_line[1:cp_index]:
+            if not token.startswith("-D"):
+                continue
+            name, has_value, value = token[2:].partition("=")
+            properties[name] = value if has_value else None
+        return properties
+
+    @staticmethod
+    def _extract_native_system_properties(command_line) -> dict[str, str | None]:
+        properties: dict[str, str | None] = {}
+        for token in command_line[1:]:
+            if token == "--project-dir":
+                break
             if not token.startswith("-D"):
                 continue
             name, has_value, value = token[2:].partition("=")
@@ -486,7 +502,14 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual([str(native_test), "--project-dir", str(project_dir)], executed[4])
+        self.assertEqual(str(native_test), executed[4][0])
+        properties = self._extract_native_system_properties(executed[4])
+        native_classpath = (properties.get("java.class.path") or "").split(os.pathsep)
+        self.assertIn("/tmp/test.jar", native_classpath)
+        self.assertIn("/tmp/runtime.jar", native_classpath)
+        self.assertIn("/tmp/build.jar", native_classpath)
+        self.assertIn(str((project_dir / "__pyronaut__" / "classes").resolve()), native_classpath)
+        self.assertEqual(["--project-dir", str(project_dir)], executed[4][-2:])
 
     def test_test_debug_vm_forces_jit_mode_even_when_native_is_configured(self):
         executed = []
@@ -1001,7 +1024,7 @@ logsDir = "var/custom-test-resources-logs"
             self.assertIn(str((lib_dir / "picocli-4.7.7.jar").resolve()), entries)
             self.assertIn(str((lib_dir / "slf4j-api-2.0.17.jar").resolve()), entries)
 
-    def test_run_delegate_classpath_leaves_application_resources_to_run_launcher(self):
+    def test_run_delegate_classpath_honors_configured_resources_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
@@ -1032,8 +1055,8 @@ additional-resources = ["views"]
 
             classpath = cli._build_delegate_classpath("run", project_dir.resolve(), self._resolver())  # noqa: SLF001
             entries = classpath.split(os.pathsep)
-            self.assertNotIn(str((project_dir / "app-config").resolve()), entries)
-            self.assertNotIn(str((project_dir / "views").resolve()), entries)
+            self.assertIn(str((project_dir / "app-config").resolve()), entries)
+            self.assertIn(str((project_dir / "views").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
 
     def test_test_delegate_classpath_honors_configured_test_resources_directory(self):
@@ -1130,7 +1153,7 @@ additional-test-resources = ["test-fixtures"]
             self.assertIn("test-resources/test.properties", watched_files)
             self.assertIn("test-fixtures/book.json", watched_files)
 
-    def test_run_delegate_classpath_leaves_runtime_manifest_to_run_launcher(self):
+    def test_run_delegate_classpath_prefers_development_runtime_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
@@ -1143,7 +1166,7 @@ additional-test-resources = ["test-fixtures"]
             )
 
             entries = classpath.split(os.pathsep)
-            self.assertNotIn("/tmp/runtime-dev.jar", entries)
+            self.assertIn("/tmp/runtime-dev.jar", entries)
             self.assertNotIn("/tmp/runtime.jar", entries)
 
     def test_run_delegation_preserves_server_port_env_without_java_home_provider(self):

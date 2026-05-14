@@ -1,28 +1,18 @@
 package io.micronaut.pyronaut.run;
 
-import io.micronaut.context.BeanContext;
-import io.micronaut.context.BeanResolutionContext;
-import io.micronaut.core.annotation.AnnotationMetadata;
-import io.micronaut.inject.BeanDefinition;
-import io.micronaut.inject.BeanDefinitionReference;
-import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 class PyronautRunMainTest {
@@ -39,7 +29,6 @@ class PyronautRunMainTest {
 
         AtomicReference<Class<?>> resolvedMainClass = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
-            new PyprojectModelReader(),
             (className, classLoader) -> {
                 if (SampleApp.class.getName().equals(className)) {
                     return SampleApp.class;
@@ -87,7 +76,6 @@ class PyronautRunMainTest {
 
         AtomicReference<Path> startedClassesDir = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
-            new PyprojectModelReader(),
             (className, classLoader) -> {
                 throw new ClassNotFoundException(className);
             },
@@ -140,114 +128,26 @@ class PyronautRunMainTest {
     }
 
     @Test
-    void resolveProjectLayoutUsesResolvedRuntimeDependencies() throws Exception {
+    void resolvesProcessedClassesRoot() throws Exception {
         Path project = tempDir.resolve("project-layout");
-        Path pyronautDir = project.resolve("__pyronaut__");
-        Path classesDir = pyronautDir.resolve("classes");
-        Path configDir = project.resolve("config");
-        Path runtimeJar = tempDir.resolve("runtime.jar");
+        Path classesDir = project.resolve("__pyronaut__/classes");
         Files.createDirectories(classesDir);
-        Files.createDirectories(configDir);
-        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
-        Files.createDirectories(pyronautDir);
-        Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
 
-        PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
-        try (var classLoader = layout.applicationClassLoader()) {
-            assertEquals(classesDir.toAbsolutePath().normalize(), layout.processedClassesRoot());
-            Path archivedClasses = pyronautDir.resolve("run-classes.jar");
-            assertTrue(Files.exists(archivedClasses));
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains(runtimeJar.getFileName().toString()))
-            );
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("run-classes.jar"))
-            );
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("config/"))
-                    || java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().endsWith("/config"))
-            );
-        }
+        assertEquals(classesDir.toAbsolutePath().normalize(), PyronautRunMain.resolveProcessedClassesRoot(project, Path.of("__pyronaut__/classes")));
     }
 
     @Test
-    void resolveProjectLayoutPrefersDevelopmentRuntimeDependencies() throws Exception {
-        Path project = tempDir.resolve("project-development-layout");
-        Path pyronautDir = project.resolve("__pyronaut__");
-        Path classesDir = pyronautDir.resolve("classes");
-        Path configDir = project.resolve("config");
-        Path runtimeJar = tempDir.resolve("runtime.jar");
-        Path developmentRuntimeJar = tempDir.resolve("runtime-dev.jar");
-        Files.createDirectories(classesDir);
-        Files.createDirectories(configDir);
-        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
-        Files.writeString(developmentRuntimeJar, "", StandardCharsets.UTF_8);
-        Files.createDirectories(pyronautDir);
-        Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
-        Files.writeString(pyronautDir.resolve("resolved-development-runtime-dependencies"), developmentRuntimeJar + "\n", StandardCharsets.UTF_8);
-
-        PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
-        try (var classLoader = layout.applicationClassLoader()) {
-            List<String> urls = Arrays.stream(classLoader.getURLs())
-                .map(URL::toString)
-                .toList();
-            assertTrue(urls.stream().anyMatch(url -> url.contains(developmentRuntimeJar.getFileName().toString())));
-            assertFalse(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
-        }
-    }
-
-    @Test
-    void discoversProcessedBeanDefinitionReferences() throws Exception {
-        Path classesDir = tempDir.resolve("processed-classes");
-        Path referencesDir = classesDir.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference");
-        Files.createDirectories(referencesDir);
-        Files.writeString(referencesDir.resolve(SampleBeanDefinitionReference.class.getName()), "", StandardCharsets.UTF_8);
-
-        List<BeanDefinitionReference<?>> references = PyronautRunMain.loadProcessedBeanDefinitionReferences(
-            classesDir,
-            PyronautRunMainTest.class.getClassLoader()
-        );
-
-        assertEquals(1, references.size());
-        assertEquals(SampleBeanDefinitionReference.class, references.get(0).getClass());
-    }
-
-    @Test
-    void usesConfiguredResourcesDirectoryWhenConfigDirNotOverridden() throws Exception {
+    void startsWithCurrentContextClassLoader() throws Exception {
         Path project = tempDir.resolve("project-custom-config");
         Path classes = project.resolve("__pyronaut__/classes");
         Files.createDirectories(classes);
-        Files.createDirectories(project.resolve("app-config"));
-        Files.createDirectories(project.resolve("views"));
-        Files.createDirectories(project.resolve("assets"));
-        Files.writeString(
-            project.resolve("pyproject.toml"),
-            """
-                [project]
-                name = "demo"
-                version = "1.0.0"
-
-                [tool.pyronaut]
-                repositories = ["mavenCentral"]
-
-                [tool.pyronaut.dependencies]
-                runtime = []
-                build = []
-                test = []
-
-                [tool.pyronaut.sources]
-                resources = "app-config"
-                additional-resources = ["views", "assets"]
-                """,
-            StandardCharsets.UTF_8
-        );
+        writeMinimalPyproject(project);
 
         AtomicReference<Path> startedClassesDir = new AtomicReference<>();
-        AtomicReference<java.net.URLClassLoader> applicationClassLoader = new AtomicReference<>();
+        AtomicReference<ClassLoader> applicationClassLoader = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
-            new PyprojectModelReader(),
             (className, classLoader) -> null,
-            classLoader -> applicationClassLoader.set((java.net.URLClassLoader) classLoader),
+            applicationClassLoader::set,
             (loadedClass, resolvedClassesDir, appArgs) -> {
                 startedClassesDir.set(resolvedClassesDir);
                 return false;
@@ -257,18 +157,7 @@ class PyronautRunMainTest {
 
         assertEquals(0, runMain.call());
         assertEquals(classes.toAbsolutePath().normalize(), startedClassesDir.get());
-        assertTrue(
-            java.util.Arrays.stream(applicationClassLoader.get().getURLs())
-                .anyMatch(url -> url.toString().contains("app-config"))
-        );
-        assertTrue(
-            java.util.Arrays.stream(applicationClassLoader.get().getURLs())
-                .anyMatch(url -> url.toString().contains("views"))
-        );
-        assertTrue(
-            java.util.Arrays.stream(applicationClassLoader.get().getURLs())
-                .anyMatch(url -> url.toString().contains("assets"))
-        );
+        assertEquals(Thread.currentThread().getContextClassLoader(), applicationClassLoader.get());
     }
 
     private static void writeMinimalPyproject(Path project) throws Exception {
@@ -307,36 +196,4 @@ class PyronautRunMainTest {
         }
     }
 
-    public static final class SampleBeanDefinitionReference implements BeanDefinitionReference<SampleApp> {
-
-        @Override
-        public String getBeanDefinitionName() {
-            return SampleApp.class.getName() + "$Definition";
-        }
-
-        @Override
-        public BeanDefinition<SampleApp> load() {
-            return null;
-        }
-
-        @Override
-        public boolean isPresent() {
-            return true;
-        }
-
-        @Override
-        public Class<SampleApp> getBeanType() {
-            return SampleApp.class;
-        }
-
-        @Override
-        public AnnotationMetadata getAnnotationMetadata() {
-            return AnnotationMetadata.EMPTY_METADATA;
-        }
-
-        @Override
-        public boolean isEnabled(BeanContext context, BeanResolutionContext resolutionContext) {
-            return true;
-        }
-    }
 }

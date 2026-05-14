@@ -15,31 +15,18 @@
  */
 package io.micronaut.pyronaut.run;
 
-import io.micronaut.context.BeanDefinitionsProvider;
-import io.micronaut.context.DefaultBeanDefinitionsProvider;
 import io.micronaut.context.python.GraalPyContextFactory;
-import io.micronaut.inject.BeanDefinitionReference;
-import io.micronaut.pyronaut.config.model.PyprojectModel;
-import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
 import java.io.IOException;
-import java.lang.reflect.Constructor;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
 import java.util.stream.Stream;
 
 /**
@@ -48,13 +35,9 @@ import java.util.stream.Stream;
 @SuppressWarnings("checkstyle:InnerTypeLast")
 @CommandLine.Command(name = "pyronaut-run", mixinStandardHelpOptions = true, description = "Run a processed Pyronaut application")
 public final class PyronautRunMain implements Callable<Integer> {
-    private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
-    private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
-    private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
-    private static final String BEAN_DEFINITION_REFERENCES_PATH = "META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -79,31 +62,24 @@ public final class PyronautRunMain implements Callable<Integer> {
     )
     boolean debugVm;
 
-    @CommandLine.Spec
-    CommandLine.Model.CommandSpec commandSpec;
-
     @CommandLine.Parameters
     List<String> appArgs = List.of();
 
     private final ClassResolver classResolver;
     private final ContextBootstrapper contextBootstrapper;
     private final ApplicationStarter applicationStarter;
-    private final PyprojectModelReader modelReader;
 
     public PyronautRunMain() {
         this(
-            new PyprojectModelReader(),
             (className, classLoader) -> Class.forName(className, true, classLoader),
             GraalPyContextFactory::bootstrapReusableContext,
             PyronautRunMain::startMicronautApplication
         );
     }
 
-    PyronautRunMain(PyprojectModelReader modelReader,
-                    ClassResolver classResolver,
+    PyronautRunMain(ClassResolver classResolver,
                     ContextBootstrapper contextBootstrapper,
                     ApplicationStarter applicationStarter) {
-        this.modelReader = modelReader;
         this.classResolver = classResolver;
         this.contextBootstrapper = contextBootstrapper;
         this.applicationStarter = applicationStarter;
@@ -113,12 +89,10 @@ public final class PyronautRunMain implements Callable<Integer> {
     public Integer call() {
         initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
         Path root = projectDir.toAbsolutePath().normalize();
-        ResolvedProjectLayout layout;
+        Path resolvedClassesDir;
         try {
             applyTestResourcesProperties(System.getenv());
-            PyprojectModel model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
-            Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
-            layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
+            resolvedClassesDir = resolveProcessedClassesRoot(root, classesDir);
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -128,11 +102,12 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
-        try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
+        try {
+            ClassLoader applicationClassLoader = resolveApplicationClassLoader();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Class<?> loadedClass = loadConfiguredMainClass(applicationClassLoader);
             contextBootstrapper.bootstrap(applicationClassLoader);
-            if (applicationStarter.start(loadedClass, layout.processedClassesRoot(), appArgs)) {
+            if (applicationStarter.start(loadedClass, resolvedClassesDir, appArgs)) {
                 blockUntilInterrupted();
             }
             return 0;
@@ -150,7 +125,6 @@ public final class PyronautRunMain implements Callable<Integer> {
         Micronaut micronaut = Micronaut.build(appArgs.toArray(String[]::new));
         ClassLoader contextClassLoader = resolveApplicationClassLoader();
         micronaut.classLoader(contextClassLoader);
-        micronaut.beanDefinitionsProvider(new ProcessedClassesBeanDefinitionsProvider(resolvedClassesDir));
         List<Class<?>> applicationClasses = discoverApplicationClasses(resolvedClassesDir, contextClassLoader);
         if (!applicationClasses.isEmpty()) {
             micronaut.classes(applicationClasses.toArray(Class[]::new));
@@ -188,111 +162,17 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir) throws IOException {
-        return resolveProjectLayout(root, classesDir, configDir, List.of());
-    }
-
-    static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir, List<Path> additionalResourceDirs) throws IOException {
-        Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
+    static Path resolveProcessedClassesRoot(Path root, Path classesDir) {
         Path resolvedClassesDir = root.resolve(classesDir).normalize();
         if (!Files.isDirectory(resolvedClassesDir)) {
             throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
         }
-
-        LinkedHashSet<URL> urls = new LinkedHashSet<>();
-        addManifestEntries(urls, resolveRunManifest(pyronautDir));
-        urls.add(archiveProcessedClasses(pyronautDir, resolvedClassesDir).toUri().toURL());
-        addPathIfDirectory(urls, root.resolve(configDir).normalize());
-        addResourceDirectories(urls, additionalResourceDirs);
-        return new ResolvedProjectLayout(
-            resolvedClassesDir,
-            new URLClassLoader(urls.toArray(URL[]::new), resolveApplicationClassLoader())
-        );
-    }
-
-    private Path resolveConfiguredPath(Path root,
-                                       Path cliValue,
-                                       String defaultValue,
-                                       String configuredValue,
-                                       String optionName) {
-        if (isExplicitlyConfigured(optionName)) {
-            return root.resolve(cliValue).normalize();
-        }
-        if (Path.of(defaultValue).equals(cliValue)) {
-            return root.resolve(configuredValue).normalize();
-        }
-        return root.resolve(cliValue).normalize();
-    }
-
-    private boolean isExplicitlyConfigured(String optionName) {
-        return commandSpec != null
-            && commandSpec.commandLine() != null
-            && commandSpec.commandLine().getParseResult() != null
-            && commandSpec.commandLine().getParseResult().hasMatchedOption(optionName);
-    }
-
-    private static List<Path> resolveConfiguredPaths(Path root, List<String> configuredDirs) {
-        if (configuredDirs == null || configuredDirs.isEmpty()) {
-            return List.of();
-        }
-        return configuredDirs.stream()
-            .map(Path::of)
-            .map(path -> path.isAbsolute() ? path.normalize() : root.resolve(path).normalize())
-            .toList();
+        return resolvedClassesDir;
     }
 
     private static ClassLoader resolveApplicationClassLoader() {
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         return contextClassLoader != null ? contextClassLoader : PyronautRunMain.class.getClassLoader();
-    }
-
-    private static void addManifestEntries(LinkedHashSet<URL> urls, Path manifest) throws IOException {
-        if (!Files.exists(manifest)) {
-            return;
-        }
-        for (String line : Files.readAllLines(manifest)) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) {
-                continue;
-            }
-            urls.add(Path.of(trimmed).toAbsolutePath().normalize().toUri().toURL());
-        }
-    }
-
-    private static Path resolveRunManifest(Path pyronautDir) {
-        Path developmentManifest = pyronautDir.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST);
-        if (Files.exists(developmentManifest)) {
-            return developmentManifest;
-        }
-        return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
-    }
-
-    private static void addPathIfDirectory(LinkedHashSet<URL> urls, Path path) throws IOException {
-        if (Files.isDirectory(path)) {
-            urls.add(path.toAbsolutePath().normalize().toUri().toURL());
-        }
-    }
-
-    private static void addResourceDirectories(LinkedHashSet<URL> urls, List<Path> resourceDirs) throws IOException {
-        for (Path resourceDir : resourceDirs) {
-            addPathIfDirectory(urls, resourceDir);
-        }
-    }
-
-    private static Path archiveProcessedClasses(Path pyronautDir, Path resolvedClassesDir) throws IOException {
-        Files.createDirectories(pyronautDir);
-        Path archive = pyronautDir.resolve("run-classes.jar");
-        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(archive))) {
-            try (Stream<Path> stream = Files.walk(resolvedClassesDir)) {
-                for (Path file : stream.filter(Files::isRegularFile).sorted().toList()) {
-                    String entryName = resolvedClassesDir.relativize(file).toString().replace('\\', '/');
-                    jar.putNextEntry(new JarEntry(entryName));
-                    jar.write(Files.readAllBytes(file));
-                    jar.closeEntry();
-                }
-            }
-        }
-        return archive;
     }
 
     static void applyTestResourcesProperties(java.util.Map<String, String> environment) {
@@ -321,9 +201,6 @@ public final class PyronautRunMain implements Callable<Integer> {
     @FunctionalInterface
     interface ApplicationStarter {
         boolean start(Class<?> loadedClass, Path resolvedClassesDir, List<String> appArgs) throws Exception;
-    }
-
-    record ResolvedProjectLayout(Path processedClassesRoot, URLClassLoader applicationClassLoader) {
     }
 
     private record TestResourcesProperty(String environmentVariable, String systemProperty) {
@@ -383,63 +260,8 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    static List<BeanDefinitionReference<?>> loadProcessedBeanDefinitionReferences(Path classesDirectory, ClassLoader classLoader) {
-        Path referencesDirectory = classesDirectory.resolve(BEAN_DEFINITION_REFERENCES_PATH);
-        if (!Files.isDirectory(referencesDirectory)) {
-            return List.of();
-        }
-        try (Stream<Path> stream = Files.list(referencesDirectory)) {
-            return stream
-                .filter(Files::isRegularFile)
-                .map(path -> path.getFileName().toString())
-                .filter(name -> !name.isBlank())
-                .sorted()
-                .<BeanDefinitionReference<?>>map(name -> loadBeanDefinitionReference(name, classLoader))
-                .toList();
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to read processed bean definition references from " + referencesDirectory, e);
-        }
-    }
-
-    private static BeanDefinitionReference<?> loadBeanDefinitionReference(String className, ClassLoader classLoader) {
-        try {
-            Class<?> loadedClass = Class.forName(className, false, classLoader);
-            if (!BeanDefinitionReference.class.isAssignableFrom(loadedClass)) {
-                throw new IllegalStateException("Processed bean definition reference is not a BeanDefinitionReference: " + className);
-            }
-            Constructor<?> constructor = loadedClass.getDeclaredConstructor();
-            if (!constructor.canAccess(null)) {
-                constructor.setAccessible(true);
-            }
-            return (BeanDefinitionReference<?>) constructor.newInstance();
-        } catch (ReflectiveOperationException | LinkageError e) {
-            throw new IllegalStateException("Failed to load processed bean definition reference: " + className, e);
-        }
-    }
-
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautRunMain()).execute(args);
         System.exit(exitCode);
-    }
-
-    private static final class ProcessedClassesBeanDefinitionsProvider implements BeanDefinitionsProvider {
-        private final BeanDefinitionsProvider delegate = new DefaultBeanDefinitionsProvider();
-        private final Path classesDirectory;
-
-        private ProcessedClassesBeanDefinitionsProvider(Path classesDirectory) {
-            this.classesDirectory = classesDirectory;
-        }
-
-        @Override
-        public List<BeanDefinitionReference<?>> provide(ClassLoader classLoader) {
-            Map<String, BeanDefinitionReference<?>> references = new LinkedHashMap<>();
-            for (BeanDefinitionReference<?> reference : loadProcessedBeanDefinitionReferences(classesDirectory, classLoader)) {
-                references.put(reference.getClass().getName(), reference);
-            }
-            for (BeanDefinitionReference<?> reference : delegate.provide(classLoader)) {
-                references.putIfAbsent(reference.getClass().getName(), reference);
-            }
-            return new ArrayList<>(references.values());
-        }
     }
 }
