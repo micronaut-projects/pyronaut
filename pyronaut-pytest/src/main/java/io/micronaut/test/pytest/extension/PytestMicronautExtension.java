@@ -19,6 +19,8 @@ import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.annotation.Property;
 import io.micronaut.core.annotation.Nullable;
+import io.micronaut.core.convert.TypeConverterRegistrar;
+import io.micronaut.core.io.service.SoftServiceLoader;
 import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.TransactionMode;
@@ -28,8 +30,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.AnnotatedElement;
-import java.util.Map;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Micronaut Test extension for Pytest.
@@ -180,6 +183,17 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         if (contextClassLoader != null) {
             builder.classLoader(contextClassLoader);
+            registerProjectTypeConverterRegistrars(builder, contextClassLoader);
+        }
+    }
+
+    static void registerProjectTypeConverterRegistrars(ApplicationContextBuilder builder, ClassLoader classLoader) {
+        List<TypeConverterRegistrar> registrars = new ArrayList<>();
+        SoftServiceLoader.load(TypeConverterRegistrar.class, classLoader)
+            .disableFork()
+            .collectAll(registrars);
+        if (!registrars.isEmpty()) {
+            builder.singletons(registrars.toArray());
         }
     }
 

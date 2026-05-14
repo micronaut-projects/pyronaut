@@ -159,6 +159,58 @@ abstract class AbstractPyronautTestSmokeTest {
         assertEquals(0, result.exitCode(), result.output());
     }
 
+    protected void assertPytestLoadsProjectTypeConverterRegistrars() throws Exception {
+        Path project = tempDir.resolve("app");
+        Path pyronautDir = project.resolve("__pyronaut__");
+        Path classesDir = pyronautDir.resolve("classes");
+        Path testsDir = project.resolve("tests");
+        Files.createDirectories(classesDir);
+        Files.createDirectories(testsDir);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject(), StandardCharsets.UTF_8);
+        Files.writeString(
+            testsDir.resolve("test_project_type_converter.py"),
+            """
+                import java
+                import pytest
+                from pyronaut.test import MicronautTest, micronaut_test_fixture
+
+                CustomValue = java.type("smoke.CustomValue")
+
+
+                @pytest.fixture
+                def my_context(request):
+                    fixture = micronaut_test_fixture(
+                        request,
+                        MicronautTest(
+                            properties={"custom.value": "project-converter-ok"},
+                            transactional=False,
+                        ),
+                    )
+                    yield fixture
+                    fixture.stop()
+
+
+                def test_project_type_converter_registrar(my_context):
+                    env = my_context["io.micronaut.context.env.Environment"]
+                    converted = env.getProperty("custom.value", CustomValue)
+
+                    assert converted.isPresent()
+                    assert converted.get().value() == "project-converter-ok"
+                """,
+            StandardCharsets.UTF_8
+        );
+
+        Path converterJar = buildTypeConverterRegistrarJar(tempDir.resolve("converter"));
+        Files.writeString(
+            pyronautDir.resolve("resolved-test-dependencies"),
+            testClasspathManifest(converterJar),
+            StandardCharsets.UTF_8
+        );
+
+        RunResult result = runDefaultPytest(project);
+        assertEquals(0, result.exitCode(), result.output());
+    }
+
     protected abstract RunResult runPyronautTest(Path project) throws Exception;
     protected abstract RunResult runDefaultPytest(Path project) throws Exception;
 
@@ -222,6 +274,66 @@ abstract class AbstractPyronautTestSmokeTest {
                     jar.closeEntry();
                 }
             }
+        }
+        return jarPath;
+    }
+
+    private static Path buildTypeConverterRegistrarJar(Path workDir) throws Exception {
+        Path sourceDir = workDir.resolve("src");
+        Path classesDir = workDir.resolve("classes");
+        Files.createDirectories(sourceDir);
+        Files.createDirectories(classesDir);
+        compileJava(
+            sourceDir.resolve("smoke/CustomValue.java"),
+            """
+                package smoke;
+
+                public final class CustomValue {
+                    private final String value;
+
+                    public CustomValue(String value) {
+                        this.value = value;
+                    }
+
+                    public String value() {
+                        return value;
+                    }
+                }
+                """,
+            classesDir,
+            currentRuntimeClasspath()
+        );
+        compileJava(
+            sourceDir.resolve("smoke/CustomValueConverterRegistrar.java"),
+            """
+                package smoke;
+
+                import io.micronaut.core.convert.MutableConversionService;
+                import io.micronaut.core.convert.TypeConverterRegistrar;
+
+                public final class CustomValueConverterRegistrar implements TypeConverterRegistrar {
+                    @Override
+                    public void register(MutableConversionService conversionService) {
+                        conversionService.addConverter(String.class, CustomValue.class, CustomValue::new);
+                    }
+                }
+                """,
+            classesDir,
+            classesDir.toAbsolutePath().normalize() + File.pathSeparator + currentRuntimeClasspath()
+        );
+        Path jarPath = workDir.resolve("converter.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            try (Stream<Path> stream = Files.walk(classesDir)) {
+                for (Path file : stream.filter(Files::isRegularFile).toList()) {
+                    String entryName = classesDir.relativize(file).toString().replace('\\', '/');
+                    jar.putNextEntry(new JarEntry(entryName));
+                    jar.write(Files.readAllBytes(file));
+                    jar.closeEntry();
+                }
+            }
+            jar.putNextEntry(new JarEntry("META-INF/services/io.micronaut.core.convert.TypeConverterRegistrar"));
+            jar.write("smoke.CustomValueConverterRegistrar\n".getBytes(StandardCharsets.UTF_8));
+            jar.closeEntry();
         }
         return jarPath;
     }

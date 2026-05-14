@@ -21,6 +21,11 @@ class PyronautTestJvmSmokeTest extends AbstractPyronautTestSmokeTest {
         assertProcessedPythonBeanLookupWorks();
     }
 
+    @Test
+    void jvmLauncherLoadsProjectTypeConverterRegistrarsForPytestMicronautContext() throws Exception {
+        assertPytestLoadsProjectTypeConverterRegistrars();
+    }
+
     @Override
     protected RunResult runPyronautTest(Path project) throws Exception {
         return runJvmTest(project);
