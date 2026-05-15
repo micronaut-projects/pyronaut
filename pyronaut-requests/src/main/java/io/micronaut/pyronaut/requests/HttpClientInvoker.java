@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.requests;
 
+import io.micronaut.http.HttpResponse;
 import io.micronaut.http.MutableHttpRequest;
 import io.micronaut.http.client.BlockingHttpClient;
 import io.micronaut.http.client.HttpClient;
@@ -22,6 +23,7 @@ import io.micronaut.http.client.exceptions.HttpClientResponseException;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Executes Micronaut HTTP client requests and converts failures into interop-friendly results.
@@ -36,14 +38,19 @@ public final class HttpClientInvoker {
             Object resp = blocking.exchange(request, bodyType);
             return Result.success(resp);
         } catch (Throwable t) {
-            if (t instanceof HttpClientResponseException) {
-                HttpClientResponseException hre = (HttpClientResponseException) t;
+            if (t instanceof HttpClientResponseException hre) {
                 if (hre.getResponse() != null) {
                     return Result.success(hre.getResponse());
                 }
             }
             return Result.failure(t);
         }
+    }
+
+    static byte[] responseBodyBytes(HttpResponse<?> response) {
+        return response.getBody(byte[].class)
+            .or(() -> response.getBody(String.class).map(value -> value.getBytes(StandardCharsets.UTF_8)))
+            .orElse(null);
     }
 
     private static String stackTraceToString(Throwable t) {
@@ -61,6 +68,7 @@ public final class HttpClientInvoker {
     public static final class Result {
         public final boolean success;
         public final Object response;
+        public final byte[] body;
         public final String message;
         public final String exceptionClass;
         public final String stack;
@@ -68,6 +76,7 @@ public final class HttpClientInvoker {
         private Result(boolean success, Object response, Throwable error) {
             this.success = success;
             this.response = response;
+            this.body = response instanceof HttpResponse<?> httpResponse ? responseBodyBytes(httpResponse) : null;
             if (error != null) {
                 this.message = error.getMessage();
                 this.exceptionClass = error.getClass().getName();

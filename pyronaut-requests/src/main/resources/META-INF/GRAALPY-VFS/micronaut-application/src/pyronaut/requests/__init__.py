@@ -207,7 +207,7 @@ class CaseInsensitiveDict:
 
 
 class Response:
-    def __init__(self, request_url: str, resp, history=None):
+    def __init__(self, request_url: str, resp, history=None, body=None):
         self._resp = resp
         self.url = request_url
         self.status_code = resp.getStatus().getCode()
@@ -220,12 +220,15 @@ class Response:
             if values is not None and not values.isEmpty():
                 hdrs[str(k)] = str(values.get(0))
         self.headers = CaseInsensitiveDict(hdrs)
-        bodyOpt = resp.getBody()
-        if bodyOpt is None or not bodyOpt.isPresent():
-            self._content = b""
+        if body is not None:
+            self._content = bytes(body)
         else:
-            arr = bodyOpt.get()
-            self._content = bytes(arr)
+            bodyOpt = resp.getBody()
+            if bodyOpt is None or not bodyOpt.isPresent():
+                self._content = b""
+            else:
+                arr = bodyOpt.get()
+                self._content = bytes(arr)
         self.history = history or []
 
 
@@ -439,7 +442,7 @@ class Session:
         result = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
         if getattr(result, 'success', False) or getattr(result, 'response', None) is not None:
             resp = result.response
-            response = Response(full_url, resp, history=[])
+            response = Response(full_url, resp, history=[], body=getattr(result, 'body', None))
             try:
                 setCookies = resp.getHeaders().getAll("Set-Cookie")
                 if setCookies is not None:
@@ -487,7 +490,7 @@ class Session:
             r2 = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
             if getattr(r2, 'success', False) or getattr(r2, 'response', None) is not None:
                 resp2 = r2.response
-                response = Response(self._resolve_url(location), resp2, history=list(history))
+                response = Response(self._resolve_url(location), resp2, history=list(history), body=getattr(r2, 'body', None))
                 try:
                     setCookies = resp2.getHeaders().getAll("Set-Cookie")
                     if setCookies is not None:
