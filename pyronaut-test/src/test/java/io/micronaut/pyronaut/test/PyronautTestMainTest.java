@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 
@@ -37,6 +38,29 @@ class PyronautTestMainTest {
         command.selectClasses = java.util.List.of(PassingTest.class.getName());
 
         assertEquals(0, command.call());
+    }
+
+    @Test
+    void enablesContextClassLoaderIntrospectionsDuringTestExecution() throws Exception {
+        String property = "micronaut.introspections.use.context.classloader";
+        String previous = System.getProperty(property);
+        System.clearProperty(property);
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("true", propertyDuringBootstrap.get());
+            assertFalse(System.getProperties().containsKey(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
     }
 
     @Test

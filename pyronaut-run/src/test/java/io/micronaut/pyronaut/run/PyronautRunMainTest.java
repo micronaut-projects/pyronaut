@@ -55,6 +55,36 @@ class PyronautRunMainTest {
     }
 
     @Test
+    void enablesContextClassLoaderIntrospectionsWhileApplicationRuns() throws Exception {
+        String property = "micronaut.introspections.use.context.classloader";
+        String previous = System.getProperty(property);
+        System.clearProperty(property);
+        try {
+            Path project = tempDir.resolve("project-introspections");
+            Files.createDirectories(project.resolve("__pyronaut__/classes"));
+            writeMinimalPyproject(project);
+
+            AtomicReference<String> propertyDuringStart = new AtomicReference<>();
+            PyronautRunMain runMain = new PyronautRunMain(
+                new PyprojectModelReader(),
+                (className, classLoader) -> null,
+                classLoader -> { },
+                (loadedClass, resolvedClassesDir, appArgs) -> {
+                    propertyDuringStart.set(System.getProperty(property));
+                    return false;
+                }
+            );
+            runMain.projectDir = project;
+
+            assertEquals(0, runMain.call());
+            assertEquals("true", propertyDuringStart.get());
+            assertFalse(System.getProperties().containsKey(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
     void failsWhenProcessedClassesDirectoryMissing() throws Exception {
         Path project = tempDir.resolve("project-missing-classes");
         Files.createDirectories(project.resolve("__pyronaut__/classes"));

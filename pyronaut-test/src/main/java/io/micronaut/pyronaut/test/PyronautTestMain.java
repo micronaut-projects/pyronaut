@@ -62,6 +62,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_HTML_REPORT = "index.html";
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
+    private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_PREFIXES = List.of(
         "micronaut-pyronaut-logback-",
         "micronaut-pyronaut-pytest-"
@@ -155,7 +156,9 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
+        String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
+            enableContextClassLoaderIntrospections();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             try {
                 contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedTestsDir));
@@ -221,6 +224,21 @@ public final class PyronautTestMain implements Callable<Integer> {
             return 7;
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+            restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
+        }
+    }
+
+    static void enableContextClassLoaderIntrospections() {
+        if (System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER) == null) {
+            System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, "true");
+        }
+    }
+
+    private static void restoreSystemProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
         }
     }
 

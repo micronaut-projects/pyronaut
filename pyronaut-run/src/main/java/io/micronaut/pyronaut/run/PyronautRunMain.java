@@ -48,6 +48,7 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
+    private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -121,7 +122,9 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
+        String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
+            enableContextClassLoaderIntrospections();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Class<?> loadedClass = loadConfiguredMainClass(applicationClassLoader);
             contextBootstrapper.bootstrap(applicationClassLoader);
@@ -134,6 +137,21 @@ public final class PyronautRunMain implements Callable<Integer> {
             return 6;
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+            restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
+        }
+    }
+
+    static void enableContextClassLoaderIntrospections() {
+        if (System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER) == null) {
+            System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, "true");
+        }
+    }
+
+    private static void restoreSystemProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
         }
     }
 
