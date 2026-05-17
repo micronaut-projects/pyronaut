@@ -1,9 +1,16 @@
 import io.micronaut.build.internal.python.PyronautCompilerPlugin
 
 pluginManager.apply(PyronautCompilerPlugin)
-def libs = project.extensions.getByType(VersionCatalogsExtension).named("libs")
+def rootProperties = new Properties()
+rootProject.file("gradle.properties").withInputStream { input ->
+    rootProperties.load(input)
+}
+def micronautCoreVersion = rootProperties.getProperty("pyronaut.micronaut.core.version")
+if (!micronautCoreVersion) {
+    throw new org.gradle.api.GradleException("Missing pyronaut.micronaut.core.version in root gradle.properties")
+}
 dependencies {
-    pyronautCompiler(platform(libs.findLibrary("micronaut-core").get()))
+    pyronautCompiler(platform("io.micronaut:micronaut-core-bom:$micronautCoreVersion"))
     pyronautCompiler("io.micronaut:micronaut-inject-python")
     pyronautCompiler("io.micronaut:micronaut-context-python")
 }

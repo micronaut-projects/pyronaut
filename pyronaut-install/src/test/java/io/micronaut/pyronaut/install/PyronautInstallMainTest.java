@@ -138,8 +138,13 @@ class PyronautInstallMainTest {
             version = "1.0.0"
 
             [tool.pyronaut]
-            version = "1.0.0"
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "1.0.0"
+
+            [tool.pyronaut.platform]
+            version = "1.0.0"
 
             [tool.pyronaut.dependencies]
             runtime = ["com.example:runtime-dep:1.0.0"]
@@ -188,8 +193,13 @@ class PyronautInstallMainTest {
             version = "1.0.0"
 
             [tool.pyronaut]
-            version = "1.0.0"
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "1.0.0"
+
+            [tool.pyronaut.platform]
+            version = "1.0.0"
 
             [tool.pyronaut.dependencies]
             runtime = ["com.example:runtime-dep:1.0.0"]
@@ -236,8 +246,13 @@ class PyronautInstallMainTest {
             version = "1.0.0"
 
             [tool.pyronaut]
-            version = "1.0.0"
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "1.0.0"
+
+            [tool.pyronaut.platform]
+            version = "1.0.0"
 
             [tool.pyronaut.dependencies]
             runtime = ["io.micronaut.pyronaut:micronaut-pyronaut-logback"]
@@ -644,10 +659,19 @@ class PyronautInstallMainTest {
             [tool.pyronaut]
             repositories = ["%s"]
 
+            [tool.pyronaut.core]
+            version = ""
+
+            [tool.pyronaut.platform]
+            version = ""
+
             [tool.pyronaut.dependencies]
             runtime = ["com.example:runtime-a:1.0.0", "com.example:runtime-b:1.0.0"]
             build = ["com.example:build-dep:1.0.0"]
             test = ["com.example:test-dep:1.0.0"]
+
+            [tool.pyronaut.test-resources]
+            enabled = false
             """.formatted(repository.toUri()));
         Files.writeString(project.resolve("config/application.toml"), "[datasources.default]\n");
 
@@ -956,8 +980,13 @@ class PyronautInstallMainTest {
             name = "custom-m2"
 
             [tool.pyronaut]
-            version = "1.0.0"
             repositories = ["mavenLocal"]
+
+            [tool.pyronaut.core]
+            version = ""
+
+            [tool.pyronaut.platform]
+            version = ""
 
             [tool.pyronaut.dependencies]
             runtime = ["com.example:runtime-dep:1.0.0"]
@@ -1005,7 +1034,9 @@ class PyronautInstallMainTest {
             List.of(
                 new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0"),
                 new ManagedDependency("org.junit.platform", "junit-platform-launcher", "1.12.2"),
-                new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2")
+                new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0")
             )
         );
 
@@ -1026,8 +1057,13 @@ class PyronautInstallMainTest {
             name = "managed-test"
 
             [tool.pyronaut]
-            version = "5.0.0"
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "5.0.0"
+
+            [tool.pyronaut.platform]
+            version = "5.0.0"
 
             [tool.pyronaut.dependencies]
             runtime = ["io.micronaut:micronaut-inject-python"]
@@ -1102,8 +1138,13 @@ class PyronautInstallMainTest {
             name = "default-dependencies-test"
 
             [tool.pyronaut]
-            version = "5.0.0"
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "5.0.0"
+
+            [tool.pyronaut.platform]
+            version = "5.0.0"
 
             [tool.pyronaut.dependencies]
             runtime = []
@@ -1181,8 +1222,96 @@ class PyronautInstallMainTest {
             name = "managed-snapshot-test"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.platform]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.micronaut:micronaut-inject-python"]
+            build = []
+            test = ["io.micronaut.test:micronaut-test-junit5"]
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python") && entry.contains("5.0.0-SNAPSHOT")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.0.0-SNAPSHOT")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0-SNAPSHOT")));
+    }
+
+    @Test
+    void usesCoreVersionForMicronautArtifactsAndPlatformVersionForEcosystem() throws Exception {
+        Path repository = tempDir.resolve("repo-split-core-platform");
+        writeBom(
+            repository,
+            "io.micronaut",
+            "micronaut-core-bom",
+            "5.0.0-SNAPSHOT",
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT"),
+                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.0.0-SNAPSHOT")
+            )
+        );
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "5.0.0-RC1",
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.0.0-RC2"),
+                new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0-RC1"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "4.0.0-RC1"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-server", "4.0.0-RC1"),
+                new ManagedDependency("io.micronaut.toml", "micronaut-toml", "3.0.0-RC1"),
+                new ManagedDependency("org.junit.platform", "junit-platform-launcher", "1.12.2"),
+                new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2")
+            )
+        );
+
+        writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0-RC2");
+        writeArtifact(repository, "io.micronaut.test", "micronaut-test-junit5", "5.0.0-RC1");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "4.0.0-RC1");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "4.0.0-RC1");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "4.0.0-RC1");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "4.0.0-RC1");
+        writeArtifact(repository, "io.micronaut.toml", "micronaut-toml", "3.0.0-RC1");
+        writeArtifact(repository, "org.junit.platform", "junit-platform-launcher", "1.12.2");
+        writeArtifact(repository, "org.junit.jupiter", "junit-jupiter-engine", "5.12.2");
+
+        Path project = tempDir.resolve("project-split-core-platform");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "split-core-platform-test"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.platform]
+            version = "5.0.0-RC1"
+
+            [tool.pyronaut.test-resources]
+            enabled = true
 
             [tool.pyronaut.dependencies]
             runtime = ["io.micronaut:micronaut-inject-python"]
@@ -1198,10 +1327,17 @@ class PyronautInstallMainTest {
         Path cacheDir = project.resolve("__pyronaut__");
         List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
         List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+        List<String> serverEntries = Files.readAllLines(cacheDir.resolve("resolved-test-resources-server-dependencies"), StandardCharsets.UTF_8);
 
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python") && entry.contains("5.0.0-SNAPSHOT")));
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.0.0-SNAPSHOT")));
-        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0-SNAPSHOT")));
+        assertFalse(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.0.0-RC2")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-toml") && entry.contains("3.0.0-RC1")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("4.0.0-RC1")));
+        assertFalse(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("2.9.0")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0-RC1")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("4.0.0-RC1")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server") && entry.contains("4.0.0-RC1")));
     }
 
     @Test
@@ -1240,8 +1376,13 @@ class PyronautInstallMainTest {
             name = "managed-test-resources-version"
 
             [tool.pyronaut]
-            version = "5.0.0"
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "5.0.0"
+
+            [tool.pyronaut.platform]
+            version = "5.0.0"
 
             [tool.pyronaut.dependencies]
             runtime = ["io.micronaut:micronaut-inject-python"]
@@ -1768,10 +1909,19 @@ class PyronautInstallMainTest {
             [tool.pyronaut]
             repositories = ["%s"]
 
+            [tool.pyronaut.core]
+            version = ""
+
+            [tool.pyronaut.platform]
+            version = ""
+
             [tool.pyronaut.dependencies]
             runtime = ["com.example:runtime-dep:1.0.0"]
             build = ["com.example:build-dep:1.0.0"]
             test = ["io.micronaut.pyronaut:micronaut-pyronaut-pytest:1.0.0"]
+
+            [tool.pyronaut.test-resources]
+            enabled = false
             """.formatted(repository.toUri()));
 
         PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
@@ -1812,10 +1962,19 @@ class PyronautInstallMainTest {
             [tool.pyronaut]
             repositories = ["%s"]
 
+            [tool.pyronaut.core]
+            version = ""
+
+            [tool.pyronaut.platform]
+            version = ""
+
             [tool.pyronaut.dependencies]
             runtime = ["io.micronaut.pyronaut:micronaut-pyronaut-logback:1.0.0"]
             build = ["com.example:build-dep:1.0.0"]
             test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
             """.formatted(repository.toUri()));
 
         PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
@@ -2764,8 +2923,8 @@ class PyronautInstallMainTest {
     void kotlinLinkageFailuresAreSilentlySkipped() throws Exception {
         Path repository = tempDir.resolve("repo-python-ide-kotlin-linkage");
         writeCompiledArtifact(repository, "com.example", "compile-only-dep", "1.0.0", Map.of(
-            "kotlin.coroutines.Continuation", """
-                package kotlin.coroutines;
+            "kotlinx.pyronaut.missing.Continuation", """
+                package kotlinx.pyronaut.missing;
 
                 public interface Continuation<T> {
                 }
@@ -2788,7 +2947,7 @@ class PyronautInstallMainTest {
                     package io.micronaut.http;
 
                     public class CoroutineBridge {
-                        public kotlin.coroutines.Continuation<?> continuation;
+                        public kotlinx.pyronaut.missing.Continuation<?> continuation;
                     }
                     """
             ),
@@ -2818,7 +2977,7 @@ class PyronautInstallMainTest {
         assertTrue(httpStub.contains("class HttpResponse:"));
         assertFalse(httpStub.contains("class CoroutineBridge:"));
         assertFalse(warningReport.contains("CoroutineBridge"));
-        assertFalse(warningReport.contains("kotlin.coroutines.Continuation"));
+        assertFalse(warningReport.contains("kotlinx.pyronaut.missing.Continuation"));
     }
 
     @Test
@@ -3061,6 +3220,14 @@ class PyronautInstallMainTest {
     }
 
     private static String pyproject(Path repository) {
+        return pyprojectBase(repository) + """
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """;
+    }
+
+    private static String pyprojectBase(Path repository) {
         return """
             [project]
             name = "install-test"
@@ -3068,6 +3235,12 @@ class PyronautInstallMainTest {
 
             [tool.pyronaut]
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = ""
+
+            [tool.pyronaut.platform]
+            version = ""
 
             [tool.pyronaut.dependencies]
             runtime = ["com.example:runtime-dep:1.0.0"]
@@ -3107,7 +3280,7 @@ class PyronautInstallMainTest {
     }
 
     private static String pyprojectWithTestResources(Path repository, boolean enabled) {
-        return pyproject(repository) + "\n" + "[tool.pyronaut.testResources]\n"
+        return pyprojectBase(repository) + "\n" + "[tool.pyronaut.test-resources]\n"
             + "enabled = " + enabled + "\n"
             + "version = \"2.9.0\"\n";
     }

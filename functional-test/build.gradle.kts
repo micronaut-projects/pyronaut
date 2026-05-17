@@ -38,7 +38,8 @@ val fixtureConfigValidationReportDir = fixtureCacheDir.dir("reports/config-valid
 val fixtureProcessedClassesDir = fixtureCacheDir.dir("classes")
 val fixtureProcessedTestClassesDir = fixtureCacheDir.dir("test-classes")
 val pytestRequirement = "pytest==9.0.3"
-val functionalTestMicronautVersion = versionFromCatalog("micronaut")
+val functionalTestMicronautCoreVersion = requiredGradleProperty("pyronaut.micronaut.core.version")
+val functionalTestMicronautPlatformVersion = requiredGradleProperty("pyronaut.micronaut.platform.version")
 val functionalTestMicronautTestVersion = versionFromCatalog("micronaut-test")
 val functionalTestResourcesVersion = versionFromCatalog("micronaut-test-resources")
 val functionalTestGraalPyVersion = versionFromCatalog("graalpy")
@@ -96,7 +97,7 @@ val fixturePlatformPom by configurations.creating {
     isTransitive = false
 }
 
-dependencies.add(fixturePlatformPom.name, "io.micronaut.platform:micronaut-platform:$functionalTestMicronautVersion@pom")
+dependencies.add(fixturePlatformPom.name, "io.micronaut.platform:micronaut-platform:$functionalTestMicronautPlatformVersion@pom")
 
 val sourcegenFixtureArtifactIds = listOf(
     "micronaut-sourcegen-annotations",
@@ -226,6 +227,10 @@ fun versionFromCatalog(file: java.io.File, key: String): String {
 fun versionFromCatalog(key: String): String {
     return versionFromCatalog(rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile, key)
 }
+
+fun requiredGradleProperty(name: String): String =
+    providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
+        ?: throw GradleException("Missing required Gradle property '$name'")
 
 fun Configuration.useJavaRuntimeClasspathAttributes() {
     attributes {
@@ -461,7 +466,6 @@ fun mavenPomContent(artifactId: String, pomFile: java.io.File): String {
         content = removeImportedBomDependencies(content)
     }
     if (artifactId == "micronaut-platform") {
-        content = replacePomProperty(content, "micronaut.core.version", functionalTestMicronautVersion)
         content = replacePomProperty(content, "graal.version", functionalTestGraalPyVersion)
         content = replacePomProperty(content, "graalpy.embedding.version", functionalTestGraalPyVersion)
         content = replacePomProperty(content, "micronaut.sourcegen.version", versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen"))
@@ -544,14 +548,14 @@ fun Project.stageMicronautPlatformFixtureArtifact() {
     copyMavenArtifact(
         groupId = "io.micronaut.platform",
         artifactId = "micronaut-platform",
-        version = functionalTestMicronautVersion,
+        version = functionalTestMicronautPlatformVersion,
         pomFile = fixturePlatformPom.singleFile,
     )
 }
 
 fun Project.stageIncludedMicronautCoreFixtureArtifacts() {
     val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
-        ?: throw GradleException("functional-test requires the included micronaut-core build when using $functionalTestMicronautVersion")
+        ?: throw GradleException("functional-test requires the included micronaut-core build when using $functionalTestMicronautCoreVersion")
     val properties = readProperties(includedBuild.projectDir.resolve("gradle.properties"))
     val coreGroupId = properties.getProperty("projectGroupId")
     val version = properties.getProperty("projectVersion")
@@ -804,7 +808,7 @@ val stageMicronautPlatformFixtureArtifact by tasks.registering {
     inputs.files(fixturePlatformPom)
     outputs.file(
         fixtureStagedRepoDir.file(
-            "io/micronaut/platform/micronaut-platform/$functionalTestMicronautVersion/micronaut-platform-$functionalTestMicronautVersion.pom"
+            "io/micronaut/platform/micronaut-platform/$functionalTestMicronautPlatformVersion/micronaut-platform-$functionalTestMicronautPlatformVersion.pom"
         )
     )
     doLast {

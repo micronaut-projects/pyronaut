@@ -455,10 +455,12 @@ final class MavenClasspathResolver {
         if (testResources.version() != null && !testResources.version().isBlank()) {
             return true;
         }
-        if (model.pyronaut() == null || model.pyronaut().version() == null) {
+        if (model.pyronaut() == null
+            || (model.pyronaut().coreVersion() == null && model.pyronaut().platformVersion() == null)) {
             return false;
         }
-        return !model.pyronaut().version().isBlank();
+        return normalizedVersion(model.pyronaut().coreVersion()) != null
+            || normalizedVersion(model.pyronaut().platformVersion()) != null;
     }
 
     private static String defaultTestResourcesVersion(PyprojectModel.TestResources testResources,
@@ -505,21 +507,30 @@ final class MavenClasspathResolver {
     private List<Dependency> managedDependencies(PyprojectModel model,
                                                  List<RemoteRepository> repositories,
                                                  CloseableSession session) {
-        if (model.pyronaut() == null || model.pyronaut().version() == null || model.pyronaut().version().isBlank()) {
+        if (model.pyronaut() == null) {
             return List.of();
         }
-        String pyronautVersion = model.pyronaut().version();
+        String coreVersion = normalizedVersion(model.pyronaut().coreVersion());
+        String platformVersion = normalizedVersion(model.pyronaut().platformVersion());
+        if (coreVersion == null && platformVersion == null) {
+            return List.of();
+        }
+        if (platformVersion == null) {
+            platformVersion = coreVersion;
+        }
         Map<String, Dependency> managed = new LinkedHashMap<>();
         LinkedHashSet<String> visitedBoms = new LinkedHashSet<>();
+        if (coreVersion != null) {
+            addManagedDependenciesFromBom(
+                new DefaultArtifact("io.micronaut", "micronaut-core-bom", "", "pom", coreVersion),
+                repositories,
+                session,
+                visitedBoms,
+                managed
+            );
+        }
         addManagedDependenciesFromBom(
-            new DefaultArtifact("io.micronaut", "micronaut-core-bom", "", "pom", pyronautVersion),
-            repositories,
-            session,
-            visitedBoms,
-            managed
-        );
-        addManagedDependenciesFromBom(
-            new DefaultArtifact("io.micronaut.platform", "micronaut-platform", "", "pom", pyronautVersion),
+            new DefaultArtifact("io.micronaut.platform", "micronaut-platform", "", "pom", platformVersion),
             repositories,
             session,
             visitedBoms,

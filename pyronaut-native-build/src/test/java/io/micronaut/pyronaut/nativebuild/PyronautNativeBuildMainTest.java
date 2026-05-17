@@ -30,7 +30,6 @@ class PyronautNativeBuildMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["org.example:demo:1.0"]
@@ -75,7 +74,6 @@ class PyronautNativeBuildMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["io.netty:netty-handler:4.2.10.Final", "org.example:demo:1.0"]
@@ -118,7 +116,6 @@ class PyronautNativeBuildMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["org.example:demo:1.0"]
@@ -177,7 +174,6 @@ class PyronautNativeBuildMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["org.example:demo:1.0"]
@@ -214,7 +210,6 @@ class PyronautNativeBuildMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["org.example:demo:1.0"]
@@ -247,7 +242,6 @@ class PyronautNativeBuildMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["org.example:demo:1.0"]
@@ -271,7 +265,6 @@ class PyronautNativeBuildMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["org.example:demo:1.0"]
@@ -309,7 +302,6 @@ class PyronautNativeBuildMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["org.example:demo:1.0"]

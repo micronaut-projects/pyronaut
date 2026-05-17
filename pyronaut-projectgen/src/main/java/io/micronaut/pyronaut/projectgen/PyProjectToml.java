@@ -16,14 +16,12 @@
 package io.micronaut.pyronaut.projectgen;
 
 import io.micronaut.core.annotation.Internal;
+import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.projectgen.core.feature.Feature;
-import io.micronaut.projectgen.core.feature.config.Configuration;
 import io.micronaut.projectgen.core.generator.GeneratorContext;
 import io.micronaut.projectgen.core.generator.ModuleContext;
-import io.micronaut.projectgen.core.template.TomlTemplate;
+import io.micronaut.projectgen.core.template.StringTemplate;
 import jakarta.inject.Singleton;
-
-import java.util.List;
 
 @Internal
 @Singleton
@@ -44,26 +42,34 @@ class PyProjectToml implements Feature {
     @Override
     public void apply(GeneratorContext generatorContext) {
         ModuleContext module = generatorContext.getRootModule();
-        Configuration config = new Configuration(TEMPLATE_PATH, TEMPLATE_NAME, TEMPLATE_NAME + "-config");
-        config.put("project.name", generatorContext.getOptions().name());
-        config.put("project.version", generatorContext.getOptions().version());
-        config.put("project.dynamic", List.of("scripts"));
-        config.put("build-system.requires", List.of("setuptools", "wheel", "tomli"));
-        config.put("build-system.build-backend", "setuptools.build_meta");
-        config.put("tool.pyronaut.version", "5.0.0-SNAPSHOT");
-        config.put("tool.pyronaut.repositories", List.of("mavenCentral", "https://repo.gradle.org/gradle/libs-releases"));
-        config.put("tool.pyronaut.dependencies.compile", List.of("io.micronaut:micronaut-inject-python",
-            "io.micronaut:micronaut-context-python",
-            "io.micronaut:micronaut-http-server-netty", "io.micronaut:micronaut-json-core",
-            "io.micronaut:micronaut-jackson-databind",
-            "ch.qos.logback:logback-classic",
-            "org.bouncycastle:bcprov-jdk18on",
-            "org.apache.commons:commons-lang3:3.20.0"));
-        config.put("tool.pyronaut.dependencies.annotationProcessor", List.of("io.micronaut:micronaut-inject-python",
-            "io.micronaut:micronaut-context-python"));
+        module.addTemplate(TEMPLATE_NAME, new StringTemplate(TEMPLATE_PATH, """
 
-        TomlTemplate template = new TomlTemplate(TEMPLATE_PATH, config);
+            [project]
+            name = '%s'
+            version = '%s'
+            dynamic = ['scripts']
 
-        module.addTemplate(TEMPLATE_NAME, template);
+            [build-system]
+            requires = ['setuptools', 'wheel', 'tomli']
+            build-backend = 'setuptools.build_meta'
+
+            [tool.pyronaut]
+            repositories = ['mavenCentral', 'https://repo.gradle.org/gradle/libs-releases']
+
+            [tool.pyronaut.core]
+            version = '%s'
+
+            [tool.pyronaut.platform]
+            version = '%s'
+
+            [tool.pyronaut.dependencies]
+            compile = ['io.micronaut:micronaut-inject-python', 'io.micronaut:micronaut-context-python', 'io.micronaut:micronaut-http-server-netty', 'io.micronaut:micronaut-json-core', 'io.micronaut:micronaut-jackson-databind', 'ch.qos.logback:logback-classic', 'org.bouncycastle:bcprov-jdk18on', 'org.apache.commons:commons-lang3:3.20.0']
+            annotationProcessor = ['io.micronaut:micronaut-inject-python', 'io.micronaut:micronaut-context-python']
+            """.formatted(
+            generatorContext.getOptions().name(),
+            generatorContext.getOptions().version(),
+            PyronautManagedVersions.micronautCoreVersion(),
+            PyronautManagedVersions.micronautPlatformVersion()
+        )));
     }
 }

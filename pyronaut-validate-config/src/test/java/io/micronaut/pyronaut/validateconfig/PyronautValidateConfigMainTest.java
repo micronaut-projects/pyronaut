@@ -206,7 +206,6 @@ class PyronautValidateConfigMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.validation]
             suppressions = ["datasources.*.db-type", "", "datasources.*.db-type"]
@@ -448,7 +447,6 @@ class PyronautValidateConfigMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.validation]
             suppressions = ["micronaut.home"]

@@ -1,0 +1,7 @@
+{
+  "resources": [
+    {
+      "glob": "io/micronaut/pyronaut/config/model/pyronaut-managed-versions.properties"
+    }
+  ]
+}

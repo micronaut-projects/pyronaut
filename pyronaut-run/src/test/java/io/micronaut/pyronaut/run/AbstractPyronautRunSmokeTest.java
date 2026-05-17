@@ -294,7 +294,7 @@ abstract class AbstractPyronautRunSmokeTest {
             name = "pyronaut-run-smoke"
             version = "1.0.0"
 
-            [tool.pyronaut]
+            [tool.pyronaut.core]
             version = "5.0.0-SNAPSHOT"
             """;
     }

@@ -289,7 +289,6 @@ class PyronautTestResourcesServerMainTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
             """ + additionalPyprojectContent);
         return project;
     }

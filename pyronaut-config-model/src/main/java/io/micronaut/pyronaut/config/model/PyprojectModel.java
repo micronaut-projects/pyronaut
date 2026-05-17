@@ -54,7 +54,8 @@ public record PyprojectModel(Project project,
     /**
      * tool.pyronaut table.
      *
-     * @param version pyronaut version
+     * @param coreVersion Micronaut Core BOM version
+     * @param platformVersion Micronaut Platform BOM version
      * @param repositories configured repositories
      * @param dependencies dependency scopes
      * @param build build defaults/settings
@@ -66,7 +67,8 @@ public record PyprojectModel(Project project,
      * @param validation validation settings
      * @param testResources test resources settings
      */
-    public record Pyronaut(String version,
+    public record Pyronaut(String coreVersion,
+                           String platformVersion,
                            List<String> repositories,
                            Dependencies dependencies,
                            Build build,

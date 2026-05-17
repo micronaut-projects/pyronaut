@@ -217,8 +217,13 @@ class PyronautInstallNativeSmokeTest {
             version = "1.0.0"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
             repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "5.0.0-SNAPSHOT"
+
+            [tool.pyronaut.platform]
+            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.test-resources]
             enabled = false

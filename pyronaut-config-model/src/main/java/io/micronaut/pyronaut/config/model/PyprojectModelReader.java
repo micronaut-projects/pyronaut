@@ -86,7 +86,8 @@ public final class PyprojectModelReader {
         List<String> build = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_BUILD);
 
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
-            readString(parsed, PyprojectConfigSpec.PYRONAUT_VERSION),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_CORE_VERSION),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_PLATFORM_VERSION),
             readStringList(parsed, PyprojectConfigSpec.PYRONAUT_REPOSITORIES),
             new PyprojectModel.Dependencies(
                 runtime,

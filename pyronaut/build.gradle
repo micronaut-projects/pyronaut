@@ -31,7 +31,12 @@ def versionFromCatalog = { String key ->
     }
     matcher.group(1)
 }
-def micronautVersion = providers.provider { versionFromCatalog("micronaut") }
+def requiredGradleProperty = { String name ->
+    providers.gradleProperty(name).orElse(providers.provider {
+        throw new GradleException("Missing Gradle property '${name}'")
+    })
+}
+def micronautCoreVersion = requiredGradleProperty("pyronaut.micronaut.core.version")
 def graalPyVersion = providers.provider { versionFromCatalog("graalpy") }
 def effectiveMavenLocalRepositoryDir = providers.provider {
     def configured = System.getProperty("maven.repo.local")
@@ -138,7 +143,7 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
             micronautCoreIncludedBuild.task(":${artifactId}:publishToMavenLocal")
         })
     }
-    inputs.property("micronautVersion", micronautVersion)
+    inputs.property("micronautCoreVersion", micronautCoreVersion)
     inputs.property("graalPyVersion", graalPyVersion)
     inputs.property("pyronautVersion", providers.provider { project.version.toString() })
     inputs.property("includedMicronautCore", includedMicronautCorePresent)
@@ -175,7 +180,7 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
         if (includedMicronautCorePresent) {
             requireMavenVersionDir(
                 targetRepository,
-                "io/micronaut/micronaut-core/${micronautVersion.get()}",
+                "io/micronaut/micronaut-core/${micronautCoreVersion.get()}",
                 "micronaut-core"
             )
         }

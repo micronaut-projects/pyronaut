@@ -3027,7 +3027,7 @@ additional-test-resources = ["test-fixtures"]
 [project]
 name = "demo"
 
-[tool.pyronaut]
+[tool.pyronaut.core]
 version = "5.0.0-SNAPSHOT"
 
 [tool.pyronaut.toolchain]

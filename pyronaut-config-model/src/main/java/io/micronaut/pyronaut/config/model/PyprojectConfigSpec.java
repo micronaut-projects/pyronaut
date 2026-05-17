@@ -99,9 +99,19 @@ public final class PyprojectConfigSpec {
         "Build backend."
     );
 
-    public static final FieldSpec PYRONAUT_VERSION = string(
-        "tool.pyronaut.version",
-        "Pyronaut version used for managed dependency resolution."
+    public static final FieldSpec PYRONAUT_CORE_VERSION = string(
+        "tool.pyronaut.core.version",
+        "Micronaut Core BOM version used for Core managed dependency resolution.",
+        PyronautManagedVersions.micronautCoreVersion(),
+        List.of(),
+        List.of()
+    );
+    public static final FieldSpec PYRONAUT_PLATFORM_VERSION = string(
+        "tool.pyronaut.platform.version",
+        "Micronaut Platform BOM version used for managed dependency resolution.",
+        PyronautManagedVersions.micronautPlatformVersion(),
+        List.of(),
+        List.of()
     );
     public static final FieldSpec PYRONAUT_REPOSITORIES = stringArray(
         "tool.pyronaut.repositories",
@@ -685,7 +695,8 @@ public final class PyprojectConfigSpec {
         PROJECT_DYNAMIC,
         BUILD_SYSTEM_REQUIRES,
         BUILD_SYSTEM_BUILD_BACKEND,
-        PYRONAUT_VERSION,
+        PYRONAUT_CORE_VERSION,
+        PYRONAUT_PLATFORM_VERSION,
         PYRONAUT_REPOSITORIES,
         PYRONAUT_DEPENDENCIES_RUNTIME,
         PYRONAUT_DEPENDENCIES_BUILD,
@@ -777,6 +788,8 @@ public final class PyprojectConfigSpec {
 
     public static final List<SectionSpec> STRICT_SECTIONS = List.of(
         section("tool.pyronaut", true),
+        section("tool.pyronaut.core", true),
+        section("tool.pyronaut.platform", true),
         section("tool.pyronaut.dependencies", true),
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.processor", true),

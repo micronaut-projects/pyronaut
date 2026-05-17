@@ -80,7 +80,7 @@ class PyronautTestResourcesServerNativeSmokeTest {
             name = "test-resources-native-smoke"
             version = "1.0.0"
 
-            [tool.pyronaut]
+            [tool.pyronaut.core]
             version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.testResources]

@@ -31,7 +31,8 @@ class PyprojectModelReaderTest {
         assertEquals("pyronaut-demo", model.project().name());
         assertEquals("1.0.0", model.project().version());
         assertEquals("setuptools.build_meta", model.buildSystem().buildBackend());
-        assertEquals("5.0.0-SNAPSHOT", model.pyronaut().version());
+        assertEquals(PyronautManagedVersions.micronautCoreVersion(), model.pyronaut().coreVersion());
+        assertEquals(PyronautManagedVersions.micronautPlatformVersion(), model.pyronaut().platformVersion());
         assertEquals(2, model.pyronaut().repositories().size());
         assertEquals(8, model.pyronaut().dependencies().runtime().size());
         assertEquals(2, model.pyronaut().dependencies().build().size());
@@ -81,7 +82,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.sources]
             python = "app"
@@ -132,7 +132,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
             annotationProcessor = ["io.micronaut:micronaut-context-python"]
 
             [tool.pyronaut.dependencies]
@@ -179,7 +178,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
             """);
 
         PyprojectModel model = reader.readFile(file);
@@ -194,7 +192,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.build]
             mode = ["native"]
@@ -212,7 +209,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.build]
             mode = "fast"
@@ -230,7 +226,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
             """);
 
         PyprojectModel model = reader.readFile(file);
@@ -245,7 +240,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.processor]
             mode = "native"
@@ -263,7 +257,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.processor]
             mode = ["native"]
@@ -281,7 +274,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.processor]
             mode = "fast"
@@ -299,7 +291,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
             """);
 
         PyprojectModel model = reader.readFile(file);
@@ -314,7 +305,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.test]
             mode = "native"
@@ -336,7 +326,6 @@ class PyprojectModelReaderTest {
             build-backend = "setuptools.build_meta"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.toolchain]
             distribution = "dev"
@@ -366,7 +355,6 @@ class PyprojectModelReaderTest {
             build-backend = "setuptools.build_meta"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.toolchain]
             distribution = "ee"
@@ -390,7 +378,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.test]
             mode = ["native"]
@@ -408,7 +395,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.test]
             mode = "fast"
@@ -426,7 +412,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.build]
             mode = "native"
@@ -454,7 +439,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.build.docker]
             image-name = "example/demo"
@@ -486,7 +470,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.build.docker]
             imageName = "example/demo"
@@ -516,7 +499,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.ide-stubs]
             enabled = false
@@ -542,7 +524,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.build.metadata]
             enabled = "yes"
@@ -560,7 +541,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.validation]
             enabled = true
@@ -605,7 +585,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.validation]
             fail-on-not-present = "yes"
@@ -623,7 +602,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.test-resources]
             enabled = true
@@ -677,7 +655,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.test-resources]
             client-timeout = "fast"
@@ -695,7 +672,6 @@ class PyprojectModelReaderTest {
             name = "demo"
 
             [tool.pyronaut]
-            version = "5.0.0-SNAPSHOT"
 
             [tool.pyronaut.build.metadata]
             repositoryUrl = "https://example.test/metadata.zip"

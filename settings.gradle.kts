@@ -26,6 +26,10 @@ fun versionFromCatalog(path: String, key: String): String {
         ?: throw GradleException("Unable to find version '$key' in ${file.absolutePath}")
 }
 
+fun requiredGradleProperty(name: String): String =
+    providers.gradleProperty(name).orNull.takeIfNotBlank()
+        ?: throw GradleException("Missing required Gradle property '$name'")
+
 fun String.isSnapshotVersion(): Boolean = endsWith("-SNAPSHOT")
 
 fun booleanGradleProperty(name: String): Boolean? {
@@ -462,7 +466,8 @@ fun ConfigurableIncludedBuild.substituteMicronautCore() {
     }
 }
 
-val micronautVersion = versionFromCatalog("gradle/libs.versions.toml", "micronaut")
+val micronautVersion = requiredGradleProperty("pyronaut.micronaut.core.version")
+val micronautPlatformVersion = requiredGradleProperty("pyronaut.micronaut.platform.version")
 val graalpyVersion = versionFromCatalog("gradle/libs.versions.toml", "graalpy")
 val useSnapshotSourceDependencies = micronautVersion.isSnapshotVersion() && graalpyVersion.isSnapshotVersion()
 
@@ -569,8 +574,13 @@ micronautBuild {
 
 dependencyResolutionManagement {
     versionCatalogs {
+        create("libs") {
+            version("micronaut", micronautVersion)
+            version("micronaut-platform", micronautPlatformVersion)
+        }
         create("mn") {
             from(files("gradle/mn.libs.versions.toml"))
+            version("micronaut", micronautVersion)
         }
     }
     repositories {

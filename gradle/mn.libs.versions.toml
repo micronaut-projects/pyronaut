@@ -1,5 +1,4 @@
 [versions]
-micronaut = "5.0.0-SNAPSHOT"
 graalpy = "25.1.0-SNAPSHOT"
 
 [libraries]

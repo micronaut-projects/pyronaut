@@ -4,6 +4,7 @@ plugins {
 
 }
 dependencies {
+    implementation(project(":micronaut-pyronaut-config-model"))
     implementation(platform(libs.micronaut.projectgen))
     implementation(libs.micronaut.projectgen.core)
     testImplementation(libs.micronaut.projectgen.test)
