@@ -20,6 +20,7 @@ dependencies {
     implementation(libs.micronaut.test.resources.core)
     implementation(libs.micronaut.test.resources.control.panel)
     implementation(libs.micronaut.test.resources.server)
+    implementation(mnSerde.micronaut.serde.jackson)
     implementation(mnLogging.logback.classic)
     runtimeOnly(libs.slf4j.jul.to.slf4j)
     runtimeOnly(mn.micronaut.http.server.netty)
