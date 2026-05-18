@@ -13,6 +13,8 @@ import java
 import inspect
 from typing import get_origin, get_args
 
+PytestFunctionInvoker = java.type("io.micronaut.test.pytest.execution.PytestFunctionInvoker")
+
 
 _INTERNAL_TRACE_MARKERS = (
     "com.oracle.truffle.",
@@ -40,6 +42,27 @@ def _filter_internal_traceback_frames(text: str) -> str:
 class _ExpectedFailure:
     def __init__(self, reason: str):
         self.reason = reason or "Expected failure"
+
+
+def _is_foreign_exception(exc: BaseException) -> bool:
+    name = getattr(getattr(exc, "__class__", type(exc)), "__name__", "")
+    return name == "ForeignException" or "Foreign" in name or (
+        isinstance(exc, TypeError)
+        and "exceptions must be classes or instances deriving from BaseException, not ForeignException" in str(exc)
+    )
+
+
+def _format_call_failure(result) -> str:
+    message = getattr(result, "message", None)
+    exception_class = getattr(result, "exceptionClass", None)
+    stack = getattr(result, "stack", None)
+    if stack:
+        return _filter_internal_traceback_frames(str(stack))
+    if message:
+        return str(message)
+    if exception_class:
+        return str(exception_class)
+    return "Python test failed with a foreign exception"
 
 
 class MicronautPytestPlugin:
@@ -82,25 +105,6 @@ class MicronautPytestPlugin:
                     outcome.force_result(None)
                     pytest.fail(f"{exc}", pytrace=False)
 
-    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
-    def pytest_runtest_call(self, item):
-        outcome = yield
-        excinfo = getattr(outcome, 'excinfo', None)
-        if excinfo is not None:
-            exc = None
-            if isinstance(excinfo, tuple):
-                if len(excinfo) >= 2:
-                    exc = excinfo[1]
-                elif len(excinfo) == 1:
-                    exc = excinfo[0]
-            else:
-                exc = getattr(excinfo, 'value', excinfo)
-            if exc is not None:
-                name = getattr(exc, '__class__', type(exc)).__name__
-                if name == 'ForeignException' or 'Foreign' in name:
-                    outcome.force_result(None)
-                    pytest.fail(f"{exc}", pytrace=False)
-
     def pytest_sessionfinish(self, session, exitstatus):
         """Called when pytest session finishes."""
         # Convert pytest exit status to JUnit TestExecutionResult
@@ -117,6 +121,23 @@ class MicronautPytestPlugin:
             self.current_file = collector.fspath
             self.listener.beforeFile(f"{collector.fspath}")
 
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_pyfunc_call(self, pyfuncitem):
+        testfunction = pyfuncitem.obj
+        if inspect.iscoroutinefunction(testfunction):
+            return None
+        fixtureinfo = getattr(pyfuncitem, "_fixtureinfo", None)
+        argnames = getattr(fixtureinfo, "argnames", ())
+        testargs = {arg: pyfuncitem.funcargs[arg] for arg in argnames}
+
+        def invoke():
+            testfunction(**testargs)
+
+        result = PytestFunctionInvoker.call(invoke)
+        if getattr(result, "success", False):
+            return True
+        pytest.fail(_format_call_failure(result), pytrace=False)
+
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_runtest_call(self, item):
         """Wrap the test call to capture stdout/stderr reliably and forward to Java.
@@ -128,8 +149,13 @@ class MicronautPytestPlugin:
         import io, contextlib
         buf_out = io.StringIO()
         buf_err = io.StringIO()
-        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
-            outcome = yield
+        try:
+            with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+                outcome = yield
+        except BaseException as exc:
+            if _is_foreign_exception(exc):
+                pytest.fail(f"{exc}", pytrace=False)
+            raise
         # Heuristic: if pytest capture is active, capstdout/capstderr will be non-empty in logreport(call),
         # so skip forwarding here to avoid duplicates. We only forward here if buffers are non-empty
         # AND we detect that pytest capture is likely disabled (-s) by checking for empty capstdout later.

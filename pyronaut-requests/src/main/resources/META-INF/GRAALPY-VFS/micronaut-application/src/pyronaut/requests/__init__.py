@@ -264,10 +264,10 @@ class Response:
                 obj = None
                 try:
                     obj = mapper.readValue(self.text, Map)
-                except Exception:
+                except BaseException:
                     try:
                         obj = mapper.readValue(self.text, List)
-                    except Exception:
+                    except BaseException:
                         obj = None
                 if obj is not None:
                     return _to_python_native(obj)
