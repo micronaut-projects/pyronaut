@@ -341,7 +341,11 @@ def _delegate(
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    dev_command_line = _pyronaut_dev_native_command_line(command, args, resolver)
+    try:
+        dev_command_line = _pyronaut_dev_native_command_line(command, args, resolver, env_overrides=env_overrides)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
     if dev_command_line is not None:
         if _delegation_trace_enabled():
             print(shlex.join(dev_command_line), file=sys.stderr)
@@ -563,6 +567,65 @@ def _read_test_delegate_dependency_entries(cache_dir: Path) -> list[str]:
         for entry in _read_manifest_entries(manifest)
         if not _is_test_launcher_provided_artifact(entry)
     ]
+
+
+def _build_native_application_classpath(command: str, project_dir: Path) -> str:
+    return os.pathsep.join(_dedupe_classpath_entries(_build_native_application_classpath_entries(command, project_dir)))
+
+
+def _build_native_application_classpath_entries(command: str, project_dir: Path) -> list[str]:
+    cache_dir = project_dir / "__pyronaut__"
+    layout = _read_pyproject_sources(project_dir)
+    entries: list[str] = []
+    if command == "run":
+        classes_dir = cache_dir / "classes"
+        if not classes_dir.is_dir():
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+        entries.extend(_read_manifest_entries(_resolve_run_manifest(cache_dir)))
+        entries.append(str(classes_dir.resolve()))
+        _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
+        for resource_dir in layout.additional_resources_dirs:
+            _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
+    elif command == "test":
+        for manifest in (
+            cache_dir / "resolved-test-dependencies",
+            cache_dir / "resolved-runtime-dependencies",
+            cache_dir / "resolved-build-dependencies",
+        ):
+            if manifest.exists():
+                entries.extend(_read_manifest_entries(manifest))
+        test_classes_dir = cache_dir / "test-classes"
+        classes_dir = cache_dir / "classes"
+        if test_classes_dir.is_dir():
+            entries.append(str(test_classes_dir.resolve()))
+        elif classes_dir.is_dir():
+            entries.append(str(classes_dir.resolve()))
+        else:
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+        _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
+        for resource_dir in layout.additional_resources_dirs:
+            _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
+        _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.test_resources_dir))
+        for resource_dir in layout.additional_test_resources_dirs:
+            _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
+    else:
+        raise RuntimeError(f"Native application classpath is not supported for command: {command}")
+    return entries
+
+
+def _add_classpath_dir(entries: list[str], directory: Path) -> None:
+    if directory.is_dir():
+        entries.append(str(directory.resolve()))
+
+
+def _dedupe_classpath_entries(entries: Sequence[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if entry not in seen:
+            deduped.append(entry)
+            seen.add(entry)
+    return deduped
 
 
 def _is_test_launcher_provided_artifact(entry: str) -> bool:
@@ -2633,12 +2696,20 @@ def _pyronaut_dev_native_command_line(
     command: str,
     args: Sequence[str],
     resolver: Callable[[str], str | None],
+    *,
+    env_overrides: dict[str, str] | None = None,
 ) -> list[str] | None:
     if command not in DEV_NATIVE_COMMANDS:
         return None
     executable_path = _resolve_pyronaut_dev_native_executable(resolver)
     if executable_path is None:
         return None
+    if command in {"run", "test"}:
+        project_dir = Path(_extract_project_dir(args)).resolve()
+        classpath = _build_native_application_classpath(command, project_dir)
+        jvm_args = [f"-Djava.class.path={classpath}"]
+        jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
+        return [executable_path, *jvm_args, command, *args]
     return [executable_path, command, *args]
 
 
