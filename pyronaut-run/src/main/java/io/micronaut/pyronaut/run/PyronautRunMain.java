@@ -122,7 +122,8 @@ public final class PyronautRunMain implements Callable<Integer> {
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
-        try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
+        try (layout) {
+            ClassLoader applicationClassLoader = layout.applicationClassLoader();
             enableContextClassLoaderIntrospections();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Class<?> loadedClass = loadConfiguredMainClass(applicationClassLoader);
@@ -218,10 +219,7 @@ public final class PyronautRunMain implements Callable<Integer> {
         addPathIfDirectory(urls, resolvedClassesDir);
         addPathIfDirectory(urls, root.resolve(configDir).normalize());
         addResourceDirectories(urls, additionalResourceDirs);
-        return new ResolvedProjectLayout(
-            resolvedClassesDir,
-            new URLClassLoader(urls.toArray(URL[]::new), resolveApplicationClassLoader())
-        );
+        return new ResolvedProjectLayout(resolvedClassesDir, List.copyOf(urls));
     }
 
     private Path resolveConfiguredPath(Path root,
@@ -321,7 +319,29 @@ public final class PyronautRunMain implements Callable<Integer> {
         boolean start(Class<?> loadedClass, Path resolvedClassesDir, Boolean bannerEnabled, List<String> appArgs) throws Exception;
     }
 
-    record ResolvedProjectLayout(Path processedClassesRoot, URLClassLoader applicationClassLoader) {
+    record ResolvedProjectLayout(Path processedClassesRoot, List<URL> classpathUrls) implements AutoCloseable {
+        private static final String NATIVE_IMAGE_CODE = "org.graalvm.nativeimage.imagecode";
+
+        ResolvedProjectLayout {
+            classpathUrls = List.copyOf(classpathUrls);
+        }
+
+        ClassLoader applicationClassLoader() {
+            if (usesNativeSystemClassLoader()) {
+                return ClassLoader.getSystemClassLoader();
+            }
+            return new URLClassLoader(classpathUrls.toArray(URL[]::new), resolveApplicationClassLoader());
+        }
+
+        @Override
+        public void close() throws IOException {
+        }
+
+        private static boolean usesNativeSystemClassLoader() {
+            return System.getProperty(NATIVE_IMAGE_CODE) != null
+                && System.getProperty("java.class.path") != null
+                && !System.getProperty("java.class.path").isBlank();
+        }
     }
 
     private record TestResourcesProperty(String environmentVariable, String systemProperty) {

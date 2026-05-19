@@ -430,18 +430,32 @@ class PyronautTestMainTest {
             List.of(testFixturesDir)
         );
 
-        try (var classLoader = layout.applicationClassLoader()) {
-            List<String> urls = java.util.Arrays.stream(classLoader.getURLs()).map(Object::toString).toList();
-            assertTrue(urls.stream().anyMatch(url -> url.contains("app-config")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("views")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/fixtures")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-context")));
-            assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-pytest")));
-            assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-logback")));
-            assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-http-netty")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("netty-transport")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-http-client")));
+        List<String> urls = layout.classpathUrls().stream().map(Object::toString).toList();
+        assertTrue(urls.stream().anyMatch(url -> url.contains("app-config")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("views")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/fixtures")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-context")));
+        assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-pytest")));
+        assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-logback")));
+        assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-http-netty")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("netty-transport")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-http-client")));
+    }
+
+    @Test
+    void nativeRuntimeUsesSystemClassLoaderWhenJavaClassPathIsSupplied() {
+        String previousNativeImageCode = System.getProperty("org.graalvm.nativeimage.imagecode");
+        String previousClasspath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("org.graalvm.nativeimage.imagecode", "runtime");
+            System.setProperty("java.class.path", tempDir.toString());
+            PyronautTestMain.ResolvedProjectLayout layout = new PyronautTestMain.ResolvedProjectLayout(tempDir, List.of());
+
+            assertEquals(ClassLoader.getSystemClassLoader(), layout.applicationClassLoader());
+        } finally {
+            restoreProperty("org.graalvm.nativeimage.imagecode", previousNativeImageCode);
+            restoreProperty("java.class.path", previousClasspath);
         }
     }
 
@@ -473,11 +487,9 @@ class PyronautTestMainTest {
                 project.resolve("tests-config")
             );
 
-            try (var classLoader = layout.applicationClassLoader()) {
-                List<String> urls = java.util.Arrays.stream(classLoader.getURLs()).map(Object::toString).toList();
-                assertFalse(urls.stream().anyMatch(url -> url.contains("duplicate.jar")));
-                assertTrue(urls.stream().anyMatch(url -> url.contains("unique.jar")));
-            }
+            List<String> urls = layout.classpathUrls().stream().map(Object::toString).toList();
+            assertFalse(urls.stream().anyMatch(url -> url.contains("duplicate.jar")));
+            assertTrue(urls.stream().anyMatch(url -> url.contains("unique.jar")));
         } finally {
             restoreProperty("java.class.path", previousClasspath);
         }

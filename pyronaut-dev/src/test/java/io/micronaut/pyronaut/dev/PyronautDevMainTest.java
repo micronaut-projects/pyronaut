@@ -109,6 +109,24 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void verifiesSystemClassAndClassResourceWhenRequested() {
+        String previousClass = System.getProperty("pyronaut.dev.verify-system-class");
+        String previousResource = System.getProperty("pyronaut.dev.verify-system-class-resource");
+        try {
+            System.setProperty("pyronaut.dev.verify-system-class", PyronautDevMainTest.class.getName());
+            System.setProperty(
+                "pyronaut.dev.verify-system-class-resource",
+                "/" + PyronautDevMainTest.class.getName().replace('.', '/') + ".class"
+            );
+
+            assertEquals(0, PyronautDevMain.verifySystemClassIfRequested());
+        } finally {
+            restoreProperty("pyronaut.dev.verify-system-class", previousClass);
+            restoreProperty("pyronaut.dev.verify-system-class-resource", previousResource);
+        }
+    }
+
+    @Test
     void initializesQuietLauncherLoggingAndAllowsApplicationReconfiguration() {
         String previousSimpleLevel = System.getProperty("org.slf4j.simpleLogger.defaultLogLevel");
         String previousStatusListener = System.getProperty("logback.statusListenerClass");

@@ -36,6 +36,7 @@ import picocli.CommandLine;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.FileVisitResult;
@@ -91,6 +92,9 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String PYTEST_EVENTS_REPORT = "pytest.report.events";
     private static final String NETTY_NO_UNSAFE = "io.netty.noUnsafe";
     private static final String SUN_MISC_UNSAFE_MEMORY_ACCESS = "sun.misc.unsafe.memory.access";
+    private static final String VERIFY_SYSTEM_RESOURCE = "pyronaut.dev.verify-system-resource";
+    private static final String VERIFY_SYSTEM_CLASS = "pyronaut.dev.verify-system-class";
+    private static final String VERIFY_SYSTEM_CLASS_RESOURCE = "pyronaut.dev.verify-system-class-resource";
     private static final Set<String> TOOL_COMMANDS = Set.of(
         "install",
         "process",
@@ -125,6 +129,14 @@ public final class PyronautDevMain implements Callable<Integer> {
     public static void main(String[] args) {
         configureNativeRuntimeDefaults();
         initializeLauncherLogging();
+        Integer verificationExit = verifySystemResourceIfRequested();
+        if (verificationExit != null) {
+            System.exit(verificationExit);
+        }
+        verificationExit = verifySystemClassIfRequested();
+        if (verificationExit != null) {
+            System.exit(verificationExit);
+        }
         int exit = execute(args);
         if (exit != 0) {
             System.exit(exit);
@@ -138,6 +150,57 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     static void initializeLauncherLogging() {
         PyronautDevLogging.initializeLauncherLogging();
+    }
+
+    static Integer verifySystemResourceIfRequested() {
+        String resource = System.getProperty(VERIFY_SYSTEM_RESOURCE);
+        if (resource == null || resource.isBlank()) {
+            return null;
+        }
+        try (InputStream input = ClassLoader.getSystemResourceAsStream(resource)) {
+            if (input == null) {
+                System.err.println("System resource not found: " + resource);
+                return PRECONDITION_FAILED;
+            }
+            while (input.read() != -1) {
+                // Fully consume the stream to verify the resource is readable.
+            }
+            System.out.println("System resource found: " + resource);
+            return SUCCESS;
+        } catch (IOException e) {
+            System.err.println("Unable to read system resource " + resource + ": " + e.getMessage());
+            return INTERNAL_ERROR;
+        }
+    }
+
+    static Integer verifySystemClassIfRequested() {
+        String className = System.getProperty(VERIFY_SYSTEM_CLASS);
+        if (className == null || className.isBlank()) {
+            return null;
+        }
+        try {
+            ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
+            Class<?> loadedClass = Class.forName(className, false, systemClassLoader);
+            String resource = System.getProperty(VERIFY_SYSTEM_CLASS_RESOURCE);
+            if (resource != null && !resource.isBlank()) {
+                try (InputStream input = loadedClass.getResourceAsStream(resource)) {
+                    if (input == null) {
+                        System.err.println("System class resource not found: " + className + " " + resource);
+                        return PRECONDITION_FAILED;
+                    }
+                    while (input.read() != -1) {
+                        // Fully consume the stream to verify the resource is readable.
+                    }
+                }
+            }
+            Class.forName(className, true, systemClassLoader);
+            System.out.println("System class initialized: " + className + " via " + loadedClass.getClassLoader());
+            return SUCCESS;
+        } catch (Throwable e) {
+            System.err.println("Unable to initialize system class " + className + ": " + e.getMessage());
+            e.printStackTrace(System.err);
+            return INTERNAL_ERROR;
+        }
     }
 
 

@@ -10,7 +10,6 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -178,18 +177,28 @@ class PyronautRunMainTest {
         Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
 
         PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
-        try (var classLoader = layout.applicationClassLoader()) {
-            assertEquals(classesDir.toAbsolutePath().normalize(), layout.processedClassesRoot());
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains(runtimeJar.getFileName().toString()))
-            );
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("__pyronaut__/classes"))
-            );
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("config/"))
-                    || java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().endsWith("/config"))
-            );
+        List<String> urls = layout.classpathUrls().stream().map(URL::toString).toList();
+        assertEquals(classesDir.toAbsolutePath().normalize(), layout.processedClassesRoot());
+        Path archivedClasses = pyronautDir.resolve("run-classes.jar");
+        assertTrue(Files.exists(archivedClasses));
+        assertTrue(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("run-classes.jar")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("config/")) || urls.stream().anyMatch(url -> url.endsWith("/config")));
+    }
+
+    @Test
+    void nativeRuntimeUsesSystemClassLoaderWhenJavaClassPathIsSupplied() throws Exception {
+        String previousNativeImageCode = System.getProperty("org.graalvm.nativeimage.imagecode");
+        String previousClasspath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("org.graalvm.nativeimage.imagecode", "runtime");
+            System.setProperty("java.class.path", tempDir.toString());
+            PyronautRunMain.ResolvedProjectLayout layout = new PyronautRunMain.ResolvedProjectLayout(tempDir, List.of());
+
+            assertEquals(ClassLoader.getSystemClassLoader(), layout.applicationClassLoader());
+        } finally {
+            restoreProperty("org.graalvm.nativeimage.imagecode", previousNativeImageCode);
+            restoreProperty("java.class.path", previousClasspath);
         }
     }
 
@@ -210,13 +219,11 @@ class PyronautRunMainTest {
         Files.writeString(pyronautDir.resolve("resolved-development-runtime-dependencies"), developmentRuntimeJar + "\n", StandardCharsets.UTF_8);
 
         PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
-        try (var classLoader = layout.applicationClassLoader()) {
-            List<String> urls = Arrays.stream(classLoader.getURLs())
-                .map(URL::toString)
-                .toList();
-            assertTrue(urls.stream().anyMatch(url -> url.contains(developmentRuntimeJar.getFileName().toString())));
-            assertFalse(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
-        }
+        List<String> urls = layout.classpathUrls().stream()
+            .map(URL::toString)
+            .toList();
+        assertTrue(urls.stream().anyMatch(url -> url.contains(developmentRuntimeJar.getFileName().toString())));
+        assertFalse(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
     }
 
     @Test
