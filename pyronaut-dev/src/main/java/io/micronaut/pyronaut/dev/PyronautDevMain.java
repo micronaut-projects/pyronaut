@@ -181,8 +181,22 @@ public final class PyronautDevMain implements Callable<Integer> {
         try {
             ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
             Class<?> loadedClass = Class.forName(className, false, systemClassLoader);
+            System.out.println("System class loaded: " + className + " via " + loadedClass.getClassLoader());
+            if (loadedClass.getProtectionDomain() != null && loadedClass.getProtectionDomain().getCodeSource() != null) {
+                System.out.println("System class code source: " + loadedClass.getProtectionDomain().getCodeSource().getLocation());
+            }
             String resource = System.getProperty(VERIFY_SYSTEM_CLASS_RESOURCE);
             if (resource != null && !resource.isBlank()) {
+                URL resourceUrl = loadedClass.getResource(resource);
+                System.out.println("System class resource URL: " + resourceUrl);
+                if (resourceUrl != null) {
+                    try (InputStream input = resourceUrl.openStream()) {
+                        while (input.read() != -1) {
+                            // Fully consume the stream to verify the URL is readable.
+                        }
+                        System.out.println("System class resource URL readable: " + resource);
+                    }
+                }
                 try (InputStream input = loadedClass.getResourceAsStream(resource)) {
                     if (input == null) {
                         System.err.println("System class resource not found: " + className + " " + resource);
