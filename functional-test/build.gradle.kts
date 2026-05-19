@@ -340,6 +340,14 @@ fun formatFixtureCommand(command: List<String>): String {
     var index = 0
     while (index < command.size) {
         val argument = command[index]
+        if (argument.startsWith("-Djava.class.path=")) {
+            val classpathEntries = argument.substringAfter("=")
+                .split(java.io.File.pathSeparatorChar)
+                .count { it.isNotBlank() }
+            rendered += "-Djava.class.path=<classpath:$classpathEntries entries>"
+            index++
+            continue
+        }
         rendered += argument
         if ((argument == "-cp" || argument == "-classpath" || argument == "--class-path") && index + 1 < command.size) {
             val classpathEntries = command[index + 1]
@@ -1036,15 +1044,7 @@ fun requireFixtureFileContains(file: java.io.File, expected: String, description
     }
 }
 
-fun buildPyronautTestCommand(): List<String> {
-    if (useNativeExecutables.get()) {
-        return pyronautCommand(
-            "test",
-            pyronautTestExecutableFile(),
-            "--project-dir",
-            fixtureAppDir.asFile.absolutePath,
-        )
-    }
+fun buildFixtureApplicationClasspathEntries(): List<String> {
     val cacheDir = fixtureAppDir.dir("__pyronaut__").asFile
     val classpathEntries = mutableListOf<String>()
     classpathEntries += readManifestEntries(cacheDir.resolve("resolved-test-dependencies"))
@@ -1066,6 +1066,35 @@ fun buildPyronautTestCommand(): List<String> {
     val configDir = fixtureAppDir.dir("config").asFile
     if (configDir.isDirectory) {
         classpathEntries += configDir.absolutePath
+    }
+    return classpathEntries.distinct()
+}
+
+fun testResourcesJvmArgs(testResourcesEnv: Map<String, String>): List<String> {
+    return listOfNotNull(
+        testResourcesEnv["MICRONAUT_TEST_RESOURCES_SERVER_URI"]
+            ?.takeIf(String::isNotBlank)
+            ?.let { "-Dmicronaut.test.resources.server.uri=$it" },
+        testResourcesEnv["MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN"]
+            ?.takeIf(String::isNotBlank)
+            ?.let { "-Dmicronaut.test.resources.server.access.token=$it" },
+        testResourcesEnv["MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT"]
+            ?.takeIf(String::isNotBlank)
+            ?.let { "-Dmicronaut.test.resources.server.client.read.timeout=$it" },
+    )
+}
+
+fun buildPyronautTestCommand(testResourcesEnv: Map<String, String> = emptyMap()): List<String> {
+    val classpathEntries = buildFixtureApplicationClasspathEntries().toMutableList()
+    if (useNativeExecutables.get()) {
+        return listOf(
+            pyronautTestExecutableFile().absolutePath,
+            "-Djava.class.path=${classpathEntries.joinToString(separator = java.io.File.pathSeparator)}",
+            *testResourcesJvmArgs(testResourcesEnv).toTypedArray(),
+            "test",
+            "--project-dir",
+            fixtureAppDir.asFile.absolutePath,
+        )
     }
     classpathEntries += delegateLibEntries(pyronautTestExecutable.get().asFile)
 
@@ -1560,7 +1589,7 @@ tasks.register("test") {
         runFixtureCommand(startCommand)
         try {
             val testResourcesEnv = readFixtureTestResourcesEnvironment(fixtureTestResourcesSettingsFile.asFile)
-            runFixtureCommand(buildPyronautTestCommand(), testResourcesEnv)
+            runFixtureCommand(buildPyronautTestCommand(testResourcesEnv), testResourcesEnv)
         } finally {
             try {
                 runFixtureCommand(stopCommand)
