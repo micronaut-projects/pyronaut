@@ -53,6 +53,7 @@ def sdkMavenLocalRepositoryDir = providers.gradleProperty("pyronaut.sdk.mavenLoc
 def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
     [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"],
+    [path: ":micronaut-pyronaut-dev", command: "pyronaut-dev"],
     [path: ":micronaut-pyronaut-run", command: "pyronaut-run"],
     [path: ":micronaut-pyronaut-test", command: "pyronaut-test"],
     [path: ":micronaut-pyronaut-create-app", command: "pyronaut-create"],
@@ -62,11 +63,10 @@ def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-tui", command: "pyronaut-tui", installDir: "pyronaut-tui"]
 ]
 def delegatedNativeCliProjects = [
-    [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
-    [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"],
-    [path: ":micronaut-pyronaut-test", command: "pyronaut-test"],
-    [path: ":micronaut-pyronaut-validate-config", command: "pyronaut-validate-config"],
-    [path: ":micronaut-pyronaut-test-resources-server", command: "pyronaut-test-resources-server"]
+    [path: ":micronaut-pyronaut-dev", command: "pyronaut-dev"]
+]
+def nativeWheelExcludedJars = [
+    "**/slf4j-simple-*.jar"
 ]
 def includedMicronautCoreArtifactIds = [
     "micronaut-aop",
@@ -213,6 +213,9 @@ tasks.register("prepareWheelSources", Sync) {
         def installDirName = cliProject.containsKey("installDir") ? cliProject.installDir : project(cliProject.path).name
         from(project(cliProject.path).layout.buildDirectory.dir("install/${installDirName}")) {
             into("src/pyronaut_cli_v2/tools/${cliProject.command}")
+            if (nativeSdkWheel.get()) {
+                exclude(nativeWheelExcludedJars)
+            }
         }
     }
     inputs.property("native", nativeSdkWheel)
@@ -245,6 +248,9 @@ tasks.register("prepareWheelSources", Sync) {
         }
 
         if (nativeSdkWheel.get()) {
+            delete(fileTree(wheelStagingDir).matching {
+                include(nativeWheelExcludedJars)
+            })
             delegatedNativeCliProjects.each { cliProject ->
                 def nativeBinary = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/${cliProject.command}").asFile
                 if (nativeBinary.exists()) {

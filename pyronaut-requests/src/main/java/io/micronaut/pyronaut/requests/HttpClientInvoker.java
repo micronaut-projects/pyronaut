@@ -24,6 +24,9 @@ import io.micronaut.http.client.exceptions.HttpClientResponseException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Executes Micronaut HTTP client requests and converts failures into interop-friendly results.
@@ -69,6 +72,10 @@ public final class HttpClientInvoker {
         public final boolean success;
         public final Object response;
         public final byte[] body;
+        public final int statusCode;
+        public final String reason;
+        public final String[] headerNames;
+        public final String[] headerValues;
         public final String message;
         public final String exceptionClass;
         public final String stack;
@@ -77,6 +84,18 @@ public final class HttpClientInvoker {
             this.success = success;
             this.response = response;
             this.body = response instanceof HttpResponse<?> httpResponse ? responseBodyBytes(httpResponse) : null;
+            if (response instanceof HttpResponse<?> httpResponse) {
+                this.statusCode = httpResponse.getStatus().getCode();
+                this.reason = httpResponse.getStatus().getReason();
+                HeaderPairs headers = HeaderPairs.from(httpResponse.getHeaders().asMap());
+                this.headerNames = headers.names();
+                this.headerValues = headers.values();
+            } else {
+                this.statusCode = 0;
+                this.reason = null;
+                this.headerNames = new String[0];
+                this.headerValues = new String[0];
+            }
             if (error != null) {
                 this.message = error.getMessage();
                 this.exceptionClass = error.getClass().getName();
@@ -94,6 +113,40 @@ public final class HttpClientInvoker {
 
         static Result failure(Throwable t) {
             return new Result(false, null, t);
+        }
+    }
+
+    private static final class HeaderPairs {
+        private final String[] names;
+        private final String[] values;
+
+        private HeaderPairs(String[] names, String[] values) {
+            this.names = names;
+            this.values = values;
+        }
+
+        String[] names() {
+            return names;
+        }
+
+        String[] values() {
+            return values;
+        }
+
+        static HeaderPairs from(Map<String, List<String>> headers) {
+            List<String> names = new ArrayList<>();
+            List<String> values = new ArrayList<>();
+            for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+                List<String> headerValues = entry.getValue();
+                if (headerValues != null && !headerValues.isEmpty()) {
+                    names.add(entry.getKey());
+                    values.add(headerValues.getFirst());
+                }
+            }
+            return new HeaderPairs(
+                names.toArray(String[]::new),
+                values.toArray(String[]::new)
+            );
         }
     }
 }

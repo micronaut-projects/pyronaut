@@ -13,6 +13,7 @@ maven = "3.9.9"
 slf4j = "2.0.17"
 micronaut-test-resources = "4.0.0"
 micronaut-json-schema = "2.0.1"
+micronaut-toml = "3.0.0-RC1"
 graalpy = "25.1.0-SNAPSHOT"
 micronaut-control-panel = "2.0.0"
 docker-java = "3.4.1"
@@ -55,9 +56,11 @@ micronaut-test-resources-build-tools = { module = "io.micronaut.testresources:mi
 micronaut-test-resources-core = { module = "io.micronaut.testresources:micronaut-test-resources-core", version.ref = "micronaut-test-resources" }
 micronaut-test-resources-control-panel = { module = "io.micronaut.testresources:micronaut-test-resources-control-panel", version.ref = "micronaut-test-resources" }
 micronaut-test-resources-server = { module = "io.micronaut.testresources:micronaut-test-resources-server", version.ref = "micronaut-test-resources" }
+micronaut-test-resources-client = { module = "io.micronaut.testresources:micronaut-test-resources-client", version.ref = "micronaut-test-resources" }
 micronaut-control-panel-core = { module = "io.micronaut.controlpanel:micronaut-control-panel-core", version.ref = "micronaut-control-panel" }
 docker-java-api = { module = "com.github.docker-java:docker-java-api", version.ref = "docker-java" }
 micronaut-json-schema-configuration-validator = { module = "io.micronaut.jsonschema:micronaut-json-schema-configuration-validator", version.ref = "micronaut-json-schema" }
+micronaut-toml = { module = "io.micronaut.toml:micronaut-toml", version.ref = "micronaut-toml" }
 micronaut-test-core = { module = "io.micronaut.test:micronaut-test-core", version.ref = "micronaut-test" }
 micronaut-data-jdbc = { module = "io.micronaut.data:micronaut-data-jdbc", version.ref = "micronaut-data" }
 micronaut-data-processor = { module = "io.micronaut.data:micronaut-data-processor", version.ref = "micronaut-data" }

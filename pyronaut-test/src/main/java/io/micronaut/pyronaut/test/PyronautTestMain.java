@@ -65,10 +65,30 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
-    private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_PREFIXES = List.of(
-        "micronaut-pyronaut-logback-",
-        "micronaut-pyronaut-pytest-"
+    private static final String MICRONAUT_SERVER_PORT = "micronaut.server.port";
+    private static final String DEFAULT_TEST_SERVER_PORT = "0";
+    private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_IDS = List.of(
+        "micronaut-aop",
+        "micronaut-buffer-netty",
+        "micronaut-context-propagation",
+        "micronaut-context-python",
+        "micronaut-core",
+        "micronaut-core-reactive",
+        "micronaut-discovery-core",
+        "micronaut-http",
+        "micronaut-http-netty",
+        "micronaut-http-server",
+        "micronaut-http-server-netty",
+        "micronaut-inject",
+        "micronaut-jackson-core",
+        "micronaut-json-core",
+        "micronaut-pyronaut-logback",
+        "micronaut-pyronaut-pytest",
+        "micronaut-retry",
+        "micronaut-router",
+        "micronaut-runtime"
     );
+    private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_PREFIXES = List.of();
     private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
 
     private static final String PYTEST_TESTS = "pytest.tests";
@@ -161,8 +181,10 @@ public final class PyronautTestMain implements Callable<Integer> {
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         Path resolvedPytestSourceDir = resolvePytestSourceDir(root, resolvedTestsDir);
+        String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
         try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
             enableContextClassLoaderIntrospections();
+            defaultTestServerPort();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             try {
                 contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedPytestSourceDir));
@@ -241,12 +263,19 @@ public final class PyronautTestMain implements Callable<Integer> {
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
+            restoreSystemProperty(MICRONAUT_SERVER_PORT, previousServerPortProperty);
         }
     }
 
     static void enableContextClassLoaderIntrospections() {
         if (System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER) == null) {
             System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, "true");
+        }
+    }
+
+    static void defaultTestServerPort() {
+        if (System.getProperty(MICRONAUT_SERVER_PORT) == null) {
+            System.setProperty(MICRONAUT_SERVER_PORT, DEFAULT_TEST_SERVER_PORT);
         }
     }
 
@@ -425,7 +454,18 @@ public final class PyronautTestMain implements Callable<Integer> {
             return false;
         }
         String fileName = path.getFileName().toString();
-        return LAUNCHER_PROVIDED_ARTIFACT_PREFIXES.stream().anyMatch(fileName::startsWith);
+        return LAUNCHER_PROVIDED_ARTIFACT_IDS.stream().anyMatch(artifactId -> matchesLauncherProvidedArtifact(path, fileName, artifactId))
+            || LAUNCHER_PROVIDED_ARTIFACT_PREFIXES.stream().anyMatch(fileName::startsWith);
+    }
+
+    private static boolean matchesLauncherProvidedArtifact(Path path, String fileName, String artifactId) {
+        if (path.getParent() != null && path.getParent().getFileName() != null && artifactId.equals(path.getParent().getFileName().toString())) {
+            return true;
+        }
+        String prefix = artifactId + "-";
+        return fileName.startsWith(prefix)
+            && fileName.length() > prefix.length()
+            && Character.isDigit(fileName.charAt(prefix.length()));
     }
 
     private static void addPathIfDirectory(LinkedHashSet<URL> urls, Path path) throws IOException {

@@ -78,6 +78,52 @@ class PyronautTestMainTest {
     }
 
     @Test
+    void defaultsTestServerToRandomPortDuringTestExecution() throws Exception {
+        String property = "micronaut.server.port";
+        String previous = System.getProperty(property);
+        System.clearProperty(property);
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("0", propertyDuringBootstrap.get());
+            assertFalse(System.getProperties().containsKey(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
+    void preservesExplicitTestServerPortDuringTestExecution() throws Exception {
+        String property = "micronaut.server.port";
+        String previous = System.getProperty(property);
+        System.setProperty(property, "9090");
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("9090", propertyDuringBootstrap.get());
+            assertEquals("9090", System.getProperty(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
     void returnsFailureCodeForFailingClass() throws Exception {
         Path project = setupProject();
         PyronautTestMain command = newCommand();
@@ -346,8 +392,12 @@ class PyronautTestMainTest {
         Path viewsDir = project.resolve("views");
         Path testResourcesDir = project.resolve("src/integration/resources");
         Path testFixturesDir = project.resolve("src/integration/fixtures");
-        Path bundledPytestJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-pytest-fixture.jar");
-        Path bundledLogbackJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-logback-fixture.jar");
+        Path bundledPytestJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-pytest-1.0.jar");
+        Path bundledLogbackJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-logback-1.0.jar");
+        Path contextJar = project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-context/1.0/micronaut-context-1.0.jar");
+        Path bundledHttpNettyJar = project.resolve("__pyronaut__/launcher-provided/micronaut-http-netty-1.0.jar");
+        Path bundledNettyJar = project.resolve("__pyronaut__/launcher-provided/netty-transport-fixture.jar");
+        Path testHttpClientJar = project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-http-client/1.0/micronaut-http-client-1.0.jar");
         Files.createDirectories(classesDir);
         Files.createDirectories(configDir);
         Files.createDirectories(viewsDir);
@@ -356,10 +406,18 @@ class PyronautTestMainTest {
         Files.createDirectories(project.resolve("__pyronaut__"));
         Files.createDirectories(bundledPytestJar.getParent());
         Files.createDirectories(bundledLogbackJar.getParent());
+        Files.createDirectories(contextJar.getParent());
+        Files.createDirectories(bundledHttpNettyJar.getParent());
+        Files.createDirectories(bundledNettyJar.getParent());
+        Files.createDirectories(testHttpClientJar.getParent());
         Files.writeString(bundledPytestJar, "", StandardCharsets.UTF_8);
         Files.writeString(bundledLogbackJar, "", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n" + bundledPytestJar + "\n", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n" + bundledLogbackJar + "\n", StandardCharsets.UTF_8);
+        Files.writeString(contextJar, "", StandardCharsets.UTF_8);
+        Files.writeString(bundledHttpNettyJar, "", StandardCharsets.UTF_8);
+        Files.writeString(bundledNettyJar, "", StandardCharsets.UTF_8);
+        Files.writeString(testHttpClientJar, "", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n" + bundledPytestJar + "\n" + testHttpClientJar + "\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n" + bundledLogbackJar + "\n" + contextJar + "\n" + bundledHttpNettyJar + "\n" + bundledNettyJar + "\n", StandardCharsets.UTF_8);
         Files.writeString(project.resolve("__pyronaut__/resolved-build-dependencies"), "/tmp/build.jar\n", StandardCharsets.UTF_8);
 
         PyronautTestMain.ResolvedProjectLayout layout = PyronautTestMain.resolveProjectLayout(
@@ -378,8 +436,12 @@ class PyronautTestMainTest {
             assertTrue(urls.stream().anyMatch(url -> url.contains("views")));
             assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
             assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/fixtures")));
+            assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-context")));
             assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-pytest")));
             assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-logback")));
+            assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-http-netty")));
+            assertTrue(urls.stream().anyMatch(url -> url.contains("netty-transport")));
+            assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-http-client")));
         }
     }
 

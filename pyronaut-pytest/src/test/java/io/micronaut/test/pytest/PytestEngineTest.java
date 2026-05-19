@@ -15,15 +15,9 @@
  */
 package io.micronaut.test.pytest;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.testkit.engine.EngineTestKit;
-
-import java.nio.file.Paths;
-import java.util.Set;
-
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots;
 
 /**
  * Integration test for the PytestTestEngine.

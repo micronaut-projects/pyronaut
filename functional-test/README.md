@@ -27,7 +27,7 @@ The functional fixture can opt into native executables for the tools that curren
 ./gradlew :micronaut-functional-test:test -Pnative=true
 ```
 
-This mode builds and uses native executables for `pyronaut-install`, `pyronaut-validate-config`, and `pyronaut-processor`. `pyronaut-test-resources-server` and `pyronaut-test` continue to run through their JIT launchers because the native `pyronaut-run` and `pyronaut-test` executables are not currently expected to work.
+This mode builds and uses the combined `pyronaut-dev` native executable for `install`, `validate-config`, `process`, `test-resources-server`, and `test`.
 
 The default command does not build native images:
 

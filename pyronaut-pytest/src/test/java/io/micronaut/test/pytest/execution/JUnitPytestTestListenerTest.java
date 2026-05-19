@@ -1,20 +1,27 @@
 package io.micronaut.test.pytest.execution;
 
+import io.micronaut.test.pytest.PytestTestDescriptor;
 import io.micronaut.test.pytest.PythonAssertionError;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.platform.engine.EngineExecutionListener;
+import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.UniqueId;
+import org.junit.platform.engine.support.descriptor.MethodSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JUnitPytestTestListenerTest {
@@ -269,6 +276,109 @@ class JUnitPytestTestListenerTest {
         assertTrue(html.contains("Skipped: 1"));
         assertTrue(html.contains(">SKIPPED<"));
         assertFalse(html.contains("Failed: 1"));
+    }
+
+    @Test
+    void reportsJavaLifecycleExceptionAsFailedTestWithoutThrowingIntoPytest() throws Exception {
+        Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
+        Path eventsReport = reportsDir.resolve("events.ndjson");
+        Path htmlReport = reportsDir.resolve("index.html");
+
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of(),
+            htmlReport.toString(),
+            reportsDir.resolve(".pyronaut-last-nodeid.txt").toString(),
+            eventsReport.toString()
+        );
+
+        recordLifecycleFailure(
+            listener,
+            "tests/test_java_lifecycle.py::test_context",
+            "Micronaut beforeEach failed",
+            new IllegalStateException("java failure escaped through polyglot")
+        );
+        listener.afterTest(
+            "tests/test_java_lifecycle.py::test_context",
+            null,
+            TestExecutionResult.successful()
+        );
+        listener.onResult(TestExecutionResult.failed(new RuntimeException("session failed")));
+
+        String events = Files.readString(eventsReport, StandardCharsets.UTF_8);
+        assertTrue(events.contains("\"status\":\"FAILED\""));
+        assertTrue(events.contains("java failure escaped through polyglot"));
+        assertFalse(events.contains("ForeignException"));
+
+        String html = Files.readString(htmlReport, StandardCharsets.UTF_8);
+        assertTrue(html.contains("Failed: 1"));
+        assertTrue(html.contains("Micronaut beforeEach failed"));
+        assertTrue(html.contains("java failure escaped through polyglot"));
+        assertFalse(html.contains("ForeignException"));
+    }
+
+    @Test
+    void forwardsJavaLifecycleExceptionToJUnitAsTestFailure() throws Exception {
+        String testId = "tests/test_java_lifecycle.py::test_context";
+        PytestTestDescriptor descriptor = testDescriptor("tests/test_java_lifecycle.py", "test_context");
+        AtomicReference<TestExecutionResult> finishedResult = new AtomicReference<>();
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            new EngineExecutionListener() {
+                @Override
+                public void executionFinished(TestDescriptor testDescriptor, TestExecutionResult testExecutionResult) {
+                    finishedResult.set(testExecutionResult);
+                }
+            },
+            Set.of(descriptor)
+        );
+
+        recordLifecycleFailure(
+            listener,
+            testId,
+            "Micronaut beforeEach failed",
+            new IllegalStateException("java failure escaped through polyglot")
+        );
+        listener.afterTest(testId, null, TestExecutionResult.successful());
+
+        TestExecutionResult result = finishedResult.get();
+        assertEquals(TestExecutionResult.Status.FAILED, result.getStatus());
+        Throwable failure = result.getThrowable().orElseThrow();
+        assertInstanceOf(PythonAssertionError.class, failure);
+        assertTrue(failure.getMessage().contains("Micronaut beforeEach failed"));
+        assertTrue(failure.getMessage().contains("java failure escaped through polyglot"));
+        assertFalse(failure.toString().contains("ForeignException"));
+    }
+
+    private static PytestTestDescriptor testDescriptor(String source, String testName) {
+        Path filePath = Path.of(source);
+        return new PytestTestDescriptor(
+            UniqueId.forEngine("pytest-engine")
+                .append(PytestTestDescriptor.SEGMENT_SOURCE, source)
+                .append(PytestTestDescriptor.SEGMENT_TEST, testName),
+            source + "::" + testName,
+            MethodSource.from(source, testName),
+            filePath,
+            1,
+            1,
+            0,
+            0
+        );
+    }
+
+    private static void recordLifecycleFailure(
+        JUnitPytestTestListener listener,
+        String testId,
+        String phase,
+        Throwable throwable
+    ) throws Exception {
+        Method method = JUnitPytestTestListener.class.getDeclaredMethod(
+            "recordLifecycleFailure",
+            String.class,
+            String.class,
+            Throwable.class
+        );
+        method.setAccessible(true);
+        method.invoke(listener, testId, phase, throwable);
     }
 
     @Test

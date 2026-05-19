@@ -780,7 +780,14 @@ final class MavenClasspathResolver {
                 resolved.put("mavenCentral", newRemoteRepository("mavenCentral", "https://repo1.maven.org/maven2/", forceUpdates));
             } else if ("mavenlocal".equals(lower)) {
                 String localPath = resolveLocalMavenRepository().toUri().toString();
-                resolved.put("mavenLocal", newRemoteRepository("mavenLocal", localPath, forceUpdates));
+                RepositoryPolicy localPolicy = new RepositoryPolicy(true, RepositoryPolicy.UPDATE_POLICY_NEVER, RepositoryPolicy.CHECKSUM_POLICY_IGNORE);
+                resolved.put(
+                    "mavenLocal",
+                    new RemoteRepository.Builder("mavenLocal", "default", localPath)
+                        .setReleasePolicy(localPolicy)
+                        .setSnapshotPolicy(localPolicy)
+                        .build()
+                );
             } else {
                 String id = "repo-" + resolved.size();
                 String url = value.contains("://") ? value : Path.of(value).toAbsolutePath().toUri().toString();

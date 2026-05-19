@@ -163,6 +163,7 @@ public final class PyronautRunMain implements Callable<Integer> {
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         if (contextClassLoader != null) {
             micronaut.classLoader(contextClassLoader);
+            micronaut.beanDefinitionsProvider(new ContextClassLoaderBeanDefinitionsProvider());
         }
         List<Class<?>> applicationClasses = discoverApplicationClasses(resolvedClassesDir, contextClassLoader);
         if (!applicationClasses.isEmpty()) {

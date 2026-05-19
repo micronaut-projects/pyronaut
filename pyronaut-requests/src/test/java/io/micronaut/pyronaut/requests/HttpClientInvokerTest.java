@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class HttpClientInvokerTest {
 
@@ -35,5 +36,9 @@ class HttpClientInvokerTest {
         HttpClientInvoker.Result result = HttpClientInvoker.Result.success(response);
 
         assertArrayEquals("{\"status\":\"DOWN\"}".getBytes(StandardCharsets.UTF_8), result.body);
+        assertEquals(503, result.statusCode);
+        assertEquals("Service Unavailable", result.reason);
+        assertArrayEquals(new String[] {"Content-Type"}, result.headerNames);
+        assertArrayEquals(new String[] {"application/json"}, result.headerValues);
     }
 }

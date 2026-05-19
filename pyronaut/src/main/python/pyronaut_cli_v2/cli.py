@@ -39,6 +39,8 @@ COMMAND_TO_EXECUTABLE = {
     "validate-config": "pyronaut-validate-config",
     "test-resources-server": "pyronaut-test-resources-server",
 }
+DEV_NATIVE_EXECUTABLE = "pyronaut-dev"
+DEV_NATIVE_COMMANDS = {"install", "process", "run", "test", "validate-config", "test-resources-server"}
 
 JAVA_MAIN_BY_COMMAND = {
     "run": "io.micronaut.pyronaut.run.PyronautRunMain",
@@ -188,6 +190,8 @@ def run(
     forwarded_args = _remove_debug_vm(forwarded_args)
 
     if command not in SUPPORTED_COMMANDS:
+        if _looks_like_direct_source_invocation(argv):
+            return _delegate_direct_source(argv, execute, locate)
         print(f"Unknown command: {command}", file=sys.stderr)
         _print_usage(stream=sys.stderr)
         return USAGE_ERROR
@@ -337,6 +341,18 @@ def _delegate(
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    dev_command_line = _pyronaut_dev_native_command_line(command, args, resolver)
+    if dev_command_line is not None:
+        if _delegation_trace_enabled():
+            print(shlex.join(dev_command_line), file=sys.stderr)
+        try:
+            env = _build_non_test_resources_env(command, java_home_provider)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        env = _merge_env_overrides(env, env_overrides)
+        return runner(dev_command_line, env)
+
     if command == "test" and not debug_vm:
         try:
             executable_path = _resolve_delegate_executable_path(command, args, resolver)
@@ -387,6 +403,21 @@ def _delegate(
         return PRECONDITION_FAILED
     env = _merge_env_overrides(env, env_overrides)
     return runner(command_line, env)
+
+
+def _delegate_direct_source(
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+) -> int:
+    executable_path = _resolve_pyronaut_dev_native_executable(resolver)
+    if executable_path is None:
+        print("Missing native delegated executable: pyronaut-dev", file=sys.stderr)
+        return PRECONDITION_FAILED
+    command_line = [executable_path, *args]
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    return runner(command_line, None)
 
 
 def _delegate_via_java(
@@ -2586,6 +2617,46 @@ def _resolve_native_preferred_executable(
     return None
 
 
+def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None]) -> str | None:
+    env_key = DEV_NATIVE_EXECUTABLE.upper().replace("-", "_") + "_NATIVE_EXECUTABLE"
+    override = _read_env(env_key)
+    if override:
+        return override
+
+    bundled = _bundled_native_executable(DEV_NATIVE_EXECUTABLE)
+    if bundled is not None and bundled.exists():
+        return str(bundled)
+    return None
+
+
+def _pyronaut_dev_native_command_line(
+    command: str,
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+) -> list[str] | None:
+    if command not in DEV_NATIVE_COMMANDS:
+        return None
+    executable_path = _resolve_pyronaut_dev_native_executable(resolver)
+    if executable_path is None:
+        return None
+    return [executable_path, command, *args]
+
+
+def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
+    if not argv:
+        return False
+    direct_options = {"--test", "--port", "--property", "-D", "--config", "--setup"}
+    first = argv[0]
+    if first in direct_options or first.startswith("-D"):
+        return True
+    if first.endswith(".py"):
+        return True
+    try:
+        return Path(first).exists()
+    except OSError:
+        return False
+
+
 def _resolve_delegate_executable_path(
     command: str,
     args: Sequence[str],
@@ -2999,13 +3070,17 @@ class _OwnedTestResourcesSession:
         runner: RunnerWithEnv,
         resolver: Callable[[str], str | None],
     ) -> int:
-        executable_path = _resolve_native_preferred_executable(
-            COMMAND_TO_EXECUTABLE["test-resources-server"],
-            resolver,
-        )
-        if executable_path is None:
-            raise RuntimeError("Missing delegated executable: pyronaut-test-resources-server")
-        command_line = [executable_path, *args]
+        dev_command_line = _pyronaut_dev_native_command_line("test-resources-server", args, resolver)
+        if dev_command_line is not None:
+            command_line = dev_command_line
+        else:
+            executable_path = _resolve_native_preferred_executable(
+                COMMAND_TO_EXECUTABLE["test-resources-server"],
+                resolver,
+            )
+            if executable_path is None:
+                raise RuntimeError("Missing delegated executable: pyronaut-test-resources-server")
+            command_line = [executable_path, *args]
         if _delegation_trace_enabled():
             print(shlex.join(command_line), file=sys.stderr)
         removed_server_port = os.environ.pop("MICRONAUT_SERVER_PORT", None)

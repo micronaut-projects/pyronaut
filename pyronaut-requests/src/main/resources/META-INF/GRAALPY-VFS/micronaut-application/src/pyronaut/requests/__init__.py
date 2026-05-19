@@ -322,15 +322,25 @@ class Response:
     def __init__(self, request_url: str, resp, history=None, body=None):
         self._resp = resp
         self.url = request_url
-        self.status_code = resp.getStatus().getCode()
-        self.reason = str(resp.getStatus().getReason()) if hasattr(resp, 'getStatus') else ''
+        if hasattr(resp, 'statusCode'):
+            self.status_code = int(resp.statusCode)
+            self.reason = str(resp.reason or '')
+        else:
+            self.status_code = resp.getStatus().getCode()
+            self.reason = str(resp.getStatus().getReason()) if hasattr(resp, 'getStatus') else ''
         # Flatten multi-value headers by taking the first value
         hdrs = {}
-        amap = resp.getHeaders().asMap()
-        for k in amap.keySet().toArray():
-            values = amap.get(k)
-            if values is not None and not values.isEmpty():
-                hdrs[str(k)] = str(values.get(0))
+        if hasattr(resp, 'headerNames') and hasattr(resp, 'headerValues'):
+            names = resp.headerNames
+            values = resp.headerValues
+            for i in range(len(names)):
+                hdrs[str(names[i])] = str(values[i])
+        else:
+            amap = resp.getHeaders().asMap()
+            for k in amap.keySet().toArray():
+                values = amap.get(k)
+                if values is not None and not values.isEmpty():
+                    hdrs[str(k)] = str(values.get(0))
         self.headers = CaseInsensitiveDict(hdrs)
         if body is not None:
             self._content = _response_body_bytes(body)
@@ -367,7 +377,6 @@ class Response:
             return self._content.decode('utf-8', errors='replace')
 
     def json(self, type: Optional[type] = None):
-        mapper = _ensure_default_mapper()
         if type is None:
             # Always return native Python dict/list
             try:
@@ -388,6 +397,7 @@ class Response:
             import json as _py_json
             return _py_json.loads(self.text)
         else:
+            mapper = _ensure_default_mapper()
             # resolve Java class for type
             cls = type
             module = getattr(cls, '__module__', None) or ''
@@ -539,7 +549,6 @@ class Session:
             ClientRegistry.register(temp_client)
             client_to_use = temp_client
 
-        blocking = client_to_use.toBlocking()
         # Map any client exception that carries a response into a Response (requests doesn't raise by default)
         # proxies via env/system properties if enabled
         prev_props = None
@@ -556,20 +565,18 @@ class Session:
         # Use Java invoker to prevent ForeignException crossing into pytest
         result = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
         if getattr(result, 'success', False) or getattr(result, 'response', None) is not None:
-            resp = result.response
-            response = Response(full_url, resp, history=[], body=getattr(result, 'body', None))
+            response = Response(full_url, result, history=[], body=getattr(result, 'body', None))
             try:
-                setCookies = resp.getHeaders().getAll("Set-Cookie")
-                if setCookies is not None:
-                    arr = setCookies.toArray()
-                    for sc in arr:
-                        s = str(sc)
-                        if '=' in s:
-                            pair = s.split(';', 1)[0]
-                            if '=' in pair:
-                                ck, cv = pair.split('=', 1)
-                                if getattr(self, 'cookies', None) is not None:
-                                    self.cookies[ck] = cv
+                for name, sc in response.headers.items():
+                    if str(name).lower() != "set-cookie":
+                        continue
+                    s = str(sc)
+                    if '=' in s:
+                        pair = s.split(';', 1)[0]
+                        if '=' in pair:
+                            ck, cv = pair.split('=', 1)
+                            if getattr(self, 'cookies', None) is not None:
+                                self.cookies[ck] = cv
             except Exception:
                 pass
         else:
@@ -604,20 +611,18 @@ class Session:
                 req = req.header(_jstring(k), _jstring(v))
             r2 = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
             if getattr(r2, 'success', False) or getattr(r2, 'response', None) is not None:
-                resp2 = r2.response
-                response = Response(self._resolve_url(location), resp2, history=list(history), body=getattr(r2, 'body', None))
+                response = Response(self._resolve_url(location), r2, history=list(history), body=getattr(r2, 'body', None))
                 try:
-                    setCookies = resp2.getHeaders().getAll("Set-Cookie")
-                    if setCookies is not None:
-                        arr = setCookies.toArray()
-                        for sc in arr:
-                            s = str(sc)
-                            if '=' in s:
-                                pair = s.split(';', 1)[0]
-                                if '=' in pair:
-                                    ck, cv = pair.split('=', 1)
-                                    if getattr(self, 'cookies', None) is not None:
-                                        self.cookies[ck] = cv
+                    for name, sc in response.headers.items():
+                        if str(name).lower() != "set-cookie":
+                            continue
+                        s = str(sc)
+                        if '=' in s:
+                            pair = s.split(';', 1)[0]
+                            if '=' in pair:
+                                ck, cv = pair.split('=', 1)
+                                if getattr(self, 'cookies', None) is not None:
+                                    self.cookies[ck] = cv
                 except Exception:
                     pass
             else:
