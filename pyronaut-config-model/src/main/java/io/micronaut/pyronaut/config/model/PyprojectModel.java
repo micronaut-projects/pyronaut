@@ -58,6 +58,7 @@ public record PyprojectModel(Project project,
      * @param platformVersion Micronaut Platform BOM version
      * @param repositories configured repositories
      * @param dependencies dependency scopes
+     * @param run runtime execution settings
      * @param build build defaults/settings
      * @param processor processor execution settings
      * @param test test execution settings
@@ -71,6 +72,7 @@ public record PyprojectModel(Project project,
                            String platformVersion,
                            List<String> repositories,
                            Dependencies dependencies,
+                           Run run,
                            Build build,
                            Processor processor,
                            Test test,
@@ -95,6 +97,14 @@ public record PyprojectModel(Project project,
      * @param mode test execution mode (for example jit or native)
      */
     public record Test(String mode) {
+    }
+
+    /**
+     * tool.pyronaut.run table.
+     *
+     * @param bannerEnabled whether the Micronaut banner is printed when running the application
+     */
+    public record Run(Boolean bannerEnabled) {
     }
 
     /**

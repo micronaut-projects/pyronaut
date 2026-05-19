@@ -156,6 +156,11 @@ public final class PyprojectConfigSpec {
         "jit",
         List.of("jit", "native")
     );
+    public static final FieldSpec PYRONAUT_RUN_BANNER_ENABLED = bool(
+        "tool.pyronaut.run.banner-enabled",
+        "Whether the Micronaut banner is printed when running the application.",
+        true
+    );
     public static final SectionSpec PYRONAUT_SOURCES_SECTION = section(
         "tool.pyronaut.sources",
         true
@@ -704,6 +709,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_BUILD_MODE,
         PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_TEST_MODE,
+        PYRONAUT_RUN_BANNER_ENABLED,
         PYRONAUT_SOURCES_PYTHON,
         PYRONAUT_SOURCES_PYTHON_TEST,
         PYRONAUT_SOURCES_JAVA,
@@ -794,6 +800,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.processor", true),
         section("tool.pyronaut.test", true),
+        section("tool.pyronaut.run", true),
         PYRONAUT_SOURCES_SECTION,
         section("tool.pyronaut.toolchain", true),
         section("tool.pyronaut.build.metadata", true),

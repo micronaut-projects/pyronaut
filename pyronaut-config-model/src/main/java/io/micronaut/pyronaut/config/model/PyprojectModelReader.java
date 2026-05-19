@@ -94,6 +94,7 @@ public final class PyprojectModelReader {
                 build,
                 readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST)
             ),
+            new PyprojectModel.Run(readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_RUN_BANNER_ENABLED)),
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
             new PyprojectModel.Processor(resolveProcessorMode(parsed)),
             new PyprojectModel.Test(resolveTestMode(parsed)),

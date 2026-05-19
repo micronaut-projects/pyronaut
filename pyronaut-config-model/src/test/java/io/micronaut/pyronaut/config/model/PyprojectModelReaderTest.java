@@ -37,6 +37,7 @@ class PyprojectModelReaderTest {
         assertEquals(8, model.pyronaut().dependencies().runtime().size());
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());
+        assertEquals(true, model.pyronaut().run().bannerEnabled());
         assertEquals("jvm", model.pyronaut().build().mode());
         assertEquals("jit", model.pyronaut().processor().mode());
         assertEquals("src", model.pyronaut().sources().python());
@@ -105,6 +106,23 @@ class PyprojectModelReaderTest {
         assertEquals(List.of("test-assets", "test-fixtures"), model.pyronaut().sources().additionalTestResources());
         assertEquals(List.of("app-config", "assets", "views", "src/main/resources"), model.pyronaut().validation().run().resourcesDirs());
         assertEquals(List.of("app-config", "assets", "views", "src/main/resources", "test-config", "test-assets", "test-fixtures"), model.pyronaut().validation().test().resourcesDirs());
+    }
+
+    @Test
+    void parseRunConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+
+            [tool.pyronaut.run]
+            banner-enabled = false
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals(false, model.pyronaut().run().bannerEnabled());
     }
 
     @Test

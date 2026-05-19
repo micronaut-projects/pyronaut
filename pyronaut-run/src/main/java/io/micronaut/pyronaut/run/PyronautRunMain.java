@@ -108,9 +108,10 @@ public final class PyronautRunMain implements Callable<Integer> {
         initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
         Path root = projectDir.toAbsolutePath().normalize();
         ResolvedProjectLayout layout;
+        PyprojectModel model;
         try {
             applyTestResourcesProperties(System.getenv());
-            PyprojectModel model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
+            model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
             Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
             layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
         } catch (IllegalStateException e) {
@@ -128,7 +129,7 @@ public final class PyronautRunMain implements Callable<Integer> {
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Class<?> loadedClass = loadConfiguredMainClass(applicationClassLoader);
             contextBootstrapper.bootstrap(applicationClassLoader);
-            if (applicationStarter.start(loadedClass, layout.processedClassesRoot(), appArgs)) {
+            if (applicationStarter.start(loadedClass, layout.processedClassesRoot(), model.pyronaut().run().bannerEnabled(), appArgs)) {
                 blockUntilInterrupted();
             }
             return 0;
@@ -157,8 +158,10 @@ public final class PyronautRunMain implements Callable<Integer> {
 
     private static boolean startMicronautApplication(Class<?> loadedClass,
                                                      Path resolvedClassesDir,
+                                                     Boolean bannerEnabled,
                                                      List<String> appArgs) {
         Micronaut micronaut = Micronaut.build(appArgs.toArray(String[]::new));
+        micronaut.banner(!Boolean.FALSE.equals(bannerEnabled));
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         if (contextClassLoader != null) {
             micronaut.classLoader(contextClassLoader);
@@ -332,7 +335,7 @@ public final class PyronautRunMain implements Callable<Integer> {
 
     @FunctionalInterface
     interface ApplicationStarter {
-        boolean start(Class<?> loadedClass, Path resolvedClassesDir, List<String> appArgs) throws Exception;
+        boolean start(Class<?> loadedClass, Path resolvedClassesDir, Boolean bannerEnabled, List<String> appArgs) throws Exception;
     }
 
     record ResolvedProjectLayout(Path processedClassesRoot, URLClassLoader applicationClassLoader) {

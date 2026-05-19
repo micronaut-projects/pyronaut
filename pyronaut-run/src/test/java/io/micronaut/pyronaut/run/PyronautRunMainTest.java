@@ -42,7 +42,7 @@ class PyronautRunMainTest {
                 return Class.forName(className, true, classLoader);
             },
             classLoader -> { },
-            (loadedClass, resolvedClassesDir, appArgs) -> {
+            (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
                 resolvedMainClass.set(loadedClass);
                 return false;
             }
@@ -69,7 +69,7 @@ class PyronautRunMainTest {
                 new PyprojectModelReader(),
                 (className, classLoader) -> null,
                 classLoader -> { },
-                (loadedClass, resolvedClassesDir, appArgs) -> {
+                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
                     propertyDuringStart.set(System.getProperty(property));
                     return false;
                 }
@@ -117,7 +117,7 @@ class PyronautRunMainTest {
                 throw new ClassNotFoundException(className);
             },
             classLoader -> { },
-            (loadedClass, resolvedClassesDir, appArgs) -> {
+            (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
                 startedClassesDir.set(resolvedClassesDir);
                 return false;
             }
@@ -257,7 +257,7 @@ class PyronautRunMainTest {
             new PyprojectModelReader(),
             (className, classLoader) -> null,
             classLoader -> applicationClassLoader.set((java.net.URLClassLoader) classLoader),
-            (loadedClass, resolvedClassesDir, appArgs) -> {
+            (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
                 startedClassesDir.set(resolvedClassesDir);
                 return false;
             }
@@ -278,6 +278,47 @@ class PyronautRunMainTest {
             java.util.Arrays.stream(applicationClassLoader.get().getURLs())
                 .anyMatch(url -> url.toString().contains("assets"))
         );
+    }
+
+    @Test
+    void passesConfiguredBannerSettingToApplicationStarter() throws Exception {
+        Path project = tempDir.resolve("project-no-banner");
+        Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            """
+                [project]
+                name = "demo"
+                version = "1.0.0"
+
+                [tool.pyronaut]
+                repositories = ["mavenCentral"]
+
+                [tool.pyronaut.run]
+                banner-enabled = false
+
+                [tool.pyronaut.dependencies]
+                runtime = []
+                build = []
+                test = []
+                """,
+            StandardCharsets.UTF_8
+        );
+
+        AtomicReference<Boolean> bannerEnabled = new AtomicReference<>();
+        PyronautRunMain runMain = new PyronautRunMain(
+            new PyprojectModelReader(),
+            (className, classLoader) -> null,
+            classLoader -> { },
+            (loadedClass, resolvedClassesDir, configuredBannerEnabled, appArgs) -> {
+                bannerEnabled.set(configuredBannerEnabled);
+                return false;
+            }
+        );
+        runMain.projectDir = project;
+
+        assertEquals(0, runMain.call());
+        assertEquals(false, bannerEnabled.get());
     }
 
     private static void writeMinimalPyproject(Path project) throws Exception {
