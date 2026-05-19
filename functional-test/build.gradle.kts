@@ -50,6 +50,7 @@ val useNativeExecutables = providers
     .gradleProperty("native")
     .map(String::toBoolean)
     .orElse(false)
+val graalVmDevBuildTag = providers.gradleProperty("pyronautGraalVmDevTag")
 val nativeExecutableSuffix = if (System.getProperty("os.name").lowercase().contains("windows")) ".exe" else ""
 
 val pyronautDevNativeExecutable = project(":micronaut-pyronaut-dev")
@@ -443,10 +444,35 @@ fun pyronautTestExecutableFile(): java.io.File {
 
 fun pyronautCommand(command: String, executable: java.io.File, vararg args: String): List<String> {
     return if (useNativeExecutables.get()) {
-        listOf(executable.absolutePath, command, *args)
+        listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + listOf(command, *args)
     } else {
         listOf(executable.absolutePath, *args)
     }
+}
+
+fun nativeJavaHomeJvmArgs(): List<String> {
+    if (!useNativeExecutables.get()) {
+        return emptyList()
+    }
+    return listOf("-Djava.home=${resolveProvisionedGraalVmDevBuildHome().absolutePath}")
+}
+
+fun resolveProvisionedGraalVmDevBuildHome(): java.io.File {
+    val configuredTag = graalVmDevBuildTag.orNull?.trim()
+        ?: throw GradleException("Native functional-test requires pyronautGraalVmDevTag to resolve the matching java.home")
+    val tag = configuredTag.removePrefix("jdk-")
+    val tagDir = rootProject.layout.projectDirectory
+        .dir(".gradle/pyronaut/graalvm-dev-builds")
+        .asFile
+        .resolve(tag)
+    if (!tagDir.isDirectory) {
+        throw GradleException("Missing provisioned GraalVM dev build for '$configuredTag': ${tagDir.absolutePath}")
+    }
+    return tagDir.walkTopDown()
+        .filter { candidate -> candidate.isDirectory && candidate.resolve("bin/java").isFile }
+        .sortedBy { candidate -> candidate.absolutePath }
+        .firstOrNull()
+        ?: throw GradleException("Unable to find java.home in provisioned GraalVM dev build: ${tagDir.absolutePath}")
 }
 
 fun Project.fixturePublishedArtifact(projectPath: String): FixturePublishedArtifact {
@@ -1089,6 +1115,7 @@ fun buildPyronautTestCommand(testResourcesEnv: Map<String, String> = emptyMap())
     if (useNativeExecutables.get()) {
         return listOf(
             pyronautTestExecutableFile().absolutePath,
+            *nativeJavaHomeJvmArgs().toTypedArray(),
             "-Djava.class.path=${classpathEntries.joinToString(separator = java.io.File.pathSeparator)}",
             *testResourcesJvmArgs(testResourcesEnv).toTypedArray(),
             "test",
