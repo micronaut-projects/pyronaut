@@ -31,6 +31,13 @@ class PyronautTestMainTest {
     }
 
     @Test
+    void launcherRuntimeCanResolveContextPythonHttpHelpers() {
+        assertDoesNotThrow(() ->
+            Class.forName("io.micronaut.http.HttpResponse", false, PyronautTestMain.class.getClassLoader())
+        );
+    }
+
+    @Test
     void executesPassingSelectedClass() throws Exception {
         Path project = setupProject();
         PyronautTestMain command = newCommand();

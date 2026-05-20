@@ -32,6 +32,7 @@ dependencies {
     implementation(mn.micronaut.context.python)
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
+    runtimeOnly(mn.micronaut.http)
     runtimeOnly(project(":micronaut-pyronaut-pytest"))
     runtimeOnly(project(":micronaut-pyronaut-logback"))
     runtimeOnly("io.projectreactor:reactor-core")
