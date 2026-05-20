@@ -31,5 +31,5 @@ class ForecastController:
 
     @Produces("application/json")
     @Get("/")
-    def forecast(self) -> object:
+    def forecast(self) -> Forecast:
         return self.forecastService.forecast()
