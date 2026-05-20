@@ -338,6 +338,44 @@ class PyronautTestMainTest {
         }
     }
 
+    @Test
+    void resolveProjectLayoutSkipsDependenciesAlreadyVisibleToParentClassLoader() throws Exception {
+        Path project = tempDir.resolve("project-layout-deduplicated");
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        Path configDir = project.resolve("config");
+        Files.createDirectories(classesDir);
+        Files.createDirectories(configDir);
+        Path duplicateJar = project.resolve("duplicate.jar");
+        Path uniqueJar = project.resolve("unique.jar");
+        Files.writeString(duplicateJar, "", StandardCharsets.UTF_8);
+        Files.writeString(uniqueJar, "", StandardCharsets.UTF_8);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
+            duplicateJar.toAbsolutePath().normalize() + "\n" + uniqueJar.toAbsolutePath().normalize() + "\n",
+            StandardCharsets.UTF_8
+        );
+
+        String previousClasspath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("java.class.path", duplicateJar.toAbsolutePath().normalize().toString());
+            PyronautTestMain.ResolvedProjectLayout layout = PyronautTestMain.resolveProjectLayout(
+                project,
+                Path.of("__pyronaut__/classes"),
+                Path.of("__pyronaut__/test-classes"),
+                configDir,
+                project.resolve("tests-config")
+            );
+
+            try (var classLoader = layout.applicationClassLoader()) {
+                List<String> urls = java.util.Arrays.stream(classLoader.getURLs()).map(Object::toString).toList();
+                assertFalse(urls.stream().anyMatch(url -> url.contains("duplicate.jar")));
+                assertTrue(urls.stream().anyMatch(url -> url.contains("unique.jar")));
+            }
+        } finally {
+            restoreProperty("java.class.path", previousClasspath);
+        }
+    }
+
     private void compileGeneratedTestClass(Path outputDir) throws Exception {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {

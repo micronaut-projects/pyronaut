@@ -290,9 +290,10 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
 
         LinkedHashSet<URL> urls = new LinkedHashSet<>();
-        addManifestEntries(urls, pyronautDir.resolve("resolved-test-dependencies"));
-        addManifestEntries(urls, pyronautDir.resolve("resolved-runtime-dependencies"));
-        addManifestEntries(urls, pyronautDir.resolve("resolved-build-dependencies"));
+        ParentClasspath parentClasspath = parentClasspathEntries();
+        addManifestEntries(urls, pyronautDir.resolve("resolved-test-dependencies"), parentClasspath);
+        addManifestEntries(urls, pyronautDir.resolve("resolved-runtime-dependencies"), parentClasspath);
+        addManifestEntries(urls, pyronautDir.resolve("resolved-build-dependencies"), parentClasspath);
         if (hasTestClassesDir) {
             addPathIfDirectory(urls, resolvedTestClassesDir);
         } else {
@@ -339,7 +340,7 @@ public final class PyronautTestMain implements Callable<Integer> {
             .toList();
     }
 
-    private static void addManifestEntries(LinkedHashSet<URL> urls, Path manifest) throws IOException {
+    private static void addManifestEntries(LinkedHashSet<URL> urls, Path manifest, ParentClasspath parentClasspath) throws IOException {
         if (!Files.exists(manifest)) {
             return;
         }
@@ -352,7 +353,46 @@ public final class PyronautTestMain implements Callable<Integer> {
             if (isLauncherProvidedArtifact(path)) {
                 continue;
             }
+            if (parentClasspath.contains(path)) {
+                continue;
+            }
             urls.add(path.toUri().toURL());
+        }
+    }
+
+    static ParentClasspath parentClasspathEntries() {
+        LinkedHashSet<Path> entries = new LinkedHashSet<>();
+        addClasspathPropertyEntries(entries, System.getProperty("java.class.path", ""));
+        ClassLoader classLoader = resolveApplicationClassLoader();
+        while (classLoader instanceof URLClassLoader urlClassLoader) {
+            for (URL url : urlClassLoader.getURLs()) {
+                if ("file".equals(url.getProtocol())) {
+                    try {
+                        entries.add(Path.of(url.toURI()).toAbsolutePath().normalize());
+                    } catch (Exception ignored) {
+                        // Ignore malformed classpath URLs; they cannot be compared safely.
+                    }
+                }
+            }
+            classLoader = classLoader.getParent();
+        }
+        LinkedHashSet<String> fileNames = new LinkedHashSet<>();
+        for (Path entry : entries) {
+            if (entry.getFileName() != null) {
+                fileNames.add(entry.getFileName().toString());
+            }
+        }
+        return new ParentClasspath(entries, fileNames);
+    }
+
+    private static void addClasspathPropertyEntries(LinkedHashSet<Path> entries, String classpath) {
+        if (classpath == null || classpath.isBlank()) {
+            return;
+        }
+        for (String entry : classpath.split(java.io.File.pathSeparator)) {
+            if (!entry.isBlank()) {
+                entries.add(Path.of(entry).toAbsolutePath().normalize());
+            }
         }
     }
 
@@ -527,6 +567,15 @@ public final class PyronautTestMain implements Callable<Integer> {
     }
 
     record ResolvedProjectLayout(Path processedClassesRoot, URLClassLoader applicationClassLoader) {
+    }
+
+    record ParentClasspath(LinkedHashSet<Path> paths, LinkedHashSet<String> fileNames) {
+        boolean contains(Path path) {
+            if (paths.contains(path)) {
+                return true;
+            }
+            return path.getFileName() != null && fileNames.contains(path.getFileName().toString());
+        }
     }
 
     private record TestResourcesProperty(String environmentVariable, String systemProperty) {

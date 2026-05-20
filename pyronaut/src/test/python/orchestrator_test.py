@@ -101,7 +101,7 @@ class OrchestratorTest(unittest.TestCase):
         *,
         resources_dir: str = "config",
         test_resources_dir: str = "tests-config",
-        expect_project_jars: bool = True,
+        expect_project_jars: bool = False,
     ) -> None:
         self.assertTrue(command_line[0].endswith("/bin/java") or command_line[0] == "java")
         cp_index = command_line.index("-cp")
@@ -1070,7 +1070,7 @@ additional-resources = ["views"]
             self.assertNotIn(str((project_dir / "views").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
 
-    def test_test_delegate_classpath_leaves_application_resources_to_test_launcher(self):
+    def test_test_delegate_classpath_leaves_application_dependencies_and_resources_to_test_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             cache_dir = project_dir / "__pyronaut__"
@@ -1118,9 +1118,9 @@ additional-test-resources = ["test-fixtures"]
             classpath = cli._build_delegate_classpath("test", project_dir.resolve(), self._resolver())  # noqa: SLF001
             entries = classpath.split(os.pathsep)
             self.assertIn("/tmp/pyronaut-test.jar", entries)
-            self.assertIn("/tmp/test.jar", entries)
-            self.assertIn("/tmp/runtime.jar", entries)
-            self.assertIn("/tmp/build.jar", entries)
+            self.assertNotIn("/tmp/test.jar", entries)
+            self.assertNotIn("/tmp/runtime.jar", entries)
+            self.assertNotIn("/tmp/build.jar", entries)
             self.assertNotIn(bundled_pytest_entry, entries)
             self.assertNotIn(bundled_logback_entry, entries)
             self._assert_no_classpath_artifact_prefix(entries, "micronaut-pyronaut-pytest-")

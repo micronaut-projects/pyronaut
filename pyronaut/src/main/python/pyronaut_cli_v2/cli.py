@@ -485,6 +485,8 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
         entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
+    elif command == "test":
+        entries = []
     else:
         entries = [
             entry
