@@ -38,6 +38,13 @@ class PyronautTestMainTest {
     }
 
     @Test
+    void launcherRuntimeCanResolveReactorMicrometerContextAccessor() {
+        assertDoesNotThrow(() ->
+            Class.forName("reactor.util.context.ReactorContextAccessor", false, PyronautTestMain.class.getClassLoader())
+        );
+    }
+
+    @Test
     void executesPassingSelectedClass() throws Exception {
         Path project = setupProject();
         PyronautTestMain command = newCommand();

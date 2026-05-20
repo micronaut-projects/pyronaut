@@ -8,6 +8,8 @@ plugins {
     id("org.graalvm.buildtools.native")
 }
 
+val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.platform.version")
+
 val micronautCoreNativeImageExclusion = providers.provider {
     val micronautCoreJar = configurations.runtimeClasspath.get().resolvedConfiguration.resolvedArtifacts
         .firstOrNull { artifact ->
@@ -32,9 +34,11 @@ dependencies {
     implementation(mn.micronaut.context.python)
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
+    runtimeOnly(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
     runtimeOnly(mn.micronaut.http)
     runtimeOnly(project(":micronaut-pyronaut-pytest"))
     runtimeOnly(project(":micronaut-pyronaut-logback"))
+    runtimeOnly("io.micrometer:context-propagation")
     runtimeOnly("io.projectreactor:reactor-core")
     runtimeOnly(mnTest.junit.jupiter.engine)
     runtimeOnly(mnTest.micronaut.test.junit5)

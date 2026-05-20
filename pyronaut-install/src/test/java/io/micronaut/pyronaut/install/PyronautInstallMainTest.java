@@ -225,6 +225,56 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void resolvesVersionlessRuntimeDependencyManagedByPlatform() throws Exception {
+        Path repository = tempDir.resolve("repo-platform-managed-runtime");
+        writeArtifact(repository, "io.micrometer", "context-propagation", "1.2.1");
+        writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "1.0.0",
+            List.of(new ManagedDependency("io.micrometer", "context-propagation", "1.2.1"))
+        );
+
+        Path project = tempDir.resolve("project-platform-managed-runtime");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "1.0.0"
+
+            [tool.pyronaut.platform]
+            version = "1.0.0"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.micrometer:context-propagation"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("context-propagation-1.2.1.jar")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("context-propagation-1.2.1.jar")));
+    }
+
+    @Test
     void resolvesVersionlessPyronautModulesFromPyronautBom() throws Exception {
         Path repository = tempDir.resolve("repo-pyronaut-bom");
         writeArtifact(repository, "io.micronaut.pyronaut", "micronaut-pyronaut-logback", "0.0.99");
