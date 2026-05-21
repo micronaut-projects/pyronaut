@@ -72,6 +72,7 @@ public final class PyronautFeatureCatalog {
             .description("Adds the Pyronaut pytest engine and Micronaut test support.")
             .category("Testing")
             .dependency(Scope.TEST, "io.micronaut.pyronaut:micronaut-pyronaut-pytest")
+            .dependency(Scope.TEST, "io.micronaut.pyronaut:micronaut-pyronaut-requests")
             .dependency(Scope.TEST, "io.micronaut.test:micronaut-test-junit5")
             .testConfiguration("micronaut.server.port", -1)
             .build());
@@ -86,6 +87,14 @@ public final class PyronautFeatureCatalog {
             "spock",
             "kotest",
             "graalvm",
+            "jackson-databind",
+            "jackson-xml",
+            "data-jpa",
+            "hibernate-jpa",
+            "hibernate-jpamodelgen",
+            "data-hibernate-reactive",
+            "hibernate-reactive-jpa",
+            "hibernate-validator",
             "docker",
             "github-workflow-java-ci",
             "kubernetes",

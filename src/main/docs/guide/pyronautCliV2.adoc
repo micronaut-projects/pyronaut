@@ -90,7 +90,7 @@ Common options:
 - `--inplace`: write generated files directly into the selected output directory.
 - `--package <module>`: Python package/module name. Defaults to a normalized form of `NAME`.
 - `--version <version>`: generated `[project].version` value. Defaults to `0.1.0`.
-- `--micronaut-version <version>`: generated `tool.pyronaut.version` value.
+- `--micronaut-version <version>`: generated `tool.pyronaut.platform.version` value.
 - `--repository <repo>`: override generated Maven repositories. Values may be repository aliases such as `mavenCentral` or `mavenLocal`, URLs, or local paths. The option accepts comma-separated values and may be repeated.
 - `-h`, `--help`: print command help.
 
@@ -99,7 +99,7 @@ Feature selection:
 - Run `pyronaut create --list-features` to see the supported feature names.
 - Pass features as a comma-separated list, for example `--features data-jdbc,mysql,json-schema,test-resources`.
 - Pyronaut defaults already include the Netty HTTP server, Micronaut Serialization with Jackson, Logback integration, and pytest support.
-- Unsupported JVM-language, build-tool, CI/IaC, generated-source, and JVM app-type starter features are hidden from `--list-features` and fail early if explicitly requested.
+- Unsupported JVM-language, build-tool, CI/IaC, generated-source, JVM app-type, and Java reflection-dependent starter features are hidden from `--list-features` and fail early if explicitly requested. Reflection-dependent examples include `jackson-databind`, `data-jpa`, `hibernate-jpa`, and `hibernate-validator`.
 
 Examples:
 

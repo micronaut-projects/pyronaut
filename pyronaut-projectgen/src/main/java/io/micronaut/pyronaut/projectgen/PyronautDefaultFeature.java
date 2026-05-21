@@ -34,6 +34,7 @@ class PyronautDefaultFeature implements DefaultFeature {
     private final PyProjectToml pyProjectToml;
     private final Banner banner;
     private final PyronautGeneratedFiles generatedFiles;
+    private final PyronautAgentSkills agentSkills;
     private final PyronautConfigurationToml configurationToml;
     private final PyronautBaseConfiguration baseConfiguration;
     private final PyronautOpenRewriteBridge openRewriteBridge;
@@ -44,6 +45,7 @@ class PyronautDefaultFeature implements DefaultFeature {
     PyronautDefaultFeature(PyProjectToml pyProjectToml,
                            Banner banner,
                            PyronautGeneratedFiles generatedFiles,
+                           PyronautAgentSkills agentSkills,
                            PyronautConfigurationToml configurationToml,
                            PyronautBaseConfiguration baseConfiguration,
                            PyronautOpenRewriteBridge openRewriteBridge,
@@ -53,6 +55,7 @@ class PyronautDefaultFeature implements DefaultFeature {
         this.pyProjectToml = pyProjectToml;
         this.banner = banner;
         this.generatedFiles = generatedFiles;
+        this.agentSkills = agentSkills;
         this.configurationToml = configurationToml;
         this.baseConfiguration = baseConfiguration;
         this.openRewriteBridge = openRewriteBridge;
@@ -72,6 +75,7 @@ class PyronautDefaultFeature implements DefaultFeature {
         featureContext.addFeatureIfNotPresent(PyProjectToml.class, pyProjectToml);
         featureContext.addFeatureIfNotPresent(Banner.class, banner);
         featureContext.addFeatureIfNotPresent(PyronautGeneratedFiles.class, generatedFiles);
+        featureContext.addFeatureIfNotPresent(PyronautAgentSkills.class, agentSkills);
         featureContext.addFeatureIfNotPresent(PyronautConfigurationToml.class, configurationToml);
         featureContext.addFeatureIfNotPresent(PyronautBaseConfiguration.class, baseConfiguration);
         featureContext.addFeatureIfNotPresent(PyronautOpenRewriteBridge.class, openRewriteBridge);

@@ -51,6 +51,9 @@ class PyronautCreateAppMainTest {
         assertTrue(Files.exists(project.resolve("pyproject.toml")));
         assertTrue(Files.exists(project.resolve("src/demo/controller.py")));
         assertTrue(Files.exists(project.resolve("tests/test_demo.py")));
+        assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-project/SKILL.md")));
+        assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-cli/SKILL.md")));
+        assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-coding/SKILL.md")));
     }
 
     @Test
@@ -126,6 +129,14 @@ class PyronautCreateAppMainTest {
     @Test
     void unsupportedFeatureFailsWithClearMessage() {
         Execution execution = execute("demo", "--output", tempDir.toString(), "--features", "gradle");
+
+        assertEquals(CommandLine.ExitCode.USAGE, execution.exitCode());
+        assertTrue(execution.err().contains("not supported for Pyronaut/Python projects"));
+    }
+
+    @Test
+    void reflectionDependentFeatureFailsWithClearMessage() {
+        Execution execution = execute("demo", "--output", tempDir.toString(), "--features", "jackson-databind");
 
         assertEquals(CommandLine.ExitCode.USAGE, execution.exitCode());
         assertTrue(execution.err().contains("not supported for Pyronaut/Python projects"));

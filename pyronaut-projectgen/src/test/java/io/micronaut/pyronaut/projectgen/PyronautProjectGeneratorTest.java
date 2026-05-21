@@ -25,6 +25,9 @@ class PyronautProjectGeneratorTest {
         Map<String, String> project = generator.generate(defaultOptions(List.of()));
 
         assertEquals(Set.of(
+            ".agents/skills/pyronaut-cli/SKILL.md",
+            ".agents/skills/pyronaut-coding/SKILL.md",
+            ".agents/skills/pyronaut-project/SKILL.md",
             ".gitignore",
             "config/application.toml",
             "config/micronaut-banner.txt",
@@ -40,6 +43,9 @@ class PyronautProjectGeneratorTest {
         assertTrue(project.get("src/main.py").contains("from demo.controller import MyController"));
         assertTrue(project.get("tests/test_demo.py").contains("micronaut_test_fixture"));
         assertTrue(project.get("config/application.toml").contains("name = 'demo'"));
+        assertTrue(project.get(".agents/skills/pyronaut-project/SKILL.md").contains("name: pyronaut-project"));
+        assertTrue(project.get(".agents/skills/pyronaut-cli/SKILL.md").contains("pyronaut validate-config --scenario run|test|production"));
+        assertTrue(project.get(".agents/skills/pyronaut-coding/SKILL.md").contains("do not use `micronaut-jackson-databind`, `hibernate-jpa`, `data-jpa`, or `hibernate-validator`"));
     }
 
     @Test
@@ -47,10 +53,9 @@ class PyronautProjectGeneratorTest {
         Map<String, String> project = generator.generate(defaultOptions(List.of()));
         String pyproject = project.get("pyproject.toml");
 
-        assertTrue(pyproject.contains("[tool.pyronaut.core]"));
-        assertTrue(pyproject.contains("version = '" + PyronautManagedVersions.micronautCoreVersion() + "'"));
-        assertTrue(pyproject.contains("[tool.pyronaut.platform]"));
-        assertTrue(pyproject.contains("version = '" + PyronautManagedVersions.micronautPlatformVersion() + "'"));
+        assertTrue(pyproject.contains("[tool.pyronaut]"));
+        assertTrue(pyproject.contains("core.version = '" + PyronautManagedVersions.micronautCoreVersion() + "'"));
+        assertTrue(pyproject.contains("platform.version = '" + PyronautManagedVersions.micronautPlatformVersion() + "'"));
         assertFalse(pyproject.contains("[tool.pyronaut]\nversion = "));
     }
 
@@ -73,6 +78,7 @@ class PyronautProjectGeneratorTest {
         assertTrue(pyproject.contains("'io.micronaut.jsonschema:micronaut-json-schema-processor'"));
         assertTrue(pyproject.contains("test = ["));
         assertTrue(pyproject.contains("'io.micronaut.pyronaut:micronaut-pyronaut-pytest'"));
+        assertTrue(pyproject.contains("'io.micronaut.pyronaut:micronaut-pyronaut-requests'"));
         assertTrue(pyproject.contains("[tool.pyronaut.test-resources]"));
         assertTrue(pyproject.contains("enabled = true"));
     }
@@ -136,6 +142,16 @@ class PyronautProjectGeneratorTest {
     }
 
     @Test
+    void reflectionDependentFeaturesFailEarly(PreviewGenerator generator) {
+        for (String feature : List.of("jackson-databind", "data-jpa", "hibernate-jpa", "hibernate-validator")) {
+            IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> generator.generate(defaultOptions(List.of(feature))));
+
+            assertTrue(exception.getMessage().contains("not supported for Pyronaut/Python projects"));
+        }
+    }
+
+    @Test
     void visibleAvailableFeaturesDoNotExposeUnsupportedFeatures(PyronautAvailableFeatures availableFeatures) {
         List<String> visible = availableFeatures.getFeatures()
             .map(feature -> feature.getName())
@@ -146,6 +162,10 @@ class PyronautProjectGeneratorTest {
         assertFalse(visible.contains("netty-server"));
         assertFalse(visible.contains("gradle"));
         assertFalse(visible.contains("java"));
+        assertFalse(visible.contains("jackson-databind"));
+        assertFalse(visible.contains("data-jpa"));
+        assertFalse(visible.contains("hibernate-jpa"));
+        assertFalse(visible.contains("hibernate-validator"));
     }
 
     private static Options defaultOptions(List<String> features) {

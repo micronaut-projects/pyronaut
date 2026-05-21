@@ -52,7 +52,7 @@ Sets the generated Python package/module name. If omitted, Pyronaut derives a va
 Sets the generated `[project].version` value in `pyproject.toml`. The default is `0.1.0`.
 
 `--micronaut-version <version>`::
-Sets the generated `tool.pyronaut.version` value. This is useful when generating against a local or snapshot Micronaut/Pyronaut platform.
+Sets the generated `tool.pyronaut.platform.version` value. This is useful when generating against a local or snapshot Micronaut/Pyronaut platform.
 
 `--repository <repo>`::
 Overrides generated Maven repositories. Values may be repository aliases such as `mavenCentral` or `mavenLocal`, repository URLs, or local paths. Values are comma-separated, and the option may be repeated.
@@ -109,9 +109,12 @@ The generated project includes:
 * `src/<module>/__init__.py`
 * `tests/test_<module>.py`
 * `tests-config/application-test.toml`
+* `.agents/skills/pyronaut-project/SKILL.md`
+* `.agents/skills/pyronaut-cli/SKILL.md`
+* `.agents/skills/pyronaut-coding/SKILL.md`
 * `.gitignore`
 
-Python, TOML configuration, and pytest are fixed defaults. There are no language, build tool, or Java test framework switches for Pyronaut projects.
+Python, TOML configuration, and pytest are fixed defaults. The generated agent skills document the project layout, Pyronaut CLI workflow, and Pyronaut coding patterns for local coding agents. There are no language, build tool, or Java test framework switches for Pyronaut projects.
 
 Pyronaut reuses compatible Micronaut ProjectGen starter features where their dependency and configuration behavior applies to Python projects. Upstream features often describe those changes as OpenRewrite recipes; Pyronaut translates compatible recipe contributions into `pyproject.toml` dependency arrays and TOML application configuration instead of generating Gradle or Maven build files.
 
@@ -131,4 +134,4 @@ Compatible starter-style features keep their familiar names where the dependency
 
 Pyronaut keeps local feature implementations only for Pyronaut-specific runtime, test, logging, and pyproject-only behavior. For example, `data-jdbc`, `mysql`, and `json-schema` are supplied by `micronaut-projectgen-micronaut`, while Pyronaut maps their recipe dependencies and configuration into the generated Python project.
 
-Build-tool, JVM-language, generated-source, CI/IaC, and JVM app-type features are hidden for Pyronaut. If an unsupported feature is explicitly requested, generation fails before writing the project with a clear unsupported-feature message.
+Build-tool, JVM-language, generated-source, CI/IaC, JVM app-type, and Java reflection-dependent features are hidden for Pyronaut. Reflection-dependent examples include `jackson-databind`, `data-jpa`, `hibernate-jpa`, and `hibernate-validator`. If an unsupported feature is explicitly requested, generation fails before writing the project with a clear unsupported-feature message.
