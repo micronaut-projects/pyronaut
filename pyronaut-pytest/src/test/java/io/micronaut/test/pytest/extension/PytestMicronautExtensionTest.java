@@ -1,7 +1,9 @@
 package io.micronaut.test.pytest.extension;
 
+import io.micronaut.context.python.ContextHolder;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.TransactionMode;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -10,6 +12,12 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PytestMicronautExtensionTest {
+
+    @AfterEach
+    void cleanupContextHolder() {
+        ContextHolder.setReuseContext(false);
+        ContextHolder.resetContext();
+    }
 
     @Test
     void createMicronautTestValueBuildsInteropSafeDefaults() {
@@ -35,6 +43,43 @@ class PytestMicronautExtensionTest {
         assertTrue(value.isResolveParameters());
         assertSame(TransactionMode.SEPARATE_TRANSACTIONS, value.transactionMode());
         assertTrue(value.deduceEnvironment());
-        assertArrayEquals(new Class<?>[0], value.contextBuilder());
+        assertArrayEquals(new Class<?>[] { PytestMicronautExtension.PytestApplicationContextBuilder.class }, value.contextBuilder());
+    }
+
+    @Test
+    void applicationContextClassLoaderPrefersGraalPyContextClassLoader() {
+        ClassLoader threadClassLoader = new ClassLoader() {
+        };
+        ClassLoader applicationClassLoader = new ClassLoader() {
+        };
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        try {
+            ContextHolder.setReuseContext(false);
+            ContextHolder.resetContext();
+            thread.setContextClassLoader(threadClassLoader);
+            ContextHolder.setContext(null, applicationClassLoader);
+
+            assertSame(applicationClassLoader, PytestMicronautExtension.resolveApplicationClassLoader());
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
+    @Test
+    void applicationContextClassLoaderFallsBackToThreadContextClassLoader() {
+        ClassLoader threadClassLoader = new ClassLoader() {
+        };
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        try {
+            ContextHolder.setReuseContext(false);
+            ContextHolder.resetContext();
+            thread.setContextClassLoader(threadClassLoader);
+
+            assertSame(threadClassLoader, PytestMicronautExtension.resolveApplicationClassLoader());
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
     }
 }

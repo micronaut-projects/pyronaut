@@ -17,9 +17,12 @@ package io.micronaut.test.pytest.extension;
 
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.ApplicationContextBuilder;
+import io.micronaut.context.DefaultApplicationContextBuilder;
 import io.micronaut.context.annotation.Property;
+import io.micronaut.context.python.ContextHolder;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.convert.TypeConverterRegistrar;
+import io.micronaut.core.io.scan.ClassPathResourceLoader;
 import io.micronaut.core.io.service.SoftServiceLoader;
 import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.annotation.MicronautTestValue;
@@ -123,7 +126,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     ) {
         @SuppressWarnings("unchecked")
         Class<? extends ApplicationContextBuilder>[] contextBuilders =
-            (Class<? extends ApplicationContextBuilder>[]) new Class<?>[0];
+            (Class<? extends ApplicationContextBuilder>[]) new Class<?>[] { PytestApplicationContextBuilder.class };
         return new MicronautTestValue(
             void.class,
             environments == null ? new String[0] : environments,
@@ -179,12 +182,24 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
 
     @Override
     protected void postProcessBuilder(ApplicationContextBuilder builder) {
-        // propagate context classloader
-        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+        configureApplicationClassLoader(builder);
+    }
+
+    static void configureApplicationClassLoader(ApplicationContextBuilder builder) {
+        ClassLoader contextClassLoader = resolveApplicationClassLoader();
         if (contextClassLoader != null) {
             builder.classLoader(contextClassLoader);
+            builder.resourceResolver(ClassPathResourceLoader.defaultLoader(contextClassLoader));
             registerProjectTypeConverterRegistrars(builder, contextClassLoader);
         }
+    }
+
+    static ClassLoader resolveApplicationClassLoader() {
+        ClassLoader contextClassLoader = ContextHolder.getContextClassLoader();
+        if (contextClassLoader != null) {
+            return contextClassLoader;
+        }
+        return Thread.currentThread().getContextClassLoader();
     }
 
     static void registerProjectTypeConverterRegistrars(ApplicationContextBuilder builder, ClassLoader classLoader) {
@@ -219,6 +234,16 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
 
     public ApplicationContext getContext() {
         return this.applicationContext;
+    }
+
+    /**
+     * Application context builder that installs the Pyronaut application class loader before
+     * Micronaut Test loads property sources and service-backed test resources.
+     */
+    public static final class PytestApplicationContextBuilder extends DefaultApplicationContextBuilder {
+        public PytestApplicationContextBuilder() {
+            configureApplicationClassLoader(this);
+        }
     }
 
     private static String buildFailureMessage(Throwable e) {
