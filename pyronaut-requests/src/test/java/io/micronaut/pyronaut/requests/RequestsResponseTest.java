@@ -27,18 +27,9 @@ class RequestsResponseTest {
 
     @Test
     void jsonParsesArrayResponseBodies() {
-        Path pythonSource = Path.of(
-            "src/main/resources/META-INF/GRAALPY-VFS/micronaut-application/src"
-        ).toAbsolutePath();
-        String pythonPath = pythonSource.toString().replace("\\", "\\\\").replace("'", "\\'");
-        try (Context context = Context.newBuilder("python")
-            .allowAllAccess(true)
-            .build()) {
+        try (Context context = newPythonContext()) {
             Value result = context.eval("python", """
-                import sys
                 import java
-
-                sys.path.insert(0, '%s')
 
                 HttpResponse = java.type("io.micronaut.http.HttpResponse")
                 MediaType = java.type("io.micronaut.http.MediaType")
@@ -52,9 +43,99 @@ class RequestsResponseTest {
                 )
                 value = response.json()
                 len(value) == 2 and value[0]["name"] == "DevOps" and value[1]["name"] == "Micro-services"
-                """.formatted(pythonPath));
+                """);
 
             assertTrue(result.asBoolean());
         }
+    }
+
+    @Test
+    void formDataIsSentAsJavaStringBody() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+                import pyronaut.requests as requests
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+                HttpStatus = java.type("io.micronaut.http.HttpStatus")
+                JString = java.type("java.lang.String")
+
+                class FakeInvoker:
+                    captured = []
+
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        FakeInvoker.captured.append(request)
+                        return type("Result", (), {
+                            "success": True,
+                            "response": HttpResponse.status(HttpStatus.SEE_OTHER).header("Location", "/rooms/1"),
+                            "body": b"",
+                        })()
+
+                requests.HttpClientInvoker = FakeInvoker
+                response = requests.Session(register=False).post(
+                    "/rooms",
+                    data={"name": "Room A", "symbol": "a b"},
+                    allow_redirects=False,
+                )
+                request = FakeInvoker.captured[0]
+                body = request.getBody(JString).get()
+                content_type = request.getContentType().get().toString()
+                response.status_code == 303 and body == "name=Room+A&symbol=a+b" and content_type == "application/x-www-form-urlencoded"
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
+    void falseyAllowRedirectsDoesNotFollowRedirects() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import pyronaut.requests as requests
+                import java
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+                HttpStatus = java.type("io.micronaut.http.HttpStatus")
+
+                class FalseyRedirects:
+                    def __bool__(self):
+                        return False
+
+                class FakeInvoker:
+                    calls = 0
+
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        FakeInvoker.calls += 1
+                        return type("Result", (), {
+                            "success": True,
+                            "response": HttpResponse.status(HttpStatus.SEE_OTHER).header("Location", "/next"),
+                            "body": b"",
+                        })()
+
+                requests.HttpClientInvoker = FakeInvoker
+                response = requests.Session(register=False).get("/", allow_redirects=FalseyRedirects())
+                response.status_code == 303 and FakeInvoker.calls == 1
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    private static Context newPythonContext() {
+        Path pythonSource = Path.of(
+            "src/main/resources/META-INF/GRAALPY-VFS/micronaut-application/src"
+        ).toAbsolutePath();
+        String pythonPath = pythonSource.toString().replace("\\", "\\\\").replace("'", "\\'");
+        Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build();
+        context.eval("python", """
+                import sys
+
+                sys.path.insert(0, '%s')
+                """.formatted(pythonPath));
+        return context;
     }
 }
