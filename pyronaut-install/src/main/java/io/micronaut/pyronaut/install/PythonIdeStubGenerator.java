@@ -432,7 +432,7 @@ final class PythonIdeStubGenerator {
                 resolve_parameters: bool
                 context_builder: Any
                 properties: dict[str, Any]
-                def __init__(self, environments: list[str] = ..., packages: list[str] = ..., transactional: bool = ..., rollback: bool = ..., rebuild_context: bool = ..., start_application: bool = ..., resolve_parameters: bool = ..., context_builder: Any = ..., properties: dict[str, Any] = ...) -> None: ...
+                def __init__(self, environments: list[str] = ..., packages: list[str] = ..., transactional: bool = False, rollback: bool = True, rebuild_context: bool = False, start_application: bool = True, resolve_parameters: bool = True, context_builder: Any = ..., properties: dict[str, Any] = ...) -> None: ...
 
             class ApplicationContextWrapper(ApplicationContext):
                 java_ctx: Any

@@ -115,7 +115,6 @@ abstract class AbstractPyronautTestSmokeTest {
                         request,
                         MicronautTest(
                             environments=["foo"],
-                            transactional=False,
                             properties={"custom.property": "test_value"},
                         ),
                     )
@@ -183,7 +182,6 @@ abstract class AbstractPyronautTestSmokeTest {
                         request,
                         MicronautTest(
                             properties={"custom.value": "project-converter-ok"},
-                            transactional=False,
                         ),
                     )
                     yield fixture

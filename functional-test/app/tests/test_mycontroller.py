@@ -7,7 +7,7 @@ from micronaut.runtime.server import EmbeddedServer
 
 @pytest.fixture
 def my_context(request):
-    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"], transactional=False,
+    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"],
                                                             properties={"custom.property": "test_value"}))
     yield fixture
     fixture.stop()

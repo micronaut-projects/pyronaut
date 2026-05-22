@@ -29,7 +29,7 @@ from micronaut.runtime.server import EmbeddedServer
 
 @pytest.fixture
 def my_context(request):
-    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"], transactional=False,
+    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"],
                                                             properties={"custom.property": "test_value"}))
     yield fixture
     fixture.stop()
@@ -74,4 +74,3 @@ assert msg.message.startswith("Hello")
 
 - Cookie jar, proxies, SSL verify toggles, streaming/chunked and file uploads are not implemented yet.
 - Untyped `Response.json()` returns Python-native dict/list; typed `json(T)` uses the Micronaut `JsonMapper`.
-

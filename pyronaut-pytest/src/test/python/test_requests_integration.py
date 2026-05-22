@@ -10,7 +10,6 @@ def my_context(request):
         request,
         MicronautTest(
             environments=["foo"],
-            transactional=False,
             properties={
                 "custom.property": "test_value",
                 "endpoints.all.enabled": "true",

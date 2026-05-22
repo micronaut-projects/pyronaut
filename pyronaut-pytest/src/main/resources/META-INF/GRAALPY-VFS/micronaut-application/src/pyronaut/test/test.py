@@ -49,7 +49,7 @@ def micronaut_test_fixture(request,
 
     @pytest.fixture
     def my_context(request):
-        fixture = micronaut_test_fixture(request, MicronautTest(environments="test", transactional=False,
+        fixture = micronaut_test_fixture(request, MicronautTest(environments="test",
                                                                 properties={"custom.property": "test_value"}))
         yield fixture
         fixture.stop()

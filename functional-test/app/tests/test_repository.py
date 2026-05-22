@@ -30,7 +30,7 @@ def unwrap_optional(value):
 
 @pytest.fixture
 def my_context(request):
-    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"], transactional=False))
+    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"]))
     yield fixture
     fixture.stop()
 

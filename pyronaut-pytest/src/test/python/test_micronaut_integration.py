@@ -17,10 +17,14 @@ from jakarta.inject import Named
 
 @pytest.fixture
 def my_context(request):
-    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"], transactional=False,
+    fixture = micronaut_test_fixture(request, MicronautTest(environments=["foo"],
                                                             properties={"custom.property": "test_value"}))
     yield fixture
     fixture.stop()
+
+
+def test_micronaut_test_defaults_to_non_transactional():
+    assert MicronautTest().transactional is False
 
 @pytest.fixture
 def env(my_context) -> ApplicationContext:
