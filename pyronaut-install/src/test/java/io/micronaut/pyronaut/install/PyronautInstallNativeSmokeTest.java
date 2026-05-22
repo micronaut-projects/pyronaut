@@ -38,7 +38,13 @@ class PyronautInstallNativeSmokeTest {
         writeArtifact(repository, "com.example", "test-dep", "1.0.0");
         Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
 
-        Process process = new ProcessBuilder(binary.toString(), "--project-dir", project.toString())
+        Process process = new ProcessBuilder(
+            binary.toString(),
+            "--project-dir",
+            project.toString(),
+            "--local-repository",
+            tempDir.resolve("maven-local").toString()
+        )
             .redirectErrorStream(true)
             .start();
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -76,7 +82,13 @@ class PyronautInstallNativeSmokeTest {
         writeArtifact(repository, "io.micronaut", "micronaut-http", "5.0.0-SNAPSHOT");
         Files.writeString(project.resolve("pyproject.toml"), bomManagedPyproject(repository));
 
-        Process process = new ProcessBuilder(binary.toString(), "--project-dir", project.toString())
+        Process process = new ProcessBuilder(
+            binary.toString(),
+            "--project-dir",
+            project.toString(),
+            "--local-repository",
+            tempDir.resolve("maven-local").toString()
+        )
             .redirectErrorStream(true)
             .start();
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -108,7 +120,14 @@ class PyronautInstallNativeSmokeTest {
         );
         Files.writeString(project.resolve("pyproject.toml"), stubsPyproject(repository));
 
-        Process process = new ProcessBuilder(binary.toString(), "--project-dir", project.toString(), "--no-cache")
+        Process process = new ProcessBuilder(
+            binary.toString(),
+            "--project-dir",
+            project.toString(),
+            "--local-repository",
+            tempDir.resolve("maven-local").toString(),
+            "--no-cache"
+        )
             .redirectErrorStream(true)
             .start();
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -176,7 +195,14 @@ class PyronautInstallNativeSmokeTest {
             runtime = ["io.micronaut.demo:demo-stub-docs-artifact:1.0.0"]
             """.formatted(repository.toUri()));
 
-        Process process = new ProcessBuilder(binary.toString(), "--project-dir", project.toString(), "--no-cache")
+        Process process = new ProcessBuilder(
+            binary.toString(),
+            "--project-dir",
+            project.toString(),
+            "--local-repository",
+            tempDir.resolve("maven-local").toString(),
+            "--no-cache"
+        )
             .redirectErrorStream(true)
             .start();
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);

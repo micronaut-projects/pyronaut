@@ -22,10 +22,6 @@ import picocli.CommandLine;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.nio.file.Files;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.FileVisitResult;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
@@ -53,6 +49,9 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory containing pyproject.toml")
     Path projectDir = Path.of(".");
 
+    @CommandLine.Option(names = {"--local-repository", "--local-repo"}, description = "Local Maven repository directory for resolved dependency artifacts")
+    Path localRepository;
+
     @CommandLine.Option(names = "--scope", description = "Scope to resolve: build|runtime|development-runtime|test|test-resources-server|all")
     String scope;
 
@@ -65,10 +64,10 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @CommandLine.Option(names = "--color", defaultValue = "auto", description = "Color output mode: auto|always|never")
     String color = "auto";
 
-    @CommandLine.Option(names = "--refresh", description = "Force dependency re-resolution and manifest rewrite without clearing the local dependency cache")
+    @CommandLine.Option(names = "--refresh", description = "Force dependency re-resolution and manifest rewrite without clearing the selected local repository")
     boolean refresh;
 
-    @CommandLine.Option(names = "--no-cache", description = "Bypass cache reads/writes and clear the local dependency cache before resolving")
+    @CommandLine.Option(names = "--no-cache", description = "Bypass manifest cache reads and rewrite manifests")
     boolean noCache;
 
     @CommandLine.Option(names = "--offline", description = "Use offline mode for repository access")
@@ -113,8 +112,9 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
             PyprojectModel model = modelReader.readFile(pyproject);
             Path cacheDir = root.resolve(DEFAULT_PYRONAUT_DIR);
+            Path localRepo = resolveLocalRepository(root);
             editorSupport.ensureWritten(root, cacheDir, model.pyronaut().sources());
-            String hash = ResolutionCache.pyprojectHash(pyproject);
+            String hash = ResolutionCache.installHash(pyproject, localRepo);
             try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
                 if (dependencies) {
                     return renderDependencyTrees(root, scopes, progressReporter);
@@ -132,15 +132,11 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     progressReporter.cacheBypass();
                 }
 
-                Path localRepo = cacheDir.resolve("m2-repository");
-                if (noCache) {
-                    deleteDirectoryIfExists(localRepo);
-                }
                 Map<InstallScope, List<String>> resolved = new EnumMap<>(InstallScope.class);
                 Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> resolvedEditorArtifacts = new EnumMap<>(InstallScope.class);
                 for (InstallScope installScope : scopes) {
                     progressReporter.startScope(installScope);
-                    MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline);
+                    MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline, noCache);
                     List<String> classpath = manifestClasspath(installScope, details.classpath());
                     progressReporter.finishScope(installScope, classpath.size());
                     resolved.put(installScope, classpath);
@@ -221,13 +217,13 @@ public final class PyronautInstallMain implements Callable<Integer> {
                                       InstallProgressReporter progressReporter) throws IOException {
         Path pyproject = root.resolve(PyprojectModelReader.FILE_NAME);
         PyprojectModel model = modelReader.readFile(pyproject);
-        Path localRepo = root.resolve(DEFAULT_PYRONAUT_DIR).resolve("m2-repository");
+        Path localRepo = resolveLocalRepository(root);
         DependencyTreeRenderer renderer = DependencyTreeRenderer.create(color);
         boolean resolutionFailure = false;
         for (InstallScope installScope : scopes) {
             progressReporter.startScope(installScope);
             try {
-                MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline);
+                MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline, noCache);
                 progressReporter.finishScope(installScope, details.classpath().size());
                 renderer.renderScope(installScope, details.root());
             } catch (PyprojectModelException e) {
@@ -244,6 +240,15 @@ public final class PyronautInstallMain implements Callable<Integer> {
             }
         }
         return resolutionFailure ? InstallExitCode.RESOLUTION_ERROR.code() : InstallExitCode.SUCCESS.code();
+    }
+
+    private Path resolveLocalRepository(Path root) {
+        Path repository = localRepository == null ? MavenClasspathResolver.resolveLocalMavenRepository() : localRepository;
+        if (repository.toString().isBlank()) {
+            throw new IllegalArgumentException("Invalid value for --local-repository. Value cannot be empty");
+        }
+        Path resolved = repository.isAbsolute() ? repository : root.resolve(repository);
+        return resolved.toAbsolutePath().normalize();
     }
 
     public static void main(String[] args) {
@@ -292,22 +297,4 @@ public final class PyronautInstallMain implements Callable<Integer> {
         PythonEditorSupport.EditorSupportResult execute() throws Exception;
     }
 
-    private static void deleteDirectoryIfExists(Path directory) throws IOException {
-        if (directory == null || !Files.exists(directory)) {
-            return;
-        }
-        Files.walkFileTree(directory, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                Files.deleteIfExists(file);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                Files.deleteIfExists(dir);
-                return FileVisitResult.CONTINUE;
-            }
-        });
-    }
 }

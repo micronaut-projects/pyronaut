@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import hashlib
 import json
 import shlex
 import shutil
@@ -788,11 +789,11 @@ def _prepare_build_wheel_staging(
         if not runtime_manifest.exists():
             raise RuntimeError(f"Missing classpath manifest: {runtime_manifest}. Run pyronaut install first.")
         _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
-        _copytree_if_exists(project_dir / "__pyronaut__" / "m2-repository", pyronaut_dir / "m2-repository")
-        _write_relative_manifest(
+        _stage_manifest_artifacts(
             source=runtime_manifest,
             target=pyronaut_dir / "resolved-runtime-dependencies",
             project_dir=project_dir,
+            pyronaut_dir=pyronaut_dir,
         )
         launcher_code = _jvm_build_launcher_code(main_class)
 
@@ -853,17 +854,39 @@ def _copytree_if_exists(source: Path, target: Path) -> None:
         shutil.copytree(source, target, dirs_exist_ok=True)
 
 
-def _write_relative_manifest(*, source: Path, target: Path, project_dir: Path) -> None:
+def _stage_manifest_artifacts(*, source: Path, target: Path, project_dir: Path, pyronaut_dir: Path) -> None:
     project_root = project_dir.resolve()
+    artifact_root = pyronaut_dir / "m2-repository"
     rewritten: list[str] = []
     for entry in _read_manifest_entries(source):
         path = Path(entry)
         resolved = path.resolve() if path.is_absolute() else (project_root / path).resolve()
+        if resolved.is_file():
+            artifact_relative = _staged_artifact_relative_path(resolved, project_root)
+            staged = artifact_root / artifact_relative
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            if resolved != staged.resolve():
+                shutil.copy2(resolved, staged)
+            rewritten.append(str(Path("__pyronaut__") / "m2-repository" / artifact_relative))
+            continue
         with contextlib.suppress(ValueError):
             rewritten.append(str(resolved.relative_to(project_root)))
             continue
         rewritten.append(entry)
     target.write_text("".join(f"{entry}\n" for entry in rewritten), encoding="utf-8")
+
+
+def _staged_artifact_relative_path(resolved: Path, project_root: Path) -> Path:
+    project_local_repository = project_root / "__pyronaut__" / "m2-repository"
+    with contextlib.suppress(ValueError):
+        return resolved.relative_to(project_local_repository)
+    for parent in resolved.parents:
+        if parent.name in {"repository", "m2-repository"}:
+            return resolved.relative_to(parent)
+    with contextlib.suppress(ValueError):
+        return resolved.relative_to(project_root)
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+    return Path("external-artifacts") / digest / resolved.name
 
 
 def _extract_build_docker(args: Sequence[str]) -> bool:
@@ -979,11 +1002,11 @@ def _prepare_jvm_docker_context(
     if not runtime_manifest.exists():
         raise RuntimeError(f"Missing classpath manifest: {runtime_manifest}. Run pyronaut install first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
-    _copytree_if_exists(project_dir / "__pyronaut__" / "m2-repository", pyronaut_dir / "m2-repository")
-    _write_relative_manifest(
+    _stage_manifest_artifacts(
         source=runtime_manifest,
         target=pyronaut_dir / "resolved-runtime-dependencies",
         project_dir=project_dir,
+        pyronaut_dir=pyronaut_dir,
     )
     delegate_executable = resolver(COMMAND_TO_EXECUTABLE["run"])
     if delegate_executable is None:
@@ -1006,11 +1029,11 @@ def _prepare_native_docker_context(
     if not runtime_manifest.exists():
         raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
-    _copytree_if_exists(project_dir / "__pyronaut__" / "m2-repository", pyronaut_dir / "m2-repository")
-    _write_relative_manifest(
+    _stage_manifest_artifacts(
         source=runtime_manifest,
         target=pyronaut_dir / "resolved-runtime-dependencies",
         project_dir=project_dir,
+        pyronaut_dir=pyronaut_dir,
     )
     delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
     if delegate_executable is None:

@@ -73,17 +73,19 @@ These settings are used by `pyronaut process`, `pyronaut run`, `pyronaut test`, 
 
 === `pyronaut install`
 
-Resolves dependencies and writes scoped manifests under `__pyronaut__/`.
+Resolves dependencies into the configured local Maven repository and writes scoped manifests under `__pyronaut__/`.
+By default, dependency artifacts are installed into Maven local (`~/.m2/repository`, or the path configured by the `maven.repo.local` system property).
 
 Common options:
 
 - `--project-dir <dir>`: project root (default `.`)
+- `--local-repository <dir>` (alias `--local-repo`): local Maven repository directory for resolved dependency artifacts; relative paths are resolved against the project root
 - `--scope <build|runtime|test|test-resources-server|all>`: restrict resolution scope
 - `--dependencies`: render dependency tree output
 - `--progress <auto|on|off>`: progress display mode
 - `--color <auto|always|never>`: dependency output color mode
-- `--refresh`: force re-resolution and manifest rewrite without clearing `__pyronaut__/m2-repository`
-- `--no-cache`: clear `__pyronaut__/m2-repository` before resolving and skip cache reads/writes
+- `--refresh`: force re-resolution and manifest rewrite without clearing the selected local repository
+- `--no-cache`: bypass Pyronaut manifest cache reads before rewriting manifests
 - `--offline`: resolve using offline repository mode
 
 Generated manifests:
@@ -92,6 +94,9 @@ Generated manifests:
 - `__pyronaut__/resolved-runtime-dependencies`
 - `__pyronaut__/resolved-test-dependencies`
 - `__pyronaut__/resolved-test-resources-server-dependencies`
+
+Manifest entries point at artifacts in the selected local repository.
+Build-wheel and Docker packaging copy those artifacts into the packaged application's `__pyronaut__/m2-repository` directory and rewrite the packaged manifest to use project-relative paths.
 
 Managed runtime defaults:
 

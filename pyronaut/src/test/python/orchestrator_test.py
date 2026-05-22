@@ -2234,7 +2234,7 @@ additional-test-resources = ["test-fixtures"]
         with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
             root_dir = Path(temp_dir)
             project_dir = root_dir / "docker-demo"
-            runtime_jar = project_dir / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar"
+            runtime_jar = root_dir / ".m2" / "repository" / "example" / "runtime.jar"
             runtime_jar.parent.mkdir(parents=True, exist_ok=True)
             runtime_jar.write_text("", encoding="utf-8")
             (project_dir / "__pyronaut__" / "classes" / "example").mkdir(parents=True, exist_ok=True)
@@ -2283,6 +2283,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("demo-app:1.2.3", docker_command)
         self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
+        self.assertIn("app/__pyronaut__/m2-repository/example/runtime.jar", captured["context_files"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", captured["context_files"])
         self.assertIn("app/config/application.toml", captured["context_files"])
         self.assertIn("app/pyproject.toml", captured["context_files"])
@@ -2472,7 +2473,7 @@ additional-test-resources = ["test-fixtures"]
     def test_prepare_jvm_build_wheel_staging_rewrites_manifest_and_generates_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "stage-demo"
-            runtime_jar = project_dir / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar"
+            runtime_jar = Path(temp_dir) / ".m2" / "repository" / "example" / "runtime.jar"
             runtime_jar.parent.mkdir(parents=True, exist_ok=True)
             runtime_jar.write_text("", encoding="utf-8")
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
@@ -2493,6 +2494,7 @@ additional-test-resources = ["test-fixtures"]
             self.assertTrue((launcher_pkg / "launcher.py").exists())
             self.assertTrue((launcher_pkg / "app" / "__pyronaut__" / "classes").is_dir())
             self.assertTrue((launcher_pkg / "app" / "__pyronaut__" / "m2-repository").is_dir())
+            self.assertTrue((launcher_pkg / "app" / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar").exists())
             manifest = (launcher_pkg / "app" / "__pyronaut__" / "resolved-runtime-dependencies").read_text(encoding="utf-8")
             self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", manifest)
             launcher_code = (launcher_pkg / "launcher.py").read_text(encoding="utf-8")
@@ -2504,7 +2506,7 @@ additional-test-resources = ["test-fixtures"]
             root_dir = Path(temp_dir)
             project_dir = root_dir / "native-context-demo"
             context_dir = root_dir / "context"
-            runtime_jar = project_dir / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar"
+            runtime_jar = root_dir / ".m2" / "repository" / "example" / "runtime.jar"
             runtime_jar.parent.mkdir(parents=True, exist_ok=True)
             runtime_jar.write_text("", encoding="utf-8")
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
@@ -2522,6 +2524,7 @@ additional-test-resources = ["test-fixtures"]
 
             manifest = (context_dir / "app" / "__pyronaut__" / "resolved-runtime-dependencies").read_text(encoding="utf-8")
             self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", manifest)
+            self.assertTrue((context_dir / "app" / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar").exists())
             self.assertTrue((context_dir / "app" / "__pyronaut__" / "tools" / "pyronaut-native-build" / "bin" / "pyronaut-native-build").exists())
 
     def test_remove_existing_built_wheels_cleans_matching_distribution_prefix(self):

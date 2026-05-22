@@ -36,16 +36,20 @@ class PyronautInstallMainTest {
     Path tempDir;
 
     private String previousIdeStubsCacheDir;
+    private String previousMavenRepoLocal;
 
     @BeforeEach
-    void setSharedIdeStubsCacheDir() {
+    void setSharedTestState() {
         previousIdeStubsCacheDir = System.getProperty("pyronaut.ide-stubs.cache-dir");
         System.setProperty("pyronaut.ide-stubs.cache-dir", tempDir.resolve("shared-ide-stubs-cache").toString());
+        previousMavenRepoLocal = System.getProperty("maven.repo.local");
+        System.setProperty("maven.repo.local", tempDir.resolve("maven-local").toString());
     }
 
     @AfterEach
-    void restoreSharedIdeStubsCacheDir() {
+    void restoreSharedTestState() {
         restoreSystemProperty("pyronaut.ide-stubs.cache-dir", previousIdeStubsCacheDir);
+        restoreSystemProperty("maven.repo.local", previousMavenRepoLocal);
     }
 
     @Test
@@ -110,10 +114,98 @@ class PyronautInstallMainTest {
         assertEquals(1, buildEntries.size());
         assertEquals(1, runtimeEntries.size());
         assertEquals(2, testEntries.size());
+        assertTrue(buildEntries.getFirst().startsWith(defaultLocalRepository().toString()));
+        assertFalse(Files.exists(project.resolve("__pyronaut__").resolve("m2-repository")));
         assertTrue(buildEntries.getFirst().contains("build-dep"));
         assertTrue(runtimeEntries.getFirst().contains("runtime-dep"));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
+    }
+
+    @Test
+    void localRepositoryOptionOverridesDefaultMavenLocal() throws Exception {
+        Path repository = tempDir.resolve("repo-local-repository-option");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-local-repository-option");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "local-repository-option"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+        command.localRepository = Path.of("custom-local-repository");
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path expectedRuntimeJar = project
+            .resolve("custom-local-repository")
+            .resolve("com/example/runtime-dep/1.0.0/runtime-dep-1.0.0.jar");
+        assertTrue(Files.exists(expectedRuntimeJar));
+        assertFalse(Files.exists(defaultLocalRepository().resolve("com/example/runtime-dep/1.0.0/runtime-dep-1.0.0.jar")));
+        List<String> runtimeEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertEquals(List.of(expectedRuntimeJar.toAbsolutePath().normalize().toString()), runtimeEntries);
+    }
+
+    @Test
+    void cacheMissesWhenLocalRepositoryChanges() throws Exception {
+        Path repository = tempDir.resolve("repo-local-repository-cache");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-local-repository-cache");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "local-repository-cache"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain firstRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        firstRun.projectDir = project;
+        firstRun.localRepository = Path.of("first-local-repository");
+        assertEquals(InstallExitCode.SUCCESS.code(), firstRun.call());
+
+        PyronautInstallMain secondRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        secondRun.projectDir = project;
+        secondRun.localRepository = Path.of("second-local-repository");
+        assertEquals(InstallExitCode.SUCCESS.code(), secondRun.call());
+
+        List<String> runtimeEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertEquals(List.of(project
+            .resolve("second-local-repository")
+            .resolve("com/example/runtime-dep/1.0.0/runtime-dep-1.0.0.jar")
+            .toAbsolutePath()
+            .normalize()
+            .toString()), runtimeEntries);
     }
 
     @Test
@@ -901,13 +993,12 @@ class PyronautInstallMainTest {
         firstRun.projectDir = project;
         assertEquals(InstallExitCode.SUCCESS.code(), firstRun.call());
 
-        Path cachedRuntimeJar = project.resolve("__pyronaut__")
-            .resolve("m2-repository")
+        Path cachedRuntimeJar = defaultLocalRepository()
             .resolve("com/example/runtime-dep/1.0.0/runtime-dep-1.0.0.jar");
         assertTrue(Files.exists(cachedRuntimeJar));
         assertEquals((byte) 1, Files.readAllBytes(cachedRuntimeJar)[0]);
 
-        Path sentinel = project.resolve("__pyronaut__").resolve("m2-repository").resolve("sentinel.txt");
+        Path sentinel = defaultLocalRepository().resolve("sentinel.txt");
         Files.writeString(sentinel, "keep");
 
         PyronautInstallMain refreshRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
@@ -921,7 +1012,7 @@ class PyronautInstallMainTest {
     }
 
     @Test
-    void noCacheClearsLocalRepositoryAndRehydratesSameVersionArtifacts() throws Exception {
+    void noCachePreservesLocalRepositoryContents() throws Exception {
         Path repository = tempDir.resolve("repo-no-cache-local-repo");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0", new byte[]{1});
         writeArtifact(repository, "com.example", "build-dep", "1.0.0");
@@ -935,23 +1026,21 @@ class PyronautInstallMainTest {
         firstRun.projectDir = project;
         assertEquals(InstallExitCode.SUCCESS.code(), firstRun.call());
 
-        Path cachedRuntimeJar = project.resolve("__pyronaut__")
-            .resolve("m2-repository")
+        Path cachedRuntimeJar = defaultLocalRepository()
             .resolve("com/example/runtime-dep/1.0.0/runtime-dep-1.0.0.jar");
         assertTrue(Files.exists(cachedRuntimeJar));
         assertEquals((byte) 1, Files.readAllBytes(cachedRuntimeJar)[0]);
 
-        Path sentinel = project.resolve("__pyronaut__").resolve("m2-repository").resolve("sentinel.txt");
-        Files.writeString(sentinel, "delete");
-        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0", new byte[]{2});
+        Path sentinel = defaultLocalRepository().resolve("sentinel.txt");
+        Files.writeString(sentinel, "keep");
 
         PyronautInstallMain noCacheRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
         noCacheRun.projectDir = project;
         noCacheRun.noCache = true;
         assertEquals(InstallExitCode.SUCCESS.code(), noCacheRun.call());
 
-        assertFalse(Files.exists(sentinel));
-        assertEquals((byte) 2, Files.readAllBytes(cachedRuntimeJar)[0]);
+        assertTrue(Files.exists(sentinel));
+        assertEquals((byte) 1, Files.readAllBytes(cachedRuntimeJar)[0]);
     }
 
     @Test
@@ -3297,6 +3386,10 @@ class PyronautInstallMainTest {
             build = ["com.example:build-dep:1.0.0"]
             test = ["com.example:test-dep:1.0.0"]
             """.formatted(repository.toUri());
+    }
+
+    private static Path defaultLocalRepository() {
+        return Path.of(System.getProperty("maven.repo.local")).toAbsolutePath().normalize();
     }
 
     private static void restoreJavaHome(String previousJavaHome) {

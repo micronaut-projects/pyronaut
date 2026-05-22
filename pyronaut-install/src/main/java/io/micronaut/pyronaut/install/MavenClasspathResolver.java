@@ -30,9 +30,10 @@ import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
-import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.repository.Authentication;
 import org.eclipse.aether.repository.Proxy;
+import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.repository.RepositoryPolicy;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
@@ -137,9 +138,17 @@ final class MavenClasspathResolver {
                                              InstallScope scope,
                                              Path localRepositoryPath,
                                              boolean offline) {
+        return resolveScopeDetails(model, scope, localRepositoryPath, offline, false);
+    }
+
+    ResolvedScopeDetails resolveScopeDetails(PyprojectModel model,
+                                             InstallScope scope,
+                                             Path localRepositoryPath,
+                                             boolean offline,
+                                             boolean forceUpdates) {
         List<RemoteRepository> repositories = toRepositories(model.pyronaut() == null ? List.of() : model.pyronaut().repositories());
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
             Map<String, String> managedVersions = new LinkedHashMap<>();
             for (Dependency dependency : managedDependencies) {
@@ -606,9 +615,13 @@ final class MavenClasspathResolver {
 
     private CloseableSession newSession(Path localRepositoryPath,
                                         boolean offline,
-                                        ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration) {
+                                        ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration,
+                                        boolean forceUpdates) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
+        if (forceUpdates) {
+            sessionBuilder.setUpdatePolicy(RepositoryPolicy.UPDATE_POLICY_ALWAYS);
+        }
         sessionBuilder.withLocalRepositoryBaseDirectories(localRepositoryPath.toAbsolutePath());
         if (proxyConfiguration != null) {
             DefaultProxySelector proxySelector = new DefaultProxySelector();
@@ -671,7 +684,7 @@ final class MavenClasspathResolver {
         return List.copyOf(resolved.values());
     }
 
-    private static Path resolveLocalMavenRepository() {
+    static Path resolveLocalMavenRepository() {
         String configuredLocalRepo = System.getProperty("maven.repo.local");
         if (configuredLocalRepo != null && !configuredLocalRepo.isBlank()) {
             return Path.of(configuredLocalRepo).toAbsolutePath().normalize();

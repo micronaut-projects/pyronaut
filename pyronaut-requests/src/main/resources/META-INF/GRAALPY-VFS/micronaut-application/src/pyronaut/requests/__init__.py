@@ -374,21 +374,22 @@ class Session:
             merged_headers['Content-Type'] = 'application/json'
             content_type_set = True
         elif data is not None:
+            body = None
             if isinstance(data, (bytes, bytearray)):
-                body_bytes = bytes(data)
+                body = JByteArray(bytes(data))
             elif isinstance(data, str):
-                body_bytes = data.encode('utf-8')
+                body = data
                 if not content_type_set:
                     merged_headers.setdefault('Content-Type', 'text/plain; charset=utf-8')
             elif isinstance(data, dict):
                 # form
-                body_bytes = '&'.join([f"{k}={v}" for k, v in data.items()]).encode('utf-8')
+                body = '&'.join([f"{k}={v}" for k, v in data.items()])
                 merged_headers.setdefault('Content-Type', 'application/x-www-form-urlencoded')
             else:
                 # attempt JSON
-                body_bytes = self._mapper.writeValueAsBytes(data)
+                body = self._mapper.writeValueAsBytes(data)
                 merged_headers.setdefault('Content-Type', 'application/json')
-            req = req.body(body_bytes)
+            req = req.body(body)
 
         # apply headers
         for k, v in (merged_headers or {}).items():
@@ -398,7 +399,7 @@ class Session:
         client_to_use = self._client
         temp_client = None
         eff_verify = verify if verify is not None else getattr(self, 'verify', None)
-        needs_custom_cfg = timeout is not None or (eff_verify is False)
+        needs_custom_cfg = timeout is not None or (eff_verify is False) or (allow_redirects is False)
         if needs_custom_cfg:
             DefaultHttpClientConfiguration = jtype("io.micronaut.http.client.DefaultHttpClientConfiguration")
             cfg = DefaultHttpClientConfiguration()
@@ -420,6 +421,8 @@ class Session:
                         sslCfg.setInsecureTrustAllCertificates(True)
                 except Exception:
                     pass
+            if allow_redirects is False:
+                cfg.setFollowRedirects(False)
             temp_client = HttpClient.create(None if self.base_url is None else URL(self.base_url), cfg)
             ClientRegistry.register(temp_client)
             client_to_use = temp_client

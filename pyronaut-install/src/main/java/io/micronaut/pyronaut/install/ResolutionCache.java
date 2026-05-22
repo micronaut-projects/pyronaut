@@ -34,10 +34,14 @@ final class ResolutionCache {
     private ResolutionCache() {
     }
 
-    static String pyprojectHash(Path pyprojectFile) throws IOException {
+    static String installHash(Path pyprojectFile, Path localRepositoryPath) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hashed = digest.digest(Files.readAllBytes(pyprojectFile));
+            digest.update(Files.readAllBytes(pyprojectFile));
+            digest.update((byte) 0);
+            digest.update("localRepository=".getBytes(StandardCharsets.UTF_8));
+            digest.update(localRepositoryPath.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8));
+            byte[] hashed = digest.digest();
             return HexFormat.of().formatHex(hashed);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
