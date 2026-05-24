@@ -1,0 +1,63 @@
+= Testing with Pytest
+
+Pyronaut runs Python tests through pytest and reports them through the JUnit Platform.
+Use `pyronaut test` instead of invoking pytest directly when tests need the Micronaut classpath, processed sources, test resources, or `MicronautTest`.
+
+Add the pytest integration to the test scope:
+
+[source,toml]
+----
+[tool.pyronaut.dependencies]
+test = [
+  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
+  "io.micronaut.test:micronaut-test-junit5"
+]
+----
+
+Run all tests:
+
+[source,bash]
+----
+pyronaut test
+----
+
+`pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts test resources when enabled, and delegates test discovery to pytest.
+
+== Test Discovery
+
+Python tests are discovered from the configured `python-test` source directory.
+The default directory is `tests`.
+
+[source,toml]
+----
+[tool.pyronaut.sources]
+python-test = "tests"
+----
+
+Use `--tests` for selector-style filtering:
+
+[source,bash]
+----
+pyronaut test --tests tests/test_controller.py::test_index
+----
+
+== Reports
+
+Test reports are written under:
+
+[source,text]
+----
+__pyronaut__/reports/tests/
+----
+
+Important files include:
+
+- `index.html`
+- `junit.xml`
+- `.pyronaut-last-nodeid.txt`
+- `events.ndjson`
+
+== Context Tests
+
+Use `MicronautTest` when a pytest needs a Micronaut `ApplicationContext`, injected beans, an `EmbeddedServer`, or configuration properties.
+Use `pyronaut.requests` or the `requests` shim for HTTP tests against the embedded server.

@@ -1,0 +1,93 @@
+= Configuration Validation
+
+`pyronaut validate-config` validates Micronaut configuration against the resolved application classpath.
+It is useful after changing `application.toml`, dependencies, environments, or source layout.
+
+Run validation explicitly with:
+
+[source,bash]
+----
+pyronaut validate-config --scenario production
+----
+
+Supported scenarios are:
+
+- `run`
+- `test`
+- `production`
+
+The standalone command defaults to `production`.
+`pyronaut run`, `pyronaut test`, and native build flows call validation with their own scenario defaults unless `--no-validate` is supplied.
+
+== Reports
+
+By default, reports are written under:
+
+[source,text]
+----
+__pyronaut__/reports/config-validation/<scenario>/
+----
+
+The default report files are:
+
+- `configuration-errors.json`
+- `configuration-errors.html`
+
+Pyronaut also writes `__pyronaut__/.config-validation-cache.properties` to avoid repeating unchanged validations.
+
+== Project Configuration
+
+[source,toml]
+----
+[tool.pyronaut.validation]
+enabled = true
+fail-on-not-present = true
+deduce-environments = false
+validate-dependency-injection = false
+dependency-injection-validation-strategy = "reachable"
+format = "both"
+suppressions = []
+
+[tool.pyronaut.validation.test]
+environments = ["test"]
+
+[tool.pyronaut.validation.production]
+environments = []
+----
+
+Scenario-specific settings can override environments, classpath entries, resources directories, and output directories.
+
+== Dependency Injection Validation
+
+Dependency injection validation is disabled by default.
+Enable it when you want validation to include bean graph checks:
+
+[source,bash]
+----
+pyronaut validate-config --validate-dependency-injection
+----
+
+or in `pyproject.toml`:
+
+[source,toml]
+----
+[tool.pyronaut.validation]
+validate-dependency-injection = true
+dependency-injection-validation-strategy = "reachable"
+----
+
+Available strategies are `reachable`, `application-beans`, and `all-beans`.
+
+== Suppressions
+
+When validation finds suppressible errors, the CLI prints a TOML snippet that can be copied into `pyproject.toml`:
+
+[source,toml]
+----
+[tool.pyronaut.validation]
+suppressions = [
+  "datasources.default.url"
+]
+----
+
+Keep suppressions narrow and revisit them when adding the missing configuration or dependency.

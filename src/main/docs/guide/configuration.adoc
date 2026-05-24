@@ -1,0 +1,15 @@
+= Configuration & Build Setup
+
+Pyronaut project configuration is split across two TOML files:
+
+- `pyproject.toml` describes the Python package, Pyronaut source layout, Java dependencies, repositories, build defaults, validation settings, IDE support, toolchains, and test resources.
+- `config/application.toml` contains Micronaut application configuration loaded at runtime.
+
+Most build and lifecycle settings live under `[tool.pyronaut]`.
+Pyronaut's generated schema uses canonical kebab-case keys, while some older camelCase aliases are still accepted for compatibility.
+
+Run `pyronaut install` after changing `pyproject.toml`.
+The install command refreshes dependency manifests, JSON schemas, and Python IDE stubs used by later commands.
+
+Use `pyronaut validate-config` when changing application configuration or dependency sets.
+It validates Micronaut configuration for run, test, or production scenarios and writes reports under `__pyronaut__/reports/config-validation`.

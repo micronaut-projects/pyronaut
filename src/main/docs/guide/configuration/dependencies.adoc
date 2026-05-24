@@ -1,0 +1,72 @@
+= Installing Python & Java Dependencies
+
+Pyronaut uses normal Python packaging for Python dependencies and Maven coordinates for Java dependencies.
+
+== Python Dependencies
+
+Declare Python dependencies using standard Python packaging metadata, or install them into the active virtual environment with `pip`.
+For example:
+
+[source,toml]
+----
+[project]
+dependencies = [
+  "pytest>=8"
+]
+----
+
+Pyronaut does not resolve Python packages during `pyronaut install`.
+The command expects the Python environment used to run Pyronaut and pytest to already contain the Python packages your tests or application import.
+
+== Java Dependencies
+
+Java dependencies are declared by scope under `[tool.pyronaut.dependencies]`:
+
+[source,toml]
+----
+[tool.pyronaut.dependencies]
+runtime = [
+  "io.micronaut:micronaut-http-server-netty",
+  "io.micronaut:micronaut-json-core",
+  "io.micronaut.serde:micronaut-serde-jackson",
+  "ch.qos.logback:logback-classic"
+]
+build = [
+  "io.micronaut.serde:micronaut-serde-processor"
+]
+test = [
+  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
+  "io.micronaut.test:micronaut-test-junit5",
+  "io.micronaut.pyronaut:micronaut-pyronaut-requests"
+]
+----
+
+Use `group:artifact` for dependencies managed by the Micronaut platform, Micronaut core BOM, or Pyronaut BOM.
+Use `group:artifact:version` for dependencies that are not managed.
+
+== Install Behavior
+
+Run:
+
+[source,bash]
+----
+pyronaut install
+----
+
+By default, dependency artifacts are resolved into Maven local (`~/.m2/repository`, or `-Dmaven.repo.local` when set).
+Pyronaut writes scoped classpath manifests under `__pyronaut__` that point at the selected local repository.
+
+To use a project-specific repository instead:
+
+[source,bash]
+----
+pyronaut install --local-repository .pyronaut-m2
+----
+
+Useful install flags include:
+
+- `--scope <build|runtime|development-runtime|test|test-resources-server|all>` to resolve a single scope
+- `--dependencies` to render dependency tree output
+- `--refresh` to force re-resolution and manifest rewrite
+- `--no-cache` to bypass manifest cache reads
+- `--offline` to resolve without remote repository access

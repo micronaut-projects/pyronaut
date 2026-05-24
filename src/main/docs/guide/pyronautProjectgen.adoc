@@ -1,3 +1,39 @@
-The following dependency eases project generation for Pyronaut.
+= Pyronaut Project Generator
+
+The Pyronaut project generator builds a default Pyronaut project using Micronaut ProjectGen.
+It is used by the project generator application to preview and download a starter project, and it can also be consumed by tools that embed Micronaut ProjectGen.
+
+The following dependency adds the Pyronaut generator feature set:
 
 dependency:micronaut-pyronaut-projectgen[groupId=io.micronaut.pyronaut]
+
+Generated projects include the standard Pyronaut layout:
+
+- `pyproject.toml`
+- `setup.py`
+- `src/controller.py`
+- `config/logback.xml`
+- `config/micronaut-banner.txt`
+
+The default generated controller is intentionally small:
+
+[source,python]
+----
+from micronaut.http.annotation import Controller, Get
+
+@Controller
+class MyController:
+    @Get(value="/", produces="text/plain")
+    def index(self) -> str:
+        return "Hello World"
+----
+
+After downloading or generating a project, run:
+
+[source,bash]
+----
+pyronaut install
+pyronaut run
+----
+
+Use the generated project as a starting point, then add runtime, build, and test dependencies in `pyproject.toml` as application features are added.

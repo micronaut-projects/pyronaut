@@ -1,0 +1,49 @@
+= Docker Requirements
+
+Micronaut Test Resources uses Testcontainers, so Docker or a compatible container runtime must be available before `pyronaut run` or `pyronaut test` can provision containers.
+
+Verify the runtime first:
+
+[source,bash]
+----
+docker ps
+docker info
+----
+
+If these commands cannot connect to a daemon, Test Resources will fail before the application dependency can be started.
+
+== macOS
+
+On macOS, start Docker Desktop or another Docker-compatible runtime before running Pyronaut commands.
+If you use an alternative runtime that exposes a non-default socket, ensure the shell running Pyronaut has the correct Docker environment variables.
+
+For example, when a runtime requires a custom host:
+
+[source,bash]
+----
+export DOCKER_HOST=unix:///path/to/docker.sock
+docker ps
+pyronaut test
+----
+
+Make sure the runtime has enough memory and disk space for the images used by your test resources modules.
+The first run may pull images and take longer than later runs.
+
+== Linux
+
+On Linux, ensure the Docker service or rootless Docker daemon is running:
+
+[source,bash]
+----
+docker ps
+----
+
+If Docker is installed in rootful mode, the user running Pyronaut must have permission to access the Docker socket.
+Common setups add the user to the `docker` group and require a new login session before the permission is active.
+
+For rootless Docker, ensure `DOCKER_HOST` points at the rootless socket when it is not the CLI default.
+
+== CI
+
+In CI, run Pyronaut tests on an executor that supports Docker-in-Docker, a sibling Docker daemon, or a container runtime service compatible with Testcontainers.
+Cache image layers when possible, but do not cache `.micronaut/test-resources` state across unrelated projects unless you intentionally use shared-server mode.

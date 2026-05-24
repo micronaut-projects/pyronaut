@@ -1,0 +1,62 @@
+= Application Configuration with application.toml
+
+Micronaut application configuration lives in the configured resources directory.
+By default, that directory is `config`, so the main configuration file is:
+
+[source,text]
+----
+config/application.toml
+----
+
+Pyronaut adds Micronaut TOML support to the runtime classpath by default when dependencies are managed from the Micronaut platform.
+
+== Basic Configuration
+
+[source,toml]
+----
+[micronaut.application]
+name = "hello-pyronaut"
+
+[micronaut.server]
+port = 8080
+
+[endpoints.all]
+enabled = true
+sensitive = false
+----
+
+Environment-specific files use the Micronaut naming convention:
+
+[source,text]
+----
+config/application-test.toml
+config/application-dev.toml
+----
+
+The configured `resources` directory and any `additional-resources` directories are included for run, test, and build flows.
+The configured `test-resources` directory and any `additional-test-resources` directories are included for test flows.
+
+== Schema Support
+
+When `application.toml` exists, `pyronaut install` builds a JSON schema from Micronaut configuration metadata present on the resolved runtime classpath.
+It writes the schema to:
+
+[source,text]
+----
+__pyronaut__/schemas/micronaut-application.schema.json
+----
+
+If `application.toml` does not already contain a user-managed schema directive, Pyronaut prepends one so TOML-aware editors can validate Micronaut configuration keys.
+
+== Validation
+
+Use:
+
+[source,bash]
+----
+pyronaut validate-config --scenario run
+pyronaut validate-config --scenario test
+pyronaut validate-config --scenario production
+----
+
+`pyronaut run`, `pyronaut test`, and native build flows run scenario-specific validation by default.

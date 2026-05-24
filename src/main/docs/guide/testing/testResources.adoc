@@ -1,0 +1,65 @@
+= Test Resources & Docker
+
+Pyronaut can orchestrate Micronaut Test Resources for `pyronaut run` and `pyronaut test`.
+This is useful for tests and local runs that need services such as databases without hard-coding connection settings.
+
+Enable test resources in `pyproject.toml`:
+
+[source,toml]
+----
+[tool.pyronaut.test-resources]
+enabled = true
+----
+
+When enabled, `pyronaut install` resolves a test-resources-server classpath and `pyronaut run` or `pyronaut test` starts a server when needed.
+The CLI propagates test resources client settings to delegated JVM processes.
+
+== Lifecycle
+
+Default behavior:
+
+- `pyronaut run` and `pyronaut test` start an owned server on demand.
+- Owned servers stop when the owning run or test session exits.
+- If an external project-local server is already running, the CLI attaches to it instead of claiming ownership.
+- Shared servers stay running across command invocations.
+
+Project-local metadata is written under:
+
+[source,text]
+----
+.micronaut/test-resources/test-resources.properties
+__pyronaut__/test-resources-session.json
+----
+
+Logs default to `.micronaut/test-resources/logs` unless `logs-dir` is configured.
+
+== Configuration
+
+[source,toml]
+----
+[tool.pyronaut.test-resources]
+enabled = true
+explicit-port = 18080
+infer-classpath = true
+client-timeout = 60
+shared-server = false
+logs-dir = ".micronaut/test-resources/logs"
+startup-optimization = "none" # none|auto|leyden|cds
+additional-modules = ["jdbc-mysql"]
+----
+
+`infer-classpath` lets Pyronaut infer test resources modules from application dependencies.
+Use `additional-modules` for modules that cannot be inferred or for explicit module selection.
+
+== Standalone Server Commands
+
+Use the explicit server command when you want a reusable server:
+
+[source,bash]
+----
+pyronaut test-resources-server start
+pyronaut test-resources-server status
+pyronaut test-resources-server stop
+----
+
+Set `PYRONAUT_TEST_RESOURCES_DISABLED=true` to disable automatic orchestration for a command invocation.

@@ -1,0 +1,127 @@
+= Getting Started
+
+This section creates a minimal Pyronaut HTTP application by hand.
+Generated projects follow the same basic layout.
+
+== Create `pyproject.toml`
+
+[source,toml]
+----
+[project]
+name = "hello-pyronaut"
+version = "0.1.0"
+dynamic = ["scripts"]
+
+[build-system]
+requires = ["setuptools", "wheel", "tomli"]
+build-backend = "setuptools.build_meta"
+
+[tool.pyronaut]
+repositories = ["mavenCentral"]
+
+[tool.pyronaut.dependencies]
+runtime = [
+  "io.micronaut:micronaut-http-server-netty",
+  "io.micronaut:micronaut-json-core",
+  "io.micronaut:micronaut-jackson-databind",
+  "ch.qos.logback:logback-classic"
+]
+build = []
+test = [
+  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
+  "io.micronaut.test:micronaut-test-junit5",
+  "io.micronaut.pyronaut:micronaut-pyronaut-requests"
+]
+----
+
+Versionless Micronaut coordinates are resolved from the configured Micronaut platform and core BOMs.
+Add explicit versions for dependencies that are not managed by those BOMs.
+
+== Add a Controller
+
+Create `src/controller.py`:
+
+[source,python]
+----
+from micronaut.http.annotation import Controller, Get
+
+
+@Controller
+class MyController:
+    @Get(value="/", produces="text/plain")
+    def index(self) -> str:
+        return "Hello from Pyronaut"
+----
+
+== Add Application Configuration
+
+Create `config/application.toml`:
+
+[source,toml]
+----
+[micronaut.application]
+name = "hello-pyronaut"
+
+[micronaut.server]
+port = 8080
+----
+
+== Run the Application
+
+[source,bash]
+----
+pyronaut install
+pyronaut process
+pyronaut run
+----
+
+`pyronaut run` performs install and process preflight automatically, so after the first successful install this shorter form is normally enough:
+
+[source,bash]
+----
+pyronaut run
+----
+
+The application can then be called with:
+
+[source,bash]
+----
+curl http://localhost:8080/
+----
+
+== Add a Test
+
+Create `tests/test_controller.py`:
+
+[source,python]
+----
+import pytest
+import requests
+
+from pyronaut.test import MicronautTest, micronaut_test_fixture
+
+
+@pytest.fixture
+def my_context(request):
+    fixture = micronaut_test_fixture(request, MicronautTest())
+    yield fixture
+    fixture.stop()
+
+
+@pytest.fixture
+def client(my_context):
+    return requests.with_context(my_context)
+
+
+def test_index(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.text == "Hello from Pyronaut"
+----
+
+Run tests through Pyronaut so the Micronaut classpath and pytest engine are set up consistently:
+
+[source,bash]
+----
+pyronaut test
+----

@@ -1,0 +1,104 @@
+= Using MicronautTest
+
+`MicronautTest` is the Python-side configuration object used by Pyronaut's pytest fixture support.
+It starts a Micronaut application context for a pytest and exposes it through a Python wrapper.
+
+[source,python]
+----
+import pytest
+
+from pyronaut.test import MicronautTest, micronaut_test_fixture
+
+
+@pytest.fixture
+def my_context(request):
+    fixture = micronaut_test_fixture(
+        request,
+        MicronautTest(
+            environments=["test"],
+            properties={"custom.property": "test_value"},
+        ),
+    )
+    yield fixture
+    fixture.stop()
+----
+
+`MicronautTest()` defaults to `transactional=False`.
+Set `transactional=True` only for tests that need Micronaut transaction handling.
+`rollback` defaults to `True` and applies when transactions are enabled.
+
+== Common Options
+
+[source,python]
+----
+MicronautTest(
+    environments=["test"],
+    packages=[],
+    transactional=False,
+    rollback=True,
+    rebuild_context=False,
+    start_application=True,
+    resolve_parameters=True,
+    properties={}
+)
+----
+
+`environments` defaults to `["test"]`.
+Additional properties are passed into the Micronaut context during fixture bootstrap.
+
+== Bean Lookup
+
+The fixture returns an application context wrapper.
+Beans can be looked up by Java class name, Java type, or Python class when the Python type can be resolved to its generated bean name.
+
+[source,python]
+----
+import java
+
+
+def test_environment(my_context):
+    env = my_context["io.micronaut.context.env.Environment"]
+    assert "test" in env.getActiveNames()
+
+
+def test_environment_by_java_type(my_context):
+    Environment = java.type("io.micronaut.context.env.Environment")
+    env = my_context[Environment]
+    assert env is not None
+----
+
+You can also delegate directly to the underlying Micronaut context:
+
+[source,python]
+----
+def test_context_running(my_context):
+    assert my_context.isRunning()
+----
+
+== Embedded Server
+
+When `start_application=True`, an `EmbeddedServer` is available from the context:
+
+[source,python]
+----
+def test_server_port(my_context):
+    server = my_context["io.micronaut.runtime.server.EmbeddedServer"]
+    assert server.getPort() > 0
+----
+
+For HTTP tests, bind `requests` to the context so relative URLs target the embedded server:
+
+[source,python]
+----
+import requests
+
+
+@pytest.fixture
+def client(my_context):
+    return requests.with_context(my_context)
+
+
+def test_health(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+----

@@ -1,0 +1,45 @@
+= IDE Setup for VS Code & PyCharm
+
+`pyronaut install` generates editor support from the resolved runtime and test classpaths.
+This gives Python editors stubs for Java-backed APIs such as Micronaut annotations and Jakarta injection types.
+
+Generated editor files include:
+
+- `__pyronaut__/schemas/pyronaut-pyproject.schema.json`
+- `__pyronaut__/schemas/micronaut-application.schema.json` when `application.toml` exists
+- `__pyronaut__/ide-stubs`
+- `__pyronaut__/resolved-editor-artifacts.json`
+- `__pyronaut__/reports/editor-stubs/stub-generation-report.txt`
+
+`pyronaut install` prepends a Taplo schema directive to `pyproject.toml` and to `application.toml` when those files do not already have user-managed schema directives.
+
+== Configure Stub Generation
+
+[source,toml]
+----
+[tool.pyronaut.ide-stubs]
+enabled = true
+ide = "vscode" # vscode|pycharm
+packages = ["io.micronaut", "jakarta"]
+exclude-patterns = ["*ModuleInfo"]
+destination-dir = "__pyronaut__/ide-stubs"
+----
+
+The default IDE target is `vscode`.
+Stub generation is best effort; APIs that cannot be rendered cleanly are skipped and reported in the stub generation report.
+
+== VS Code
+
+When `ide = "vscode"` and the project does not already own Pyright configuration, Pyronaut writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the generated stub directory.
+
+If `pyrightconfig.json` or `[tool.pyright]` already exists, Pyronaut leaves the configuration user-managed and records that decision in the editor stub report.
+
+== PyCharm
+
+When `ide = "pycharm"`, Pyronaut writes a generated `.idea/pyronaut-editor-stubs.iml` module and registers it in `.idea/modules.xml`.
+The generated module marks the stub directory as a source root without rewriting the main PyCharm project module.
+
+== Refreshing IDE State
+
+Run `pyronaut install` after changing dependencies, source layout, or IDE stub settings.
+Delete `__pyronaut__/ide-stubs` if you want the next install to rebuild stubs from scratch.

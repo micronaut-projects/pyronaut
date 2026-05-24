@@ -1,0 +1,66 @@
+= Pyronaut Project Layout
+
+Pyronaut reads project layout from `[tool.pyronaut.sources]` in `pyproject.toml`.
+All configured paths are relative to the project root.
+
+The default layout is:
+
+[source,text]
+----
+.
+|-- pyproject.toml
+|-- src/
+|   `-- application Python sources
+|-- src-java/
+|   `-- optional Java application sources
+|-- config/
+|   `-- application.toml and other application resources
+|-- tests/
+|   `-- pytest sources
+|-- test-java/
+|   `-- optional Java test sources
+|-- tests-config/
+|   `-- test-only resources
+`-- __pyronaut__/
+    `-- generated Pyronaut state
+----
+
+The default source settings are:
+
+[source,toml]
+----
+[tool.pyronaut.sources]
+python = "src"
+python-test = "tests"
+java = "src-java"
+java-test = "test-java"
+resources = "config"
+test-resources = "tests-config"
+additional-resources = []
+additional-test-resources = []
+----
+
+`pyronaut process` compiles the configured Python and Java source trees into `__pyronaut__/classes`.
+For tests, Pyronaut also creates `__pyronaut__/test-classes` from the application and test source sets.
+
+== Resource Directories
+
+The `resources` directory is added to the runtime classpath for `run`, `test`, and build operations.
+The `test-resources` directory is added only for tests.
+
+Use `additional-resources` for application resource directories that should be available in run, test, JVM wheel, and Docker packaging flows.
+Use `additional-test-resources` for test-only resource directories.
+
+[source,toml]
+----
+[tool.pyronaut.sources]
+resources = "config"
+additional-resources = ["views", "assets"]
+test-resources = "tests-config"
+additional-test-resources = ["tests-fixtures"]
+----
+
+== Generated Files
+
+The `__pyronaut__` directory contains generated state such as dependency manifests, processed classes, test reports, validation reports, schemas, and IDE stubs.
+It is safe to delete this directory when you want a clean local Pyronaut state; the CLI recreates it as needed.

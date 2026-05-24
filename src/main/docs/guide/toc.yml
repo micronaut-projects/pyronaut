@@ -1,13 +1,32 @@
 introduction:
   title: Introduction
+releaseHistory: Release History
+installation: Installing Pyronaut
+gettingStarted: Getting Started
+projectStructure:
+  title: Pyronaut Project Layout
+configuration:
+  title: Configuration & Build Setup
+  pyproject: Configuring pyproject.toml
+  dependencies: Installing Python & Java dependencies
+  mavenRepositories: Configuring Maven Repositories
+  proxyConfig: Proxy Configuration
+  ideSetup: IDE Setup for VS Code & PyCharm
+  appConfig: Application Configuration with application.toml
+  validateConfig: Configuration Validation
 logging:
   title: Python Logging with Logback
-releaseHistory: Release History
+testing:
+  title: Testing with Pytest
+  micronautTest: Using MicronautTest
+  testResources:
+    title: Test Resources & Docker
+    dockerSetup: Docker Requirements
 pyronautProjectgen:
   title: Pyronaut Project Generator
 pyronautRequests:
   title: Pyronaut Requests
+  requestsTesting: Using Requests for Testing
 pyronautCliV2:
-  title: Pyronaut CLI v2
+  title: Pyronaut CLI Reference
 repository: Repository
-

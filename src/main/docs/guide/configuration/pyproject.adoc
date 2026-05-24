@@ -1,0 +1,92 @@
+= Configuring pyproject.toml
+
+`pyproject.toml` is the source of truth for Pyronaut's build-time and runtime project model.
+It includes standard Python project metadata plus the `[tool.pyronaut]` tables consumed by the CLI.
+
+== Minimal Structure
+
+[source,toml]
+----
+[project]
+name = "hello-pyronaut"
+version = "0.1.0"
+dynamic = ["scripts"]
+
+[build-system]
+requires = ["setuptools", "wheel", "tomli"]
+build-backend = "setuptools.build_meta"
+
+[tool.pyronaut]
+repositories = ["mavenCentral"]
+
+[tool.pyronaut.dependencies]
+runtime = []
+build = []
+test = []
+----
+
+== Managed Versions
+
+Pyronaut can resolve versionless Micronaut coordinates from configured BOM versions:
+
+[source,toml]
+----
+[tool.pyronaut.core]
+version = "4.9.0"
+
+[tool.pyronaut.platform]
+version = "4.9.0"
+----
+
+If these tables are omitted, Pyronaut uses the managed versions bundled with the current Pyronaut distribution.
+
+== Source Layout
+
+Use `[tool.pyronaut.sources]` to move source and resource directories away from the defaults:
+
+[source,toml]
+----
+[tool.pyronaut.sources]
+python = "app"
+python-test = "test/python"
+java = "src/main/java"
+java-test = "src/test/java"
+resources = "app-config"
+test-resources = "tests-config"
+additional-resources = ["views", "assets"]
+additional-test-resources = ["tests-fixtures"]
+----
+
+== Build, Processor, and Test Modes
+
+Pyronaut supports separate defaults for build, processing, and test execution:
+
+[source,toml]
+----
+[tool.pyronaut.build]
+mode = "jvm" # jvm|native
+
+[tool.pyronaut.processor]
+mode = "jit" # jit|native
+
+[tool.pyronaut.test]
+mode = "jit" # jit|native
+----
+
+Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
+See the CLI reference for the full build option surface.
+
+== Toolchain
+
+Commands that delegate to Java use a GraalVM JDK.
+You can let Pyronaut discover a compatible installed JDK, or pin a toolchain:
+
+[source,toml]
+----
+[tool.pyronaut.toolchain]
+distribution = "ce"
+java-version = 25
+version = "25.0.2"
+----
+
+Development builds can use `distribution = "dev"` with a `release-tag` or explicit `download-url`.

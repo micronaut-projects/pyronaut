@@ -1,0 +1,30 @@
+= Configuring Maven Repositories
+
+Pyronaut resolves Java dependencies through Apache Maven Resolver.
+Configure remote and local repositories in `[tool.pyronaut]`:
+
+[source,toml]
+----
+[tool.pyronaut]
+repositories = [
+  "mavenCentral",
+  "mavenLocal",
+  "https://repo.gradle.org/gradle/libs-releases",
+  "../build/fixture-repo"
+]
+----
+
+Supported entries:
+
+- `mavenCentral`: Maven Central
+- `mavenLocal`: the effective Maven local repository
+- `https://...`: a remote Maven repository URL
+- relative or absolute file paths: local Maven repository directories
+
+If `repositories` is omitted or empty, Pyronaut uses Maven Central.
+
+`mavenLocal` is a source repository entry.
+It is separate from the install destination selected by `pyronaut install --local-repository`.
+By default, the install destination is also Maven local, so many local development flows do not need to list `mavenLocal` explicitly.
+
+Use `mavenLocal` when the dependency you want to resolve was published locally and is not available from another configured repository.

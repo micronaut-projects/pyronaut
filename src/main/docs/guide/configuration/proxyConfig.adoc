@@ -1,0 +1,74 @@
+= Proxy Configuration
+
+`pyronaut install` honors proxy configuration while resolving Maven dependencies.
+Proxy settings are checked in this order:
+
+. Environment variables
+. `~/.pyronaut/settings.toml`
+. `~/.m2/settings.xml`
+
+The first configured proxy wins.
+
+== Environment Variables
+
+Use the standard proxy environment variables:
+
+[source,bash]
+----
+export HTTPS_PROXY=http://user:password@proxy.example.com:3128
+export NO_PROXY=localhost,127.0.0.1,*.internal
+pyronaut install
+----
+
+Lowercase variants such as `https_proxy` and `no_proxy` are also recognized.
+If both HTTP and HTTPS proxy variables are set, HTTPS takes precedence.
+
+== Pyronaut Settings
+
+Use `~/.pyronaut/settings.toml` when proxy settings should apply to Pyronaut without changing the shell environment:
+
+[source,toml]
+----
+[proxy]
+url = "https://user:password@proxy.example.com:8443"
+nonProxyHosts = "localhost,*.internal"
+----
+
+The proxy can also be expressed as individual fields:
+
+[source,toml]
+----
+[proxy]
+protocol = "http"
+host = "proxy.example.com"
+port = 3128
+username = "user"
+password = "password"
+nonProxyHosts = "localhost|127.*"
+----
+
+`nonProxyHosts` and `noProxyHosts` are both accepted.
+Comma-separated and pipe-separated values are normalized before being passed to Maven Resolver.
+
+== Maven Settings Fallback
+
+If neither environment variables nor Pyronaut settings define a proxy, Pyronaut reads the active proxy from `~/.m2/settings.xml`:
+
+[source,xml]
+----
+<settings>
+  <proxies>
+    <proxy>
+      <active>true</active>
+      <protocol>https</protocol>
+      <host>proxy.example.com</host>
+      <port>7443</port>
+      <username>user</username>
+      <password>password</password>
+      <nonProxyHosts>localhost|127.*</nonProxyHosts>
+    </proxy>
+  </proxies>
+</settings>
+----
+
+When dependency resolution fails and a proxy was selected, the install error includes the proxy source and host summary.

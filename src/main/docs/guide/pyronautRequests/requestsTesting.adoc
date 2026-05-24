@@ -1,0 +1,80 @@
+= Using Requests for Testing
+
+Pyronaut Requests can be used in tests as a drop-in `requests` module backed by the Micronaut HTTP client.
+When it is bound to a `MicronautTest` context, relative URLs are resolved against the running `EmbeddedServer`.
+
+Add the requests integration to the test scope:
+
+[source,toml]
+----
+[tool.pyronaut.dependencies]
+test = [
+  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
+  "io.micronaut.test:micronaut-test-junit5",
+  "io.micronaut.pyronaut:micronaut-pyronaut-requests"
+]
+----
+
+Then use it from pytest:
+
+[source,python]
+----
+import pytest
+import requests
+
+from pyronaut.test import MicronautTest, micronaut_test_fixture
+
+
+@pytest.fixture
+def my_context(request):
+    fixture = micronaut_test_fixture(request, MicronautTest())
+    yield fixture
+    fixture.stop()
+
+
+@pytest.fixture
+def client(my_context):
+    return requests.with_context(my_context)
+
+
+def test_http_endpoint(client):
+    response = client.get("/")
+    assert response.status_code == 200
+----
+
+`requests.with_context(my_context)` looks up the Micronaut `EmbeddedServer` and `JsonMapper` from the context.
+This lets tests use relative URLs and the same JSON configuration as the application.
+
+== Absolute URLs
+
+Absolute URLs continue to work:
+
+[source,python]
+----
+def test_absolute_url(my_context):
+    server = my_context["io.micronaut.runtime.server.EmbeddedServer"]
+    base_url = f"http://localhost:{server.getPort()}"
+
+    response = requests.get(f"{base_url}/")
+    assert response.status_code == 200
+----
+
+== JSON Responses
+
+Untyped `response.json()` returns Python-native dictionaries and lists.
+Pass a target type to deserialize with Micronaut Serialization:
+
+[source,python]
+----
+class Message:
+    def __init__(self, message: str):
+        self.message = message
+
+
+def test_typed_json(client):
+    response = client.get("/hello/John")
+    message = response.json(Message)
+    assert message.message.startswith("Hello")
+----
+
+Created Micronaut clients are closed when the Micronaut context shuts down.

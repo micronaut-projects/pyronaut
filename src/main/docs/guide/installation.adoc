@@ -1,0 +1,61 @@
+= Installing Pyronaut
+
+Install Pyronaut into the Python environment that will run the application.
+A virtual environment is recommended so the `pyronaut` command and Python test tools are isolated from the system Python installation.
+
+[source,bash]
+----
+python -m venv .venv
+source .venv/bin/activate
+pip install pyronaut
+pyronaut --version
+----
+
+Pyronaut runs on GraalPy and delegates Micronaut work to Java-based tools.
+Use a GraalVM JDK that satisfies the toolchain requirements for the current Pyronaut version.
+When no explicit toolchain is configured, the CLI discovers a compatible GraalVM from `JAVA_HOME`, common SDK locations, and Pyronaut's own SDK cache.
+
+== Project Installation
+
+After a project has a `pyproject.toml`, run:
+
+[source,bash]
+----
+pyronaut install
+----
+
+`pyronaut install` resolves Java dependencies for the configured build, runtime, development-runtime, test, and test-resources-server scopes.
+Dependency artifacts are installed into Maven local by default:
+
+[source,text]
+----
+~/.m2/repository
+----
+
+If the JVM was started with `-Dmaven.repo.local=/path/to/repo`, that value is used as the default local repository instead.
+The selected repository can be overridden per invocation:
+
+[source,bash]
+----
+pyronaut install --local-repository .pyronaut-m2
+----
+
+Relative paths passed to `--local-repository` are resolved against the project directory.
+Pyronaut still writes project state and classpath manifests under `__pyronaut__`; the option only changes where resolved Maven artifacts are stored.
+
+== Generated Project State
+
+`pyronaut install` writes files that later commands consume:
+
+- scoped dependency manifests under `__pyronaut__/resolved-*-dependencies`
+- `pyproject.toml` schema support under `__pyronaut__/schemas`
+- optional `application.toml` schema support
+- Python IDE stubs under `__pyronaut__/ide-stubs`
+
+The `__pyronaut__` directory is generated state.
+It should not be treated as application source.
+
+== Platform Notes
+
+The CLI currently targets macOS and Linux.
+Docker is only required when using Micronaut Test Resources or Docker-based build modes.
