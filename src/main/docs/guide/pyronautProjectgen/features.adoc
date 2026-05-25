@@ -1,0 +1,95 @@
+= Project Generator Features
+
+Run the following command to list the feature names supported for Pyronaut projects:
+
+[source,bash]
+----
+pyronaut create --list-features
+----
+
+Pass selected features with `--features`:
+
+[source,bash]
+----
+pyronaut create demo --features data-jdbc,mysql
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+----
+
+Pyronaut defaults already include the Netty HTTP server, Micronaut Serialization with Jackson, Pyronaut Logback integration, pytest support, and the core Pyronaut compiler/runtime dependencies.
+Those defaults can appear in the feature list, but they do not need to be explicitly selected for a standard HTTP application.
+
+The richer reference-style application can be reproduced by adding:
+
+[source,bash]
+----
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+----
+
+That selection adds Micronaut Data JDBC, the MySQL driver and datasource configuration, JSON Schema annotations and processor support, and Pyronaut test-resources settings.
+
+== Feature Sources
+
+Pyronaut keeps local feature implementations only for Pyronaut-specific runtime, test, logging, generated-file, and `pyproject.toml` behavior.
+Compatible starter-style features keep their familiar names where their dependency or configuration contribution is meaningful for Python.
+
+The default visible feature set includes:
+
+* `http-server-netty`
+* `serde-jackson`
+* `pyronaut-logback`
+* `pyronaut-pytest`
+
+Additional compatible upstream features include:
+
+* `data-jdbc`
+* `mysql`
+* `json-schema`
+* `test-resources`
+
+`data-jdbc`, `mysql`, `json-schema`, and the underlying server and serialization implementations are supplied by `micronaut-projectgen-micronaut`.
+Pyronaut aliases the upstream `netty-server` feature as `http-server-netty` and the upstream `serialization-jackson` feature as `serde-jackson`, then hides the upstream names from `--list-features`.
+
+== Dependency Scopes
+
+Upstream features often describe dependency changes as OpenRewrite recipes.
+Pyronaut reads compatible recipe contributions and renders them into `tool.pyronaut.dependencies` arrays in `pyproject.toml`.
+
+The generated scopes mirror the scopes consumed by `pyronaut install`:
+
+* ProjectGen `compile` and `runtime` dependencies become `tool.pyronaut.dependencies.runtime`.
+* `annotationProcessor` and `testAnnotationProcessor` dependencies become `tool.pyronaut.dependencies.build`.
+* `test`, `testRuntime`, and `testCompileOnly` dependencies become `tool.pyronaut.dependencies.test`.
+
+For example, a project generated with `data-jdbc,mysql,json-schema,test-resources` includes runtime dependencies for the HTTP server, Micronaut Serialization, Data JDBC, Hikari, MySQL, and JSON Schema annotations.
+It also includes build dependencies for the Serde, Data, and JSON Schema processors, plus test dependencies for Pyronaut pytest, Pyronaut requests, and Micronaut Test.
+
+== Configuration
+
+Feature configuration is rendered to Pyronaut resource locations:
+
+* main configuration becomes `config/application.toml`
+* test configuration becomes `tests-config/application-test.toml`
+* environment-specific configuration becomes `config/application-<env>.toml`
+
+For example, `mysql` contributes `datasources.default` configuration to `config/application.toml`, while the default pytest feature contributes `micronaut.server.port = -1` to `tests-config/application-test.toml`.
+
+`test-resources` also contributes the following generated `pyproject.toml` settings:
+
+[source,toml]
+----
+[tool.pyronaut.test-resources]
+enabled = true
+infer-classpath = true
+----
+
+== Unsupported Features
+
+Build-tool, JVM-language, generated-source, CI/IaC, JVM app-type, and Java reflection-dependent features are hidden for Pyronaut.
+If an unsupported feature is explicitly requested, generation fails before writing the project with a clear unsupported-feature message.
+
+Unsupported examples include:
+
+* build tools and JVM languages: `gradle`, `maven`, `java`, `kotlin`, `groovy`
+* Java test frameworks: `junit`, `spock`, `kotest`
+* Java reflection-dependent features: `jackson-databind`, `jackson-xml`, `data-jpa`, `hibernate-jpa`, `hibernate-jpamodelgen`, `data-hibernate-reactive`, `hibernate-reactive-jpa`, `hibernate-validator`
+* JVM/container/CI/IaC/application-type features: `graalvm`, `docker`, `github-workflow-java-ci`, `kubernetes`, `aws-lambda`, `function-aws`, `oracle-cloud-function`, `gcp-function`, `azure-function`

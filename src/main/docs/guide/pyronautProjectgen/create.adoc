@@ -1,0 +1,65 @@
+= Creating Projects
+
+`pyronaut create` is the user-facing command backed by the Pyronaut project generator.
+
+[source,bash]
+----
+pyronaut create [NAME] [options]
+----
+
+By default, `pyronaut create demo` writes a project under `./demo`.
+Use `--output <dir>` to choose the parent directory, or combine `--inplace` with `--output` to write directly into that directory.
+
+[source,bash]
+----
+pyronaut create demo --output /tmp/apps
+pyronaut create demo --inplace --output /tmp/demo
+----
+
+== Options
+
+`NAME`::
+The project name. This is required unless `--inplace` is used. With `--inplace`, the name is derived from the selected output directory when `NAME` is omitted.
+
+`--features <f1,f2>`::
+Adds Pyronaut-compatible features to the generated project. Values are comma-separated, and the option may be repeated. Use feature names exactly as printed by `--list-features`.
+
+`--list-features`::
+Prints the selectable Pyronaut feature catalog and exits without generating files.
+
+`--output <dir>`::
+Selects the output directory. Without `--inplace`, this is the parent directory and the project is written under `<dir>/<name>`. If omitted, the current working directory is used as the parent.
+
+`--inplace`::
+Writes generated files directly into the selected output directory. Generation fails if an existing non-empty generated file would be overwritten.
+
+`--package <module>`::
+Sets the generated Python package/module name. If omitted, Pyronaut derives a valid Python package name from `NAME`.
+
+`--version <version>`::
+Sets the generated `[project].version` value in `pyproject.toml`. The default is `0.1.0`.
+
+`--micronaut-version <version>`::
+Sets the generated `tool.pyronaut.platform.version` value. This is useful when generating against a local or snapshot Micronaut/Pyronaut platform.
+
+`--repository <repo>`::
+Overrides generated Maven repositories. Values may be repository aliases such as `mavenCentral` or `mavenLocal`, repository URLs, or local paths. Values are comma-separated, and the option may be repeated.
+
+`-h`, `--help`::
+Prints command help.
+
+== Examples
+
+[source,bash]
+----
+pyronaut create demo
+pyronaut create demo --features data-jdbc,mysql
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+pyronaut create demo --package example.service --version 1.0.0
+pyronaut create demo --output /tmp/apps
+pyronaut create --inplace --output /tmp/demo
+pyronaut create demo --micronaut-version 5.0.0-SNAPSHOT --repository mavenLocal,mavenCentral
+----
+
+When no repositories are specified, generated projects use `mavenCentral`.
+If the selected Micronaut platform version is a snapshot, the generated repository list starts with `mavenLocal` and then falls back to `mavenCentral` so locally published Pyronaut artifacts can be resolved during development.
