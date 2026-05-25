@@ -26,6 +26,7 @@ val fixtureCacheDir = fixtureAppDir.dir("__pyronaut__")
 val fixtureIdeStubsDir = fixtureCacheDir.dir("ide-stubs")
 val fixtureReportsDir = fixtureCacheDir.dir("reports/tests")
 val fixtureStagedRepoDir = layout.buildDirectory.dir("fixture-repo").get()
+val fixtureRepositoryId = "repo-0"
 val fixtureM2RepoDir = fixtureCacheDir.dir("m2-repository")
 val fixtureSchemasDir = fixtureCacheDir.dir("schemas")
 val fixtureResolvedEditorArtifacts = fixtureCacheDir.file("resolved-editor-artifacts.json")
@@ -216,6 +217,17 @@ val includedCoreArtifacts = listOf(
     IncludedBuildPublishedArtifact("runtime", "micronaut-runtime"),
     IncludedBuildPublishedArtifact("runtime-osx", "micronaut-runtime-osx"),
     IncludedBuildPublishedArtifact("websocket", "micronaut-websocket"),
+)
+
+val includedDataArtifacts = listOf(
+    IncludedBuildPublishedArtifact("data-connection", "micronaut-data-connection"),
+    IncludedBuildPublishedArtifact("data-document-model", "micronaut-data-document-model"),
+    IncludedBuildPublishedArtifact("data-document-processor", "micronaut-data-document-processor"),
+    IncludedBuildPublishedArtifact("data-model", "micronaut-data-model"),
+    IncludedBuildPublishedArtifact("data-mongodb", "micronaut-data-mongodb"),
+    IncludedBuildPublishedArtifact("data-processor", "micronaut-data-processor"),
+    IncludedBuildPublishedArtifact("data-runtime", "micronaut-data-runtime"),
+    IncludedBuildPublishedArtifact("data-tx", "micronaut-data-tx"),
 )
 
 fun versionFromCatalog(file: java.io.File, key: String): String {
@@ -429,6 +441,7 @@ fun copyMavenArtifact(
     version: String,
     pomFile: java.io.File,
     jarFile: java.io.File? = null,
+    pomVersionReplacement: Pair<String, String>? = null,
 ) {
     if (!pomFile.isFile) {
         throw GradleException("Missing generated POM for $groupId:$artifactId:$version: ${pomFile.absolutePath}")
@@ -442,17 +455,46 @@ fun copyMavenArtifact(
         .resolve(version)
     artifactDir.mkdirs()
     val stagedPom = artifactDir.resolve("$artifactId-$version.pom")
-    stagedPom.writeText(mavenPomContent(artifactId, pomFile))
+    stagedPom.writeText(mavenPomContent(artifactId, pomFile, pomVersionReplacement))
     writeSha1(stagedPom)
+    writeFixtureRepositoryMarker(artifactDir, stagedPom.name)
     jarFile?.let {
         val stagedJar = artifactDir.resolve("$artifactId-$version.jar")
         it.copyTo(stagedJar, overwrite = true)
         writeSha1(stagedJar)
+        writeFixtureRepositoryMarker(artifactDir, stagedJar.name)
     }
 }
 
-fun mavenPomContent(artifactId: String, pomFile: java.io.File): String {
+fun writeFixtureRepositoryMarker(artifactDir: java.io.File, fileName: String) {
+    val marker = artifactDir.resolve("_remote.repositories")
+    val entries = marker.takeIf { it.isFile }
+        ?.readLines()
+        ?.map(String::trim)
+        ?.filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("$fileName>") }
+        ?.toMutableList()
+        ?: mutableListOf()
+    entries.add("$fileName>$fixtureRepositoryId=")
+    marker.writeText(
+        buildString {
+            appendLine("#NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.")
+            appendLine("#${java.util.Date()}")
+            entries.distinct().sorted().forEach { entry ->
+                appendLine(entry)
+            }
+        }
+    )
+}
+
+fun mavenPomContent(
+    artifactId: String,
+    pomFile: java.io.File,
+    versionReplacement: Pair<String, String>? = null,
+): String {
     var content = pomFile.readText()
+    versionReplacement?.let { (sourceVersion, targetVersion) ->
+        content = content.replace(">$sourceVersion<", ">$targetVersion<")
+    }
     val sourcegenPlaceholder = "${'$'}{micronaut.sourcegen.version}"
     if (artifactId == "micronaut-core-bom" && content.contains(sourcegenPlaceholder)) {
         val sourcegenVersion = versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen")
@@ -553,6 +595,9 @@ fun Project.stageMicronautPlatformFixtureArtifact() {
     )
 }
 
+fun micronautDataVersionFromPlatformPom(): String =
+    readMavenPomTag(fixturePlatformPom.singleFile, "micronaut.data.version")
+
 fun Project.stageIncludedMicronautCoreFixtureArtifacts() {
     val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
         ?: throw GradleException("functional-test requires the included micronaut-core build when using $functionalTestMicronautCoreVersion")
@@ -573,6 +618,39 @@ fun Project.stageIncludedMicronautCoreFixtureArtifacts() {
             },
         )
     }
+}
+
+fun Project.stageIncludedMicronautDataFixtureArtifacts() {
+    val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-data" } ?: return
+    val targetVersion = micronautDataVersionFromPlatformPom()
+    for (artifact in includedDataArtifacts) {
+        val projectDir = includedBuild.projectDir.resolve(artifact.projectDirName)
+        val pomFile = projectDir.resolve("build/publications/maven/pom-default.xml")
+        val sourceVersion = readMavenPomTag(pomFile, "version")
+        copyMavenArtifact(
+            groupId = readMavenPomTag(pomFile, "groupId"),
+            artifactId = readMavenPomTag(pomFile, "artifactId"),
+            version = targetVersion,
+            pomFile = pomFile,
+            jarFile = if (artifact.hasJar) {
+                projectDir.resolve("build/libs/${artifact.artifactId}-$sourceVersion.jar")
+            } else {
+                null
+            },
+            pomVersionReplacement = sourceVersion to targetVersion,
+        )
+    }
+}
+
+fun readMavenPomTag(pomFile: java.io.File, tagName: String): String {
+    if (!pomFile.isFile) {
+        throw GradleException("Missing generated POM: ${pomFile.absolutePath}")
+    }
+    return Regex("""<${Regex.escape(tagName)}>([^<]+)</${Regex.escape(tagName)}>""")
+        .find(pomFile.readText())
+        ?.groupValues
+        ?.get(1)
+        ?: throw GradleException("Unable to find <$tagName> in ${pomFile.absolutePath}")
 }
 
 fun Project.stageSourcegenFixtureArtifacts() {
@@ -666,6 +744,7 @@ fun copyMavenArtifactFile(artifact: ExternalFixtureArtifact) {
         artifact.file.copyTo(stagedFile, overwrite = true)
     }
     writeSha1(stagedFile)
+    writeFixtureRepositoryMarker(artifactDir, stagedFile.name)
 }
 
 fun Project.stageGraalPyFixtureArtifacts() {
@@ -836,6 +915,27 @@ val stageMicronautCoreFixtureArtifacts by tasks.registering {
     }
 }
 
+val stageMicronautDataFixtureArtifacts by tasks.registering {
+    group = "build setup"
+    description = "Stages included Micronaut Data artifacts into the functional-test file repository."
+    inputs.files(fixturePlatformPom)
+    val micronautDataIncludedBuild = gradle.includedBuilds.find { it.name == "micronaut-data" }
+    val taskDependencies = mutableListOf<Any>()
+    if (micronautDataIncludedBuild != null) {
+        for (artifact in includedDataArtifacts) {
+            taskDependencies.add(micronautDataIncludedBuild.task(":${artifact.artifactId}:generatePomFileForMavenPublication"))
+            if (artifact.hasJar) {
+                taskDependencies.add(micronautDataIncludedBuild.task(":${artifact.artifactId}:jar"))
+            }
+        }
+    }
+    dependsOn(taskDependencies)
+    outputs.dir(fixtureStagedRepoDir)
+    doLast {
+        project.stageIncludedMicronautDataFixtureArtifacts()
+    }
+}
+
 val stageSourcegenFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages SourceGen artifacts needed by included Micronaut Core Python artifacts."
@@ -886,6 +986,7 @@ val publishFixtureArtifactsToMavenLocal by tasks.registering {
         stagePyronautFixtureArtifacts,
         stageMicronautPlatformFixtureArtifact,
         stageMicronautCoreFixtureArtifacts,
+        stageMicronautDataFixtureArtifacts,
         stageSourcegenFixtureArtifacts,
         stageIncludedCoreExternalFixtureArtifacts,
         stageMicronautTestFixtureArtifacts,

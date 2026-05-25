@@ -101,7 +101,7 @@ class OrchestratorTest(unittest.TestCase):
         *,
         resources_dir: str = "config",
         test_resources_dir: str = "tests-config",
-        expect_project_jars: bool = False,
+        expect_project_jars: bool = True,
     ) -> None:
         self.assertTrue(command_line[0].endswith("/bin/java") or command_line[0] == "java")
         cp_index = command_line.index("-cp")
@@ -713,6 +713,54 @@ class OrchestratorTest(unittest.TestCase):
         self._assert_test_delegate(executed[4], "/tmp/demo")
         self._assert_test_resources_stop(executed[5], "/tmp/demo")
 
+    def test_test_forwards_local_repository_env_to_preflight_install(self):
+        executed = []
+        project_dir = Path("/tmp/demo")
+        (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+        self._write_manifests(project_dir)
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        with patch.dict(os.environ, {cli.LOCAL_REPOSITORY_ENV: "/tmp/local-repository"}):
+            exit_code = cli.run(
+                ["test", "--project-dir", "/tmp/demo"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--local-repository", "/tmp/local-repository"],
+            executed[1],
+        )
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[2])
+        self._assert_test_delegate(executed[4], "/tmp/demo")
+
+    def test_test_resources_start_forwards_local_repository_env_to_install(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        with patch.dict(os.environ, {cli.LOCAL_REPOSITORY_ENV: "/tmp/local-repository"}):
+            exit_code = cli.run(
+                ["test-resources-server", "start", "--project-dir", "/tmp/demo"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--local-repository", "/tmp/local-repository"],
+            executed[0],
+        )
+        self.assertEqual(["/tmp/pyronaut-test-resources-server", "start", "--project-dir", "/tmp/demo"], executed[1])
+
     def test_test_starts_test_resources_before_validation_and_reuses_fresh_env(self):
         executed: list[tuple[list[str], dict[str, str] | None]] = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1070,7 +1118,7 @@ additional-resources = ["views"]
             self.assertNotIn(str((project_dir / "views").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
 
-    def test_test_delegate_classpath_leaves_application_dependencies_and_resources_to_test_launcher(self):
+    def test_test_delegate_classpath_includes_application_dependencies_but_leaves_resources_to_test_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             cache_dir = project_dir / "__pyronaut__"
@@ -1118,9 +1166,9 @@ additional-test-resources = ["test-fixtures"]
             classpath = cli._build_delegate_classpath("test", project_dir.resolve(), self._resolver())  # noqa: SLF001
             entries = classpath.split(os.pathsep)
             self.assertIn("/tmp/pyronaut-test.jar", entries)
-            self.assertNotIn("/tmp/test.jar", entries)
-            self.assertNotIn("/tmp/runtime.jar", entries)
-            self.assertNotIn("/tmp/build.jar", entries)
+            self.assertIn("/tmp/test.jar", entries)
+            self.assertIn("/tmp/runtime.jar", entries)
+            self.assertIn("/tmp/build.jar", entries)
             self.assertNotIn(bundled_pytest_entry, entries)
             self.assertNotIn(bundled_logback_entry, entries)
             self._assert_no_classpath_artifact_prefix(entries, "micronaut-pyronaut-pytest-")

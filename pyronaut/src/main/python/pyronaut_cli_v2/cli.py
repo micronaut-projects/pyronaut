@@ -29,6 +29,7 @@ PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
 SUPPORTED_COMMANDS = {"install", "process", "run", "test", "build", "validate-config", "test-resources-server"}
+LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
     "process": "pyronaut-processor",
@@ -218,7 +219,7 @@ def run(
         )
 
     if command == "test-resources-server" and _is_test_resources_start(forwarded_args):
-        install_args = ["--project-dir", project_dir]
+        install_args = ["--project-dir", project_dir, *_local_repository_install_args()]
         if no_cache:
             install_args.append("--refresh")
         install_code = _delegate("install", install_args, execute, locate)
@@ -487,19 +488,9 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
         entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
     elif command == "test":
-        entries = []
+        entries = _read_test_delegate_dependency_entries(cache_dir)
     else:
-        entries = [
-            entry
-            for manifest in (
-                cache_dir / "resolved-test-dependencies",
-                cache_dir / "resolved-runtime-dependencies",
-                cache_dir / "resolved-build-dependencies",
-            )
-            if manifest.exists()
-            for entry in _read_manifest_entries(manifest)
-            if not _is_test_launcher_provided_artifact(entry)
-        ]
+        entries = _read_test_delegate_dependency_entries(cache_dir)
 
     override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
     if override_jar:
@@ -519,6 +510,20 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
     return os.pathsep.join(deduped)
 
 
+def _read_test_delegate_dependency_entries(cache_dir: Path) -> list[str]:
+    return [
+        entry
+        for manifest in (
+            cache_dir / "resolved-test-dependencies",
+            cache_dir / "resolved-runtime-dependencies",
+            cache_dir / "resolved-build-dependencies",
+        )
+        if manifest.exists()
+        for entry in _read_manifest_entries(manifest)
+        if not _is_test_launcher_provided_artifact(entry)
+    ]
+
+
 def _is_test_launcher_provided_artifact(entry: str) -> bool:
     file_name = Path(entry).name
     return file_name.startswith("micronaut-pyronaut-logback-") or file_name.startswith("micronaut-pyronaut-pytest-")
@@ -530,7 +535,7 @@ def _run_preflight(
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
 ) -> int:
-    install_args = ["--project-dir", project_dir]
+    install_args = ["--project-dir", project_dir, *_local_repository_install_args()]
     if no_cache:
         install_args.append("--no-cache")
     install_code = _delegate("install", install_args, runner, resolver)
@@ -541,6 +546,13 @@ def _run_preflight(
     if no_cache:
         process_args.append("--no-cache")
     return _delegate("process", process_args, runner, resolver)
+
+
+def _local_repository_install_args() -> list[str]:
+    local_repository = _read_env(LOCAL_REPOSITORY_ENV)
+    if local_repository is None:
+        return []
+    return ["--local-repository", local_repository]
 
 
 def _run_build(

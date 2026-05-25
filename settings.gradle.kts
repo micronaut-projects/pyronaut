@@ -528,6 +528,16 @@ if (includeMicronautCore) {
     }
 }
 
+providers.gradleProperty("local.git.micronaut-data").orNull.takeIfNotBlank()?.let { localOverride ->
+    val localDir = file(localOverride)
+    if (!isUsableGitCheckout(localDir)) {
+        throw GradleException("Configured local.git.micronaut-data path is not a valid git checkout: ${localDir.absolutePath}")
+    }
+    includeBuild(localDir) {
+        name = "micronaut-data"
+    }
+}
+
 toolchainManagement {
     jvm {
         javaRepositories {
