@@ -979,7 +979,7 @@ class PyronautInstallMainTest {
     }
 
     @Test
-    void refreshPreservesLocalRepositoryContents() throws Exception {
+    void refreshUpdatesChangedSameVersionArtifactsWithoutClearingLocalRepository() throws Exception {
         Path repository = tempDir.resolve("repo-refresh-local-repo");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0", new byte[]{1});
         writeArtifact(repository, "com.example", "build-dep", "1.0.0");
@@ -1000,6 +1000,8 @@ class PyronautInstallMainTest {
 
         Path sentinel = defaultLocalRepository().resolve("sentinel.txt");
         Files.writeString(sentinel, "keep");
+        Thread.sleep(25L);
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0", new byte[]{2});
 
         PyronautInstallMain refreshRun = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
         refreshRun.projectDir = project;
@@ -1008,7 +1010,7 @@ class PyronautInstallMainTest {
 
         assertTrue(Files.exists(cachedRuntimeJar));
         assertTrue(Files.exists(sentinel));
-        assertEquals((byte) 1, Files.readAllBytes(cachedRuntimeJar)[0]);
+        assertEquals((byte) 2, Files.readAllBytes(cachedRuntimeJar)[0]);
     }
 
     @Test

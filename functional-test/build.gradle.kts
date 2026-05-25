@@ -466,6 +466,27 @@ fun copyMavenArtifact(
     }
 }
 
+fun stagedMavenArtifactOutputFiles(
+    groupId: String,
+    artifactId: String,
+    version: String,
+    hasJar: Boolean = true,
+): List<java.io.File> {
+    val artifactDir = fixtureStagedRepoDir.asFile
+        .resolve(groupId.replace('.', '/'))
+        .resolve(artifactId)
+        .resolve(version)
+    return buildList {
+        add(artifactDir.resolve("$artifactId-$version.pom"))
+        add(artifactDir.resolve("$artifactId-$version.pom.sha1"))
+        if (hasJar) {
+            add(artifactDir.resolve("$artifactId-$version.jar"))
+            add(artifactDir.resolve("$artifactId-$version.jar.sha1"))
+        }
+        add(artifactDir.resolve("_remote.repositories"))
+    }
+}
+
 fun writeFixtureRepositoryMarker(artifactDir: java.io.File, fileName: String) {
     val marker = artifactDir.resolve("_remote.repositories")
     val entries = marker.takeIf { it.isFile }
@@ -747,6 +768,62 @@ fun copyMavenArtifactFile(artifact: ExternalFixtureArtifact) {
     writeFixtureRepositoryMarker(artifactDir, stagedFile.name)
 }
 
+fun stagedExternalFixtureArtifactOutputFiles(
+    artifact: ExternalFixtureArtifact,
+    includePom: Boolean = false,
+): List<java.io.File> {
+    val artifactDir = fixtureStagedRepoDir.asFile
+        .resolve(artifact.groupId.replace('.', '/'))
+        .resolve(artifact.artifactId)
+        .resolve(artifact.version)
+    val classifier = artifact.classifier?.takeIf { it.isNotBlank() }?.let { "-$it" }.orEmpty()
+    val fileName = "${artifact.artifactId}-${artifact.version}$classifier.${artifact.extension}"
+    return buildList {
+        add(artifactDir.resolve(fileName))
+        add(artifactDir.resolve("$fileName.sha1"))
+        add(artifactDir.resolve("_remote.repositories"))
+        if (includePom && artifact.extension != "pom") {
+            addAll(stagedMavenArtifactOutputFiles(artifact.groupId, artifact.artifactId, artifact.version, hasJar = false))
+        }
+    }.distinct()
+}
+
+fun resolvedFixtureArtifactOutputFiles(
+    resolvedArtifacts: Set<org.gradle.api.artifacts.ResolvedArtifact>,
+    includeArtifact: (ExternalFixtureArtifact) -> Boolean = { true },
+    includePom: Boolean = false,
+): List<java.io.File> {
+    return resolvedArtifacts.flatMap { artifact ->
+        val moduleVersion = artifact.moduleVersion.id
+        val fixtureArtifact = ExternalFixtureArtifact(
+            groupId = moduleVersion.group,
+            artifactId = artifact.name,
+            version = moduleVersion.version,
+            extension = artifact.extension ?: artifact.file.extension,
+            classifier = artifact.classifier,
+            file = artifact.file,
+        )
+        if (includeArtifact(fixtureArtifact)) {
+            stagedExternalFixtureArtifactOutputFiles(fixtureArtifact, includePom)
+        } else {
+            emptyList<java.io.File>()
+        }
+    }.distinct()
+}
+
+fun stagedRepositoryCopyOutputFiles(sourceRepository: java.io.File): List<java.io.File> {
+    if (!sourceRepository.isDirectory) {
+        return emptyList()
+    }
+    val sourceRoot = sourceRepository.toPath()
+    val targetRoot = fixtureStagedRepoDir.asFile.toPath()
+    return sourceRepository
+        .walkTopDown()
+        .filter { it.isFile }
+        .map { sourceFile -> targetRoot.resolve(sourceRoot.relativize(sourceFile.toPath())).toFile() }
+        .toList()
+}
+
 fun Project.stageGraalPyFixtureArtifacts() {
     val bundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
         ?.takeIf { it.isNotBlank() }
@@ -875,7 +952,22 @@ val stagePyronautFixtureArtifacts by tasks.registering {
         bomProject.tasks.named("generatePomFileForMavenPublication"),
         taskDependencies,
     )
-    outputs.dir(fixtureStagedRepoDir)
+    outputs.files(providers.provider {
+        val outputs = mutableListOf<java.io.File>()
+        outputs.addAll(
+            stagedMavenArtifactOutputFiles(
+                bomProject.group.toString(),
+                bomProject.name,
+                bomProject.version.toString(),
+                hasJar = false,
+            )
+        )
+        for (projectPath in stagedPyronautProjectPaths) {
+            val artifact = project.fixturePublishedArtifact(projectPath)
+            outputs.addAll(stagedMavenArtifactOutputFiles(artifact.groupId, artifact.artifactId, artifact.version))
+        }
+        outputs.distinct()
+    })
     doLast {
         project.stageLocalPyronautFixtureArtifacts()
     }
@@ -885,9 +977,12 @@ val stageMicronautPlatformFixtureArtifact by tasks.registering {
     group = "build setup"
     description = "Stages the Micronaut Platform BOM used by the functional-test file repository."
     inputs.files(fixturePlatformPom)
-    outputs.file(
-        fixtureStagedRepoDir.file(
-            "io/micronaut/platform/micronaut-platform/$functionalTestMicronautPlatformVersion/micronaut-platform-$functionalTestMicronautPlatformVersion.pom"
+    outputs.files(
+        stagedMavenArtifactOutputFiles(
+            "io.micronaut.platform",
+            "micronaut-platform",
+            functionalTestMicronautPlatformVersion,
+            hasJar = false,
         )
     )
     doLast {
@@ -902,14 +997,25 @@ val stageMicronautCoreFixtureArtifacts by tasks.registering {
     val taskDependencies = mutableListOf<Any>()
     if (micronautCoreIncludedBuild != null) {
         for (artifact in includedCoreArtifacts) {
+            val projectDir = micronautCoreIncludedBuild.projectDir.resolve(artifact.projectDirName)
             taskDependencies.add(micronautCoreIncludedBuild.task(":${artifact.artifactId}:generatePomFileForMavenPublication"))
+            inputs.file(projectDir.resolve("build/publications/maven/pom-default.xml"))
             if (artifact.hasJar) {
                 taskDependencies.add(micronautCoreIncludedBuild.task(":${artifact.artifactId}:jar"))
+                inputs.dir(projectDir.resolve("build/libs"))
             }
         }
     }
     dependsOn(taskDependencies)
-    outputs.dir(fixtureStagedRepoDir)
+    outputs.files(providers.provider {
+        val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" } ?: return@provider emptyList<java.io.File>()
+        val properties = readProperties(includedBuild.projectDir.resolve("gradle.properties"))
+        val coreGroupId = properties.getProperty("projectGroupId")
+        val version = properties.getProperty("projectVersion")
+        includedCoreArtifacts
+            .flatMap { artifact -> stagedMavenArtifactOutputFiles(coreGroupId, artifact.artifactId, version, artifact.hasJar) }
+            .distinct()
+    })
     doLast {
         project.stageIncludedMicronautCoreFixtureArtifacts()
     }
@@ -923,14 +1029,28 @@ val stageMicronautDataFixtureArtifacts by tasks.registering {
     val taskDependencies = mutableListOf<Any>()
     if (micronautDataIncludedBuild != null) {
         for (artifact in includedDataArtifacts) {
+            val projectDir = micronautDataIncludedBuild.projectDir.resolve(artifact.projectDirName)
             taskDependencies.add(micronautDataIncludedBuild.task(":${artifact.artifactId}:generatePomFileForMavenPublication"))
+            inputs.file(projectDir.resolve("build/publications/maven/pom-default.xml"))
             if (artifact.hasJar) {
                 taskDependencies.add(micronautDataIncludedBuild.task(":${artifact.artifactId}:jar"))
+                inputs.dir(projectDir.resolve("build/libs"))
             }
         }
     }
     dependsOn(taskDependencies)
-    outputs.dir(fixtureStagedRepoDir)
+    outputs.files(providers.provider {
+        if (gradle.includedBuilds.none { it.name == "micronaut-data" }) {
+            emptyList<java.io.File>()
+        } else {
+            val targetVersion = micronautDataVersionFromPlatformPom()
+            includedDataArtifacts
+                .flatMap { artifact ->
+                    stagedMavenArtifactOutputFiles("io.micronaut.data", artifact.artifactId, targetVersion, artifact.hasJar)
+                }
+                .distinct()
+        }
+    })
     doLast {
         project.stageIncludedMicronautDataFixtureArtifacts()
     }
@@ -940,7 +1060,14 @@ val stageSourcegenFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages SourceGen artifacts needed by included Micronaut Core Python artifacts."
     inputs.files(fixtureSourcegenArtifacts, fixtureSourcegenRuntimeArtifacts)
-    outputs.dir(fixtureStagedRepoDir)
+    outputs.files(providers.provider {
+        resolvedFixtureArtifactOutputFiles(fixtureSourcegenArtifacts.resolvedConfiguration.resolvedArtifacts) +
+            resolvedFixtureArtifactOutputFiles(
+                fixtureSourcegenRuntimeArtifacts.resolvedConfiguration.resolvedArtifacts,
+                includeArtifact = ::isExternalFixtureArtifact,
+                includePom = true,
+            )
+    })
     doLast {
         project.stageSourcegenFixtureArtifacts()
     }
@@ -950,7 +1077,14 @@ val stageMicronautTestFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages Micronaut Test artifacts needed by the fixture test scope."
     inputs.files(fixtureMicronautTestArtifacts, fixtureMicronautTestRuntimeArtifacts)
-    outputs.dir(fixtureStagedRepoDir)
+    outputs.files(providers.provider {
+        resolvedFixtureArtifactOutputFiles(fixtureMicronautTestArtifacts.resolvedConfiguration.resolvedArtifacts) +
+            resolvedFixtureArtifactOutputFiles(
+                fixtureMicronautTestRuntimeArtifacts.resolvedConfiguration.resolvedArtifacts,
+                includeArtifact = ::isExternalFixtureArtifact,
+                includePom = true,
+            )
+    })
     doLast {
         project.stageMicronautTestFixtureArtifacts()
     }
@@ -960,7 +1094,13 @@ val stageIncludedCoreExternalFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages external artifacts referenced by included Micronaut Core POMs."
     inputs.files(fixtureIncludedCoreExternalArtifacts)
-    outputs.dir(fixtureStagedRepoDir)
+    outputs.files(providers.provider {
+        resolvedFixtureArtifactOutputFiles(
+            fixtureIncludedCoreExternalArtifacts.resolvedConfiguration.resolvedArtifacts,
+            includeArtifact = ::isExternalFixtureArtifact,
+            includePom = true,
+        )
+    })
     doLast {
         project.stageIncludedCoreExternalFixtureArtifacts()
     }
@@ -973,7 +1113,12 @@ val stageGraalPyFixtureArtifacts by tasks.registering {
     if (!bundleRepo.isNullOrBlank()) {
         inputs.dir(java.io.File(bundleRepo))
     }
-    outputs.dir(fixtureStagedRepoDir)
+    outputs.files(providers.provider {
+        bundleRepo
+            ?.takeIf { it.isNotBlank() }
+            ?.let { stagedRepositoryCopyOutputFiles(java.io.File(it)) }
+            ?: emptyList<java.io.File>()
+    })
     doLast {
         project.stageGraalPyFixtureArtifacts()
     }
