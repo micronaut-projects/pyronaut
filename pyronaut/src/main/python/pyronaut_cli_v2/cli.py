@@ -198,7 +198,9 @@ def run(
     project_dir = _extract_project_dir(forwarded_args)
 
     no_cache = _extract_no_cache(forwarded_args)
+    local_repository = _extract_local_repository(forwarded_args)
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"run", "test"} else forwarded_args
+    delegated_args = _strip_local_repository_args(delegated_args) if command in {"run", "test"} else delegated_args
     auto_restart_mode = command == "run" and (process_runner is not None or (runner is None and runner_with_env is None))
 
     effective_java_home_provider = java_home_provider or _default_java_home_provider(
@@ -261,7 +263,7 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-            preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
+            preflight_code = _run_preflight(project_dir, no_cache, local_repository, execute, locate)
             if preflight_code != SUCCESS:
                 return preflight_code
             if tr_session is not None:
@@ -283,6 +285,7 @@ def run(
                 monotonic=monotonic,
                 sleep=sleep,
                 java_home_provider=effective_java_home_provider,
+                local_repository=local_repository,
             )
 
         if command in {"run", "test"}:
@@ -300,7 +303,7 @@ def run(
                 if validation_code != SUCCESS:
                     return validation_code
 
-            preflight_code = _run_preflight(project_dir, no_cache, execute, locate)
+            preflight_code = _run_preflight(project_dir, no_cache, local_repository, execute, locate)
             if preflight_code != SUCCESS:
                 return preflight_code
 
@@ -532,10 +535,11 @@ def _is_test_launcher_provided_artifact(entry: str) -> bool:
 def _run_preflight(
     project_dir: str,
     no_cache: bool,
+    local_repository: str | None,
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
 ) -> int:
-    install_args = ["--project-dir", project_dir, *_local_repository_install_args()]
+    install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
     if no_cache:
         install_args.append("--no-cache")
     install_code = _delegate("install", install_args, runner, resolver)
@@ -548,11 +552,11 @@ def _run_preflight(
     return _delegate("process", process_args, runner, resolver)
 
 
-def _local_repository_install_args() -> list[str]:
-    local_repository = _read_env(LOCAL_REPOSITORY_ENV)
-    if local_repository is None:
+def _local_repository_install_args(local_repository: str | None = None) -> list[str]:
+    repository = local_repository or _read_env(LOCAL_REPOSITORY_ENV)
+    if repository is None:
         return []
-    return ["--local-repository", local_repository]
+    return ["--local-repository", repository]
 
 
 def _run_build(
@@ -600,7 +604,7 @@ def _run_build(
         if validation_code != SUCCESS:
             return validation_code
 
-    preflight = _run_preflight(str(project_dir), no_cache, runner, resolver)
+    preflight = _run_preflight(str(project_dir), no_cache, None, runner, resolver)
     if preflight != SUCCESS:
         return preflight
 
@@ -1722,6 +1726,7 @@ def _run_with_auto_restart(
     monotonic: Callable[[], float],
     sleep: Callable[[float], None],
     java_home_provider: JavaHomeProvider | None,
+    local_repository: str | None,
 ) -> int:
     if poll_interval <= 0:
         poll_interval = 0.25
@@ -1735,7 +1740,7 @@ def _run_with_auto_restart(
         if initial_preflight_done:
             initial_preflight_done = False
         else:
-            preflight_code = _run_preflight(str(project_root), no_cache, execute, resolver)
+            preflight_code = _run_preflight(str(project_root), no_cache, local_repository, execute, resolver)
             if preflight_code != SUCCESS:
                 return preflight_code
 
@@ -1794,7 +1799,7 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
-                        refresh_code = _run_preflight(str(project_root), no_cache, execute, resolver)
+                        refresh_code = _run_preflight(str(project_root), no_cache, local_repository, execute, resolver)
                     except BaseException as exc:
                         refresh_exception = exc
                         refresh_code = INTERNAL_ERROR
@@ -2414,6 +2419,34 @@ def _strip_no_cache_flag(args: Sequence[str]) -> list[str]:
     filtered: list[str] = []
     for token in args:
         if token == "--no-cache" or token.startswith("--no-cache="):
+            continue
+        filtered.append(token)
+    return filtered
+
+
+def _extract_local_repository(args: Sequence[str]) -> str | None:
+    for index, token in enumerate(args):
+        if token in {"--local-repository", "--local-repo"}:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {token}")
+            return args[index + 1]
+        for prefix in ("--local-repository=", "--local-repo="):
+            if token.startswith(prefix):
+                return token.split("=", 1)[1]
+    return None
+
+
+def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
+    filtered: list[str] = []
+    skip_next = False
+    for token in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in {"--local-repository", "--local-repo"}:
+            skip_next = True
+            continue
+        if token.startswith("--local-repository=") or token.startswith("--local-repo="):
             continue
         filtered.append(token)
     return filtered
