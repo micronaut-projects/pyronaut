@@ -92,6 +92,12 @@ data class ExternalFixtureArtifact(
     val file: java.io.File,
 )
 
+data class StagedSnapshotVersion(
+    val extension: String,
+    val classifier: String?,
+    val value: String,
+)
+
 val fixturePlatformPom by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true
@@ -464,6 +470,7 @@ fun copyMavenArtifact(
         writeSha1(stagedJar)
         writeFixtureRepositoryMarker(artifactDir, stagedJar.name)
     }
+    writeFixtureSnapshotMetadata(groupId, artifactId, version, artifactDir)
 }
 
 fun writeFixtureRepositoryMarker(artifactDir: java.io.File, fileName: String) {
@@ -745,6 +752,90 @@ fun copyMavenArtifactFile(artifact: ExternalFixtureArtifact) {
     }
     writeSha1(stagedFile)
     writeFixtureRepositoryMarker(artifactDir, stagedFile.name)
+    writeFixtureSnapshotMetadata(artifact.groupId, artifact.artifactId, artifact.version, artifactDir)
+}
+
+fun writeFixtureSnapshotMetadata(
+    groupId: String,
+    artifactId: String,
+    version: String,
+    artifactDir: java.io.File,
+) {
+    if (!version.endsWith("-SNAPSHOT")) {
+        return
+    }
+    val snapshotVersions = artifactDir.listFiles()
+        ?.filter { file ->
+            file.isFile &&
+                file.name.startsWith("$artifactId-$version") &&
+                !file.name.endsWith(".sha1")
+        }
+        ?.mapNotNull { file -> stagedSnapshotVersion(artifactId, version, file.name) }
+        ?.sortedWith(compareBy<StagedSnapshotVersion> { it.extension }.thenBy { it.classifier.orEmpty() })
+        .orEmpty()
+    if (snapshotVersions.isEmpty()) {
+        return
+    }
+
+    val metadataFile = artifactDir.resolve("maven-metadata.xml")
+    metadataFile.writeText(
+        buildString {
+            appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
+            appendLine("""<metadata modelVersion="1.1.0">""")
+            appendLine("  <groupId>$groupId</groupId>")
+            appendLine("  <artifactId>$artifactId</artifactId>")
+            appendLine("  <versioning>")
+            appendLine("    <snapshot>")
+            appendLine("      <localCopy>true</localCopy>")
+            appendLine("    </snapshot>")
+            appendLine("    <snapshotVersions>")
+            snapshotVersions.forEach { snapshotVersion ->
+                appendLine("      <snapshotVersion>")
+                snapshotVersion.classifier?.let { classifier ->
+                    appendLine("        <classifier>$classifier</classifier>")
+                }
+                appendLine("        <extension>${snapshotVersion.extension}</extension>")
+                appendLine("        <value>${snapshotVersion.value}</value>")
+                appendLine("      </snapshotVersion>")
+            }
+            appendLine("    </snapshotVersions>")
+            appendLine("  </versioning>")
+            appendLine("  <version>$version</version>")
+            appendLine("</metadata>")
+        }
+    )
+    writeSha1(metadataFile)
+
+    val versionMetadataFile = artifactDir.parentFile.resolve("maven-metadata.xml")
+    versionMetadataFile.writeText(
+        buildString {
+            appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
+            appendLine("<metadata>")
+            appendLine("  <groupId>$groupId</groupId>")
+            appendLine("  <artifactId>$artifactId</artifactId>")
+            appendLine("  <versioning>")
+            appendLine("    <latest>$version</latest>")
+            appendLine("    <versions>")
+            appendLine("      <version>$version</version>")
+            appendLine("    </versions>")
+            appendLine("  </versioning>")
+            appendLine("</metadata>")
+        }
+    )
+    writeSha1(versionMetadataFile)
+}
+
+fun stagedSnapshotVersion(artifactId: String, version: String, fileName: String): StagedSnapshotVersion? {
+    val suffix = fileName.removePrefix("$artifactId-$version")
+    if (suffix.isEmpty() || !suffix.contains(".")) {
+        return null
+    }
+    val classifier = suffix
+        .substringBeforeLast(".")
+        .removePrefix("-")
+        .takeIf { it.isNotBlank() }
+    val extension = suffix.substringAfterLast(".")
+    return StagedSnapshotVersion(extension, classifier, version)
 }
 
 fun Project.stageGraalPyFixtureArtifacts() {
