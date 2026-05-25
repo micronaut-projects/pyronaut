@@ -1328,27 +1328,27 @@ class PyronautInstallMainTest {
             repository,
             "io.micronaut",
             "micronaut-core-bom",
-            "5.0.0-SNAPSHOT",
+            "5.1.0-SNAPSHOT",
             List.of(
-                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT"),
-                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.0.0-SNAPSHOT")
+                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.1.0-SNAPSHOT"),
+                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.1.0-SNAPSHOT")
             )
         );
         writeBom(
             repository,
             "io.micronaut.platform",
             "micronaut-platform",
-            "5.0.0-SNAPSHOT",
+            "5.1.0-SNAPSHOT",
             List.of(
-                new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0-SNAPSHOT"),
+                new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.1.0-SNAPSHOT"),
                 new ManagedDependency("org.junit.platform", "junit-platform-launcher", "1.12.2"),
                 new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2")
             )
         );
 
-        writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT");
-        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0-SNAPSHOT");
-        writeArtifact(repository, "io.micronaut.test", "micronaut-test-junit5", "5.0.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.1.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.1.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut.test", "micronaut-test-junit5", "5.1.0-SNAPSHOT");
         writeArtifact(repository, "org.junit.platform", "junit-platform-launcher", "1.12.2");
         writeArtifact(repository, "org.junit.jupiter", "junit-jupiter-engine", "5.12.2");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
@@ -1366,10 +1366,10 @@ class PyronautInstallMainTest {
             repositories = ["%s"]
 
             [tool.pyronaut.core]
-            version = "5.0.0-SNAPSHOT"
+            version = "5.1.0-SNAPSHOT"
 
             [tool.pyronaut.platform]
-            version = "5.0.0-SNAPSHOT"
+            version = "5.1.0-SNAPSHOT"
 
             [tool.pyronaut.dependencies]
             runtime = ["io.micronaut:micronaut-inject-python"]
@@ -1389,9 +1389,9 @@ class PyronautInstallMainTest {
         List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
         List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
 
-        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python") && entry.contains("5.0.0-SNAPSHOT")));
-        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.0.0-SNAPSHOT")));
-        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0-SNAPSHOT")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python") && entry.contains("5.1.0-SNAPSHOT")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.1.0-SNAPSHOT")));
+        assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.1.0-SNAPSHOT")));
     }
 
     @Test
@@ -1401,10 +1401,10 @@ class PyronautInstallMainTest {
             repository,
             "io.micronaut",
             "micronaut-core-bom",
-            "5.0.0-SNAPSHOT",
+            "5.1.0-SNAPSHOT",
             List.of(
-                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT"),
-                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.0.0-SNAPSHOT")
+                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.1.0-SNAPSHOT"),
+                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.1.0-SNAPSHOT")
             )
         );
         writeBom(
@@ -1423,8 +1423,8 @@ class PyronautInstallMainTest {
             )
         );
 
-        writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0-SNAPSHOT");
-        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.1.0-SNAPSHOT");
+        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.1.0-SNAPSHOT");
         writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0-RC2");
         writeArtifact(repository, "io.micronaut.test", "micronaut-test-junit5", "5.0.0-RC1");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
@@ -1446,7 +1446,7 @@ class PyronautInstallMainTest {
             repositories = ["%s"]
 
             [tool.pyronaut.core]
-            version = "5.0.0-SNAPSHOT"
+            version = "5.1.0-SNAPSHOT"
 
             [tool.pyronaut.platform]
             version = "5.0.0-RC1"
@@ -1470,8 +1470,8 @@ class PyronautInstallMainTest {
         List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
         List<String> serverEntries = Files.readAllLines(cacheDir.resolve("resolved-test-resources-server-dependencies"), StandardCharsets.UTF_8);
 
-        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python") && entry.contains("5.0.0-SNAPSHOT")));
-        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.0.0-SNAPSHOT")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-inject-python") && entry.contains("5.1.0-SNAPSHOT")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.1.0-SNAPSHOT")));
         assertFalse(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-context-python") && entry.contains("5.0.0-RC2")));
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-toml") && entry.contains("3.0.0-RC1")));
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("4.0.0-RC1")));
