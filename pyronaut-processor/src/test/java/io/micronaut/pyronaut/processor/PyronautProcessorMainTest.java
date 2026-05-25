@@ -58,6 +58,36 @@ class PyronautProcessorMainTest {
     }
 
     @Test
+    void mirrorsProcessedRuntimeTestSourcesForPytest() throws Exception {
+        Path project = tempDir.resolve("project-runtime-test-sources");
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(project.resolve("tests"));
+        Files.writeString(project.resolve("tests").resolve("sample_test.py"), "def test_example():\n    assert True\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"), List.of("/tmp/runtime-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-test-dependencies"), List.of("/tmp/test-a.jar"), StandardCharsets.UTF_8);
+
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), request -> {
+            try {
+                Path outputFile = request.targetDir()
+                    .resolve("META-INF/GRAALPY-VFS/micronaut-application/src/sample_test.py");
+                Files.createDirectories(outputFile.getParent());
+                Files.writeString(outputFile, "TRANSFORMED = True\n", StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        Path mirrored = project.resolve("__pyronaut__/test-sources/sample_test.py");
+        assertTrue(Files.isRegularFile(mirrored));
+        assertEquals("TRANSFORMED = True\n", Files.readString(mirrored));
+    }
+
+    @Test
     void failsWhenBuildCacheMissing() throws Exception {
         Path project = tempDir.resolve("project-missing-cache");
         Files.createDirectories(project.resolve("__pyronaut__"));

@@ -42,6 +42,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_TARGET_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_TEST_TARGET_DIR = "__pyronaut__/test-classes";
+    private static final String DEFAULT_TEST_SOURCES_DIR = "__pyronaut__/test-sources";
+    private static final String APPLICATION_VFS_SRC = "META-INF/GRAALPY-VFS/micronaut-application/src";
     private static final String DEFAULT_JAVA_SRC = "src-java";
     private static final String DEFAULT_TEST_PYTHON_SRC = "tests";
     private static final String DEFAULT_TEST_JAVA_SRC = "test-java";
@@ -148,6 +150,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             Path resolvedTestPythonSrc = resolveConfiguredPath(root, testPythonSrc, DEFAULT_TEST_PYTHON_SRC, model.pyronaut().sources().pythonTest(), "--test-python-src");
             Path resolvedTestJavaSrc = resolveConfiguredPath(root, testJavaSrc, DEFAULT_TEST_JAVA_SRC, model.pyronaut().sources().javaTest(), "--test-java-src");
             Path resolvedTestTargetDir = root.resolve(testTargetDir).normalize();
+            Path resolvedTestSourcesDir = root.resolve(DEFAULT_TEST_SOURCES_DIR).normalize();
             Path resolvedCacheDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
 
             String mainStatus;
@@ -198,6 +201,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                 progressReporter.startPass("test", testSourceCount);
                 if (testSourceCount == 0L) {
                     Files.createDirectories(resolvedTestTargetDir);
+                    syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                     progressReporter.noSources("test");
                     testStatus = "no sources";
                 } else {
@@ -210,6 +214,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                     );
                     if (!noCache
                         && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint, resolvedTestTargetDir)) {
+                        syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                         progressReporter.cacheHit("test", testSourceCount);
                         testStatus = "cache hit";
                     } else {
@@ -227,6 +232,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         if (!noCache) {
                             ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint);
                         }
+                        syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                         progressReporter.finishPass("test", testSourceCount);
                         testStatus = "processed";
                     }
@@ -293,6 +299,32 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         copyTree(overlaySource, targetDirectory);
     }
 
+    private static void syncProcessedTestSources(Path testTargetDir, Path testSourcesDir, Path originalTestSourceDir) {
+        deleteTree(testSourcesDir);
+        Path generatedSources = testTargetDir.resolve(APPLICATION_VFS_SRC).normalize();
+        if (!Files.isDirectory(generatedSources) || !Files.isDirectory(originalTestSourceDir)) {
+            try {
+                Files.createDirectories(testSourcesDir);
+            } catch (Exception e) {
+                throw new PyronautProcessorException("Failed to create processed test sources directory: " + testSourcesDir, e);
+            }
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(originalTestSourceDir)) {
+            paths.filter(Files::isRegularFile)
+                .filter(path -> path.toString().endsWith(".py"))
+                .forEach(path -> {
+                    Path relative = originalTestSourceDir.relativize(path);
+                    Path generatedPath = generatedSources.resolve(relative).normalize();
+                    if (Files.isRegularFile(generatedPath)) {
+                        copyFile(generatedPath, testSourcesDir.resolve(relative));
+                    }
+                });
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed to mirror processed test sources from: " + generatedSources, e);
+        }
+    }
+
     private static void copyTree(Path sourceDirectory, Path targetDirectory) {
         if (!Files.isDirectory(sourceDirectory)) {
             return;
@@ -309,7 +341,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         if (parent != null) {
                             Files.createDirectories(parent);
                         }
-                        Files.copy(path, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                        copyFile(path, targetPath);
                     }
                 } catch (Exception e) {
                     throw new PyronautProcessorException("Failed to merge source tree from: " + sourceDirectory, e);
@@ -317,6 +349,37 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             });
         } catch (Exception e) {
             throw new PyronautProcessorException("Failed walking source tree: " + sourceDirectory, e);
+        }
+    }
+
+    private static void copyFile(Path source, Path target) {
+        try {
+            Path parent = target.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed copying " + source + " to " + target, e);
+        }
+    }
+
+    private static void deleteTree(Path directory) {
+        if (!Files.exists(directory)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(directory)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (Exception e) {
+                    throw new PyronautProcessorException("Failed deleting path: " + path, e);
+                }
+            });
+        } catch (PyronautProcessorException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed walking path: " + directory, e);
         }
     }
 

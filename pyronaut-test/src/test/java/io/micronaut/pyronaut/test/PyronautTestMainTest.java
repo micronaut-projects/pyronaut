@@ -219,6 +219,37 @@ class PyronautTestMainTest {
     }
 
     @Test
+    void prefersProcessedTestSourcesForPytestExecution() throws Exception {
+        Path project = tempDir.resolve("processed-test-source-project");
+        Path originalTests = project.resolve("tests");
+        Path processedTests = project.resolve("__pyronaut__/test-sources");
+        Files.createDirectories(originalTests);
+        Files.createDirectories(processedTests);
+
+        assertEquals(
+            processedTests.toAbsolutePath().normalize(),
+            PyronautTestMain.resolvePytestSourceDir(project, originalTests)
+        );
+    }
+
+    @Test
+    void mapsDirectTestFileSelectorsToProcessedTestSourcesWhenAvailable() throws Exception {
+        Path project = tempDir.resolve("processed-test-selector-project");
+        Path originalTests = project.resolve("tests");
+        Path processedTests = project.resolve("__pyronaut__/test-sources");
+        Path originalFile = originalTests.resolve("example/micronaut/test_fruit.py");
+        Path processedFile = processedTests.resolve("example/micronaut/test_fruit.py");
+        Files.createDirectories(originalFile.getParent());
+        Files.createDirectories(processedFile.getParent());
+        Files.writeString(originalFile, "def test_original():\n  assert True\n", StandardCharsets.UTF_8);
+        Files.writeString(processedFile, "def test_processed():\n  assert True\n", StandardCharsets.UTF_8);
+
+        List<Path> mapped = PyronautTestMain.mapToPytestSourceFiles(originalTests, processedTests, List.of(originalFile));
+
+        assertEquals(List.of(processedFile), mapped);
+    }
+
+    @Test
     void clearsLegacyReportAliasesBeforeExecution() throws Exception {
         Path project = tempDir.resolve("legacy-report-clean-project");
         Files.createDirectories(project);

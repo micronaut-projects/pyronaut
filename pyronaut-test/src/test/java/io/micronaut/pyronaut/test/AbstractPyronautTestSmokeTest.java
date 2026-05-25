@@ -158,6 +158,67 @@ abstract class AbstractPyronautTestSmokeTest {
         assertEquals(0, result.exitCode(), result.output());
     }
 
+    protected void assertPytestUsesProcessedRuntimeSourcesForKeywordAliases() throws Exception {
+        Path project = tempDir.resolve("keyword-alias-app");
+        Path pyronautDir = project.resolve("__pyronaut__");
+        Path sourceDir = project.resolve("src/example");
+        Path testsDir = project.resolve("tests/example");
+        Files.createDirectories(sourceDir);
+        Files.createDirectories(testsDir);
+        Files.createDirectories(pyronautDir);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject(), StandardCharsets.UTF_8);
+        Files.writeString(
+            sourceDir.resolve("marker.py"),
+            """
+                from jakarta.inject import Singleton
+
+
+                @Singleton
+                class Marker:
+                    pass
+                """,
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            testsDir.resolve("test_keyword_alias.py"),
+            """
+                from reactor.core.publisher import Flux
+
+
+                def test_keyword_safe_java_method_alias():
+                    assert Flux.from_(Flux.just("ok")).blockFirst() == "ok"
+                """,
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            pyronautDir.resolve("resolved-build-dependencies"),
+            testClasspathManifest(null),
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            pyronautDir.resolve("resolved-test-dependencies"),
+            testClasspathManifest(null),
+            StandardCharsets.UTF_8
+        );
+        Files.writeString(
+            pyronautDir.resolve("resolved-runtime-dependencies"),
+            testClasspathManifest(null),
+            StandardCharsets.UTF_8
+        );
+        int processExit = new picocli.CommandLine(new PyronautProcessorMain()).execute(
+            "--project-dir", project.toString(),
+            "--no-cache"
+        );
+        assertEquals(0, processExit);
+        String processedTest = Files.readString(project.resolve("__pyronaut__/test-sources/example/test_keyword_alias.py"));
+        if (!processedTest.contains("getattr(Flux, 'from')")) {
+            throw new AssertionError(processedTest);
+        }
+
+        RunResult result = runDefaultPytest(project);
+        assertEquals(0, result.exitCode(), result.output());
+    }
+
     protected void assertPytestLoadsProjectTypeConverterRegistrars() throws Exception {
         Path project = tempDir.resolve("app");
         Path pyronautDir = project.resolve("__pyronaut__");

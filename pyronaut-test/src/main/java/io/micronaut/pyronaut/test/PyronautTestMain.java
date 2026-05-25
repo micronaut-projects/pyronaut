@@ -54,6 +54,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_TEST_CLASSES_DIR = "__pyronaut__/test-classes";
+    private static final String DEFAULT_TEST_SOURCES_DIR = "__pyronaut__/test-sources";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String DEFAULT_TESTS_DIR = "tests";
     private static final String TEST_APPLICATION_MAIN = "tests.py";
@@ -157,24 +158,26 @@ public final class PyronautTestMain implements Callable<Integer> {
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+        Path resolvedPytestSourceDir = resolvePytestSourceDir(root, resolvedTestsDir);
         try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
             enableContextClassLoaderIntrospections();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             try {
-                contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedTestsDir));
+                contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedPytestSourceDir));
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
                 boolean publishReports = false;
                 if (selectClasses == null || selectClasses.isEmpty()) {
                     requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(layout.processedClassesRoot())));
                     Optional<String> pytestTests = buildPytestTestsParameter(tests);
-                    if (Files.isDirectory(resolvedTestsDir)) {
+                    if (Files.isDirectory(resolvedPytestSourceDir)) {
                         List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
+                        List<Path> selectedFiles = mapToPytestSourceFiles(resolvedTestsDir, resolvedPytestSourceDir, explicitFiles);
                         boolean onlyDirectSelectors = hasOnlyDirectFileSelectors(tests);
                         if (explicitFiles.isEmpty() || !onlyDirectSelectors) {
-                            requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedTestsDir.toString()));
-                            requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedTestsDir.toString());
+                            requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedPytestSourceDir.toString()));
+                            requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedPytestSourceDir.toString());
                         } else {
-                            for (Path file : explicitFiles) {
+                            for (Path file : selectedFiles) {
                                 requestBuilder.selectors(DiscoverySelectors.selectFile(file.toString()));
                             }
                         }
@@ -247,6 +250,14 @@ public final class PyronautTestMain implements Callable<Integer> {
             return TEST_APPLICATION_MAIN;
         }
         return GraalPyContextFactory.APPLICATION_MAIN;
+    }
+
+    static Path resolvePytestSourceDir(Path root, Path resolvedTestsDir) {
+        Path processedTestSources = root.resolve(DEFAULT_TEST_SOURCES_DIR).normalize();
+        if (Files.isDirectory(processedTestSources)) {
+            return processedTestSources;
+        }
+        return resolvedTestsDir;
     }
 
     private static ClassLoader resolveApplicationClassLoader() {
@@ -497,6 +508,28 @@ public final class PyronautTestMain implements Callable<Integer> {
             }
         }
         return List.copyOf(resolved);
+    }
+
+    static List<Path> mapToPytestSourceFiles(Path resolvedTestsDir, Path pytestSourceDir, List<Path> originalFiles) {
+        if (resolvedTestsDir.equals(pytestSourceDir) || originalFiles == null || originalFiles.isEmpty()) {
+            return originalFiles == null ? List.of() : originalFiles;
+        }
+        return originalFiles.stream()
+            .map(file -> mapToPytestSourceFile(resolvedTestsDir, pytestSourceDir, file))
+            .toList();
+    }
+
+    private static Path mapToPytestSourceFile(Path resolvedTestsDir, Path pytestSourceDir, Path originalFile) {
+        try {
+            Path relative = resolvedTestsDir.relativize(originalFile);
+            Path processedFile = pytestSourceDir.resolve(relative).normalize();
+            if (Files.isRegularFile(processedFile)) {
+                return processedFile;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // Fall back to the original selector if it is not under the configured tests directory.
+        }
+        return originalFile;
     }
 
     static boolean hasOnlyDirectFileSelectors(List<String> rawSelectors) {

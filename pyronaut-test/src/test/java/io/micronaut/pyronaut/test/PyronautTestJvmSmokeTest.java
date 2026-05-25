@@ -22,6 +22,11 @@ class PyronautTestJvmSmokeTest extends AbstractPyronautTestSmokeTest {
     }
 
     @Test
+    void jvmLauncherRunsPytestAgainstProcessedRuntimeSources() throws Exception {
+        assertPytestUsesProcessedRuntimeSourcesForKeywordAliases();
+    }
+
+    @Test
     void jvmLauncherLoadsProjectTypeConverterRegistrarsForPytestMicronautContext() throws Exception {
         assertPytestLoadsProjectTypeConverterRegistrars();
     }
