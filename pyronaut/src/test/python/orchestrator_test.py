@@ -713,6 +713,32 @@ class OrchestratorTest(unittest.TestCase):
         self._assert_test_delegate(executed[4], "/tmp/demo")
         self._assert_test_resources_stop(executed[5], "/tmp/demo")
 
+    def test_test_forwards_local_repository_to_install_preflight_only(self):
+        executed = []
+        project_dir = Path("/tmp/demo-local-repo-test")
+        (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+        self._write_manifests(project_dir)
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["test", "--project-dir", str(project_dir), "--local-repository", ".pyronaut-m2"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(6, len(executed))
+        self.assertEqual(
+            ["/tmp/pyronaut-install", "--project-dir", str(project_dir), "--local-repository", ".pyronaut-m2"],
+            executed[1],
+        )
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir)], executed[2])
+        self._assert_test_delegate(executed[4], str(project_dir))
+
     def test_test_starts_test_resources_before_validation_and_reuses_fresh_env(self):
         executed: list[tuple[list[str], dict[str, str] | None]] = []
         with tempfile.TemporaryDirectory() as temp_dir:
