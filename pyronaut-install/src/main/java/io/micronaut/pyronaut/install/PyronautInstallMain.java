@@ -136,7 +136,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> resolvedEditorArtifacts = new EnumMap<>(InstallScope.class);
                 for (InstallScope installScope : scopes) {
                     progressReporter.startScope(installScope);
-                    MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline, noCache);
+                    MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline, bypassRequested);
                     List<String> classpath = manifestClasspath(installScope, details.classpath());
                     progressReporter.finishScope(installScope, classpath.size());
                     resolved.put(installScope, classpath);
@@ -223,7 +223,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
         for (InstallScope installScope : scopes) {
             progressReporter.startScope(installScope);
             try {
-                MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline, noCache);
+                MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline, refresh || noCache);
                 progressReporter.finishScope(installScope, details.classpath().size());
                 renderer.renderScope(installScope, details.root());
             } catch (PyprojectModelException e) {

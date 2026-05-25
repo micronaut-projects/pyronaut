@@ -50,6 +50,8 @@ import org.eclipse.aether.util.filter.DependencyFilterUtils;
 import org.eclipse.aether.util.repository.AuthenticationBuilder;
 import org.eclipse.aether.util.repository.DefaultProxySelector;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -146,7 +148,10 @@ final class MavenClasspathResolver {
                                              Path localRepositoryPath,
                                              boolean offline,
                                              boolean forceUpdates) {
-        List<RemoteRepository> repositories = toRepositories(model.pyronaut() == null ? List.of() : model.pyronaut().repositories());
+        List<RemoteRepository> repositories = toRepositories(
+            model.pyronaut() == null ? List.of() : model.pyronaut().repositories(),
+            forceUpdates
+        );
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
@@ -180,6 +185,9 @@ final class MavenClasspathResolver {
             );
 
             DependencyResult result = repositorySystem.resolveDependencies(session, dependencyRequest);
+            if (forceUpdates && !offline && evictResolvedArtifacts(localRepositoryPath, result)) {
+                result = repositorySystem.resolveDependencies(session, dependencyRequest);
+            }
             List<Path> classpath = result.getArtifactResults().stream()
                 .map(artifactResult -> artifactResult.getArtifact())
                 .filter(Objects::nonNull)
@@ -202,6 +210,36 @@ final class MavenClasspathResolver {
             }
             throw new PyprojectModelException(message, e);
         }
+    }
+
+    private static boolean evictResolvedArtifacts(Path localRepositoryPath, DependencyResult result) {
+        Path localRepositoryRoot = localRepositoryPath.toAbsolutePath().normalize();
+        boolean evicted = false;
+        for (ArtifactResult artifactResult : result.getArtifactResults()) {
+            Artifact artifact = artifactResult.getArtifact();
+            if (artifact == null || artifact.getPath() == null) {
+                continue;
+            }
+            Path artifactPath = artifact.getPath().toAbsolutePath().normalize();
+            if (!artifactPath.startsWith(localRepositoryRoot)) {
+                continue;
+            }
+            evicted |= deleteLocalArtifactFile(artifactPath);
+        }
+        return evicted;
+    }
+
+    private static boolean deleteLocalArtifactFile(Path artifactPath) {
+        boolean deleted = false;
+        try {
+            deleted |= Files.deleteIfExists(artifactPath);
+            deleted |= Files.deleteIfExists(artifactPath.resolveSibling(artifactPath.getFileName() + ".sha1"));
+            deleted |= Files.deleteIfExists(artifactPath.resolveSibling(artifactPath.getFileName() + ".md5"));
+            deleted |= Files.deleteIfExists(artifactPath.resolveSibling(artifactPath.getFileName() + ".lastUpdated"));
+        } catch (IOException e) {
+            throw new PyprojectModelException("Failed refreshing local dependency artifact: " + artifactPath, e);
+        }
+        return deleted;
     }
 
     private List<String> coordinatesForScope(PyprojectModel model,
@@ -658,7 +696,7 @@ final class MavenClasspathResolver {
         return new RepositorySystemSupplier().get();
     }
 
-    private static List<RemoteRepository> toRepositories(List<String> configuredRepositories) {
+    private static List<RemoteRepository> toRepositories(List<String> configuredRepositories, boolean forceUpdates) {
         List<String> repositories = configuredRepositories == null || configuredRepositories.isEmpty()
             ? List.of("mavenCentral")
             : configuredRepositories;
@@ -671,17 +709,31 @@ final class MavenClasspathResolver {
             }
             String lower = value.toLowerCase(Locale.ROOT);
             if ("mavencentral".equals(lower)) {
-                resolved.put("mavenCentral", new RemoteRepository.Builder("mavenCentral", "default", "https://repo1.maven.org/maven2/").build());
+                resolved.put("mavenCentral", newRemoteRepository("mavenCentral", "https://repo1.maven.org/maven2/", forceUpdates));
             } else if ("mavenlocal".equals(lower)) {
                 String localPath = resolveLocalMavenRepository().toUri().toString();
-                resolved.put("mavenLocal", new RemoteRepository.Builder("mavenLocal", "default", localPath).build());
+                resolved.put("mavenLocal", newRemoteRepository("mavenLocal", localPath, forceUpdates));
             } else {
                 String id = "repo-" + resolved.size();
                 String url = value.contains("://") ? value : Path.of(value).toAbsolutePath().toUri().toString();
-                resolved.put(id, new RemoteRepository.Builder(id, "default", url).build());
+                resolved.put(id, newRemoteRepository(id, url, forceUpdates));
             }
         }
         return List.copyOf(resolved.values());
+    }
+
+    private static RemoteRepository newRemoteRepository(String id, String url, boolean forceUpdates) {
+        RemoteRepository.Builder builder = new RemoteRepository.Builder(id, "default", url);
+        if (forceUpdates) {
+            RepositoryPolicy policy = new RepositoryPolicy(
+                true,
+                RepositoryPolicy.UPDATE_POLICY_ALWAYS,
+                RepositoryPolicy.CHECKSUM_POLICY_WARN
+            );
+            builder.setReleasePolicy(policy);
+            builder.setSnapshotPolicy(policy);
+        }
+        return builder.build();
     }
 
     static Path resolveLocalMavenRepository() {

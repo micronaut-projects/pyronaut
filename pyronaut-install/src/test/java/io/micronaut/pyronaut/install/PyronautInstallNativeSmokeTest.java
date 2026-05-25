@@ -76,10 +76,10 @@ class PyronautInstallNativeSmokeTest {
         Path project = tempDir.resolve("bom-project");
         Path repository = tempDir.resolve("bom-repo");
         Files.createDirectories(project);
-        writeManagedBom(repository, "io.micronaut", "micronaut-core-bom", "5.0.0-SNAPSHOT",
-            List.of("io.micronaut:micronaut-http:5.0.0-SNAPSHOT"));
-        writeManagedBom(repository, "io.micronaut.platform", "micronaut-platform", "5.0.0-SNAPSHOT", List.of());
-        writeArtifact(repository, "io.micronaut", "micronaut-http", "5.0.0-SNAPSHOT");
+        writeManagedBom(repository, "io.micronaut", "micronaut-core-bom", "5.1.0-SNAPSHOT",
+            List.of("io.micronaut:micronaut-http:5.1.0-SNAPSHOT"));
+        writeManagedBom(repository, "io.micronaut.platform", "micronaut-platform", "5.1.0-SNAPSHOT", List.of());
+        writeArtifact(repository, "io.micronaut", "micronaut-http", "5.1.0-SNAPSHOT");
         Files.writeString(project.resolve("pyproject.toml"), bomManagedPyproject(repository));
 
         Process process = new ProcessBuilder(
@@ -99,7 +99,7 @@ class PyronautInstallNativeSmokeTest {
             project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
             StandardCharsets.UTF_8
         );
-        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-http-5.0.0-SNAPSHOT.jar")), output);
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-http-5.1.0-SNAPSHOT.jar")), output);
     }
 
     @Test
@@ -246,10 +246,10 @@ class PyronautInstallNativeSmokeTest {
             repositories = ["%s"]
 
             [tool.pyronaut.core]
-            version = "5.0.0-SNAPSHOT"
+            version = "5.1.0-SNAPSHOT"
 
             [tool.pyronaut.platform]
-            version = "5.0.0-SNAPSHOT"
+            version = "5.1.0-SNAPSHOT"
 
             [tool.pyronaut.test-resources]
             enabled = false
