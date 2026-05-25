@@ -134,6 +134,47 @@ def _restore_system_properties(prev: Dict[str, Optional[str]]):
     except Exception:
         pass
 
+
+def _flatten_params(params):
+    if not params:
+        return []
+    if hasattr(params, 'items') and callable(getattr(params, 'items')):
+        iterable = params.items()
+    else:
+        iterable = params
+    pairs = []
+    for item in iterable:
+        k, v = item
+        if v is None:
+            continue
+        if isinstance(v, (list, tuple)):
+            for value in v:
+                if value is not None:
+                    pairs.append((k, value))
+        else:
+            pairs.append((k, v))
+    return pairs
+
+
+def _merge_params(session_params, request_params):
+    if (
+        session_params
+        and request_params
+        and hasattr(session_params, 'items')
+        and callable(getattr(session_params, 'items'))
+        and hasattr(request_params, 'items')
+        and callable(getattr(request_params, 'items'))
+    ):
+        merged = {}
+        merged.update(session_params)
+        merged.update(request_params)
+        return _flatten_params(merged)
+    pairs = []
+    pairs.extend(_flatten_params(session_params))
+    pairs.extend(_flatten_params(request_params))
+    return pairs
+
+
 # expose exceptions module for compatibility
 exceptions = _exc
 
@@ -359,14 +400,10 @@ class Session:
             up = (user_pass[0] + ':' + user_pass[1]).encode('utf-8')
             merged_headers['Authorization'] = 'Basic ' + base64.b64encode(up).decode('ascii')
 
-        merged_params: Dict[str, Any] = {}
-        if getattr(self, 'params', None):
-            merged_params.update(self.params)
-        if params:
-            merged_params.update(params)
+        merged_params = _merge_params(getattr(self, 'params', None), params)
         if merged_params:
             uri = UriBuilder.of(_jstring(full_url))
-            for k, v in merged_params.items():
+            for k, v in merged_params:
                 uri = uri.queryParam(_jstring(k), _jstring(v))
             full_url = str(uri.build())
             req = HttpRequest.create(HttpMethod.valueOf(method.upper()), _jstring(full_url))

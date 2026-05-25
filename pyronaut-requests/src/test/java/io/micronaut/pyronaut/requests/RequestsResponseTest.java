@@ -50,6 +50,74 @@ class RequestsResponseTest {
     }
 
     @Test
+    void repeatedQueryParametersArePreserved() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+                import pyronaut.requests as requests
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+
+                class FakeInvoker:
+                    captured = []
+
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        FakeInvoker.captured.append(request)
+                        return type("Result", (), {
+                            "success": True,
+                            "response": HttpResponse.ok(),
+                            "body": b"",
+                        })()
+
+                requests.HttpClientInvoker = FakeInvoker
+                response = requests.Session(register=False).get(
+                    "/fruits/q",
+                    params=[("names", "apple"), ("names", "pineapple")],
+                )
+                uri = str(FakeInvoker.captured[0].getUri())
+                response.status_code == 200 and uri == "/fruits/q?names=apple&names=pineapple"
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
+    void dictQueryListValuesAreExpanded() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+                import pyronaut.requests as requests
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+
+                class FakeInvoker:
+                    captured = []
+
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        FakeInvoker.captured.append(request)
+                        return type("Result", (), {
+                            "success": True,
+                            "response": HttpResponse.ok(),
+                            "body": b"",
+                        })()
+
+                requests.HttpClientInvoker = FakeInvoker
+                response = requests.Session(register=False).get(
+                    "/fruits/q",
+                    params={"names": ["apple", "pineapple"]},
+                )
+                uri = str(FakeInvoker.captured[0].getUri())
+                response.status_code == 200 and uri == "/fruits/q?names=apple&names=pineapple"
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
     void formDataIsSentAsJavaStringBody() {
         try (Context context = newPythonContext()) {
             Value result = context.eval("python", """
