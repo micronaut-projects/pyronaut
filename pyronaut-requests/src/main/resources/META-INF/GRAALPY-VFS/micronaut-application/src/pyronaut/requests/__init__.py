@@ -252,6 +252,12 @@ class CaseInsensitiveDict:
         return key.lower() in self._store
 
 
+def _response_body_bytes(body) -> bytes:
+    if isinstance(body, (bytes, bytearray)):
+        return bytes(body)
+    return bytes(int(value) & 0xFF for value in body)
+
+
 class Response:
     def __init__(self, request_url: str, resp, history=None, body=None):
         self._resp = resp
@@ -267,14 +273,14 @@ class Response:
                 hdrs[str(k)] = str(values.get(0))
         self.headers = CaseInsensitiveDict(hdrs)
         if body is not None:
-            self._content = bytes(body)
+            self._content = _response_body_bytes(body)
         else:
             bodyOpt = resp.getBody()
             if bodyOpt is None or not bodyOpt.isPresent():
                 self._content = b""
             else:
                 arr = bodyOpt.get()
-                self._content = bytes(arr)
+                self._content = _response_body_bytes(arr)
         self.history = history or []
 
 

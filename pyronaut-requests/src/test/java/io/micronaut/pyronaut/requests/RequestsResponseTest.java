@@ -50,6 +50,29 @@ class RequestsResponseTest {
     }
 
     @Test
+    void signedJavaByteArrayResponseBodiesAreConvertedToPythonBytes() {
+        try (Context context = newPythonContext()) {
+            context.getBindings("python").putMember("signedBody", new byte[] {0, 1, -1, -128, 127});
+            Value result = context.eval("python", """
+                import java
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+
+                from pyronaut.requests import Response
+
+                response = Response(
+                    "http://localhost/files/books.xlsx",
+                    HttpResponse.ok(),
+                    body=signedBody,
+                )
+                response.content == bytes([0, 1, 255, 128, 127])
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
     void repeatedQueryParametersArePreserved() {
         try (Context context = newPythonContext()) {
             Value result = context.eval("python", """
