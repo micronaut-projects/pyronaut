@@ -232,6 +232,7 @@ val includedDataArtifacts = listOf(
     IncludedBuildPublishedArtifact("data-model", "micronaut-data-model"),
     IncludedBuildPublishedArtifact("data-mongodb", "micronaut-data-mongodb"),
     IncludedBuildPublishedArtifact("data-processor", "micronaut-data-processor"),
+    IncludedBuildPublishedArtifact("data-r2dbc", "micronaut-data-r2dbc"),
     IncludedBuildPublishedArtifact("data-runtime", "micronaut-data-runtime"),
     IncludedBuildPublishedArtifact("data-tx", "micronaut-data-tx"),
 )
@@ -631,19 +632,21 @@ fun Project.stageIncludedMicronautCoreFixtureArtifacts() {
         ?: throw GradleException("functional-test requires the included micronaut-core build when using $functionalTestMicronautCoreVersion")
     val properties = readProperties(includedBuild.projectDir.resolve("gradle.properties"))
     val coreGroupId = properties.getProperty("projectGroupId")
-    val version = properties.getProperty("projectVersion")
+    val sourceVersion = properties.getProperty("projectVersion")
+    val targetVersion = functionalTestMicronautCoreVersion
     for (artifact in includedCoreArtifacts) {
         val projectDir = includedBuild.projectDir.resolve(artifact.projectDirName)
         copyMavenArtifact(
             groupId = coreGroupId,
             artifactId = artifact.artifactId,
-            version = version,
+            version = targetVersion,
             pomFile = projectDir.resolve("build/publications/maven/pom-default.xml"),
             jarFile = if (artifact.hasJar) {
-                projectDir.resolve("build/libs/${artifact.artifactId}-$version.jar")
+                projectDir.resolve("build/libs/${artifact.artifactId}-$sourceVersion.jar")
             } else {
                 null
             },
+            pomVersionReplacement = sourceVersion to targetVersion,
         )
     }
 }
@@ -1102,9 +1105,8 @@ val stageMicronautCoreFixtureArtifacts by tasks.registering {
         val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" } ?: return@provider emptyList<java.io.File>()
         val properties = readProperties(includedBuild.projectDir.resolve("gradle.properties"))
         val coreGroupId = properties.getProperty("projectGroupId")
-        val version = properties.getProperty("projectVersion")
         includedCoreArtifacts
-            .flatMap { artifact -> stagedMavenArtifactOutputFiles(coreGroupId, artifact.artifactId, version, artifact.hasJar) }
+            .flatMap { artifact -> stagedMavenArtifactOutputFiles(coreGroupId, artifact.artifactId, functionalTestMicronautCoreVersion, artifact.hasJar) }
             .distinct()
     })
     doLast {
