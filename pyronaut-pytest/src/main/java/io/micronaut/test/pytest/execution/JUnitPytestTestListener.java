@@ -15,6 +15,7 @@
  */
 package io.micronaut.test.pytest.execution;
 
+import io.micronaut.test.pytest.FailureDiagnostics;
 import io.micronaut.test.pytest.PytestTestDescriptor;
 import io.micronaut.test.pytest.extension.PytestMicronautExtension;
 import io.micronaut.test.pytest.listener.PytestTestListener;
@@ -167,9 +168,9 @@ public class JUnitPytestTestListener implements PytestTestListener {
         outcomes.add(new TestOutcome(testId, result));
         var payload = new LinkedHashMap<String, String>();
         if (result.getStatus() == TestExecutionResult.Status.FAILED) {
-            result.getThrowable().ifPresent(throwable -> payload.put("failure", throwable.toString()));
+            result.getThrowable().ifPresent(throwable -> payload.put("failure", FailureDiagnostics.render(throwable)));
         } else if (result.getStatus() == TestExecutionResult.Status.ABORTED) {
-            result.getThrowable().ifPresent(throwable -> payload.put("reason", throwable.toString()));
+            result.getThrowable().ifPresent(throwable -> payload.put("reason", FailureDiagnostics.render(throwable)));
         }
         writeEvent("test_finished", testId, result.getStatus().name(), payload);
         if (result.getStatus() == TestExecutionResult.Status.FAILED && renderFailureOutputEnabled()) {
@@ -266,7 +267,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
 
     private String renderFailureDiagnostics(String testId, TestExecutionResult result) {
         TestStreamOutput details = outputByTest.getOrDefault(testId, new TestStreamOutput());
-        String failure = result.getThrowable().map(Throwable::toString).orElse("");
+        String failure = result.getThrowable().map(FailureDiagnostics::render).orElse("");
         StringBuilder message = new StringBuilder(256);
         message.append("\n=== Pyronaut test failure: ").append(testId).append(" ===\n");
         appendConsoleSection(message, "Failure", failure);
@@ -440,7 +441,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
             for (TestOutcome outcome : outcomes) {
                 String status = displayStatus(outcome.result().getStatus());
                 TestStreamOutput details = outputByTest.getOrDefault(outcome.testId(), new TestStreamOutput());
-                String failure = outcome.result().getThrowable().map(Throwable::toString).orElse("");
+                String failure = outcome.result().getThrowable().map(FailureDiagnostics::render).orElse("");
                 String badgeClass = badgeClass(outcome.result().getStatus());
 
                 html.append("<details class=\"card mb-2\">\n")

@@ -24,6 +24,7 @@ import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.convert.TypeConverterRegistrar;
 import io.micronaut.core.io.scan.ClassPathResourceLoader;
 import io.micronaut.core.io.service.SoftServiceLoader;
+import io.micronaut.test.pytest.FailureDiagnostics;
 import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.TransactionMode;
@@ -175,8 +176,8 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         try {
             super.beforeClass(context, testClass, testAnnotationValue);
         } catch (RuntimeException e) {
-            LOG.error("Error PytestMicronautExtension beforeClass: {}", e.getMessage());
-            throw new PythonAssertionError(e.getMessage());
+            LOG.error("Error PytestMicronautExtension beforeClass: {}", e.getMessage(), e);
+            throw new PythonAssertionError(e.getMessage(), e);
         }
     }
 
@@ -246,23 +247,12 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         }
     }
 
-    private static String buildFailureMessage(Throwable e) {
-        String message = e.getMessage();
+    static String buildFailureMessage(Throwable e) {
+        String message = FailureDiagnostics.render(e);
         if (message == null || message.isBlank()) {
-            message = e.getClass().getName();
+            return e.getMessage() == null || e.getMessage().isBlank() ? e.getClass().getName() : e.getMessage();
         }
-        Throwable cause = e.getCause();
-        if (cause == null || cause == e) {
-            return message;
-        }
-        String causeMessage = cause.getMessage();
-        if (causeMessage == null || causeMessage.isBlank()) {
-            causeMessage = cause.getClass().getName();
-        }
-        if (message.equals(causeMessage)) {
-            return message;
-        }
-        return message + System.lineSeparator() + causeMessage;
+        return message;
     }
 
     /**

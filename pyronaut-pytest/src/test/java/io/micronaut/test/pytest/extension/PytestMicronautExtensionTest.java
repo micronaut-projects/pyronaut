@@ -47,6 +47,19 @@ class PytestMicronautExtensionTest {
     }
 
     @Test
+    void fixtureFailureMessageIncludesRootCauseDiagnostics() {
+        RuntimeException failure = new RuntimeException(
+            "fixture setup failed",
+            new IllegalStateException("root cause detail")
+        );
+
+        String message = PytestMicronautExtension.buildFailureMessage(failure);
+
+        assertTrue(message.contains("java.lang.RuntimeException: fixture setup failed"));
+        assertTrue(message.contains("Caused by: java.lang.IllegalStateException: root cause detail"));
+    }
+
+    @Test
     void applicationContextClassLoaderPrefersGraalPyContextClassLoader() {
         ClassLoader threadClassLoader = new ClassLoader() {
         };

@@ -15,6 +15,7 @@
  */
 package io.micronaut.test.pytest.execution;
 
+import io.micronaut.test.pytest.FailureDiagnostics;
 import io.micronaut.test.pytest.PytestFileDescriptor;
 import io.micronaut.test.pytest.PytestTestDescriptor;
 import io.micronaut.test.pytest.PythonAssertionError;
@@ -30,7 +31,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 
 /**
@@ -38,7 +38,6 @@ import java.util.regex.Pattern;
  */
 public class PytestTestExecutor {
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestExecutor.class);
-    private static final Pattern INTERNAL_STACK_FRAME = Pattern.compile("\\s+at (com\\.oracle\\.truffle\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|java\\.base/).*");
     private static final String DEFAULT_REPORTS_DIR = "__pyronaut__/reports/tests";
     private static final String DEFAULT_JUNIT_XML_REPORT = "junit.xml";
     private static final String DEFAULT_HTML_REPORT = "index.html";
@@ -247,19 +246,8 @@ run_pytest
     }
 
     private static PythonAssertionError compactFailure(Exception e) {
-        String text = e.toString();
-        StringBuilder compact = new StringBuilder();
-        for (String line : text.split("\\R")) {
-            if (INTERNAL_STACK_FRAME.matcher(line).matches()) {
-                continue;
-            }
-            if (!compact.isEmpty()) {
-                compact.append(System.lineSeparator());
-            }
-            compact.append(line);
-        }
-        String message = compact.isEmpty() ? e.getMessage() : compact.toString();
+        String message = FailureDiagnostics.render(e);
         String finalMessage = message == null || message.isBlank() ? "Pytest execution failed" : message;
-        return new PythonAssertionError(finalMessage);
+        return new PythonAssertionError(finalMessage, e);
     }
 }

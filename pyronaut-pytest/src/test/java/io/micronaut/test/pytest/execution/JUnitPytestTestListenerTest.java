@@ -173,6 +173,36 @@ class JUnitPytestTestListenerTest {
     }
 
     @Test
+    void failureReportsIncludeCauseChainDiagnostics() throws Exception {
+        Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
+        Path eventsReport = reportsDir.resolve("events.ndjson");
+        Path htmlReport = reportsDir.resolve("index.html");
+
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of(),
+            htmlReport.toString(),
+            reportsDir.resolve(".pyronaut-last-nodeid.txt").toString(),
+            eventsReport.toString()
+        );
+
+        RuntimeException failure = new RuntimeException(
+            "fixture setup failed",
+            new IllegalStateException("root cause detail")
+        );
+        listener.afterTest("tests/test_fixture.py::test_context", null, TestExecutionResult.failed(failure));
+        listener.onResult(TestExecutionResult.failed(failure));
+
+        String events = Files.readString(eventsReport, StandardCharsets.UTF_8);
+        assertTrue(events.contains("java.lang.RuntimeException: fixture setup failed"));
+        assertTrue(events.contains("Caused by: java.lang.IllegalStateException: root cause detail"));
+
+        String html = Files.readString(htmlReport, StandardCharsets.UTF_8);
+        assertTrue(html.contains("java.lang.RuntimeException: fixture setup failed"));
+        assertTrue(html.contains("Caused by: java.lang.IllegalStateException: root cause detail"));
+    }
+
+    @Test
     void reportsAbortedTestsAsSkippedInEventsAndHtmlReport() throws Exception {
         Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
         Path eventsReport = reportsDir.resolve("events.ndjson");
