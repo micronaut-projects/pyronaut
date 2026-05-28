@@ -2081,6 +2081,8 @@ class PyronautInstallMainTest {
         assertTrue(pyronautTestStub.contains("class MicronautTest:"));
         assertTrue(pyronautTestStub.contains("from micronaut.context import ApplicationContext"));
         assertTrue(pyronautTestStub.contains("class ApplicationContextWrapper(ApplicationContext):"));
+        assertTrue(pyronautTestStub.contains("def stop(self) -> ApplicationContextWrapper: ..."));
+        assertTrue(pyronautTestStub.contains("def close(self) -> ApplicationContextWrapper: ..."));
         assertTrue(pyronautTestStub.contains("def micronaut_test_fixture(request: Any, micronaut_test: MicronautTest | None = ...) -> ApplicationContextWrapper: ..."));
     }
 

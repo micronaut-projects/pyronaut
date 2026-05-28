@@ -16,8 +16,12 @@
 package io.micronaut.test.pytest.execution;
 
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.junit.jupiter.api.Test;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -44,6 +48,40 @@ class PytestFunctionInvokerTest {
             assertFalse(result.success);
             assertTrue(result.stack.contains("java.lang.IllegalStateException"));
             assertTrue(result.stack.contains("boom"));
+        }
+    }
+
+    @Test
+    void applicationContextWrapperConvertsLifecycleFailure() throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String testSupport = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
+            context.getBindings("python").putMember("failingContext", new FailingContext());
+
+            context.eval("python", """
+                wrapper = ApplicationContextWrapper(failingContext)
+                try:
+                    wrapper.stop()
+                except RuntimeError as e:
+                    lifecycle_error = str(e)
+                """);
+
+            String error = context.getBindings("python").getMember("lifecycle_error").asString();
+            assertTrue(error.contains("Micronaut application context stop failed"));
+            assertTrue(error.contains("java.lang.IllegalStateException"));
+            assertTrue(error.contains("boom"));
+        }
+    }
+
+    public static final class FailingContext {
+        public void stop() {
+            throw new IllegalStateException("boom");
         }
     }
 }

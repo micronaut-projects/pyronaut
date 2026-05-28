@@ -95,6 +95,40 @@ class ApplicationContextWrapper:
         """
         self.java_ctx = java_app_context
 
+    def stop(self):
+        return self._invoke_lifecycle("stop")
+
+    def close(self):
+        return self._invoke_lifecycle("close")
+
+    def _invoke_lifecycle(self, method_name):
+        method = getattr(self.java_ctx, method_name, None)
+        if method is None:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{method_name}' (not found on Java context)"
+            )
+
+        PytestFunctionInvoker = java.type("io.micronaut.test.pytest.execution.PytestFunctionInvoker")
+        result = PytestFunctionInvoker.call(method)
+        if not getattr(result, "success", False):
+            raise RuntimeError(self._format_lifecycle_failure(method_name, result))
+        return self
+
+    def _format_lifecycle_failure(self, method_name, result):
+        stack = getattr(result, "stack", None)
+        if stack:
+            return f"Micronaut application context {method_name} failed:\n{stack}"
+
+        message = getattr(result, "message", None)
+        exception_class = getattr(result, "exceptionClass", None)
+        if message and exception_class:
+            return f"Micronaut application context {method_name} failed: {exception_class}: {message}"
+        if message:
+            return f"Micronaut application context {method_name} failed: {message}"
+        if exception_class:
+            return f"Micronaut application context {method_name} failed: {exception_class}"
+        return f"Micronaut application context {method_name} failed"
+
     def __getitem__(self, key):
         """
         Supports ctx["Foo"] notation.
