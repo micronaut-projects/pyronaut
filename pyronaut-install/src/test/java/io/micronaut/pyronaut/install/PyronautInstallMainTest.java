@@ -1242,6 +1242,75 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void resolvesDependenciesManagedByNestedPomBomDependencies() throws Exception {
+        Path repository = tempDir.resolve("repo-nested-managed-bom");
+        writeBom(
+            repository,
+            "io.micronaut",
+            "micronaut-core-bom",
+            "5.0.0",
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-context-python", "5.0.0"),
+                new ManagedDependency("io.micronaut", "micronaut-inject-python", "5.0.0")
+            )
+        );
+        writeBom(
+            repository,
+            "io.opentelemetry",
+            "opentelemetry-bom",
+            "1.54.1",
+            List.of(new ManagedDependency("io.opentelemetry", "opentelemetry-exporter-otlp", "1.54.1"))
+        );
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "5.0.0",
+            List.of(
+                new ManagedDependency("io.opentelemetry", "opentelemetry-bom", "1.54.1"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0")
+            )
+        );
+
+        writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0");
+        writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0");
+        writeArtifact(repository, "io.opentelemetry", "opentelemetry-exporter-otlp", "1.54.1");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
+
+        Path project = tempDir.resolve("project-nested-managed-bom");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "nested-managed-bom-test"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "5.0.0"
+
+            [tool.pyronaut.platform]
+            version = "5.0.0"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.opentelemetry:opentelemetry-exporter-otlp"]
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("opentelemetry-exporter-otlp-1.54.1")));
+    }
+
+    @Test
     void addsDefaultRuntimeBuildAndTestDependenciesWhenOmittedFromPyproject() throws Exception {
         Path repository = tempDir.resolve("repo-default-dependencies");
         writeBom(

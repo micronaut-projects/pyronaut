@@ -631,6 +631,29 @@ final class MavenClasspathResolver {
                 continue;
             }
             managedDependencies.putIfAbsent(managedDependencyKey(artifact), dependency);
+            if ("pom".equals(artifact.getExtension())) {
+                addManagedDependenciesFromBom(artifact, repositories, session, visitedBoms, managedDependencies);
+            } else if (artifact.getArtifactId().endsWith("-bom")) {
+                addManagedDependenciesFromOptionalBom(
+                    new DefaultArtifact(artifact.getGroupId(), artifact.getArtifactId(), "", "pom", artifact.getVersion()),
+                    repositories,
+                    session,
+                    visitedBoms,
+                    managedDependencies
+                );
+            }
+        }
+    }
+
+    private void addManagedDependenciesFromOptionalBom(Artifact bomArtifact,
+                                                       List<RemoteRepository> repositories,
+                                                       CloseableSession session,
+                                                       LinkedHashSet<String> visitedBoms,
+                                                       Map<String, Dependency> managedDependencies) {
+        try {
+            addManagedDependenciesFromBom(bomArtifact, repositories, session, visitedBoms, managedDependencies);
+        } catch (PyprojectModelException ignored) {
+            // Some managed artifacts use a *-bom name without being published as a Maven BOM.
         }
     }
 
