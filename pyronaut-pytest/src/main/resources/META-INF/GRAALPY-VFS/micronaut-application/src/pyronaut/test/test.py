@@ -181,7 +181,16 @@ class ApplicationContextWrapper:
         if module_name.endswith(f'.{class_name}'):
             stripped_module = module_name[:-len(f'.{class_name}')]
             fqn = f"{stripped_module}.{qualname}" if stripped_module else qualname
+        else:
+            snake_class_name = self._camel_to_snake(class_name)
+            if module_name.endswith(f'.{snake_class_name}'):
+                stripped_module = module_name[:-len(f'.{snake_class_name}')]
+                fqn = f"{stripped_module}.{qualname}" if stripped_module else qualname
         return fqn
+
+    def _camel_to_snake(self, name):
+        value = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+        return re.sub("([a-z0-9])([A-Z])", r"\1_\2", value).lower()
 
     def _foreign_java_class_name(self, key):
         if type(key).__module__ != "polyglot":

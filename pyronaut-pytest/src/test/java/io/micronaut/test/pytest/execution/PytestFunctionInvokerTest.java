@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -76,6 +77,30 @@ class PytestFunctionInvokerTest {
             assertTrue(error.contains("Micronaut application context stop failed"));
             assertTrue(error.contains("java.lang.IllegalStateException"));
             assertTrue(error.contains("boom"));
+        }
+    }
+
+    @Test
+    void applicationContextWrapperMapsSnakeCaseModuleClassesToGeneratedBeanNames() throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String testSupport = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
+            context.getBindings("python").putMember("failingContext", new FailingContext());
+
+            context.eval("python", """
+                DemoConsumer = type("DemoConsumer", (), {"__module__": "example.micronaut.demo_consumer"})
+                wrapper = ApplicationContextWrapper(failingContext)
+                lookup_key = wrapper._python_type_to_lookup_key(DemoConsumer)
+                """);
+
+            String lookupKey = context.getBindings("python").getMember("lookup_key").asString();
+            assertEquals("example.micronaut.DemoConsumer", lookupKey);
         }
     }
 
