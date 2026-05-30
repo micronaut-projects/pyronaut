@@ -43,8 +43,10 @@ def jtype(name: str):
 HttpClient = jtype("io.micronaut.http.client.HttpClient")
 HttpRequest = jtype("io.micronaut.http.HttpRequest")
 HttpMethod = jtype("io.micronaut.http.HttpMethod")
+MediaType = jtype("io.micronaut.http.MediaType")
 JsonMapper = jtype("io.micronaut.json.JsonMapper")
 ClientRegistry = jtype("io.micronaut.pyronaut.requests.ClientRegistry")
+MultipartBody = jtype("io.micronaut.http.client.multipart.MultipartBody")
 UriBuilder = jtype("io.micronaut.http.uri.UriBuilder")
 HttpClientConfiguration = jtype("io.micronaut.http.client.HttpClientConfiguration")
 JByteArray = jtype("byte[]")
@@ -173,6 +175,64 @@ def _merge_params(session_params, request_params):
     pairs.extend(_flatten_params(session_params))
     pairs.extend(_flatten_params(request_params))
     return pairs
+
+
+def _iter_items(value):
+    if not value:
+        return []
+    if hasattr(value, 'items') and callable(getattr(value, 'items')):
+        return value.items()
+    return value
+
+
+def _to_body_bytes(value) -> bytes:
+    if hasattr(value, 'read') and callable(getattr(value, 'read')):
+        value = value.read()
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, str):
+        return value.encode('utf-8')
+    return bytes(value)
+
+
+def _to_java_bytes(value):
+    data = _to_body_bytes(value)
+    array = JByteArray(len(data))
+    for index, item in enumerate(data):
+        array[index] = item if item < 128 else item - 256
+    return array
+
+
+def _build_multipart_body(data, files):
+    builder = MultipartBody.builder()
+    for name, value in _iter_items(data):
+        if value is None:
+            continue
+        values = value if isinstance(value, (list, tuple)) else [value]
+        for item in values:
+            if item is None:
+                continue
+            builder = builder.addPart(str(name), str(item))
+
+    for name, value in _iter_items(files):
+        filename = None
+        content_type = "application/octet-stream"
+        content = value
+        if isinstance(value, tuple):
+            if len(value) >= 2:
+                filename = value[0]
+                content = value[1]
+            if len(value) >= 3 and value[2]:
+                content_type = value[2]
+        if filename is None:
+            filename = getattr(content, 'name', name)
+        if filename is None:
+            builder = builder.addPart(str(name), str(content))
+            continue
+        builder = builder.addPart(str(name), str(filename), MediaType(str(content_type)), _to_java_bytes(content))
+    return builder.build()
 
 
 # expose exceptions module for compatibility
@@ -385,7 +445,7 @@ class Session:
     def request(self, method: str, url: str, params: Dict[str, Any] = None, data: Any = None,
                 json: Any = None, headers: Dict[str, str] = None, cookies: Dict[str, str] = None,
                 auth: Optional[Tuple[str, str]] = None, timeout: Optional[Union[float, Tuple[float, float]]] = None,
-                allow_redirects: bool = True, verify: Optional[Union[bool, str]] = None):
+                allow_redirects: bool = True, verify: Optional[Union[bool, str]] = None, files: Any = None):
         full_url = self._resolve_url(url)
         req = HttpRequest.create(HttpMethod.valueOf(method.upper()), _jstring(full_url))
         # headers
@@ -416,7 +476,11 @@ class Session:
 
         # body
         content_type_set = False
-        if json is not None:
+        if files is not None:
+            req = req.body(_build_multipart_body(data, files))
+            merged_headers.setdefault('Content-Type', 'multipart/form-data')
+            content_type_set = True
+        elif json is not None:
             body_bytes = self._mapper.writeValueAsBytes(json)
             req = req.body(body_bytes)
             merged_headers['Content-Type'] = 'application/json'
@@ -424,7 +488,7 @@ class Session:
         elif data is not None:
             body = None
             if isinstance(data, (bytes, bytearray)):
-                body = JByteArray(bytes(data))
+                body = _to_java_bytes(data)
             elif isinstance(data, str):
                 body = _jstring(data)
                 if not content_type_set:

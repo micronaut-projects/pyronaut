@@ -180,6 +180,45 @@ class RequestsResponseTest {
     }
 
     @Test
+    void multipartFilesUseMicronautMultipartBody() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+                import pyronaut.requests as requests
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+                MultipartBody = java.type("io.micronaut.http.client.multipart.MultipartBody")
+
+                class FakeInvoker:
+                    captured = []
+
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        FakeInvoker.captured.append(request)
+                        return type("Result", (), {
+                            "success": True,
+                            "response": HttpResponse.created("/pictures/alvaro"),
+                            "body": b"",
+                        })()
+
+                requests.HttpClientInvoker = FakeInvoker
+                response = requests.Session(register=False).post(
+                    "/pictures/alvaro",
+                    data={"description": "avatar"},
+                    files={"fileUpload": ("test-file.txt", b"micronaut", "text/plain")},
+                )
+                request = FakeInvoker.captured[0]
+                content_type = request.getContentType().get().toString()
+                response.status_code == 201 \\
+                    and request.getBody(MultipartBody).isPresent() \\
+                    and content_type == "multipart/form-data"
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
     void falseyAllowRedirectsDoesNotFollowRedirects() {
         try (Context context = newPythonContext()) {
             Value result = context.eval("python", """
