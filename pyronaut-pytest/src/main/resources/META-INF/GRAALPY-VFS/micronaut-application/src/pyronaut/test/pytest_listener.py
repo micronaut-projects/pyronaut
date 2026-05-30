@@ -257,10 +257,23 @@ class MicronautPytestPlugin:
             except Exception:
                 import traceback; traceback.print_exc()
 
+    @pytest.hookimpl(hookwrapper=True, trylast=True)
     def pytest_runtest_teardown(self, item):
         """Called after test teardown."""
         test_id = self._get_test_id(item)
-        exception = self.test_results.get(test_id)
+        outcome = yield
+        teardown_exception = None
+        excinfo = getattr(outcome, "excinfo", None)
+        if excinfo is not None:
+            if isinstance(excinfo, tuple):
+                if len(excinfo) >= 2:
+                    teardown_exception = excinfo[1]
+                elif len(excinfo) == 1:
+                    teardown_exception = excinfo[0]
+            else:
+                teardown_exception = getattr(excinfo, "value", excinfo)
+
+        exception = teardown_exception or self.test_results.get(test_id)
 
         if isinstance(exception, _ExpectedFailure):
             result = self.listener.abortedResult(exception.reason)
@@ -269,10 +282,19 @@ class MicronautPytestPlugin:
         else:
             result = self.listener.successfulResult()
 
-        self.listener.afterTest(test_id, item, result)
+        def notify_after_test():
+            self.listener.afterTest(test_id, item, result)
+
+        after_test_result = PytestFunctionInvoker.call(notify_after_test)
+        if not getattr(after_test_result, "success", False):
+            pytest.fail(_format_call_failure(after_test_result), pytrace=False)
 
         # Clean up stored result
         self.test_results.pop(test_id, None)
+
+        if teardown_exception is not None and _is_foreign_exception(teardown_exception):
+            outcome.force_result(None)
+            pytest.fail(f"{teardown_exception}", pytrace=False)
 
     def pytest_collectreport(self, report):
         """Called when collection report is generated."""
