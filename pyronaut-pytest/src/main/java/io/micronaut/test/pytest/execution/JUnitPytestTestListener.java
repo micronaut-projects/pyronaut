@@ -79,6 +79,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     private final List<TestOutcome> outcomes = new ArrayList<>();
     private final Set<String> writtenNodeIds = new HashSet<>();
     private final Map<String, TestStreamOutput> outputByTest = new LinkedHashMap<>();
+    private TestExecutionResult sessionResult = TestExecutionResult.successful();
 
     public JUnitPytestTestListener(
         EngineExecutionListener junitListener,
@@ -139,7 +140,13 @@ public class JUnitPytestTestListener implements PytestTestListener {
     @Override
     public void afterFile(String file, TestExecutionResult result) {
         LOG.debug("Pytest finished file: {} ({})", file, result);
-        // File-level events are not used in the new architecture
+        if (result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {
+            recordSessionResult(result);
+            outcomes.add(new TestOutcome(file, result));
+            var payload = new LinkedHashMap<String, String>();
+            result.getThrowable().ifPresent(throwable -> payload.put("failure", FailureDiagnostics.render(throwable)));
+            writeEvent("file_finished", file, result.getStatus().name(), payload);
+        }
     }
 
     @Override
@@ -200,6 +207,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     @Override
     public void onResult(TestExecutionResult result) {
         LOG.debug("Pytest session completed");
+        recordSessionResult(result);
         long passed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.SUCCESSFUL).count();
         long failed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.FAILED).count();
         long skipped = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.ABORTED).count();
@@ -210,6 +218,19 @@ public class JUnitPytestTestListener implements PytestTestListener {
         payload.put("skipped", Long.toString(skipped));
         writeEvent("session_finished", null, result.getStatus().name(), payload);
         writeHtmlReport();
+    }
+
+    TestExecutionResult sessionResult() {
+        return sessionResult;
+    }
+
+    private void recordSessionResult(TestExecutionResult result) {
+        if (result == null || result.getStatus() == TestExecutionResult.Status.SUCCESSFUL) {
+            return;
+        }
+        if (sessionResult.getStatus() == TestExecutionResult.Status.SUCCESSFUL) {
+            sessionResult = result;
+        }
     }
 
     @Override

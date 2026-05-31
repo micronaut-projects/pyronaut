@@ -299,10 +299,12 @@ class MicronautPytestPlugin:
     def pytest_collectreport(self, report):
         """Called when collection report is generated."""
         if report.failed:
-            result = self.listener.failedAssertionResult(f"Collection failed: {report.longrepr}")
-            if self.current_file:
-                self.listener.afterFile(f"{self.current_file}", result)
-                raise Exception(f"Collection failed: {report.longrepr}")
+            file_id = f"{self.current_file or getattr(report, 'fspath', None) or getattr(report, 'nodeid', 'collection')}"
+            failure_text = _filter_internal_traceback_frames(f"{report.longrepr}")
+            message = f"Collection failed: {failure_text}"
+            result = self.listener.failedAssertionResult(message)
+            self.listener.onOutput(file_id, "log", message)
+            self.listener.afterFile(file_id, result)
         else:
             if self.current_file:
                 self.listener.afterFile(f"{self.current_file}", self.listener.successfulResult())

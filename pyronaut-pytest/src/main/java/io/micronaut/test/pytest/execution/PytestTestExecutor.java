@@ -148,6 +148,7 @@ run_pytest
                 testListener,
                 junitXmlReportPath
             );
+            failIfPytestFailed(testListener, result);
 
             LOG.debug("Pytest execution completed for file: {}", fileDescriptor.getDisplayName());
 
@@ -195,7 +196,7 @@ run_pytest
                 .toArray(String[]::new);
 
             // Call run_pytest with the file paths and listener
-            context.eval("python", """
+            Value result = context.eval("python", """
 from pyronaut.test import run_pytest
 
 run_pytest
@@ -204,6 +205,7 @@ run_pytest
                 testListener,
                 junitXmlReportPath
             );
+            failIfPytestFailed(testListener, result);
 
             LOG.debug("Pytest execution completed for all tests");
 
@@ -226,7 +228,7 @@ run_pytest
                 lastNodeIdReportPath,
                 eventsReportPath
             );
-            context.eval("python", """
+            Value result = context.eval("python", """
 from pyronaut.test import run_pytest
 
 run_pytest
@@ -235,6 +237,7 @@ run_pytest
                 testListener,
                 junitXmlReportPath
             );
+            failIfPytestFailed(testListener, result);
             LOG.debug("Test {} executed via pytest for file {}", testDescriptor.getDisplayName(), filePath);
 
         } catch (Exception e) {
@@ -249,5 +252,38 @@ run_pytest
         String message = FailureDiagnostics.render(e);
         String finalMessage = message == null || message.isBlank() ? "Pytest execution failed" : message;
         return new PythonAssertionError(finalMessage, e);
+    }
+
+    static void failIfPytestFailed(JUnitPytestTestListener testListener, Value result) {
+        TestExecutionResult sessionResult = testListener.sessionResult();
+        if (sessionResult.getStatus() == TestExecutionResult.Status.FAILED) {
+            Throwable throwable = sessionResult.getThrowable()
+                .orElseGet(() -> new RuntimeException("Pytest session failed"));
+            throw new IllegalStateException(FailureDiagnostics.render(throwable), throwable);
+        }
+        int exitCode = pytestExitCode(result);
+        if (exitCode != 0) {
+            throw new IllegalStateException("Pytest session failed with exit code: " + exitCode);
+        }
+    }
+
+    static int pytestExitCode(Value result) {
+        if (result == null || result.isNull()) {
+            return 0;
+        }
+        if (result.fitsInInt()) {
+            return result.asInt();
+        }
+        if (result.hasMember("value")) {
+            Value value = result.getMember("value");
+            if (value != null && value.fitsInInt()) {
+                return value.asInt();
+            }
+        }
+        try {
+            return Integer.parseInt(result.toString());
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 }

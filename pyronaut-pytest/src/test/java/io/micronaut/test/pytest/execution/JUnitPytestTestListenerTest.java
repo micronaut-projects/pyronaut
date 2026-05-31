@@ -1,5 +1,6 @@
 package io.micronaut.test.pytest.execution;
 
+import io.micronaut.test.pytest.PythonAssertionError;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.platform.engine.EngineExecutionListener;
@@ -12,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -200,6 +202,40 @@ class JUnitPytestTestListenerTest {
         String html = Files.readString(htmlReport, StandardCharsets.UTF_8);
         assertTrue(html.contains("java.lang.RuntimeException: fixture setup failed"));
         assertTrue(html.contains("Caused by: java.lang.IllegalStateException: root cause detail"));
+    }
+
+    @Test
+    void fileCollectionFailuresAreRecordedAsSessionFailures() throws Exception {
+        Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
+        Path eventsReport = reportsDir.resolve("events.ndjson");
+        Path htmlReport = reportsDir.resolve("index.html");
+
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of(),
+            htmlReport.toString(),
+            reportsDir.resolve(".pyronaut-last-nodeid.txt").toString(),
+            eventsReport.toString()
+        );
+
+        listener.onOutput("tests/test_bad.py", "log", "Collection failed: ImportError: bad import\n");
+        listener.afterFile(
+            "tests/test_bad.py",
+            TestExecutionResult.failed(new PythonAssertionError("Collection failed: ImportError: bad import"))
+        );
+        listener.onResult(TestExecutionResult.failed(new RuntimeException("Pytest session failed with exit code: 2")));
+
+        assertEquals(TestExecutionResult.Status.FAILED, listener.sessionResult().getStatus());
+        assertTrue(listener.sessionResult().getThrowable().orElseThrow().getMessage().contains("bad import"));
+
+        String events = Files.readString(eventsReport, StandardCharsets.UTF_8);
+        assertTrue(events.contains("\"eventType\":\"file_finished\""));
+        assertTrue(events.contains("\"testId\":\"tests/test_bad.py\""));
+        assertTrue(events.contains("bad import"));
+
+        String html = Files.readString(htmlReport, StandardCharsets.UTF_8);
+        assertTrue(html.contains("tests/test_bad.py"));
+        assertTrue(html.contains("Collection failed: ImportError: bad import"));
     }
 
     @Test
