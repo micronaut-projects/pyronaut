@@ -486,6 +486,7 @@ val gitHubUsername = configuredValue("pyronaut.git.username", "PYRONAUT_GIT_USER
 val graalPyBundleRepo = if (includeGraalPyExtensions) {
     ensureGraalPyBundleRepo(ensureGraalPyExtensionsCheckout(), graalpyVersion).also {
         System.setProperty("pyronaut.graalpy.bundle.repo", it.absolutePath)
+        System.setProperty("micronaut.graalpy.bundle.repo", it.absolutePath)
         System.setProperty("org.gradle.project.pyronaut.graalpy.bundle.repo", it.absolutePath)
         System.setProperty("org.gradle.project.micronaut.graalpy.bundle.repo", it.absolutePath)
         System.setProperty("maven.repo.local", it.absolutePath)
