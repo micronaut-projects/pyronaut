@@ -611,6 +611,7 @@ fun Project.stageLocalPyronautFixtureArtifacts() {
             version = artifact.version,
             pomFile = artifact.pomFile,
             jarFile = artifact.jarFile,
+            pomVersionReplacement = pyronautMicronautCoreVersionReplacement(artifact.pomFile),
         )
     }
 }
@@ -683,6 +684,31 @@ fun readMavenPomTag(pomFile: java.io.File, tagName: String): String {
         ?.get(1)
         ?: throw GradleException("Unable to find <$tagName> in ${pomFile.absolutePath}")
 }
+
+fun readMavenDependencyVersion(
+    pomFile: java.io.File,
+    groupId: String,
+    artifactId: String,
+): String? {
+    if (!pomFile.isFile) {
+        throw GradleException("Missing generated POM: ${pomFile.absolutePath}")
+    }
+    val dependencyPattern = """
+        (?s)<dependency>\s*
+        <groupId>${Regex.escape(groupId)}</groupId>\s*
+        <artifactId>${Regex.escape(artifactId)}</artifactId>\s*
+        <version>([^<]+)</version>.*?</dependency>
+    """.trimIndent().replace("\n", "")
+    return Regex(dependencyPattern)
+        .find(pomFile.readText())
+        ?.groupValues
+        ?.get(1)
+}
+
+fun pyronautMicronautCoreVersionReplacement(pomFile: java.io.File): Pair<String, String>? =
+    readMavenDependencyVersion(pomFile, "io.micronaut", "micronaut-core-bom")
+        ?.takeIf { it != functionalTestMicronautCoreVersion }
+        ?.let { it to functionalTestMicronautCoreVersion }
 
 fun Project.stageSourcegenFixtureArtifacts() {
     stageResolvedFixtureArtifacts(fixtureSourcegenArtifacts.resolvedConfiguration.resolvedArtifacts)

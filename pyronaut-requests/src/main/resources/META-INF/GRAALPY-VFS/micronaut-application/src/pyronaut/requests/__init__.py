@@ -420,9 +420,9 @@ class Response:
 
 
 class Session:
-    def __init__(self, base_url: Optional[str] = None, mapper=None, register: bool = True):
+    def __init__(self, base_url: Optional[str] = None, mapper=None, register: bool = True, client=None):
         self.base_url = base_url
-        self._client = HttpClient.create(None if base_url is None else java.net.URL(base_url))
+        self._client = client or HttpClient.create(None if base_url is None else java.net.URL(base_url))
         if register:
             ClientRegistry.register(self._client)
         self._mapper = mapper or _ensure_default_mapper()
@@ -738,13 +738,15 @@ def options(url: str, **kwargs):
 def with_context(ctx):
     # Resolve server safely via wrapper to avoid ForeignException crossing
     server = ctx["io.micronaut.runtime.server.EmbeddedServer"]
-    base_url = f"http://localhost:{server.getPort()}"
+    server_url = server.getURL()
+    base_url = str(server_url)
+    client = server.getApplicationContext().createBean(HttpClient, server_url)
     # resolve mapper from context if present
     try:
         mapper = ctx["io.micronaut.json.JsonMapper"]
     except KeyError:
         mapper = _ensure_default_mapper()
-    return Session(base_url, mapper)
+    return Session(base_url, mapper, client=client)
 
 
 # atexit fallback close all
