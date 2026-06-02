@@ -120,6 +120,44 @@ result = 'success'
     }
 
     @Test
+    void testPythonDictConfigAcceptsTraceLevel() {
+        String pythonCode =
+                """
+from logback.config import dictConfig
+
+config = {
+    'version': 1,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'level': 'TRACE'
+        }
+    },
+    'loggers': {
+        'test.trace': {
+            'level': 'TRACE',
+            'handlers': ['console']
+        }
+    }
+}
+
+dictConfig(config)
+result = 'success'
+""".stripIndent();
+
+        try {
+            graalContext.eval("python", pythonCode);
+            String result = graalContext.eval("python", "result").asString();
+            assertEquals("success", result, "dictConfig should accept TRACE levels");
+
+            Logger logger = (Logger) LoggerFactory.getLogger("test.trace");
+            assertEquals(Level.TRACE, logger.getLevel());
+        } catch (Exception e) {
+            fail("Python dictConfig failed for TRACE level: " + e.getMessage());
+        }
+    }
+
+    @Test
     void testPythonFileHandlerWorksWithLogback() throws Exception {
         // Test that file handler configuration works
         Path tempFile = Path.of("test-file-logging.log");

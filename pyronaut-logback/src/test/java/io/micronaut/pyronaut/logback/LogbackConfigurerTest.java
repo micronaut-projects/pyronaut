@@ -124,6 +124,23 @@ class LogbackConfigurerTest {
     }
 
     @Test
+    void testLogbackConfigurerWithTraceLogger() {
+        Map<String, Object> config = new HashMap<>();
+
+        Map<String, Object> loggers = new HashMap<>();
+        Map<String, Object> testLogger = new HashMap<>();
+        testLogger.put("level", "TRACE");
+        loggers.put("test.trace", testLogger);
+        config.put("loggers", loggers);
+
+        LogbackConfigurer.configure(config);
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger("test.trace");
+        assertEquals(ch.qos.logback.classic.Level.TRACE, logger.getLevel());
+    }
+
+    @Test
     void testLoggerCaching() {
         // Test that LogbackConfigurer.getLogger returns the same instance
         Logger logger1 = LogbackConfigurer.getLogger("test.cache");

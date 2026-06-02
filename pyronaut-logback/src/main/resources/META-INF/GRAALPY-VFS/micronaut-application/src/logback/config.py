@@ -14,6 +14,12 @@ except (ImportError, KeyError):
     LogbackConfigurer = None
 
 
+def _level_to_python(level):
+    if isinstance(level, str) and level.upper() == "TRACE":
+        return logging.DEBUG
+    return getattr(logging, level) if isinstance(level, str) else level
+
+
 class LogbackLogger(logging.Logger):
     """
     Custom Logger class that delegates to SLF4J/logback loggers.
@@ -124,12 +130,12 @@ def dictConfig(config):
     if root_config:
         level = root_config.get('level')
         if level:
-            root_logger.setLevel(getattr(logging, level))
+            root_logger.setLevel(_level_to_python(level))
 
     # 2️⃣ Replace the root logger instance
     level = root_config.get('level')
     if level:
-        root = LogbackLogger("root", level)
+        root = LogbackLogger("root", _level_to_python(level))
     else:
         root = LogbackLogger("root", logging.WARNING)
 
@@ -145,7 +151,7 @@ def dictConfig(config):
         logger = logging.getLogger(logger_name)
         level = logger_config.get('level')
         if level:
-            logger.setLevel(getattr(logging, level))
+            logger.setLevel(_level_to_python(level))
         
         propagate = logger_config.get('propagate', True)
         logger.propagate = propagate

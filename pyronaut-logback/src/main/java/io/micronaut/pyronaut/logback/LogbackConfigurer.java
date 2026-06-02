@@ -205,7 +205,6 @@ public final class LogbackConfigurer {
             throw new IllegalArgumentException("Formatter '" + formatter + "' not found in formatters configuration");
         }
         String pattern = formatter != null ? FORMATTERS.get(formatter) : "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
-        String level = (String) config.get("level");
 
         Appender<ILoggingEvent> appender = null;
         if (clazz.contains("StreamHandler")) {
@@ -243,12 +242,7 @@ public final class LogbackConfigurer {
         // Set level
         String level = (String) config.get("level");
         if (level != null) {
-            // Map Python levels to logback levels
-            if ("TRACE".equals(level)) {
-                logger.setLevel(Level.DEBUG); // Map TRACE to DEBUG
-            } else {
-                logger.setLevel(Level.toLevel(level));
-            }
+            logger.setLevel(Level.toLevel(level));
         }
 
         // Set handlers
