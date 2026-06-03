@@ -102,3 +102,46 @@ def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
 ----
+
+== SQL Scripts
+
+Use `Sql` with `MicronautTest` to execute SQL scripts during the pytest lifecycle.
+The scripts are resolved with Micronaut's `ResourceLoader`, so classpath resources such as `classpath:sql/seed-data.sql` work the same way they do with Micronaut Test on the JVM.
+
+[source,python]
+----
+import pytest
+
+from pyronaut.test import MicronautTest, Sql, micronaut_test_fixture
+
+
+@pytest.fixture
+def my_context(request):
+    fixture = micronaut_test_fixture(
+        request,
+        MicronautTest(
+            start_application=False,
+            sql=Sql(
+                scripts="classpath:sql/seed-data.sql",
+                phase=Sql.Phase.BEFORE_EACH,
+            ),
+        ),
+    )
+    yield fixture
+    fixture.stop()
+----
+
+Pass a list when multiple scripts or phases are needed:
+
+[source,python]
+----
+MicronautTest(
+    sql=[
+        Sql("classpath:sql/init-db.sql", phase=Sql.Phase.BEFORE_EACH),
+        Sql("classpath:sql/seed-data.sql", phase=Sql.Phase.BEFORE_EACH),
+    ],
+)
+----
+
+`Sql` defaults to the `default` datasource and `javax.sql.DataSource`.
+Use `data_source_name` or `resource_type` when the test needs another SQL resource.

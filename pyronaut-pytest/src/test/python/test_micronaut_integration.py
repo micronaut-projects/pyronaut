@@ -26,6 +26,18 @@ def my_context(request):
 def test_micronaut_test_defaults_to_non_transactional():
     assert MicronautTest().transactional is False
 
+
+def test_micronaut_test_accepts_sql_config():
+    sql = Sql("classpath:sql/seed-data.sql", phase=Sql.Phase.BEFORE_EACH)
+    config = MicronautTest(sql=sql)
+
+    assert config.sql is sql
+    assert sql.as_dict()["scripts"] == ["classpath:sql/seed-data.sql"]
+    assert sql.as_dict()["phase"] == "BEFORE_EACH"
+    assert sql.as_dict()["dataSourceName"] == "default"
+    assert sql.as_dict()["resourceType"] == "javax.sql.DataSource"
+
+
 @pytest.fixture
 def env(my_context) -> ApplicationContext:
     return my_context["io.micronaut.context.env.Environment"]

@@ -20,23 +20,37 @@ import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.DefaultApplicationContextBuilder;
 import io.micronaut.context.annotation.Property;
 import io.micronaut.context.python.ContextHolder;
+import io.micronaut.core.annotation.NonNull;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.convert.TypeConverterRegistrar;
+import io.micronaut.core.io.ResourceLoader;
 import io.micronaut.core.io.scan.ClassPathResourceLoader;
 import io.micronaut.core.io.service.SoftServiceLoader;
+import io.micronaut.inject.qualifiers.Qualifiers;
 import io.micronaut.test.pytest.FailureDiagnostics;
 import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.annotation.MicronautTestValue;
+import io.micronaut.test.annotation.Sql;
 import io.micronaut.test.annotation.TransactionMode;
 import io.micronaut.test.extensions.AbstractMicronautExtension;
+import io.micronaut.test.support.sql.SqlHandler;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.AnnotatedElement;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.Consumer;
+import javax.sql.DataSource;
 
 /**
  * Micronaut Test extension for Pytest.
@@ -45,11 +59,17 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
 
     public static final String ID = "_micronaut_test_extension";
     private static final Logger LOG = LoggerFactory.getLogger(PytestMicronautExtension.class);
+    private final List<SqlConfig> sqlConfigs;
 
     public PytestMicronautExtension(Map<String, Object> pytestProperties, Value node) {
+        this(pytestProperties, node, List.of());
+    }
+
+    public PytestMicronautExtension(Map<String, Object> pytestProperties, Value node, @Nullable List<Map<String, Object>> sqlConfigs) {
         if (pytestProperties != null) {
             this.testProperties.putAll(pytestProperties);
         }
+        this.sqlConfigs = parseSqlConfigs(sqlConfigs);
         node.putMember(ID, this);
     }
 
@@ -74,6 +94,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         @Nullable String[] environments,
         @Nullable String[] packages,
         @Nullable String[] propertySources,
+        @Nullable List<Map<String, Object>> sqlConfigs,
         boolean rollback,
         boolean transactional,
         boolean rebuildContext,
@@ -81,7 +102,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         boolean resolveParameters
     ) {
         try {
-            PytestMicronautExtension extension = new PytestMicronautExtension(pytestProperties, node);
+            PytestMicronautExtension extension = new PytestMicronautExtension(pytestProperties, node, sqlConfigs);
             String error = extension.start(
                 node,
                 createMicronautTestValue(
@@ -155,6 +176,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     public String start(Value node, MicronautTestValue testAnnotationValue) {
         try {
             beforeClass(node, PytestMicronautExtension.class, testAnnotationValue);
+            runSql(Sql.Phase.BEFORE_ALL);
             return null;
         } catch (Throwable e) {
             LOG.error("Error PytestMicronautExtension start: {}", e.getMessage(), e);
@@ -216,6 +238,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     @Override
     public void afterClass(Value context) {
         try {
+            runSql(Sql.Phase.AFTER_ALL);
             super.afterClass(context);
         } catch (RuntimeException e) {
             LOG.error("Error PytestMicronautExtension afterClass: " + e.getMessage(), e);
@@ -226,15 +249,124 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     @Override
     public void beforeEach(Value context, @Nullable Object testInstance, @Nullable AnnotatedElement method, List<Property> propertyAnnotations) {
         super.beforeEach(context, testInstance, method, propertyAnnotations);
+        runSql(Sql.Phase.BEFORE_EACH);
     }
 
     @Override
     public void afterEach(Value context) throws Exception {
+        runSql(Sql.Phase.AFTER_EACH);
         super.afterEach(context);
     }
 
     public ApplicationContext getContext() {
         return this.applicationContext;
+    }
+
+    private void runSql(Sql.Phase phase) {
+        if (applicationContext == null || !applicationContext.isRunning()) {
+            return;
+        }
+        List<SqlConfig> phaseConfigs = sqlConfigs.stream()
+            .filter(config -> config.phase() == phase)
+            .toList();
+        if (phaseConfigs.isEmpty()) {
+            return;
+        }
+        ResourceLoader resourceLoader = applicationContext.getBean(ResourceLoader.class);
+        for (SqlConfig config : phaseConfigs) {
+            Consumer<String> processor = sqlProcessor(config);
+            for (String script : config.scripts()) {
+                handleScript(resourceLoader, script, processor, phase);
+            }
+        }
+    }
+
+    private Consumer<String> sqlProcessor(SqlConfig config) {
+        Object resource = applicationContext.getBean(config.resourceType(), Qualifiers.byName(config.dataSourceName()));
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        SqlHandler<Object> handler = applicationContext.getBean(SqlHandler.class, Qualifiers.byTypeArguments(config.resourceType()));
+        return script -> handler.handle(resource, script);
+    }
+
+    private static void handleScript(ResourceLoader loader, String script, Consumer<String> processor, Sql.Phase phase) {
+        Optional<URL> resource = loader.getResource(script);
+        if (resource.isEmpty()) {
+            LOG.warn("Could not find SQL script: {}", script);
+            return;
+        }
+        try (InputStream in = resource.get().openStream()) {
+            processor.accept(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            throw new IllegalStateException("Error processing " + phase + " SQL script: " + script, e);
+        }
+    }
+
+    private static List<SqlConfig> parseSqlConfigs(@Nullable List<Map<String, Object>> configs) {
+        if (configs == null || configs.isEmpty()) {
+            return List.of();
+        }
+        List<SqlConfig> parsed = new ArrayList<>(configs.size());
+        for (Map<String, Object> config : configs) {
+            List<String> scripts = stringList(config.get("scripts"));
+            if (scripts.isEmpty()) {
+                continue;
+            }
+            Sql.Phase phase = parsePhase(config.get("phase"));
+            String dataSourceName = stringValue(config.get("dataSourceName"), "default");
+            Class<?> resourceType = resolveClass(stringValue(config.get("resourceType"), DataSource.class.getName()));
+            parsed.add(new SqlConfig(scripts, phase, dataSourceName, resourceType));
+        }
+        return List.copyOf(parsed);
+    }
+
+    private static Sql.Phase parsePhase(@Nullable Object value) {
+        if (value == null) {
+            return Sql.Phase.BEFORE_ALL;
+        }
+        return Sql.Phase.valueOf(value.toString());
+    }
+
+    private static String stringValue(@Nullable Object value, String fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        String text = value.toString();
+        return text.isBlank() ? fallback : text;
+    }
+
+    private static List<String> stringList(@Nullable Object value) {
+        if (value == null) {
+            return List.of();
+        }
+        if (value instanceof String string) {
+            return string.isBlank() ? List.of() : List.of(string);
+        }
+        if (value instanceof String[] strings) {
+            return Arrays.stream(strings).filter(s -> !s.isBlank()).toList();
+        }
+        if (value instanceof Collection<?> collection) {
+            return collection.stream()
+                .map(Object::toString)
+                .filter(s -> !s.isBlank())
+                .toList();
+        }
+        return List.of(value.toString());
+    }
+
+    private static Class<?> resolveClass(String className) {
+        try {
+            return Class.forName(className, false, resolveApplicationClassLoader());
+        } catch (ClassNotFoundException e) {
+            throw new IllegalArgumentException("Cannot resolve SQL resource type: " + className, e);
+        }
+    }
+
+    private record SqlConfig(
+        @NonNull List<String> scripts,
+        @NonNull Sql.Phase phase,
+        @NonNull String dataSourceName,
+        @NonNull Class<?> resourceType
+    ) {
     }
 
     /**

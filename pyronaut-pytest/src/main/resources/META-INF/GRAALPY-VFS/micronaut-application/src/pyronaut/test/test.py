@@ -27,7 +27,8 @@ class MicronautTest:
                  start_application: bool = True,
                  resolve_parameters: bool = True,
                  context_builder: Any = None,
-                 properties: Dict[str, Any] = {}):
+                 properties: Dict[str, Any] = {},
+                 sql: Any = None):
         self.environments = environments or []
         self.packages = packages or []
         self.transactional = transactional
@@ -37,6 +38,39 @@ class MicronautTest:
         self.resolve_parameters = resolve_parameters
         self.context_builder = context_builder
         self.properties = properties or {}
+        self.sql = sql
+
+
+class Sql:
+    """
+    SQL scripts to execute during Micronaut pytest lifecycle phases.
+    """
+
+    class Phase:
+        BEFORE_ALL = "BEFORE_ALL"
+        BEFORE_EACH = "BEFORE_EACH"
+        AFTER_ALL = "AFTER_ALL"
+        AFTER_EACH = "AFTER_EACH"
+
+    def __init__(self,
+                 scripts: Union[str, List[str]],
+                 phase: str = Phase.BEFORE_ALL,
+                 data_source_name: str = "default",
+                 resource_type: str = "javax.sql.DataSource"):
+        if isinstance(scripts, str):
+            scripts = [scripts]
+        self.scripts = scripts or []
+        self.phase = phase
+        self.data_source_name = data_source_name
+        self.resource_type = resource_type
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "scripts": self.scripts,
+            "phase": self.phase,
+            "dataSourceName": self.data_source_name,
+            "resourceType": self.resource_type,
+        }
 
 
 # Convenience function for pytest fixtures
@@ -65,6 +99,7 @@ def micronaut_test_fixture(request,
         to_java_array(micronaut_test.environments),
         to_java_array(micronaut_test.packages),
         to_java_array([]), # propertySources
+        to_sql_configs(micronaut_test.sql),
         micronaut_test.rollback,
         micronaut_test.transactional,
         micronaut_test.rebuild_context,
@@ -86,6 +121,20 @@ def to_java_array(list):
         arr[i] = name
 
     return arr
+
+
+def to_sql_configs(sql):
+    if sql is None:
+        return []
+    if isinstance(sql, Sql):
+        sql = [sql]
+    configs = []
+    for item in sql:
+        if isinstance(item, Sql):
+            configs.append(item.as_dict())
+        else:
+            configs.append(item)
+    return configs
 
 class ApplicationContextWrapper:
     def __init__(self, java_app_context):
@@ -246,4 +295,4 @@ class ApplicationContextWrapper:
             return default
 
 # Export the function for use in pytest fixtures
-__all__ = ['MicronautTest', 'micronaut_test_fixture']
+__all__ = ['MicronautTest', 'Sql', 'micronaut_test_fixture']
