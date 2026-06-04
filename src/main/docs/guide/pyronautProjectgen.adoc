@@ -20,7 +20,6 @@ Generated projects use the standard Pyronaut layout:
 
 * `pyproject.toml`
 * `config/application.toml`
-* `config/micronaut-banner.txt`
 * `src/main.py`
 * `src/<module>/controller.py`
 * `src/<module>/__init__.py`

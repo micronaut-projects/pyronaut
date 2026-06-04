@@ -30,7 +30,6 @@ class PyronautProjectGeneratorTest {
             ".agents/skills/pyronaut-project/SKILL.md",
             ".gitignore",
             "config/application.toml",
-            "config/micronaut-banner.txt",
             "pyproject.toml",
             "src/demo/__init__.py",
             "src/demo/controller.py",

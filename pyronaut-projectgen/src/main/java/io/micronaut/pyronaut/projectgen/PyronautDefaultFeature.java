@@ -32,7 +32,6 @@ import java.util.Set;
 @Internal
 class PyronautDefaultFeature implements DefaultFeature {
     private final PyProjectToml pyProjectToml;
-    private final Banner banner;
     private final PyronautGeneratedFiles generatedFiles;
     private final PyronautAgentSkills agentSkills;
     private final PyronautConfigurationToml configurationToml;
@@ -43,7 +42,6 @@ class PyronautDefaultFeature implements DefaultFeature {
     private final MicronautSerdeJackson serdeJackson;
 
     PyronautDefaultFeature(PyProjectToml pyProjectToml,
-                           Banner banner,
                            PyronautGeneratedFiles generatedFiles,
                            PyronautAgentSkills agentSkills,
                            PyronautConfigurationToml configurationToml,
@@ -53,7 +51,6 @@ class PyronautDefaultFeature implements DefaultFeature {
                            Netty netty,
                            MicronautSerdeJackson serdeJackson) {
         this.pyProjectToml = pyProjectToml;
-        this.banner = banner;
         this.generatedFiles = generatedFiles;
         this.agentSkills = agentSkills;
         this.configurationToml = configurationToml;
@@ -73,7 +70,6 @@ class PyronautDefaultFeature implements DefaultFeature {
     public void processSelectedFeatures(FeatureContext featureContext) {
         featureContext.exclude(feature -> feature instanceof ConfigurationFeature || "toml-build".equals(feature.getName()));
         featureContext.addFeatureIfNotPresent(PyProjectToml.class, pyProjectToml);
-        featureContext.addFeatureIfNotPresent(Banner.class, banner);
         featureContext.addFeatureIfNotPresent(PyronautGeneratedFiles.class, generatedFiles);
         featureContext.addFeatureIfNotPresent(PyronautAgentSkills.class, agentSkills);
         featureContext.addFeatureIfNotPresent(PyronautConfigurationToml.class, configurationToml);

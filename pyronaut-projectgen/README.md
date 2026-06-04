@@ -31,7 +31,6 @@ Useful options:
 pyproject.toml
 .gitignore
 config/application.toml
-config/micronaut-banner.txt
 src/main.py
 src/<module>/__init__.py
 src/<module>/controller.py
