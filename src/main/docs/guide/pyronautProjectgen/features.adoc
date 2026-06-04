@@ -92,4 +92,4 @@ Unsupported examples include:
 * build tools and JVM languages: `gradle`, `maven`, `java`, `kotlin`, `groovy`
 * Java test frameworks: `junit`, `spock`, `kotest`
 * Java reflection-dependent features: `jackson-databind`, `jackson-xml`, `data-jpa`, `hibernate-jpa`, `hibernate-jpamodelgen`, `data-hibernate-reactive`, `hibernate-reactive-jpa`, `hibernate-validator`
-* JVM/container/CI/IaC/application-type features: `graalvm`, `docker`, `github-workflow-java-ci`, `kubernetes`, `aws-lambda`, `function-aws`, `oracle-cloud-function`, `gcp-function`, `azure-function`
+* JVM/container/CI/IaC/application-type features: `docker`, `github-workflow-java-ci`, `kubernetes`, `aws-lambda`, `function-aws`, `oracle-cloud-function`, `gcp-function`, `azure-function`

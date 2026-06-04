@@ -43,11 +43,26 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.regex.Pattern;
 
+/**
+ * Command line entry point that creates a Pyronaut application from the
+ * Micronaut ProjectGen preview output.
+ */
 @Singleton
 @CommandLine.Command(name = "pyronaut-create", mixinStandardHelpOptions = true, description = "Create a Pyronaut application")
 public final class PyronautCreateAppMain implements Callable<Integer> {
+    /**
+     * Default project version used when the caller does not pass {@code --version}.
+     */
     private static final String DEFAULT_PROJECT_VERSION = "0.1.0";
+
+    /**
+     * Pattern used to validate each segment of a Python package/module name.
+     */
     private static final Pattern PYTHON_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+
+    /**
+     * Python reserved words that cannot be used as package/module name segments.
+     */
     private static final Set<String> PYTHON_KEYWORDS = Set.of(
         "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
         "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
@@ -55,34 +70,68 @@ public final class PyronautCreateAppMain implements Callable<Integer> {
         "with", "yield"
     );
 
+    /**
+     * Project name to generate. When absent with {@code --inplace}, the output directory name is used.
+     */
     @CommandLine.Parameters(index = "0", arity = "0..1", paramLabel = "NAME", description = "Project name")
     String name;
 
+    /**
+     * Feature names requested for the generated project.
+     */
     @CommandLine.Option(names = "--features", split = ",", description = "Comma-separated feature names")
     List<String> features = List.of();
 
+    /**
+     * Whether to print the Pyronaut-compatible feature catalog and exit.
+     */
     @CommandLine.Option(names = "--list-features", description = "List Pyronaut-compatible features")
     boolean listFeatures;
 
+    /**
+     * Whether to write generated files directly into the selected output directory.
+     */
     @CommandLine.Option(names = "--inplace", description = "Write into the selected output directory")
     boolean inplace;
 
+    /**
+     * Output directory or parent directory for the generated project.
+     */
     @CommandLine.Option(names = "--output", paramLabel = "DIR", description = "Output directory")
     Path output;
 
+    /**
+     * Python package/module name to use for generated sources.
+     */
     @CommandLine.Option(names = "--package", paramLabel = "MODULE", description = "Python package/module name")
     String packageName;
 
+    /**
+     * Python project version written to generated metadata.
+     */
     @CommandLine.Option(names = "--version", defaultValue = DEFAULT_PROJECT_VERSION, description = "Project version")
     String version = DEFAULT_PROJECT_VERSION;
 
+    /**
+     * Micronaut platform version override for generated Pyronaut settings.
+     */
     @CommandLine.Option(names = "--micronaut-version", description = "Micronaut platform version")
     String micronautVersion;
 
+    /**
+     * Repository names, URLs, or local paths to write into generated Pyronaut settings.
+     */
     @CommandLine.Option(names = "--repository", split = ",", description = "Maven repository name, URL, or path. Repeatable.")
     List<String> repositories = List.of();
 
+    /**
+     * ProjectGen preview generator used to produce the file map before writing to disk.
+     */
     private final PreviewGenerator previewGenerator;
+
+    /**
+     * Available feature providers used when listing Pyronaut-compatible features.
+     */
     private final List<AvailableFeatures> availableFeatures;
 
     public PyronautCreateAppMain(PreviewGenerator previewGenerator,
@@ -134,6 +183,9 @@ public final class PyronautCreateAppMain implements Callable<Integer> {
         }
     }
 
+    /**
+     * Picocli command metadata injected for command output and error streams.
+     */
     @CommandLine.Spec
     CommandLine.Model.CommandSpec commandSpec;
 

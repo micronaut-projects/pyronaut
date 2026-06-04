@@ -77,6 +77,8 @@ class PyronautAgentSkills implements Feature {
             - `[project]`: Python package name, version, and metadata.
             - `[build-system]`: Python build backend metadata.
             - `[tool.pyronaut]`: repositories, core/platform version keys, and top-level Pyronaut options.
+            - `[tool.pyronaut.core]`: Micronaut Core version override.
+            - `[tool.pyronaut.platform]`: Micronaut platform version override.
             - `[tool.pyronaut.sources]`: source and resource directories.
             - `[tool.pyronaut.processor]`: processing mode.
             - `[tool.pyronaut.ide-stubs]`: Java-backed Python stub generation.
@@ -85,6 +87,7 @@ class PyronautAgentSkills implements Feature {
             - `[tool.pyronaut.dependencies]`: runtime, build, and test dependency coordinates.
 
             Prefer kebab-case option names, such as `python-test`, `test-resources`, and `additional-modules`.
+            Use split managed versions only: `[tool.pyronaut.core] version = ...` and `[tool.pyronaut.platform] version = ...`. Do not add the legacy `tool.pyronaut.version` key.
 
             ## Dependencies
 
@@ -108,6 +111,8 @@ class PyronautAgentSkills implements Feature {
             ```
 
             Avoid `bootstrap.properties` and `bootstrap.toml`; Pyronaut projects should use normal application configuration and exclude features that require bootstrap configuration.
+
+            Do not migrate distributed-configuration, secrets-manager, or cloud-secret patterns into normal application configuration. Those guides require bootstrap-time configuration support and should stay out of generated projects until Pyronaut supports `bootstrap.toml`.
 
             ## Generated Files
 
@@ -182,9 +187,11 @@ class PyronautAgentSkills implements Feature {
             - Write typed Python. Add parameter and return type annotations for route handlers, services, clients, repositories, DTOs, entities, configuration objects, and tests.
             - Prefer Python dataclasses for structured data: request bodies, response models, DTOs, configuration properties, JSON schema inputs, and data entities.
             - Keep required values non-optional. Use `None` and `| None` only for values that are genuinely optional or framework-populated, such as generated IDs and timestamps.
+            - Do not use direct `Nullable` or `NonNull` annotations in Python code. Express optionality with Python type syntax and leave required values non-optional.
             - Use `@Serdeable` on dataclasses that cross JSON or HTTP boundaries. Add `@JsonSchema` when schema generation is part of the feature.
             - Use `@MappedEntity` plus `typing.Annotated` metadata for Micronaut Data entities.
             - Keep module names snake_case under `src/<package>/`.
+            - Do not copy JavaBean getters and setters into Python. If explicit accessors are useful, use idiomatic `@property`.
 
             ## Controllers And Beans
 
@@ -213,6 +220,8 @@ class PyronautAgentSkills implements Feature {
 
             Constructor injection is preferred for class beans. Module-level injection with `Annotated[Type, Inject]` is idiomatic for classless route modules.
 
+            Prefer annotation-based HTTP filters: use `@ServerFilter` or `@ClientFilter` on the bean with `@RequestFilter` or `@ResponseFilter` methods. Avoid subclassing `HttpServerFilter` or `HttpClientFilter` unless method-style filters cannot represent the behavior. Add `@Blocking` when a filter performs blocking work.
+
             ## Imports
 
             Import Java-backed Micronaut APIs through the generated Python package names:
@@ -228,11 +237,32 @@ class PyronautAgentSkills implements Feature {
 
             Add Micronaut and Java dependencies in `pyproject.toml`, not Gradle or Maven build files. Put annotation processors in the `build` dependency scope.
 
+            When source code uses `@Serdeable` or other Micronaut Serialization annotations, ensure `micronaut-serde-processor` is in the `build` scope, not only available at runtime.
+
             Avoid Java reflection-dependent features in Pyronaut code. In particular, do not use `micronaut-jackson-databind`, `hibernate-jpa`, `data-jpa`, or `hibernate-validator` as implementation shortcuts. Prefer Micronaut Serialization, typed dataclasses, compile-time data/introspection support, and Pyronaut-compatible validation.
+
+            Do not weaken typed dataclasses into untyped `dict` or `Map` workarounds just to make a feature pass.
 
             ## Tests
 
             Write normal pytest tests under `tests/`. Use `pyronaut.test` fixtures when a Micronaut application context is needed, and use the Pyronaut `requests` integration for HTTP requests when available.
+
+            For tests with a Micronaut context, prefer a context-bound client fixture:
+
+            ```python
+            import pytest
+            from pyronaut import requests
+
+            @pytest.fixture
+            def client(my_context):
+                return requests.with_context(my_context)
+            ```
+
+            Avoid manually deriving URLs from `EmbeddedServer.getPort()` in new tests.
+
+            ## Logging
+
+            Prefer Python logging configuration in `src/main.py` backed by `io.micronaut.pyronaut:micronaut-pyronaut-logback`. Do not add guide-specific `logback.xml` files unless the Pyronaut logging module cannot represent the required setup.
 
             Run:
 

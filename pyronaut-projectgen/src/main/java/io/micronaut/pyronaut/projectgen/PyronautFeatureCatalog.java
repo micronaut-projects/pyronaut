@@ -86,7 +86,6 @@ public final class PyronautFeatureCatalog {
             "junit",
             "spock",
             "kotest",
-            "graalvm",
             "jackson-databind",
             "jackson-xml",
             "data-jpa",

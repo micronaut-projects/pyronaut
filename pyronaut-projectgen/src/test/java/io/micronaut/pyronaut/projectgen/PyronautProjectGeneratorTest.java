@@ -43,8 +43,10 @@ class PyronautProjectGeneratorTest {
         assertTrue(project.get("tests/test_demo.py").contains("micronaut_test_fixture"));
         assertTrue(project.get("config/application.toml").contains("name = 'demo'"));
         assertTrue(project.get(".agents/skills/pyronaut-project/SKILL.md").contains("name: pyronaut-project"));
+        assertTrue(project.get(".agents/skills/pyronaut-project/SKILL.md").contains("Do not add the legacy `tool.pyronaut.version` key"));
         assertTrue(project.get(".agents/skills/pyronaut-cli/SKILL.md").contains("pyronaut validate-config --scenario run|test|production"));
         assertTrue(project.get(".agents/skills/pyronaut-coding/SKILL.md").contains("do not use `micronaut-jackson-databind`, `hibernate-jpa`, `data-jpa`, or `hibernate-validator`"));
+        assertTrue(project.get(".agents/skills/pyronaut-coding/SKILL.md").contains("requests.with_context(my_context)"));
     }
 
     @Test
