@@ -23,6 +23,7 @@ def graalVmHomeProvider = providers.gradleProperty("pyronautGraalVmHome").orElse
 def nativeSdkWheel = providers.gradleProperty("native")
     .map { it.toBoolean() }
     .orElse(false)
+def pyenvVersion = providers.gradleProperty("pyronautPyenvVersion").orElse("graalpy-25.0.3")
 def versionFromCatalog = { String key ->
     def catalogFile = rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile
     def matcher = catalogFile.getText("UTF-8") =~ /(?m)^${Pattern.quote(key)}\s*=\s*"([^"]+)"/
@@ -341,6 +342,7 @@ tasks.register("installSdkWheel", Exec) {
     dependsOn(tasks.named("prepareSdkMavenLocalEnvironment"))
     inputs.dir(wheelDistDir)
     inputs.property("native", nativeSdkWheel)
+    inputs.property("pyenvVersion", pyenvVersion)
     doFirst {
         def wheels = fileTree(wheelDistDir).matching {
             include("pyronaut-*.whl")
@@ -358,6 +360,7 @@ tasks.register("installSdkWheel", Exec) {
             "--force-reinstall",
             wheels.first().absolutePath
         )
+        environment("PYENV_VERSION", pyenvVersion.get())
     }
 }
 
