@@ -15,7 +15,7 @@
  */
 package io.micronaut.python.logging.impl;
 
-import io.micronaut.context.python.ContextHolder;
+import io.micronaut.context.python.PythonContextRuntime;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Value;
 import org.junit.jupiter.api.AfterEach;
@@ -41,15 +41,15 @@ class PythonLoggingServiceProviderTest {
                 .allowAllAccess(true)
                 .build();
 
-        // Set the context in ContextHolder
-        ContextHolder.setContext(graalContext);
+        // Set the context in PythonContextRuntime
+        PythonContextRuntime.setContext(graalContext);
     }
 
     @AfterEach
     void cleanup() {
         if (graalContext != null) {
             graalContext.close();
-            ContextHolder.setContext(null);
+            PythonContextRuntime.setContext(null);
         }
     }
 
@@ -68,7 +68,7 @@ class PythonLoggingServiceProviderTest {
     @Test
     void testDelayedConsoleLoggerIsUsedWhenContextIsNotAvailable() {
         // Clear the context
-        ContextHolder.setContext(null);
+        PythonContextRuntime.setContext(null);
 
         // When no GraalPy context is available, DelayedConsoleLogger should be used
         Logger logger = LoggerFactory.getLogger("test.console");
@@ -180,7 +180,7 @@ class PythonLoggingServiceProviderTest {
     @Test
     void testDelayedConsoleLoggerFallback() {
         // Clear context to force DelayedConsoleLogger usage
-        ContextHolder.setContext(null);
+        PythonContextRuntime.setContext(null);
 
         Logger logger = LoggerFactory.getLogger("test.fallback");
 
@@ -197,7 +197,7 @@ class PythonLoggingServiceProviderTest {
         assertTrue(delayedLogger.isErrorEnabled(), "ERROR should be enabled by default");
 
         // After setting context, it should delegate to PythonLogger
-        ContextHolder.setContext(graalContext);
+        PythonContextRuntime.setContext(graalContext);
 
         Logger sameLogger = LoggerFactory.getLogger("test.fallback");
         // Note: This might still be the same DelayedConsoleLogger instance,

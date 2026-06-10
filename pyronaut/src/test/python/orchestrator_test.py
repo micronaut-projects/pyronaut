@@ -138,6 +138,14 @@ class OrchestratorTest(unittest.TestCase):
         return properties
 
     @staticmethod
+    def _write_test_resources_enabled(project_dir: Path, enabled: bool = True) -> None:
+        (project_dir / "pyproject.toml").write_text(
+            "[tool.pyronaut.test-resources]\n"
+            f"enabled = {'true' if enabled else 'false'}\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
     def _write_manifests(
         project_dir: Path,
         *,
@@ -156,6 +164,8 @@ class OrchestratorTest(unittest.TestCase):
             (cache_dir / "resolved-test-dependencies").write_text("/tmp/test.jar\n", encoding="utf-8")
         if build:
             (cache_dir / "resolved-build-dependencies").write_text("/tmp/build.jar\n", encoding="utf-8")
+        if not (project_dir / "pyproject.toml").exists():
+            OrchestratorTest._write_test_resources_enabled(project_dir)
 
     @staticmethod
     def _write_fake_install_dist(root_dir: Path, command_name: str) -> str:
@@ -3702,7 +3712,7 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         self.assertFalse(any("pyronaut-validate-config" in cmd[0] for cmd in executed))
         self.assertIn("[validation] skipped (--no-validate)", stderr.getvalue())
 
-    def test_test_resources_disabled_env_skips_server_orchestration(self):
+    def test_test_resources_disabled_env_skips_server_orchestration_quietly(self):
         executed = []
         stderr = io.StringIO()
         project_dir = Path("/tmp/demo")
@@ -3739,7 +3749,61 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo"], executed[2])
         self._assert_run_delegate(executed[3], "/tmp/demo")
         self.assertFalse(any("pyronaut-test-resources-server" in cmd[0] for cmd in executed))
-        self.assertIn("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)", stderr.getvalue())
+        self.assertNotIn("[test-resources]", stderr.getvalue())
+
+    def test_test_resources_disabled_pyproject_skips_server_orchestration_quietly(self):
+        executed = []
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "disabled"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            self._write_test_resources_enabled(project_dir, enabled=False)
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["run", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(4, len(executed))
+        self.assertFalse(any("pyronaut-test-resources-server" in cmd[0] for cmd in executed))
+        self.assertNotIn("[test-resources]", stderr.getvalue())
+
+    def test_missing_test_resources_pyproject_config_skips_server_orchestration_quietly(self):
+        executed = []
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "unconfigured"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+            (cache_dir / "resolved-test-dependencies").write_text("/tmp/test.jar\n", encoding="utf-8")
+            (cache_dir / "resolved-build-dependencies").write_text("/tmp/build.jar\n", encoding="utf-8")
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["run", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(4, len(executed))
+        self.assertFalse(any("pyronaut-test-resources-server" in cmd[0] for cmd in executed))
+        self.assertNotIn("[test-resources]", stderr.getvalue())
 
     def test_validate_config_delegates_to_validate_config_executable(self):
         executed = []

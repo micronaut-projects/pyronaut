@@ -1,6 +1,6 @@
 package io.micronaut.test.pytest.extension;
 
-import io.micronaut.context.python.ContextHolder;
+import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.TransactionMode;
 import org.junit.jupiter.api.AfterEach;
@@ -14,9 +14,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PytestMicronautExtensionTest {
 
     @AfterEach
-    void cleanupContextHolder() {
-        ContextHolder.setReuseContext(false);
-        ContextHolder.resetContext();
+    void cleanupPythonContextRuntime() {
+        PythonContextRuntime.setReuseContext(false);
+        PythonContextRuntime.resetContext();
     }
 
     @Test
@@ -68,10 +68,10 @@ class PytestMicronautExtensionTest {
         Thread thread = Thread.currentThread();
         ClassLoader previous = thread.getContextClassLoader();
         try {
-            ContextHolder.setReuseContext(false);
-            ContextHolder.resetContext();
+            PythonContextRuntime.setReuseContext(false);
+            PythonContextRuntime.resetContext();
             thread.setContextClassLoader(threadClassLoader);
-            ContextHolder.setContext(null, applicationClassLoader);
+            PythonContextRuntime.setContext(null, applicationClassLoader);
 
             assertSame(applicationClassLoader, PytestMicronautExtension.resolveApplicationClassLoader());
         } finally {
@@ -86,8 +86,8 @@ class PytestMicronautExtensionTest {
         Thread thread = Thread.currentThread();
         ClassLoader previous = thread.getContextClassLoader();
         try {
-            ContextHolder.setReuseContext(false);
-            ContextHolder.resetContext();
+            PythonContextRuntime.setReuseContext(false);
+            PythonContextRuntime.resetContext();
             thread.setContextClassLoader(threadClassLoader);
 
             assertSame(threadClassLoader, PytestMicronautExtension.resolveApplicationClassLoader());

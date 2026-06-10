@@ -24,7 +24,6 @@ import io.micronaut.projectgen.core.feature.FeaturePhase;
 import io.micronaut.projectgen.core.feature.config.Configuration;
 import io.micronaut.projectgen.core.generator.GeneratorContext;
 import io.micronaut.projectgen.core.generator.ModuleContext;
-import io.micronaut.projectgen.core.template.TomlTemplate;
 import jakarta.inject.Singleton;
 
 import java.util.LinkedHashSet;
@@ -72,6 +71,8 @@ class PyProjectToml implements Feature {
         config.put("tool.pyronaut.sources.python-test", "tests");
         config.put("tool.pyronaut.sources.resources", "config");
         config.put("tool.pyronaut.sources.test-resources", "tests-config");
+        config.put("tool.pyronaut.test-resources.enabled", false);
+        config.put("tool.pyronaut.test-resources.infer-classpath", false);
 
         for (Feature feature : generatorContext.getFeatures().getFeatures()) {
             if (feature instanceof PyprojectContributor contributor) {
@@ -84,7 +85,7 @@ class PyProjectToml implements Feature {
         config.put("tool.pyronaut.dependencies.build", List.copyOf(dependencies.build()));
         config.put("tool.pyronaut.dependencies.test", List.copyOf(dependencies.test()));
 
-        module.addTemplate(TEMPLATE_NAME, new TomlTemplate(TEMPLATE_PATH, config));
+        module.addTemplate(TEMPLATE_NAME, new PyprojectTomlTemplate(TEMPLATE_PATH, config));
     }
 
     private static List<String> repositories(PyronautProjectSettings settings) {

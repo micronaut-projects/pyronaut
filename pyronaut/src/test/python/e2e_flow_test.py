@@ -552,6 +552,11 @@ class E2EFlowTest(unittest.TestCase):
             '  "io.micronaut.testresources:micronaut-test-resources-jdbc-mysql"\n'
             ']',
         )
+        if "[tool.pyronaut.test-resources]" in content:
+            content = content.replace("enabled = false", "enabled = true")
+            content = content.replace("infer-classpath = false", "infer-classpath = true")
+        else:
+            content += "\n[tool.pyronaut.test-resources]\nenabled = true\ninfer-classpath = true\n"
         pyproject.write_text(content, encoding="utf-8")
 
     @staticmethod

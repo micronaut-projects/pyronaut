@@ -54,6 +54,17 @@ class PyronautCreateAppMainTest {
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-project/SKILL.md")));
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-cli/SKILL.md")));
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-coding/SKILL.md")));
+        String pyproject = Files.readString(project.resolve("pyproject.toml"), StandardCharsets.UTF_8);
+        String application = Files.readString(project.resolve("config/application.toml"), StandardCharsets.UTF_8);
+        String testApplication = Files.readString(project.resolve("tests-config/application-test.toml"), StandardCharsets.UTF_8);
+        assertTrue(pyproject.contains("[tool.pyronaut.test-resources]"));
+        assertTrue(pyproject.contains("enabled = false"));
+        assertTrue(pyproject.contains("runtime = [\n"));
+        assertFalse(pyproject.contains("runtime = ['"));
+        assertTrue(application.contains("[micronaut.application]\nname = 'demo'"));
+        assertFalse(application.contains("micronaut.application.name = 'demo'"));
+        assertTrue(testApplication.contains("[micronaut.server]\nport = -1"));
+        assertFalse(testApplication.contains("micronaut.server.port = -1"));
     }
 
     @Test
@@ -93,6 +104,8 @@ class PyronautCreateAppMainTest {
         assertTrue(pyproject.contains("io.micronaut.data:micronaut-data-jdbc"));
         assertTrue(pyproject.contains("com.mysql:mysql-connector-j"));
         assertTrue(pyproject.contains("[tool.pyronaut.test-resources]"));
+        assertTrue(pyproject.contains("enabled = true"));
+        assertFalse(pyproject.contains("enabled = false"));
         assertTrue(application.contains("[datasources.default]"));
     }
 

@@ -40,12 +40,17 @@ class PyronautProjectGeneratorTest {
         assertTrue(project.get("src/demo/controller.py").contains("@Controller"));
         assertTrue(project.get("src/main.py").contains("from demo.controller import MyController"));
         assertTrue(project.get("tests/test_demo.py").contains("micronaut_test_fixture"));
-        assertTrue(project.get("config/application.toml").contains("name = 'demo'"));
+        assertTrue(project.get("config/application.toml").contains("[micronaut.application]\nname = 'demo'"));
+        assertFalse(project.get("config/application.toml").contains("micronaut.application.name = 'demo'"));
+        assertTrue(project.get("tests-config/application-test.toml").contains("[micronaut.server]\nport = -1"));
+        assertFalse(project.get("tests-config/application-test.toml").contains("micronaut.server.port = -1"));
         assertTrue(project.get(".agents/skills/pyronaut-project/SKILL.md").contains("name: pyronaut-project"));
         assertTrue(project.get(".agents/skills/pyronaut-project/SKILL.md").contains("Do not add the legacy `tool.pyronaut.version` key"));
         assertTrue(project.get(".agents/skills/pyronaut-cli/SKILL.md").contains("pyronaut validate-config --scenario run|test|production"));
         assertTrue(project.get(".agents/skills/pyronaut-coding/SKILL.md").contains("do not use `micronaut-jackson-databind`, `hibernate-jpa`, `data-jpa`, or `hibernate-validator`"));
         assertTrue(project.get(".agents/skills/pyronaut-coding/SKILL.md").contains("requests.with_context(my_context)"));
+        assertTrue(project.get("pyproject.toml").contains("[tool.pyronaut.test-resources]"));
+        assertTrue(project.get("pyproject.toml").contains("enabled = false"));
     }
 
     @Test
@@ -63,24 +68,29 @@ class PyronautProjectGeneratorTest {
     void dependenciesRenderIntoPyronautScopes(PreviewGenerator generator) throws Exception {
         Map<String, String> project = generator.generate(defaultOptions(List.of("data-jdbc", "mysql", "json-schema", "test-resources")));
         String pyproject = project.get("pyproject.toml");
+        String dependencies = dependenciesSection(pyproject);
 
         assertTrue(pyproject.contains("[tool.pyronaut.dependencies]"));
-        assertTrue(pyproject.contains("runtime = ["));
-        assertTrue(pyproject.contains("'io.micronaut:micronaut-http-server-netty'"));
-        assertTrue(pyproject.contains("'io.micronaut.serde:micronaut-serde-jackson'"));
-        assertTrue(pyproject.contains("'io.micronaut.data:micronaut-data-jdbc'"));
-        assertTrue(pyproject.contains("'io.micronaut.sql:micronaut-jdbc-hikari'"));
-        assertTrue(pyproject.contains("'com.mysql:mysql-connector-j'"));
-        assertTrue(pyproject.contains("'io.micronaut.jsonschema:micronaut-json-schema-annotations'"));
-        assertTrue(pyproject.contains("build = ["));
-        assertTrue(pyproject.contains("'io.micronaut.serde:micronaut-serde-processor'"));
-        assertTrue(pyproject.contains("'io.micronaut.data:micronaut-data-processor'"));
-        assertTrue(pyproject.contains("'io.micronaut.jsonschema:micronaut-json-schema-processor'"));
-        assertTrue(pyproject.contains("test = ["));
-        assertTrue(pyproject.contains("'io.micronaut.pyronaut:micronaut-pyronaut-pytest'"));
-        assertTrue(pyproject.contains("'io.micronaut.pyronaut:micronaut-pyronaut-requests'"));
+        assertTrue(dependencies.contains("runtime = [\n"));
+        assertTrue(dependencies.contains("  'io.micronaut:micronaut-http-server-netty'"));
+        assertTrue(dependencies.contains("  'io.micronaut.serde:micronaut-serde-jackson'"));
+        assertTrue(dependencies.contains("  'io.micronaut.data:micronaut-data-jdbc'"));
+        assertTrue(dependencies.contains("  'io.micronaut.sql:micronaut-jdbc-hikari'"));
+        assertTrue(dependencies.contains("  'com.mysql:mysql-connector-j'"));
+        assertTrue(dependencies.contains("  'io.micronaut.jsonschema:micronaut-json-schema-annotations'"));
+        assertTrue(dependencies.contains("build = [\n"));
+        assertTrue(dependencies.contains("  'io.micronaut.serde:micronaut-serde-processor'"));
+        assertTrue(dependencies.contains("  'io.micronaut.data:micronaut-data-processor'"));
+        assertTrue(dependencies.contains("  'io.micronaut.jsonschema:micronaut-json-schema-processor'"));
+        assertTrue(dependencies.contains("test = [\n"));
+        assertTrue(dependencies.contains("  'io.micronaut.pyronaut:micronaut-pyronaut-pytest'"));
+        assertTrue(dependencies.contains("  'io.micronaut.pyronaut:micronaut-pyronaut-requests'"));
+        assertFalse(dependencies.contains("runtime = ['"));
+        assertFalse(dependencies.contains("build = ['"));
+        assertFalse(dependencies.contains("test = ['"));
         assertTrue(pyproject.contains("[tool.pyronaut.test-resources]"));
         assertTrue(pyproject.contains("enabled = true"));
+        assertFalse(pyproject.contains("enabled = false"));
     }
 
     @Test
@@ -88,9 +98,9 @@ class PyronautProjectGeneratorTest {
         Map<String, String> project = generator.generate(defaultOptions(List.of("scope-mapping-fixture")));
         String pyproject = project.get("pyproject.toml");
 
-        String runtimeDependencies = dependenciesLine(pyproject, "runtime");
-        String buildDependencies = dependenciesLine(pyproject, "build");
-        String testDependencies = dependenciesLine(pyproject, "test");
+        String runtimeDependencies = dependenciesList(pyproject, "runtime");
+        String buildDependencies = dependenciesList(pyproject, "build");
+        String testDependencies = dependenciesList(pyproject, "test");
 
         assertTrue(runtimeDependencies.contains("com.example:compile-dep"));
         assertTrue(runtimeDependencies.contains("com.example:runtime-dep"));
@@ -111,7 +121,7 @@ class PyronautProjectGeneratorTest {
         assertTrue(application.contains("[datasources.default]"));
         assertTrue(application.contains("driver-class-name = 'com.mysql.cj.jdbc.Driver'"));
         assertTrue(application.contains("db-type = 'mysql'"));
-        assertTrue(project.get("tests-config/application-test.toml").contains("port = -1"));
+        assertTrue(project.get("tests-config/application-test.toml").contains("[micronaut.server]\nport = -1"));
     }
 
     @Test
@@ -179,10 +189,26 @@ class PyronautProjectGeneratorTest {
             .build();
     }
 
-    private static String dependenciesLine(String pyproject, String scope) {
-        return pyproject.lines()
-            .filter(line -> line.startsWith(scope + " = ["))
-            .findFirst()
-            .orElseThrow();
+    private static String dependenciesSection(String pyproject) {
+        int start = pyproject.indexOf("[tool.pyronaut.dependencies]");
+        if (start < 0) {
+            throw new IllegalArgumentException("Missing dependencies section");
+        }
+        int nextSection = pyproject.indexOf("\n[", start + 1);
+        return nextSection < 0 ? pyproject.substring(start) : pyproject.substring(start, nextSection);
+    }
+
+    private static String dependenciesList(String pyproject, String scope) {
+        String dependencies = dependenciesSection(pyproject);
+        String startMarker = scope + " = [\n";
+        int start = dependencies.indexOf(startMarker);
+        if (start < 0) {
+            throw new IllegalArgumentException("Missing dependency scope: " + scope);
+        }
+        int end = dependencies.indexOf("\n]", start);
+        if (end < 0) {
+            throw new IllegalArgumentException("Unclosed dependency scope: " + scope);
+        }
+        return dependencies.substring(start, end);
     }
 }

@@ -22,7 +22,6 @@ import io.micronaut.projectgen.core.feature.FeaturePhase;
 import io.micronaut.projectgen.core.feature.config.Configuration;
 import io.micronaut.projectgen.core.generator.GeneratorContext;
 import io.micronaut.projectgen.core.generator.ModuleContext;
-import io.micronaut.projectgen.core.template.TomlTemplate;
 import jakarta.inject.Singleton;
 
 import java.util.Map;
@@ -66,6 +65,6 @@ class PyronautConfigurationToml implements Feature {
     private static void addConfigurationTemplate(ModuleContext module, String path, Configuration source) {
         Configuration target = new Configuration(path, path.substring(path.lastIndexOf('/') + 1), path + "-config");
         target.addNested(source);
-        module.addTemplate(path, new TomlTemplate(path, target));
+        module.addTemplate(path, new PyronautConfigurationTomlTemplate(path, target));
     }
 }

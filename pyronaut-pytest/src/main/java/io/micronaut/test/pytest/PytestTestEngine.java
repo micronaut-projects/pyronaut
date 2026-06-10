@@ -15,7 +15,7 @@
  */
 package io.micronaut.test.pytest;
 
-import io.micronaut.context.python.ContextHolder;
+import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.core.util.StringUtils;
 import io.micronaut.test.pytest.discovery.PytestDiscoverySelectorResolver;
@@ -55,7 +55,7 @@ public class PytestTestEngine implements TestEngine {
     public static final String LAST_NODEID_REPORT = "pytest.report.nodeid";
     public static final String EVENTS_REPORT = "pytest.report.events";
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
-    private Context context = ContextHolder.isInitialized() && ContextHolder.isReuseContext() ? ContextHolder.getContext() : null;
+    private Context context = PythonContextRuntime.isInitialized() && PythonContextRuntime.isReuseContext() ? PythonContextRuntime.getContext() : null;
     private String junitXmlReport;
     private String htmlReport;
     private String lastNodeIdReport;
@@ -165,8 +165,8 @@ public class PytestTestEngine implements TestEngine {
                 throw e;
             } finally {
                 try {
-                    ContextHolder.resetContext();
-                    if (!ContextHolder.isReuseContext()) {
+                    PythonContextRuntime.resetContext();
+                    if (!PythonContextRuntime.isReuseContext()) {
                         context.close();
                         context = null;
                     }

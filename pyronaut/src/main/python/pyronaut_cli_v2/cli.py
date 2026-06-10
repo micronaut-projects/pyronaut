@@ -241,14 +241,12 @@ def run(
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
     try:
-        test_resources_disabled = _test_resources_disabled()
-        if command in {"run", "test"} and not test_resources_disabled:
+        test_resources_enabled = _test_resources_enabled(Path(project_dir))
+        if command in {"run", "test"} and test_resources_enabled:
             tr_session = _OwnedTestResourcesSession(
                 project_dir=Path(project_dir).resolve(),
                 owner_command=shlex.join(["pyronaut", command, *forwarded_args]),
             )
-        elif command in {"run", "test"} and test_resources_disabled:
-            sys.stderr.write("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)\n")
 
         if auto_restart_mode:
             if no_validate:
@@ -1543,10 +1541,20 @@ def _read_pyproject_test_resources_table(project_dir: Path) -> dict[str, object]
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
         return None
-    test_resources = pyronaut.get("testResources")
+    test_resources = pyronaut.get("test-resources")
+    if not isinstance(test_resources, dict):
+        test_resources = pyronaut.get("testResources")
     if not isinstance(test_resources, dict):
         return None
     return test_resources
+
+
+def _read_pyproject_test_resources_enabled(project_dir: Path) -> bool:
+    test_resources = _read_pyproject_test_resources_table(project_dir)
+    if not isinstance(test_resources, dict):
+        return False
+    enabled = test_resources.get("enabled")
+    return isinstance(enabled, bool) and enabled
 
 
 def _read_pyproject_test_resources_shared(project_dir: Path) -> bool:
@@ -2649,6 +2657,10 @@ def _test_resources_disabled() -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _test_resources_enabled(project_dir: Path) -> bool:
+    return not _test_resources_disabled() and _read_pyproject_test_resources_enabled(project_dir)
+
+
 def _is_supported_platform(platform_name: str) -> bool:
     return platform_name.startswith("linux") or platform_name == "darwin"
 
@@ -3061,7 +3073,7 @@ def _run_tamboui_tui(
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
     try:
-        if initial_mode in {"run", "test"} and not _test_resources_disabled():
+        if initial_mode in {"run", "test"} and _test_resources_enabled(project_dir):
             tr_session = _OwnedTestResourcesSession(
                 project_dir=project_dir.resolve(),
                 owner_command=shlex.join(["pyronaut", "--tui", f"--{initial_mode}", "--project-dir", str(project_dir)]),
@@ -3069,8 +3081,6 @@ def _run_tamboui_tui(
             )
             tr_session.ensure_started(runner=runner, resolver=resolver)
             test_resources_env_overrides = tr_session.client_env_overrides()
-        elif initial_mode in {"run", "test"} and _test_resources_disabled():
-            sys.stderr.write("[test-resources] skipped (disabled via PYRONAUT_TEST_RESOURCES_DISABLED)\n")
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED

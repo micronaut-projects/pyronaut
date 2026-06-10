@@ -15,7 +15,7 @@
  */
 package io.micronaut.python.logging.impl;
 
-import io.micronaut.context.python.ContextHolder;
+import io.micronaut.context.python.PythonContextRuntime;
 import org.slf4j.Logger;
 import org.slf4j.Marker;
 import org.slf4j.helpers.FormattingTuple;
@@ -62,7 +62,7 @@ final class DelayedConsoleLogger implements Logger {
     }
 
     PythonLogger getDelegate() {
-        if (ContextHolder.isInitialized()) {
+        if (PythonContextRuntime.isInitialized()) {
             if (delegate == null) {
                 synchronized (this) {
                     if (delegate == null) {

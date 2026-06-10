@@ -15,7 +15,7 @@
  */
 package io.micronaut.pyronaut.logback;
 
-import io.micronaut.context.python.ContextHolder;
+import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.context.python.GraalPyContextFactory;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.HostAccess;
@@ -60,16 +60,16 @@ class LogbackConfigurerGraalPyTest {
 
         this.graalContext = builder.build();
 
-        // Set the context in ContextHolder
-        ContextHolder.setContext(graalContext);
-        ContextHolder.setReuseContext(true);
+        // Set the context in PythonContextRuntime
+        PythonContextRuntime.setContext(graalContext);
+        PythonContextRuntime.setReuseContext(true);
     }
 
     @AfterEach
     void cleanup() {
         if (graalContext != null) {
             graalContext.close();
-            ContextHolder.setContext(null);
+            PythonContextRuntime.setContext(null);
         }
     }
 

@@ -15,7 +15,7 @@
  */
 package io.micronaut.python.logging.impl;
 
-import io.micronaut.context.python.ContextHolder;
+import io.micronaut.context.python.PythonContextRuntime;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.Marker;
@@ -46,7 +46,7 @@ final class PythonLogger implements Logger {
 
     PythonLogger(String name) {
         this.name = name;
-        this.pythonLogger = ContextHolder.getContext()
+        this.pythonLogger = PythonContextRuntime.getContext()
             .eval(PYTHON, "import logging; logging.getLogger('" + name + "')");
         this.debugMember = pythonLogger.getMember("debug");
         this.infoMember = pythonLogger.getMember("info");
