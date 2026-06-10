@@ -19,6 +19,7 @@ import io.micronaut.context.python.ContextHolder;
 import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.core.util.StringUtils;
 import io.micronaut.test.pytest.discovery.PytestDiscoverySelectorResolver;
+import io.micronaut.test.pytest.execution.PytestPreconditionException;
 import io.micronaut.test.pytest.execution.PytestTestExecutor;
 import org.graalvm.polyglot.Context;
 import org.junit.platform.engine.*;
@@ -157,6 +158,8 @@ public class PytestTestEngine implements TestEngine {
             try {
                 executor.execute(rootDescriptor);
                 LOG.debug("Test execution completed successfully");
+            } catch (PytestPreconditionException e) {
+                throw e;
             } catch (Exception e) {
                 LOG.error("Error during test execution", e);
                 throw e;

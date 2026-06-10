@@ -43,6 +43,27 @@ public class PytestTestExecutor {
     private static final String DEFAULT_HTML_REPORT = "index.html";
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
+    private static final String PYTEST_MISSING_MODULE = "No module named 'pytest'";
+    private static final String PYTEST_MISSING_MESSAGE = """
+        Pytest is not installed in the Python environment used by Pyronaut.
+
+        Pyronaut discovered tests, but it could not import the Python 'pytest' module.
+        This usually means the project virtual environment has not been created or pytest
+        has not been installed into the active environment.
+
+        From the project directory, run:
+
+          python3 -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip pytest
+
+        Then rerun:
+
+          pyronaut test
+
+        If you already use a virtual environment, activate it before running Pyronaut
+        and confirm that 'python -m pytest --version' works in the same shell.
+        """;
 
     private final EngineExecutionListener listener;
     private final Context context;
@@ -103,6 +124,9 @@ public class PytestTestExecutor {
             listener.executionFinished(descriptor, TestExecutionResult.successful());
 
         } catch (Exception e) {
+            if (e instanceof PytestPreconditionException preconditionException) {
+                throw preconditionException;
+            }
             LOG.error("Error executing test descriptor {}: {}", descriptor.getDisplayName(), e.getMessage());
             listener.executionFinished(descriptor, TestExecutionResult.failed(compactFailure(e)));
         }
@@ -115,6 +139,9 @@ public class PytestTestExecutor {
             // Run pytest on this file with our custom plugin
             runPytestForFile(fileDescriptor);
         } catch (Exception e) {
+            if (e instanceof PytestPreconditionException preconditionException) {
+                throw preconditionException;
+            }
             LOG.error("Error running pytest for file {}: {}", fileDescriptor.getDisplayName(), e.getMessage());
             // Mark all child tests as failed
             for (TestDescriptor child : fileDescriptor.getChildren()) {
@@ -139,11 +166,7 @@ public class PytestTestExecutor {
                 eventsReportPath
             );
             // Call run_pytest with the file path and listener
-            Value result = context.eval("python", """
-from pyronaut.test import run_pytest
-
-run_pytest
-            """).execute(
+            Value result = pytestRunner().execute(
                 new String[]{filePath.toString()},
                 testListener,
                 junitXmlReportPath
@@ -153,6 +176,9 @@ run_pytest
             LOG.debug("Pytest execution completed for file: {}", fileDescriptor.getDisplayName());
 
         } catch (Exception e) {
+            if (e instanceof PytestPreconditionException preconditionException) {
+                throw preconditionException;
+            }
             LOG.error("Error running pytest for file {}: {}", fileDescriptor.getDisplayName(), e.getMessage());
             throw e;
         }
@@ -196,11 +222,7 @@ run_pytest
                 .toArray(String[]::new);
 
             // Call run_pytest with the file paths and listener
-            Value result = context.eval("python", """
-from pyronaut.test import run_pytest
-
-run_pytest
-            """).execute(
+            Value result = pytestRunner().execute(
                 fileArgs,
                 testListener,
                 junitXmlReportPath
@@ -210,6 +232,9 @@ run_pytest
             LOG.debug("Pytest execution completed for all tests");
 
         } catch (Exception e) {
+            if (e instanceof PytestPreconditionException preconditionException) {
+                throw preconditionException;
+            }
             LOG.error("Error running pytest for all tests: {}", e.getMessage());
             throw e;
         }
@@ -228,11 +253,7 @@ run_pytest
                 lastNodeIdReportPath,
                 eventsReportPath
             );
-            Value result = context.eval("python", """
-from pyronaut.test import run_pytest
-
-run_pytest
-            """).execute(
+            Value result = pytestRunner().execute(
                 new String[]{filePath.toString()},
                 testListener,
                 junitXmlReportPath
@@ -241,11 +262,46 @@ run_pytest
             LOG.debug("Test {} executed via pytest for file {}", testDescriptor.getDisplayName(), filePath);
 
         } catch (Exception e) {
+            if (e instanceof PytestPreconditionException preconditionException) {
+                throw preconditionException;
+            }
             LOG.error("Test {} failed: {}", testDescriptor.getDisplayName(), e.getMessage());
             // If pytest invocation fails at the process level, still notify JUnit about the failure
             listener.executionStarted(testDescriptor);
             listener.executionFinished(testDescriptor, TestExecutionResult.failed(compactFailure(e)));
         }
+    }
+
+    private Value pytestRunner() {
+        ensurePytestInstalled();
+        return context.eval("python", """
+from pyronaut.test import run_pytest
+
+run_pytest
+            """);
+    }
+
+    private void ensurePytestInstalled() {
+        try {
+            context.eval("python", "import pytest\npytest.__version__");
+        } catch (Exception e) {
+            if (isMissingPytest(e)) {
+                throw new PytestPreconditionException(PYTEST_MISSING_MESSAGE, e);
+            }
+            throw e;
+        }
+    }
+
+    static boolean isMissingPytest(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.contains(PYTEST_MISSING_MODULE)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private static PythonAssertionError compactFailure(Exception e) {

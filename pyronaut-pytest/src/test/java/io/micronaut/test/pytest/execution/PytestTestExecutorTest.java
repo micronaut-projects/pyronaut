@@ -61,4 +61,14 @@ class PytestTestExecutorTest {
 
         assertTrue(failure.getMessage().contains("Collection failed: ImportError: bad import"));
     }
+
+    @Test
+    void detectsMissingPytestFromCausalChain() {
+        RuntimeException failure = new RuntimeException(
+            "outer",
+            new IllegalStateException("ModuleNotFoundError: No module named 'pytest'")
+        );
+
+        assertTrue(PytestTestExecutor.isMissingPytest(failure));
+    }
 }

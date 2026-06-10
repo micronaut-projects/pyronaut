@@ -24,6 +24,7 @@ import org.junit.platform.launcher.LauncherDiscoveryRequest;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
 import org.junit.platform.launcher.core.LauncherFactory;
 import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
+import org.junit.platform.launcher.listeners.TestExecutionSummary;
 import picocli.CommandLine;
 
 import java.io.IOException;
@@ -76,6 +77,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String PYTEST_HTML_REPORT = "pytest.report.html";
     private static final String PYTEST_LAST_NODEID_REPORT = "pytest.report.nodeid";
     private static final String PYTEST_EVENTS_REPORT = "pytest.report.events";
+    private static final String PYTEST_PRECONDITION_EXCEPTION = "io.micronaut.test.pytest.execution.PytestPreconditionException";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -213,12 +215,23 @@ public final class PyronautTestMain implements Callable<Integer> {
                         publishReportLocations(root);
                     }
                 }
-                long failures = listener.getSummary().getTotalFailureCount();
+                TestExecutionSummary summary = listener.getSummary();
+                Optional<Throwable> pytestPreconditionFailure = findPytestPreconditionFailure(summary);
+                if (pytestPreconditionFailure.isPresent()) {
+                    System.err.println(pytestPreconditionMessage(pytestPreconditionFailure.get()));
+                    return 8;
+                }
+                long failures = summary.getTotalFailureCount();
                 return failures == 0 ? 0 : 7;
-            } catch (IllegalStateException e) {
-                System.err.println(e.getMessage());
-                return 8;
             } catch (Exception e) {
+                if (isPytestPreconditionFailure(e)) {
+                    System.err.println(pytestPreconditionMessage(e));
+                    return 8;
+                }
+                if (e instanceof IllegalStateException) {
+                    System.err.println(e.getMessage());
+                    return 8;
+                }
                 System.err.println("Test execution failed: " + e.getMessage());
                 return 7;
             }
@@ -574,6 +587,38 @@ public final class PyronautTestMain implements Callable<Integer> {
 
         System.out.println("Test reports directory: " + reportsDir);
         System.out.println("HTML report: " + html);
+    }
+
+    static boolean isPytestPreconditionFailure(Throwable throwable) {
+        return findPytestPreconditionFailure(throwable).isPresent();
+    }
+
+    static String pytestPreconditionMessage(Throwable throwable) {
+        return findPytestPreconditionFailure(throwable)
+            .map(Throwable::getMessage)
+            .filter(message -> message != null && !message.isBlank())
+            .orElseGet(() -> throwable.getMessage());
+    }
+
+    private static Optional<Throwable> findPytestPreconditionFailure(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (PYTEST_PRECONDITION_EXCEPTION.equals(current.getClass().getName())) {
+                return Optional.of(current);
+            }
+            current = current.getCause();
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Throwable> findPytestPreconditionFailure(TestExecutionSummary summary) {
+        return summary.getFailures()
+            .stream()
+            .map(TestExecutionSummary.Failure::getException)
+            .map(PyronautTestMain::findPytestPreconditionFailure)
+            .filter(Optional::isPresent)
+            .map(Optional::get)
+            .findFirst();
     }
 
     static void clearLegacyReportAliases(Path projectRoot) {
