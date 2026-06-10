@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2025 original authors
+ * Copyright 2017-2026 original authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,11 +17,21 @@ package io.micronaut.pyronaut.projectgen;
 
 import io.micronaut.core.annotation.Internal;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
+import io.micronaut.projectgen.core.buildtools.Scope;
+import io.micronaut.projectgen.core.buildtools.dependencies.Dependency;
 import io.micronaut.projectgen.core.feature.Feature;
+import io.micronaut.projectgen.core.feature.FeaturePhase;
+import io.micronaut.projectgen.core.feature.config.Configuration;
 import io.micronaut.projectgen.core.generator.GeneratorContext;
 import io.micronaut.projectgen.core.generator.ModuleContext;
-import io.micronaut.projectgen.core.template.StringTemplate;
+import io.micronaut.projectgen.core.template.TomlTemplate;
 import jakarta.inject.Singleton;
+
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.StreamSupport;
 
 @Internal
 @Singleton
@@ -40,36 +50,86 @@ class PyProjectToml implements Feature {
     }
 
     @Override
+    public int getOrder() {
+        return FeaturePhase.HIGHEST.getOrder();
+    }
+
+    @Override
     public void apply(GeneratorContext generatorContext) {
         ModuleContext module = generatorContext.getRootModule();
-        module.addTemplate(TEMPLATE_NAME, new StringTemplate(TEMPLATE_PATH, """
+        PyronautProjectSettings settings = PyronautProjectSettingsContext.current();
+        Configuration config = new Configuration(TEMPLATE_PATH, TEMPLATE_NAME, TEMPLATE_NAME + "-config");
+        config.put("project.name", generatorContext.getOptions().name());
+        config.put("project.version", generatorContext.getOptions().version());
+        config.put("build-system.requires", List.of("setuptools", "wheel", "tomli"));
+        config.put("build-system.build-backend", "setuptools.build_meta");
+        config.put("tool.setuptools.package-dir", Map.of("", "src"));
+        config.put("tool.setuptools.packages.find.where", List.of("src"));
+        config.put("tool.pyronaut.repositories", repositories(settings));
+        config.put("tool.pyronaut.core.version", PyronautManagedVersions.micronautCoreVersion());
+        config.put("tool.pyronaut.platform.version", settings.micronautVersion());
+        config.put("tool.pyronaut.sources.python", "src");
+        config.put("tool.pyronaut.sources.python-test", "tests");
+        config.put("tool.pyronaut.sources.resources", "config");
+        config.put("tool.pyronaut.sources.test-resources", "tests-config");
 
-            [project]
-            name = '%s'
-            version = '%s'
-            dynamic = ['scripts']
+        for (Feature feature : generatorContext.getFeatures().getFeatures()) {
+            if (feature instanceof PyprojectContributor contributor) {
+                contributor.contributePyproject(config::put);
+            }
+        }
 
-            [build-system]
-            requires = ['setuptools', 'wheel', 'tomli']
-            build-backend = 'setuptools.build_meta'
+        DependencyScopes dependencies = dependencyScopes(module.getDependencies());
+        config.put("tool.pyronaut.dependencies.runtime", List.copyOf(dependencies.runtime()));
+        config.put("tool.pyronaut.dependencies.build", List.copyOf(dependencies.build()));
+        config.put("tool.pyronaut.dependencies.test", List.copyOf(dependencies.test()));
 
-            [tool.pyronaut]
-            repositories = ['mavenCentral', 'https://repo.gradle.org/gradle/libs-releases']
+        module.addTemplate(TEMPLATE_NAME, new TomlTemplate(TEMPLATE_PATH, config));
+    }
 
-            [tool.pyronaut.core]
-            version = '%s'
+    private static List<String> repositories(PyronautProjectSettings settings) {
+        if (!settings.repositories().isEmpty()) {
+            return settings.repositories();
+        }
+        if (settings.micronautVersion() != null && settings.micronautVersion().endsWith("-SNAPSHOT")) {
+            return List.of("mavenLocal", "mavenCentral");
+        }
+        return List.of("mavenCentral");
+    }
 
-            [tool.pyronaut.platform]
-            version = '%s'
+    private static DependencyScopes dependencyScopes(Iterable<Dependency> dependencies) {
+        Set<String> runtime = new LinkedHashSet<>();
+        Set<String> build = new LinkedHashSet<>();
+        Set<String> test = new LinkedHashSet<>();
+        StreamSupport.stream(dependencies.spliterator(), false)
+            .sorted(Dependency.COMPARATOR)
+            .forEach(dependency -> {
+                String coordinate = coordinate(dependency);
+                Scope scope = dependency.getScope();
+                if (Scope.ANNOTATION_PROCESSOR.equals(scope)
+                    || Scope.TEST_ANNOTATION_PROCESSOR.equals(scope)) {
+                    build.add(coordinate);
+                } else if (Scope.TEST.equals(scope)
+                    || Scope.TEST_RUNTIME.equals(scope)
+                    || Scope.TEST_COMPILE_ONLY.equals(scope)) {
+                    test.add(coordinate);
+                } else if (Scope.COMPILE.equals(scope)
+                    || Scope.RUNTIME.equals(scope)
+                    || scope == null) {
+                    runtime.add(coordinate);
+                }
+            });
+        return new DependencyScopes(runtime, build, test);
+    }
 
-            [tool.pyronaut.dependencies]
-            compile = ['io.micronaut:micronaut-inject-python', 'io.micronaut:micronaut-context-python', 'io.micronaut:micronaut-http-server-netty', 'io.micronaut:micronaut-json-core', 'io.micronaut:micronaut-jackson-databind', 'ch.qos.logback:logback-classic', 'org.bouncycastle:bcprov-jdk18on', 'org.apache.commons:commons-lang3:3.20.0']
-            annotationProcessor = ['io.micronaut:micronaut-inject-python', 'io.micronaut:micronaut-context-python']
-            """.formatted(
-            generatorContext.getOptions().name(),
-            generatorContext.getOptions().version(),
-            PyronautManagedVersions.micronautCoreVersion(),
-            PyronautManagedVersions.micronautPlatformVersion()
-        )));
+    private static String coordinate(Dependency dependency) {
+        String coordinate = dependency.getGroupId() + ":" + dependency.getArtifactId();
+        if (dependency.getVersion() != null && !dependency.getVersion().isBlank()) {
+            coordinate += ":" + dependency.getVersion();
+        }
+        return coordinate;
+    }
+
+    private record DependencyScopes(Set<String> runtime, Set<String> build, Set<String> test) {
     }
 }

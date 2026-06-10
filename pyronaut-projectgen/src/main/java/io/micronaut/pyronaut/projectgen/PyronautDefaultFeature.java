@@ -16,36 +16,49 @@
 package io.micronaut.pyronaut.projectgen;
 
 import io.micronaut.core.annotation.Internal;
+import io.micronaut.projectgen.core.feature.ConfigurationFeature;
 import io.micronaut.projectgen.core.feature.DefaultFeature;
 import io.micronaut.projectgen.core.feature.Feature;
 import io.micronaut.projectgen.core.feature.FeatureContext;
 import io.micronaut.projectgen.core.options.Options;
+import io.micronaut.projectgen.micronaut.features.serde.MicronautSerdeJackson;
+import io.micronaut.starter.feature.server.Netty;
 import jakarta.inject.Singleton;
 
+import java.util.Arrays;
 import java.util.Set;
 
 @Singleton
 @Internal
 class PyronautDefaultFeature implements DefaultFeature {
-    private final SetupPy setupPy;
     private final PyProjectToml pyProjectToml;
-    private final Banner banner;
-    private final LauncherInitPy launcherInitPy;
-    private final HelloWorldControllerPy helloWorldControllerPy;
-    private final LogbackXml logbackXml;
+    private final PyronautGeneratedFiles generatedFiles;
+    private final PyronautAgentSkills agentSkills;
+    private final PyronautConfigurationToml configurationToml;
+    private final PyronautBaseConfiguration baseConfiguration;
+    private final PyronautOpenRewriteBridge openRewriteBridge;
+    private final PyronautFeatureCatalog catalog;
+    private final Netty netty;
+    private final MicronautSerdeJackson serdeJackson;
 
-    PyronautDefaultFeature(SetupPy setupPy,
-                           PyProjectToml pyProjectToml,
-                           Banner banner,
-                           LauncherInitPy launcherInitPy,
-                           HelloWorldControllerPy helloWorldControllerPy,
-                           LogbackXml logbackXml) {
-        this.setupPy = setupPy;
+    PyronautDefaultFeature(PyProjectToml pyProjectToml,
+                           PyronautGeneratedFiles generatedFiles,
+                           PyronautAgentSkills agentSkills,
+                           PyronautConfigurationToml configurationToml,
+                           PyronautBaseConfiguration baseConfiguration,
+                           PyronautOpenRewriteBridge openRewriteBridge,
+                           PyronautFeatureCatalog catalog,
+                           Netty netty,
+                           MicronautSerdeJackson serdeJackson) {
         this.pyProjectToml = pyProjectToml;
-        this.banner = banner;
-        this.launcherInitPy = launcherInitPy;
-        this.helloWorldControllerPy = helloWorldControllerPy;
-        this.logbackXml = logbackXml;
+        this.generatedFiles = generatedFiles;
+        this.agentSkills = agentSkills;
+        this.configurationToml = configurationToml;
+        this.baseConfiguration = baseConfiguration;
+        this.openRewriteBridge = openRewriteBridge;
+        this.catalog = catalog;
+        this.netty = netty;
+        this.serdeJackson = serdeJackson;
     }
 
     @Override
@@ -55,12 +68,18 @@ class PyronautDefaultFeature implements DefaultFeature {
 
     @Override
     public void processSelectedFeatures(FeatureContext featureContext) {
-        featureContext.addFeatureIfNotPresent(SetupPy.class, setupPy);
+        featureContext.exclude(feature -> feature instanceof ConfigurationFeature || "toml-build".equals(feature.getName()));
         featureContext.addFeatureIfNotPresent(PyProjectToml.class, pyProjectToml);
-        featureContext.addFeatureIfNotPresent(LogbackXml.class, logbackXml);
-        featureContext.addFeatureIfNotPresent(Banner.class, banner);
-        featureContext.addFeatureIfNotPresent(LauncherInitPy.class, launcherInitPy);
-        featureContext.addFeatureIfNotPresent(HelloWorldControllerPy.class, helloWorldControllerPy);
+        featureContext.addFeatureIfNotPresent(PyronautGeneratedFiles.class, generatedFiles);
+        featureContext.addFeatureIfNotPresent(PyronautAgentSkills.class, agentSkills);
+        featureContext.addFeatureIfNotPresent(PyronautConfigurationToml.class, configurationToml);
+        featureContext.addFeatureIfNotPresent(PyronautBaseConfiguration.class, baseConfiguration);
+        featureContext.addFeatureIfNotPresent(PyronautOpenRewriteBridge.class, openRewriteBridge);
+        addCatalogFeatureIfMissing(featureContext, "pyronaut-core");
+        addFeatureIfMissing(featureContext, netty, "http-server-netty", "netty-server");
+        addFeatureIfMissing(featureContext, serdeJackson, "serde-jackson", "serialization-jackson");
+        addCatalogFeatureIfMissing(featureContext, "pyronaut-logback");
+        addCatalogFeatureIfMissing(featureContext, "pyronaut-pytest");
     }
 
     @Override
@@ -71,5 +90,24 @@ class PyronautDefaultFeature implements DefaultFeature {
     @Override
     public boolean isVisible() {
         return false;
+    }
+
+    private void addCatalogFeatureIfMissing(FeatureContext featureContext, String name) {
+        boolean selected = featureContext.getSelectedFeatures().stream()
+            .map(Feature::getName)
+            .anyMatch(name::equals);
+        if (!selected) {
+            featureContext.addFeature(catalog.findFeature(name)
+                .orElseThrow(() -> new IllegalStateException("Missing Pyronaut feature: " + name)));
+        }
+    }
+
+    private static void addFeatureIfMissing(FeatureContext featureContext, Feature feature, String... names) {
+        boolean selected = featureContext.getSelectedFeatures().stream()
+            .map(Feature::getName)
+            .anyMatch(name -> Arrays.asList(names).contains(name));
+        if (!selected) {
+            featureContext.addFeatureIfNotPresent(feature.getClass(), feature);
+        }
     }
 }

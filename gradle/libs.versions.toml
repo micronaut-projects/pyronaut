@@ -29,6 +29,7 @@ micronaut-picocli = { module = 'io.micronaut.picocli:micronaut-picocli-bom', ver
 micronaut-projectgen = { module = 'io.micronaut.projectgen:micronaut-projectgen-bom', version.ref = 'micronaut-projectgen' }
 micronaut-test = { module = "io.micronaut.test:micronaut-test-bom", version.ref = "micronaut-test" }
 micronaut-projectgen-core = { module = 'io.micronaut.projectgen:micronaut-projectgen-core' }
+micronaut-projectgen-micronaut = { module = 'io.micronaut.projectgen:micronaut-projectgen-micronaut' }
 micronaut-projectgen-http-server = { module = 'io.micronaut.projectgen:micronaut-projectgen-http-server' }
 micronaut-projectgen-test = { module = 'io.micronaut.projectgen:micronaut-projectgen-test' }
 

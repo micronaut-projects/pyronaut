@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2025 original authors
+ * Copyright 2017-2026 original authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,23 +15,18 @@
  */
 package io.micronaut.pyronaut.projectgen;
 
-import io.micronaut.core.annotation.Internal;
+import io.micronaut.projectgen.core.buildtools.Scope;
+import io.micronaut.projectgen.core.buildtools.dependencies.Dependency;
 import io.micronaut.projectgen.core.feature.Feature;
 import io.micronaut.projectgen.core.generator.GeneratorContext;
 import io.micronaut.projectgen.core.generator.ModuleContext;
-import io.micronaut.projectgen.core.rocker.RockerTemplate;
-import io.micronaut.pyronaut.projectgen.template.setupPy;
 import jakarta.inject.Singleton;
 
-@Internal
 @Singleton
-class SetupPy implements Feature {
-    private static final String TEMPLATE_NAME = "setup.py";
-    private static final String TEMPLATE_PATH = TEMPLATE_NAME;
-
+final class ScopeMappingFeature implements Feature {
     @Override
     public String getName() {
-        return "setuppy";
+        return "scope-mapping-fixture";
     }
 
     @Override
@@ -42,6 +37,18 @@ class SetupPy implements Feature {
     @Override
     public void apply(GeneratorContext generatorContext) {
         ModuleContext module = generatorContext.getRootModule();
-        module.addTemplate(TEMPLATE_NAME, new RockerTemplate(TEMPLATE_PATH, setupPy.template()));
+        module.addDependency(dependency(Scope.COMPILE, "compile-dep"));
+        module.addDependency(dependency(Scope.RUNTIME, "runtime-dep"));
+        module.addDependency(dependency(Scope.ANNOTATION_PROCESSOR, "annotation-processor-dep"));
+        module.addDependency(dependency(Scope.TEST_ANNOTATION_PROCESSOR, "test-annotation-processor-dep"));
+        module.addDependency(dependency(Scope.TEST, "test-dep"));
+    }
+
+    private static Dependency dependency(Scope scope, String artifactId) {
+        return Dependency.builder()
+            .groupId("com.example")
+            .artifactId(artifactId)
+            .scope(scope)
+            .build();
     }
 }

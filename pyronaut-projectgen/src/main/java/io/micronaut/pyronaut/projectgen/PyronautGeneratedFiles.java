@@ -1,0 +1,143 @@
+/*
+ * Copyright 2017-2026 original authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.micronaut.pyronaut.projectgen;
+
+import io.micronaut.core.annotation.Internal;
+import io.micronaut.projectgen.core.feature.Feature;
+import io.micronaut.projectgen.core.generator.GeneratorContext;
+import io.micronaut.projectgen.core.generator.ModuleContext;
+import io.micronaut.projectgen.core.template.StringTemplate;
+import jakarta.inject.Singleton;
+
+@Internal
+@Singleton
+class PyronautGeneratedFiles implements Feature {
+    @Override
+    public String getName() {
+        return "pyronaut-generated-files";
+    }
+
+    @Override
+    public boolean isVisible() {
+        return false;
+    }
+
+    @Override
+    public void apply(GeneratorContext generatorContext) {
+        ModuleContext module = generatorContext.getRootModule();
+        String pythonModule = generatorContext.getOptions().packageName();
+        String modulePath = pythonModule.replace('.', '/');
+        addPackageInitFiles(module, pythonModule);
+        module.addTemplate("src/" + modulePath + "/controller.py", new StringTemplate("src/" + modulePath + "/controller.py", controller()));
+        module.addTemplate("src/main.py", new StringTemplate("src/main.py", main(pythonModule)));
+        module.addTemplate("tests/test_" + pythonModule.replace('.', '_') + ".py",
+            new StringTemplate("tests/test_" + pythonModule.replace('.', '_') + ".py", test()));
+        module.addTemplate(".gitignore", new StringTemplate(".gitignore", gitignore()));
+    }
+
+    private static void addPackageInitFiles(ModuleContext module, String pythonModule) {
+        StringBuilder packagePath = new StringBuilder("src");
+        for (String part : pythonModule.split("\\.")) {
+            packagePath.append('/').append(part);
+            String path = packagePath + "/__init__.py";
+            module.addTemplate(path, new StringTemplate(path, ""));
+        }
+    }
+
+    private static String controller() {
+        return """
+            from micronaut.http.annotation import Controller, Get
+
+
+            @Controller
+            class MyController:
+                @Get(value="/", produces="text/plain")
+                def index(self) -> str:
+                    return "Hello World"
+            """;
+    }
+
+    private static String main(String pythonModule) {
+        return """
+            from logback.config import dictConfig
+
+            from %s.controller import MyController
+
+
+            LOGGING = {
+                "version": 1,
+                "disable_existing_loggers": False,
+                "formatters": {
+                    "standard": {
+                        "format": "%%(asctime)s [%%(levelname)s] %%(name)s: %%(message)s"
+                    }
+                },
+                "handlers": {
+                    "console": {
+                        "class": "logging.StreamHandler",
+                        "level": "INFO",
+                        "formatter": "standard",
+                        "stream": "ext://sys.stdout"
+                    }
+                },
+                "root": {
+                    "level": "INFO",
+                    "handlers": ["console"]
+                }
+            }
+
+            dictConfig(LOGGING)
+            """.formatted(pythonModule);
+    }
+
+    private static String test() {
+        return """
+            import pytest
+
+            from micronaut.runtime.server import EmbeddedServer
+            from pyronaut.test import MicronautTest, micronaut_test_fixture
+
+
+            @pytest.fixture
+            def application_context(request):
+                fixture = micronaut_test_fixture(
+                    request,
+                    MicronautTest(environments=["test"], transactional=False)
+                )
+                yield fixture
+                fixture.stop()
+
+
+            def test_application_starts(application_context):
+                server = application_context[EmbeddedServer]
+                assert server.isRunning()
+            """;
+    }
+
+    private static String gitignore() {
+        return """
+            __pyronaut__/
+            *.py[cod]
+            __pycache__/
+            .pytest_cache/
+            .venv/
+            venv/
+            build/
+            dist/
+            *.egg-info/
+            """;
+    }
+}

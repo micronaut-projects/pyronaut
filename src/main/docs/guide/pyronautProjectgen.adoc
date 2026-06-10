@@ -1,39 +1,48 @@
 = Pyronaut Project Generator
 
-The Pyronaut project generator builds a default Pyronaut project using Micronaut ProjectGen.
-It is used by the project generator application to preview and download a starter project, and it can also be consumed by tools that embed Micronaut ProjectGen.
+The Pyronaut project generator builds a minimal runnable Python application with Micronaut ProjectGen.
+It is used by `pyronaut create`, and it can also be embedded by tools that consume Micronaut ProjectGen directly.
 
-The following dependency adds the Pyronaut generator feature set:
+The generator is provided by the following dependency:
 
 dependency:micronaut-pyronaut-projectgen[groupId=io.micronaut.pyronaut]
 
-Generated projects include the standard Pyronaut layout:
-
-- `pyproject.toml`
-- `setup.py`
-- `src/controller.py`
-- `config/logback.xml`
-- `config/micronaut-banner.txt`
-
-The default generated controller is intentionally small:
-
-[source,python]
-----
-from micronaut.http.annotation import Controller, Get
-
-@Controller
-class MyController:
-    @Get(value="/", produces="text/plain")
-    def index(self) -> str:
-        return "Hello World"
-----
-
-After downloading or generating a project, run:
+Create a project with:
 
 [source,bash]
 ----
+pyronaut create demo
+pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
+pyronaut create --list-features
+----
+
+Generated projects use the standard Pyronaut layout:
+
+* `pyproject.toml`
+* `config/application.toml`
+* `src/main.py`
+* `src/<module>/controller.py`
+* `src/<module>/__init__.py`
+* `tests/test_<module>.py`
+* `tests-config/application-test.toml`
+* `.agents/skills/pyronaut-project/SKILL.md`
+* `.agents/skills/pyronaut-cli/SKILL.md`
+* `.agents/skills/pyronaut-coding/SKILL.md`
+* `.gitignore`
+
+The default application includes a simple HTTP controller, Logback-backed Python logging setup, pytest integration, and generated agent guidance for local Pyronaut workflows.
+Python, TOML configuration, and pytest are fixed defaults. There are no language, build tool, or Java test framework switches for Pyronaut projects.
+
+After generation, run:
+
+[source,bash]
+----
+cd demo
 pyronaut install
+pyronaut process
+pyronaut test
 pyronaut run
 ----
 
-Use the generated project as a starting point, then add runtime, build, and test dependencies in `pyproject.toml` as application features are added.
+Pyronaut reuses compatible Micronaut starter features when their dependency and configuration behavior applies to Python projects.
+Feature contributions are translated into `pyproject.toml` dependency arrays and Pyronaut TOML configuration files instead of Gradle or Maven build files.
