@@ -31,7 +31,6 @@ class PyronautProjectGeneratorTest {
             ".gitignore",
             "config/application.toml",
             "pyproject.toml",
-            "src/demo/__init__.py",
             "src/demo/controller.py",
             "src/main.py",
             "tests/test_demo.py",
@@ -116,7 +115,7 @@ class PyronautProjectGeneratorTest {
     }
 
     @Test
-    void nestedPythonPackagesIncludeParentInitFiles(PreviewGenerator generator) throws Exception {
+    void nestedPythonPackagesDoNotIncludeUnsupportedInitFiles(PreviewGenerator generator) throws Exception {
         Options options = GenericOptionsBuilder.builder()
             .name("demo")
             .packageName("example.service")
@@ -127,8 +126,8 @@ class PyronautProjectGeneratorTest {
 
         Map<String, String> project = generator.generate(options);
 
-        assertTrue(project.containsKey("src/example/__init__.py"));
-        assertTrue(project.containsKey("src/example/service/__init__.py"));
+        assertFalse(project.containsKey("src/example/__init__.py"));
+        assertFalse(project.containsKey("src/example/service/__init__.py"));
         assertTrue(project.containsKey("src/example/service/controller.py"));
         assertTrue(project.containsKey("tests/test_example_service.py"));
         assertTrue(project.get("src/main.py").contains("from example.service.controller import MyController"));

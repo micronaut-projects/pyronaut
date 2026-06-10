@@ -32,7 +32,6 @@ pyproject.toml
 .gitignore
 config/application.toml
 src/main.py
-src/<module>/__init__.py
 src/<module>/controller.py
 tests/test_<module>.py
 tests-config/application-test.toml

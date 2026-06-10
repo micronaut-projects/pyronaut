@@ -102,8 +102,8 @@ class PyronautCreateAppMainTest {
 
         Path project = tempDir.resolve("demo");
         assertEquals(0, execution.exitCode());
-        assertTrue(Files.exists(project.resolve("src/example/__init__.py")));
-        assertTrue(Files.exists(project.resolve("src/example/service/__init__.py")));
+        assertFalse(Files.exists(project.resolve("src/example/__init__.py")));
+        assertFalse(Files.exists(project.resolve("src/example/service/__init__.py")));
         assertTrue(Files.exists(project.resolve("src/example/service/controller.py")));
         assertTrue(Files.exists(project.resolve("tests/test_example_service.py")));
     }

@@ -40,21 +40,11 @@ class PyronautGeneratedFiles implements Feature {
         ModuleContext module = generatorContext.getRootModule();
         String pythonModule = generatorContext.getOptions().packageName();
         String modulePath = pythonModule.replace('.', '/');
-        addPackageInitFiles(module, pythonModule);
         module.addTemplate("src/" + modulePath + "/controller.py", new StringTemplate("src/" + modulePath + "/controller.py", controller()));
         module.addTemplate("src/main.py", new StringTemplate("src/main.py", main(pythonModule)));
         module.addTemplate("tests/test_" + pythonModule.replace('.', '_') + ".py",
             new StringTemplate("tests/test_" + pythonModule.replace('.', '_') + ".py", test()));
         module.addTemplate(".gitignore", new StringTemplate(".gitignore", gitignore()));
-    }
-
-    private static void addPackageInitFiles(ModuleContext module, String pythonModule) {
-        StringBuilder packagePath = new StringBuilder("src");
-        for (String part : pythonModule.split("\\.")) {
-            packagePath.append('/').append(part);
-            String path = packagePath + "/__init__.py";
-            module.addTemplate(path, new StringTemplate(path, ""));
-        }
     }
 
     private static String controller() {
