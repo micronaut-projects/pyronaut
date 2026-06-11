@@ -32,8 +32,6 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
 import java.util.stream.Stream;
 
 /**
@@ -216,7 +214,7 @@ public final class PyronautRunMain implements Callable<Integer> {
 
         LinkedHashSet<URL> urls = new LinkedHashSet<>();
         addManifestEntries(urls, resolveRunManifest(pyronautDir));
-        urls.add(archiveProcessedClasses(pyronautDir, resolvedClassesDir).toUri().toURL());
+        addPathIfDirectory(urls, resolvedClassesDir);
         addPathIfDirectory(urls, root.resolve(configDir).normalize());
         addResourceDirectories(urls, additionalResourceDirs);
         return new ResolvedProjectLayout(
@@ -292,22 +290,6 @@ public final class PyronautRunMain implements Callable<Integer> {
         for (Path resourceDir : resourceDirs) {
             addPathIfDirectory(urls, resourceDir);
         }
-    }
-
-    private static Path archiveProcessedClasses(Path pyronautDir, Path resolvedClassesDir) throws IOException {
-        Files.createDirectories(pyronautDir);
-        Path archive = pyronautDir.resolve("run-classes.jar");
-        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(archive))) {
-            try (Stream<Path> stream = Files.walk(resolvedClassesDir)) {
-                for (Path file : stream.filter(Files::isRegularFile).sorted().toList()) {
-                    String entryName = resolvedClassesDir.relativize(file).toString().replace('\\', '/');
-                    jar.putNextEntry(new JarEntry(entryName));
-                    jar.write(Files.readAllBytes(file));
-                    jar.closeEntry();
-                }
-            }
-        }
-        return archive;
     }
 
     static void applyTestResourcesProperties(java.util.Map<String, String> environment) {

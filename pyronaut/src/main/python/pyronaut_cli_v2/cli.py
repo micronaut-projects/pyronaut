@@ -504,11 +504,19 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
         entries.extend(_delegate_lib_entries(delegate_executable))
 
     deduped: list[str] = []
-    seen: set[str] = set()
+    seen_paths: set[str] = set()
+    seen_file_names: set[str] = set()
     for entry in entries:
-        if entry not in seen:
-            deduped.append(entry)
-            seen.add(entry)
+        normalized = str(Path(entry).expanduser().resolve())
+        file_name = Path(entry).name
+        if normalized in seen_paths:
+            continue
+        if file_name and file_name in seen_file_names:
+            continue
+        deduped.append(entry)
+        seen_paths.add(normalized)
+        if file_name:
+            seen_file_names.add(file_name)
     return os.pathsep.join(deduped)
 
 

@@ -180,13 +180,11 @@ class PyronautRunMainTest {
         PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
         try (var classLoader = layout.applicationClassLoader()) {
             assertEquals(classesDir.toAbsolutePath().normalize(), layout.processedClassesRoot());
-            Path archivedClasses = pyronautDir.resolve("run-classes.jar");
-            assertTrue(Files.exists(archivedClasses));
             assertTrue(
                 java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains(runtimeJar.getFileName().toString()))
             );
             assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("run-classes.jar"))
+                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("__pyronaut__/classes"))
             );
             assertTrue(
                 java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("config/"))

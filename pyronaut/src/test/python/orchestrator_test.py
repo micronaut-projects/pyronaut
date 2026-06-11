@@ -1119,6 +1119,51 @@ logsDir = "var/custom-test-resources-logs"
             self.assertIn(str(picocli_jar.resolve()), entries)
             self.assertIn(str(slf4j_jar.resolve()), entries)
 
+    def test_build_delegate_classpath_deduplicates_delegate_lib_jars_by_file_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            project_lib_dir = project_dir / "project-libs"
+            project_lib_dir.mkdir(parents=True, exist_ok=True)
+            project_runtime = project_lib_dir / "micronaut-context-python-5.1.0-SNAPSHOT.jar"
+            project_runtime.write_text("", encoding="utf-8")
+            (cache_dir / "resolved-runtime-dependencies").write_text(
+                f"{project_runtime}\n/tmp/runtime.jar\n",
+                encoding="utf-8",
+            )
+            self._write_manifests(project_dir, runtime=False)
+
+            tools_dir = Path(temp_dir) / "tools" / "pyronaut-run"
+            bin_dir = tools_dir / "bin"
+            lib_dir = tools_dir / "lib"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            executable = bin_dir / "pyronaut-run"
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            delegate_context_python = lib_dir / "micronaut-context-python-5.1.0-SNAPSHOT.jar"
+            delegate_run = lib_dir / "micronaut-pyronaut-run-fixture.jar"
+            delegate_context_python.write_text("", encoding="utf-8")
+            delegate_run.write_text("", encoding="utf-8")
+
+            previous = os.environ.pop("PYRONAUT_RUN_JAR", None)
+            try:
+                classpath = cli._build_delegate_classpath(  # noqa: SLF001 - exercising internal helper directly
+                    "run",
+                    project_dir.resolve(),
+                    lambda command_name: str(executable) if command_name == "pyronaut-run" else f"/tmp/{command_name}",
+                )
+            finally:
+                if previous is not None:
+                    os.environ["PYRONAUT_RUN_JAR"] = previous
+
+            entries = classpath.split(os.pathsep)
+            artifact_names = [Path(entry).name for entry in entries]
+            self.assertEqual(1, artifact_names.count("micronaut-context-python-5.1.0-SNAPSHOT.jar"))
+            self.assertIn(str(project_runtime), entries)
+            self.assertNotIn(str(delegate_context_python.resolve()), entries)
+            self.assertIn(str(delegate_run.resolve()), entries)
+
     def test_run_delegate_classpath_leaves_application_resources_to_run_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"

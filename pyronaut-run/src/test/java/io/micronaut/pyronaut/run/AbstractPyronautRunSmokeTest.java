@@ -53,7 +53,6 @@ abstract class AbstractPyronautRunSmokeTest {
     protected static RunResult runJvm(Path project) throws Exception {
         List<String> classpathEntries = new ArrayList<>();
         classpathEntries.addAll(readManifestEntries(project.resolve("__pyronaut__/resolved-runtime-dependencies")));
-        classpathEntries.add(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize().toString());
         classpathEntries.addAll(currentRuntimeClasspathEntries());
         return runCommand(
             project,
@@ -131,7 +130,7 @@ abstract class AbstractPyronautRunSmokeTest {
         HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(2))
             .build();
-        HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello"))
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/"))
             .timeout(Duration.ofSeconds(2))
             .GET()
             .build();
@@ -152,7 +151,7 @@ abstract class AbstractPyronautRunSmokeTest {
             }
             Thread.sleep(200);
         }
-        String message = "Timed out waiting for pyronaut-run to serve /hello:" + System.lineSeparator() + snapshot(outputBuffer);
+        String message = "Timed out waiting for pyronaut-run to serve /:" + System.lineSeparator() + snapshot(outputBuffer);
         if (lastFailure != null) {
             throw new IllegalStateException(message, lastFailure);
         }
@@ -206,9 +205,9 @@ abstract class AbstractPyronautRunSmokeTest {
                     cylinders: int
                     enabled: bool = True
 
-                @Controller("/hello")
+                @Controller
                 class HelloController:
-                    @Get(produces="text/plain")
+                    @Get(value="/", produces="text/plain")
                     def index(self) -> str:
                         return "Hello World"
                 """
