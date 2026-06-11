@@ -80,6 +80,8 @@ public class JUnitPytestTestListener implements PytestTestListener {
     private final Set<String> writtenNodeIds = new HashSet<>();
     private final Map<String, TestStreamOutput> outputByTest = new LinkedHashMap<>();
     private TestExecutionResult sessionResult = TestExecutionResult.successful();
+    private boolean failedTestReported;
+    private boolean nonTestFailureReported;
 
     public JUnitPytestTestListener(
         EngineExecutionListener junitListener,
@@ -141,6 +143,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     public void afterFile(String file, TestExecutionResult result) {
         LOG.debug("Pytest finished file: {} ({})", file, result);
         if (result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {
+            nonTestFailureReported = true;
             recordSessionResult(result);
             outcomes.add(new TestOutcome(file, result));
             var payload = new LinkedHashMap<String, String>();
@@ -175,6 +178,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
         outcomes.add(new TestOutcome(testId, result));
         var payload = new LinkedHashMap<String, String>();
         if (result.getStatus() == TestExecutionResult.Status.FAILED) {
+            failedTestReported = true;
             result.getThrowable().ifPresent(throwable -> payload.put("failure", FailureDiagnostics.render(throwable)));
         } else if (result.getStatus() == TestExecutionResult.Status.ABORTED) {
             result.getThrowable().ifPresent(throwable -> payload.put("reason", FailureDiagnostics.render(throwable)));
@@ -222,6 +226,14 @@ public class JUnitPytestTestListener implements PytestTestListener {
 
     TestExecutionResult sessionResult() {
         return sessionResult;
+    }
+
+    boolean hasReportedTestFailures() {
+        return failedTestReported;
+    }
+
+    boolean hasNonTestFailures() {
+        return nonTestFailureReported;
     }
 
     private void recordSessionResult(TestExecutionResult result) {

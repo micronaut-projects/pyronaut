@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  */
 public class PythonAssertionError extends AssertionError {
     private static final Pattern INTERNAL_STACK_FRAME = Pattern.compile(
-        "^(com\\.oracle\\.truffle\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|java\\.base/).*"
+        "^(com\\.oracle\\.truffle\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|org\\.junit\\.platform\\.|picocli\\.|io\\.micronaut\\.pyronaut\\.test\\.PyronautTestMain).*"
     );
 
     public PythonAssertionError(String message, Throwable cause) {
@@ -37,12 +37,15 @@ public class PythonAssertionError extends AssertionError {
     @Override
     public synchronized Throwable fillInStackTrace() {
         Throwable self = super.fillInStackTrace();
-        StackTraceElement[] filtered = Arrays.stream(getStackTrace())
+        StackTraceElement[] filtered = filterStackTrace(getStackTrace());
+        setStackTrace(filtered);
+        return self;
+    }
+
+    static StackTraceElement[] filterStackTrace(StackTraceElement[] stackTrace) {
+        return Arrays.stream(stackTrace)
+            .filter(frame -> !"java.base".equals(frame.getModuleName()))
             .filter(frame -> !INTERNAL_STACK_FRAME.matcher(frame.getClassName()).matches())
             .toArray(StackTraceElement[]::new);
-        if (filtered.length > 0) {
-            setStackTrace(filtered);
-        }
-        return self;
     }
 }

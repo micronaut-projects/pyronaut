@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -57,6 +58,47 @@ class PytestTestExecutorTest {
         IllegalStateException failure = assertThrows(
             IllegalStateException.class,
             () -> PytestTestExecutor.failIfPytestFailed(listener, Value.asValue(2))
+        );
+
+        assertTrue(failure.getMessage().contains("Collection failed: ImportError: bad import"));
+    }
+
+    @Test
+    void reportedTestFailuresDoNotFailSessionAgain() {
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of()
+        );
+        listener.afterTest(
+            "tests/test_demo.py::test_failure",
+            Value.asValue(null),
+            TestExecutionResult.failed(new PythonAssertionError("assert 1 == 2"))
+        );
+        listener.onResult(TestExecutionResult.failed(new RuntimeException("Pytest session failed with exit code: 1")));
+
+        assertDoesNotThrow(() -> PytestTestExecutor.failIfPytestFailed(listener, Value.asValue(1)));
+    }
+
+    @Test
+    void collectionFailuresStillFailSessionWhenTestsAlsoFail() {
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of()
+        );
+        listener.afterTest(
+            "tests/test_demo.py::test_failure",
+            Value.asValue(null),
+            TestExecutionResult.failed(new PythonAssertionError("assert 1 == 2"))
+        );
+        listener.afterFile(
+            "tests/test_bad.py",
+            TestExecutionResult.failed(new PythonAssertionError("Collection failed: ImportError: bad import"))
+        );
+        listener.onResult(TestExecutionResult.failed(new RuntimeException("Pytest session failed with exit code: 1")));
+
+        IllegalStateException failure = assertThrows(
+            IllegalStateException.class,
+            () -> PytestTestExecutor.failIfPytestFailed(listener, Value.asValue(1))
         );
 
         assertTrue(failure.getMessage().contains("Collection failed: ImportError: bad import"));

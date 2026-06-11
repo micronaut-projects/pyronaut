@@ -44,6 +44,8 @@ public class PytestTestExecutor {
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
     private static final String PYTEST_MISSING_MODULE = "No module named 'pytest'";
+    private static final int PYTEST_TESTS_FAILED_EXIT_CODE = 1;
+    private static final String PYTEST_SESSION_FAILED_PREFIX = "Pytest session failed with exit code: ";
     private static final String PYTEST_MISSING_MESSAGE = """
         Pytest is not installed in the Python environment used by Pyronaut.
 
@@ -315,12 +317,35 @@ run_pytest
         if (sessionResult.getStatus() == TestExecutionResult.Status.FAILED) {
             Throwable throwable = sessionResult.getThrowable()
                 .orElseGet(() -> new RuntimeException("Pytest session failed"));
+            if (isAlreadyReportedTestFailure(testListener, throwable)) {
+                return;
+            }
             throw new IllegalStateException(FailureDiagnostics.render(throwable), throwable);
         }
         int exitCode = pytestExitCode(result);
         if (exitCode != 0) {
-            throw new IllegalStateException("Pytest session failed with exit code: " + exitCode);
+            if (isAlreadyReportedTestFailure(testListener, exitCode)) {
+                return;
+            }
+            throw new IllegalStateException(PYTEST_SESSION_FAILED_PREFIX + exitCode);
         }
+    }
+
+    private static boolean isAlreadyReportedTestFailure(JUnitPytestTestListener testListener, Throwable throwable) {
+        return testListener.hasReportedTestFailures()
+            && !testListener.hasNonTestFailures()
+            && isGenericPytestExitFailure(throwable);
+    }
+
+    private static boolean isAlreadyReportedTestFailure(JUnitPytestTestListener testListener, int exitCode) {
+        return exitCode == PYTEST_TESTS_FAILED_EXIT_CODE
+            && testListener.hasReportedTestFailures()
+            && !testListener.hasNonTestFailures();
+    }
+
+    private static boolean isGenericPytestExitFailure(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message != null && message.startsWith(PYTEST_SESSION_FAILED_PREFIX);
     }
 
     static int pytestExitCode(Value result) {
