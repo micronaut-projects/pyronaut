@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  */
 public class PythonAssertionError extends AssertionError {
     private static final Pattern INTERNAL_STACK_FRAME = Pattern.compile(
-        "^(com\\.oracle\\.truffle\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|org\\.junit\\.platform\\.|picocli\\.|io\\.micronaut\\.pyronaut\\.test\\.PyronautTestMain).*"
+        "^(com\\.oracle\\.truffle\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|org\\.junit\\.platform\\.|picocli\\.|io\\.micronaut\\.pyronaut\\.test\\.PyronautTestMain|io\\.micronaut\\.test\\.pytest\\.PytestTestEngine|io\\.micronaut\\.test\\.pytest\\.execution\\.PytestTestExecutor).*"
     );
 
     public PythonAssertionError(String message, Throwable cause) {

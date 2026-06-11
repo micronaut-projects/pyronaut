@@ -21,6 +21,10 @@ _INTERNAL_TRACE_MARKERS = (
     "com.oracle.graal.python.",
     "org.graalvm.polyglot.",
     "org.graalvm.python.embedding.",
+    "org.junit.platform.",
+    "picocli.",
+    "io.micronaut.pyronaut.test.PyronautTestMain",
+    "io.micronaut.test.pytest.",
     "at java.base/",
 )
 
@@ -37,6 +41,23 @@ def _filter_internal_traceback_frames(text: str) -> str:
         filtered.append(line)
 
     return "\n".join(filtered)
+
+
+def _compact_assertion_failure(text: str) -> Optional[str]:
+    if not text:
+        return None
+
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith("AssertionError:"):
+        return None
+
+    compacted = []
+    for line in lines:
+        if line.strip().startswith("at "):
+            break
+        compacted.append(line)
+
+    return "\n".join(compacted).strip() or None
 
 
 class _ExpectedFailure:
@@ -57,7 +78,8 @@ def _format_call_failure(result) -> str:
     exception_class = getattr(result, "exceptionClass", None)
     stack = getattr(result, "stack", None)
     if stack:
-        return _filter_internal_traceback_frames(str(stack))
+        filtered_stack = _filter_internal_traceback_frames(str(stack))
+        return _compact_assertion_failure(filtered_stack) or filtered_stack
     if message:
         return str(message)
     if exception_class:

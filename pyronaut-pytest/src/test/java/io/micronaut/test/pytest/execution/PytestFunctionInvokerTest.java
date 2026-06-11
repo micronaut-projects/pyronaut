@@ -104,6 +104,60 @@ class PytestFunctionInvokerTest {
         }
     }
 
+    @Test
+    void pytestListenerFiltersFrameworkFramesFromFailureText() throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String pytestListener = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/pytest_listener.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval("python", """
+                import sys
+
+                class _PytestStub:
+                    class ExitCode:
+                        OK = 0
+
+                    @staticmethod
+                    def hookimpl(*args, **kwargs):
+                        return lambda function: function
+
+                sys.modules["pytest"] = _PytestStub
+                """);
+            context.eval(Source.newBuilder("python", pytestListener, "pytest-listener.py").build());
+
+            context.eval("python", """
+                failure_text = '''AssertionError: assert 200 == 201
+                \tat <python> test_index(test_simple_python.py:27:0)
+                \tat io.micronaut.test.pytest.execution.PytestFunctionInvoker.call(PytestFunctionInvoker.java:33)
+                \tat io.micronaut.test.pytest.execution.PytestTestExecutor.execute(PytestTestExecutor.java:123)
+                \tat io.micronaut.test.pytest.PytestTestEngine.execute(PytestTestEngine.java:159)
+                \tat org.junit.platform.launcher.core.EngineExecutionOrchestrator.executeEngine(EngineExecutionOrchestrator.java:246)
+                \tat io.micronaut.pyronaut.test.PyronautTestMain.call(PyronautTestMain.java:212)
+                \tat picocli.CommandLine.execute(CommandLine.java:2174)'''
+                filtered_failure_text = _filter_internal_traceback_frames(failure_text)
+                compacted_assertion_text = _compact_assertion_failure(filtered_failure_text)
+                """);
+
+            String filtered = context.getBindings("python").getMember("filtered_failure_text").asString();
+            assertTrue(filtered.contains("AssertionError: assert 200 == 201"));
+            assertTrue(filtered.contains("test_simple_python.py:27"));
+            assertFalse(filtered.contains("PytestFunctionInvoker"));
+            assertFalse(filtered.contains("PytestTestExecutor"));
+            assertFalse(filtered.contains("PytestTestEngine"));
+            assertFalse(filtered.contains("EngineExecutionOrchestrator"));
+            assertFalse(filtered.contains("PyronautTestMain"));
+            assertFalse(filtered.contains("picocli"));
+
+            String compacted = context.getBindings("python").getMember("compacted_assertion_text").asString();
+            assertEquals("AssertionError: assert 200 == 201", compacted);
+            assertFalse(compacted.contains("test_simple_python.py"));
+        }
+    }
+
     public static final class FailingContext {
         public void stop() {
             throw new IllegalStateException("boom");
