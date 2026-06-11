@@ -1,5 +1,5 @@
 [versions]
-micronaut-serde = "3.0.0-RC3"
+micronaut-serde = "3.0.0"
 micronaut-picocli = "6.0.0-RC1"
 micronaut-logging = "2.0.0"
 micronaut-projectgen = "0.0.9"
