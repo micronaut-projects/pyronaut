@@ -158,6 +158,54 @@ class PytestFunctionInvokerTest {
         }
     }
 
+    @Test
+    void pytestRunnerDisablesPytestCacheProvider() throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String pytestRunner = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/pytest_runner.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval("python", """
+                import sys
+                import types
+
+                pytest_module = types.ModuleType("pytest")
+                recorded_args = []
+
+                def pytest_main(args, plugins=None):
+                    recorded_args.extend(args)
+                    return 0
+
+                pytest_module.main = pytest_main
+                sys.modules["pytest"] = pytest_module
+
+                pyronaut_module = types.ModuleType("pyronaut")
+                pyronaut_test_module = types.ModuleType("pyronaut.test")
+                pyronaut_test_module.create_plugin = lambda listener: object()
+                sys.modules["pyronaut"] = pyronaut_module
+                sys.modules["pyronaut.test"] = pyronaut_test_module
+                """);
+            context.getBindings("python").putMember("pytest_runner_source", pytestRunner);
+            context.eval("python", """
+                pytest_runner_globals = {"__name__": "pyronaut.test.pytest_runner"}
+                exec(pytest_runner_source, pytest_runner_globals)
+                run_pytest = pytest_runner_globals["run_pytest"]
+                """);
+
+            context.eval("python", """
+                run_pytest(["tests/test_demo.py"], object(), None)
+                """);
+
+            Value recordedArgs = context.getBindings("python").getMember("recorded_args");
+            assertEquals("-p", recordedArgs.getArrayElement(0).asString());
+            assertEquals("no:cacheprovider", recordedArgs.getArrayElement(1).asString());
+            assertEquals("tests/test_demo.py", recordedArgs.getArrayElement(2).asString());
+        }
+    }
+
     public static final class FailingContext {
         public void stop() {
             throw new IllegalStateException("boom");
