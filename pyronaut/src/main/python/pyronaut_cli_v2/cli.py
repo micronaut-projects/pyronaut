@@ -528,7 +528,11 @@ def _read_test_delegate_dependency_entries(cache_dir: Path) -> list[str]:
 
 def _is_test_launcher_provided_artifact(entry: str) -> bool:
     file_name = Path(entry).name
-    return file_name.startswith("micronaut-pyronaut-logback-") or file_name.startswith("micronaut-pyronaut-pytest-")
+    return (
+        file_name.startswith("micronaut-context-python-")
+        or file_name.startswith("micronaut-pyronaut-logback-")
+        or file_name.startswith("micronaut-pyronaut-pytest-")
+    )
 
 
 def _run_preflight(

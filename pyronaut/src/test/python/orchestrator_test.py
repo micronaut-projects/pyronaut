@@ -1167,8 +1167,9 @@ additional-resources = ["views"]
             self._write_manifests(project_dir)
             bundled_pytest_entry = "/tmp/micronaut-pyronaut-pytest-fixture.jar"
             bundled_logback_entry = "/tmp/micronaut-pyronaut-logback-fixture.jar"
+            bundled_context_python_entry = "/tmp/micronaut-context-python-fixture.jar"
             (cache_dir / "resolved-test-dependencies").write_text(
-                f"/tmp/test.jar\n{bundled_pytest_entry}\n",
+                f"/tmp/test.jar\n{bundled_pytest_entry}\n{bundled_context_python_entry}\n",
                 encoding="utf-8",
             )
             (cache_dir / "resolved-runtime-dependencies").write_text(
@@ -1207,8 +1208,10 @@ additional-test-resources = ["test-fixtures"]
             self.assertIn("/tmp/build.jar", entries)
             self.assertNotIn(bundled_pytest_entry, entries)
             self.assertNotIn(bundled_logback_entry, entries)
+            self.assertNotIn(bundled_context_python_entry, entries)
             self._assert_no_classpath_artifact_prefix(entries, "micronaut-pyronaut-pytest-")
             self._assert_no_classpath_artifact_prefix(entries, "micronaut-pyronaut-logback-")
+            self._assert_no_classpath_artifact_prefix(entries, "micronaut-context-python-")
             self.assertNotIn(str((project_dir / "app-config").resolve()), entries)
             self.assertNotIn(str((project_dir / "views").resolve()), entries)
             self.assertNotIn(str((project_dir / "assets").resolve()), entries)
