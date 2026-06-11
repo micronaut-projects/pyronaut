@@ -27,6 +27,7 @@ public final class PyronautManagedVersions {
     private static final String RESOURCE = "io/micronaut/pyronaut/config/model/pyronaut-managed-versions.properties";
     private static final String MICRONAUT_CORE_VERSION = "micronaut.core.version";
     private static final String MICRONAUT_PLATFORM_VERSION = "micronaut.platform.version";
+    private static final String MICRONAUT_CONTROL_PANEL_VERSION = "micronaut.control-panel.version";
     private static final Properties PROPERTIES = load();
 
     private PyronautManagedVersions() {
@@ -38,6 +39,10 @@ public final class PyronautManagedVersions {
 
     public static String micronautPlatformVersion() {
         return property(MICRONAUT_PLATFORM_VERSION);
+    }
+
+    public static String micronautControlPanelVersion() {
+        return property(MICRONAUT_CONTROL_PANEL_VERSION);
     }
 
     private static String property(String name) {

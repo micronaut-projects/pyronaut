@@ -95,6 +95,7 @@ public final class PyprojectModelReader {
                 readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST)
             ),
             new PyprojectModel.Run(readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_RUN_BANNER_ENABLED)),
+            resolveControlPanel(parsed),
             new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
             new PyprojectModel.Processor(resolveProcessorMode(parsed)),
             new PyprojectModel.Test(resolveTestMode(parsed)),
@@ -106,6 +107,21 @@ public final class PyprojectModelReader {
         );
 
         return new PyprojectModel(project, buildSystem, pyronaut);
+    }
+
+    private static PyprojectModel.ControlPanel resolveControlPanel(TomlParseResult parsed) {
+        String path = readString(parsed, PyprojectConfigSpec.PYRONAUT_CONTROL_PANEL_PATH);
+        if (path == null || path.isBlank() || !path.startsWith("/")) {
+            throw new PyprojectModelException(
+                "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_CONTROL_PANEL_PATH.canonicalPath()
+                    + "': expected an absolute URL path starting with '/'"
+            );
+        }
+        return new PyprojectModel.ControlPanel(
+            readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_CONTROL_PANEL_ENABLED),
+            path,
+            readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_CONTROL_PANEL_PRODUCTION_ENABLED)
+        );
     }
 
     private static String readString(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {

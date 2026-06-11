@@ -20,6 +20,8 @@ import io.micronaut.python.cli.ui.PyronautTui;
 import io.micronaut.python.cli.ui.StreamsCapture;
 import io.micronaut.python.cli.ui.UiController;
 import io.micronaut.python.cli.ui.UiModel;
+import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -85,6 +87,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private static final String TEST_RESOURCES_LOGS_DIR = ".micronaut/test-resources/logs";
     private static final String RUN_MAIN_CLASS = "io.micronaut.pyronaut.run.PyronautRunMain";
     private static final String TEST_MAIN_CLASS = "io.micronaut.pyronaut.test.PyronautTestMain";
+    private static final String CONTROL_PANEL_ENABLED_PROPERTY = "micronaut.control-panel.enabled";
+    private static final String CONTROL_PANEL_PATH_PROPERTY = "micronaut.control-panel.path";
+    private static final String CONTROL_PANEL_SECURITY_ACCESS_PROPERTY = "micronaut.control-panel.security.access";
+    private static final String MICRONAUT_ENVIRONMENTS_PROPERTY = "micronaut.environments";
+    private static final String MICRONAUT_ENVIRONMENTS_ENV = "MICRONAUT_ENVIRONMENTS";
+    private static final String DEVELOPMENT_ENVIRONMENT = "dev";
     private static final List<String> DELEGATE_JVM_FLAGS = List.of(
         "--sun-misc-unsafe-memory-access=allow",
         "--enable-native-access=ALL-UNNAMED"
@@ -142,6 +150,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private final AtomicReference<TestResourcesConnection> activeTestResourcesConnection = new AtomicReference<>();
     private final AtomicBoolean testResourcesRunningNotified = new AtomicBoolean(false);
     private final HttpClient insightsClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+    private final PyprojectModelReader modelReader;
 
     private UiController controller;
     private PyronautTui tui;
@@ -149,6 +158,14 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private Path currentProject;
     private Path currentReportDir;
     private Path currentLogFile;
+
+    public PyronautDelegatingTuiCommand() {
+        this(new PyprojectModelReader());
+    }
+
+    PyronautDelegatingTuiCommand(PyprojectModelReader modelReader) {
+        this.modelReader = modelReader;
+    }
 
     @Override
     public Integer call() throws Exception {
@@ -417,6 +434,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 String managementServerUri = "http://127.0.0.1:" + managementPort;
                 var jvmArgs = new ArrayList<>(DEV_MANAGEMENT_JVM_FLAGS);
                 jvmArgs.add("-Dendpoints.all.port=" + managementPort);
+                addDevelopmentControlPanelJvmArgs(project, jvmArgs);
                 yield new ManagedCommand(
                     buildJavaDelegateCommand(
                         project,
@@ -467,6 +485,64 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         command.add(mainClass);
         command.addAll(arguments);
         return command;
+    }
+
+    private void addDevelopmentControlPanelJvmArgs(Path project, List<String> jvmArgs) {
+        ControlPanelSettings settings = controlPanelSettings(project);
+        if (!settings.enabled()) {
+            return;
+        }
+        jvmArgs.add("-D" + CONTROL_PANEL_ENABLED_PROPERTY + "=true");
+        jvmArgs.add("-D" + CONTROL_PANEL_PATH_PROPERTY + "=" + settings.path());
+        jvmArgs.add("-D" + CONTROL_PANEL_SECURITY_ACCESS_PROPERTY + "=ANONYMOUS");
+        jvmArgs.add("-D" + MICRONAUT_ENVIRONMENTS_PROPERTY + "=" + developmentEnvironments());
+    }
+
+    private String developmentEnvironments() {
+        String configured = firstNonBlank(
+            System.getProperty(MICRONAUT_ENVIRONMENTS_PROPERTY),
+            System.getenv(MICRONAUT_ENVIRONMENTS_ENV)
+        );
+        LinkedHashSet<String> environments = new LinkedHashSet<>();
+        if (configured != null && !configured.isBlank()) {
+            for (String environment : configured.split(",")) {
+                String trimmed = environment.trim();
+                if (!trimmed.isEmpty()) {
+                    environments.add(trimmed);
+                }
+            }
+        }
+        environments.add(DEVELOPMENT_ENVIRONMENT);
+        return String.join(",", environments);
+    }
+
+    private ControlPanelSettings controlPanelSettings(Path project) {
+        if (project == null) {
+            return ControlPanelSettings.disabled();
+        }
+        try {
+            PyprojectModel model = modelReader.readProjectDirectory(project);
+            if (model.pyronaut() == null || model.pyronaut().controlPanel() == null) {
+                return ControlPanelSettings.disabled();
+            }
+            PyprojectModel.ControlPanel controlPanel = model.pyronaut().controlPanel();
+            if (!Boolean.TRUE.equals(controlPanel.enabled())) {
+                return ControlPanelSettings.disabled();
+            }
+            return new ControlPanelSettings(true, controlPanel.path());
+        } catch (Exception e) {
+            appendLog("[control-panel] failed reading configuration: " + e.getMessage());
+            return ControlPanelSettings.disabled();
+        }
+    }
+
+    private static String appendUrlPath(String serverUri, String path) {
+        if (serverUri == null || serverUri.isBlank()) {
+            return path;
+        }
+        String normalizedPath = path == null || path.isBlank() ? "/control-panel" : path;
+        String base = serverUri.endsWith("/") ? serverUri.substring(0, serverUri.length() - 1) : serverUri;
+        return base + normalizedPath;
     }
 
     private static int findAvailablePort() throws IOException {
@@ -682,7 +758,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                     if (matcher.find()) {
                         String serverUri = matcher.group(1);
                         controller.setUrl(serverUri);
-                        refreshApplicationEndpointsAsync(resolveEndpointsServerUri(process, serverUri));
+                        refreshApplicationEndpointsAsync(serverUri, resolveEndpointsServerUri(process, serverUri));
                     }
                 }
             }
@@ -699,10 +775,10 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         return applicationServerUri;
     }
 
-    private void refreshApplicationEndpointsAsync(String serverUri) {
+    private void refreshApplicationEndpointsAsync(String applicationServerUri, String endpointsServerUri) {
         Thread.ofVirtual().start(() -> {
             try {
-                refreshApplicationEndpoints(serverUri);
+                refreshApplicationEndpoints(applicationServerUri, endpointsServerUri);
             } catch (Exception e) {
                 appendLog("[endpoints] discovery failed: " + e.getMessage());
             }
@@ -710,16 +786,20 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private boolean refreshApplicationEndpoints(String serverUri) throws IOException, InterruptedException {
+        return refreshApplicationEndpoints(serverUri, serverUri);
+    }
+
+    private boolean refreshApplicationEndpoints(String applicationServerUri, String endpointsServerUri) throws IOException, InterruptedException {
         controller.clearEndpoints();
         controller.clearManagementHealth();
-        var routes = fetchApplicationEndpointRoutes(serverUri);
+        var routes = fetchApplicationEndpointRoutes(endpointsServerUri);
         if (routes.statusCode() != 200) {
             appendLog("[endpoints] routes endpoint returned status " + routes.statusCode());
             return false;
         }
         List<String> endpoints = summarizeRoutePayload(routes.body());
         controller.setEndpoints(endpoints);
-        refreshManagementHealth(serverUri);
+        refreshManagementHealth(applicationServerUri, endpointsServerUri);
         return !endpoints.isEmpty();
     }
 
@@ -731,8 +811,8 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         return insightsClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
-    private void refreshManagementHealth(String serverUri) throws IOException, InterruptedException {
-        String healthUri = serverUri + "/health";
+    private void refreshManagementHealth(String applicationServerUri, String endpointsServerUri) throws IOException, InterruptedException {
+        String healthUri = endpointsServerUri + "/health";
         var request = HttpRequest.newBuilder(URI.create(healthUri))
             .timeout(Duration.ofSeconds(5))
             .GET()
@@ -743,7 +823,15 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             return;
         }
         String status = firstNonBlank(jsonString(response.body(), "status"), "UNKNOWN");
-        controller.setManagementHealth(healthUri, status);
+        controller.setManagementHealth(managementHealthLinkUri(applicationServerUri, healthUri), status);
+    }
+
+    private String managementHealthLinkUri(String applicationServerUri, String healthUri) {
+        ControlPanelSettings settings = controlPanelSettings(currentProject);
+        if (!settings.enabled()) {
+            return healthUri;
+        }
+        return appendUrlPath(applicationServerUri, settings.path());
     }
 
     private void routeOutputLine(Process process, String line) {
@@ -2266,6 +2354,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private record ManagedCommand(List<String> command, String managementServerUri) {
+    }
+
+    private record ControlPanelSettings(boolean enabled, String path) {
+        private static ControlPanelSettings disabled() {
+            return new ControlPanelSettings(false, "/control-panel");
+        }
     }
 
     private record RouteEntry(String key, String value) {

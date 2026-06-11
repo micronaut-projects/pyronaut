@@ -44,6 +44,8 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     private static final String TEST_RESOURCES_CLIENT_ARTIFACT = "micronaut-test-resources-client";
 
     private static final String DEFAULT_SCENARIO = "production";
+    private static final String MICRONAUT_SECURITY_GROUP_PATH = "/io/micronaut/security/";
+    private static final String MICRONAUT_SECURITY_ARTIFACT_PREFIX = "micronaut-security";
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -135,6 +137,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             String normalizedScenario = normalizeScenario(scenario);
             PyprojectModel model = modelReader.readProjectDirectory(root);
             ValidationSettings settings = resolveSettings(root, model, normalizedScenario);
+            validateProductionControlPanelSecurity(model, settings);
             if (!settings.enabled()) {
                 System.out.println("Configuration validation disabled for scenario '" + normalizedScenario + "'.");
                 return SUCCESS;
@@ -398,6 +401,31 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
 
     private static boolean valueOrDefault(Boolean value, boolean fallback) {
         return value == null ? fallback : value;
+    }
+
+    private static void validateProductionControlPanelSecurity(PyprojectModel model,
+                                                               ValidationSettings settings) {
+        if (!"production".equals(settings.scenario()) || model.pyronaut() == null || model.pyronaut().controlPanel() == null) {
+            return;
+        }
+        if (!Boolean.TRUE.equals(model.pyronaut().controlPanel().productionEnabled())) {
+            return;
+        }
+        if (settings.classpathElements().stream().noneMatch(PyronautValidateConfigMain::isMicronautSecurityClasspathEntry)) {
+            throw new PyprojectModelException(
+                "tool.pyronaut.control-panel.production-enabled requires a Micronaut Security runtime dependency"
+            );
+        }
+    }
+
+    private static boolean isMicronautSecurityClasspathEntry(String entry) {
+        String normalized = entry.replace('\\', '/').toLowerCase(Locale.ROOT);
+        if (normalized.contains(MICRONAUT_SECURITY_GROUP_PATH)
+            && normalized.contains("/" + MICRONAUT_SECURITY_ARTIFACT_PREFIX)) {
+            return true;
+        }
+        return normalized.contains("io.micronaut.security:")
+            && normalized.contains(":" + MICRONAUT_SECURITY_ARTIFACT_PREFIX);
     }
 
     interface ConfigurationValidatorExecutor {

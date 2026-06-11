@@ -59,6 +59,7 @@ public record PyprojectModel(Project project,
      * @param repositories configured repositories
      * @param dependencies dependency scopes
      * @param run runtime execution settings
+     * @param controlPanel control panel settings
      * @param build build defaults/settings
      * @param processor processor execution settings
      * @param test test execution settings
@@ -73,6 +74,7 @@ public record PyprojectModel(Project project,
                            List<String> repositories,
                            Dependencies dependencies,
                            Run run,
+                           ControlPanel controlPanel,
                            Build build,
                            Processor processor,
                            Test test,
@@ -105,6 +107,18 @@ public record PyprojectModel(Project project,
      * @param bannerEnabled whether the Micronaut banner is printed when running the application
      */
     public record Run(Boolean bannerEnabled) {
+    }
+
+    /**
+     * tool.pyronaut.control-panel table.
+     *
+     * @param enabled whether development control panel support is enabled
+     * @param path URL path where the control panel is served
+     * @param productionEnabled whether control panel support is included in production runtime artifacts
+     */
+    public record ControlPanel(Boolean enabled,
+                               String path,
+                               Boolean productionEnabled) {
     }
 
     /**

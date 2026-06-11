@@ -291,6 +291,75 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void validateConfigRejectsProductionControlPanelWithoutSecurity() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+
+            [tool.pyronaut.control-panel]
+            production-enabled = true
+            """);
+        Path runtimeJar = project.resolve("libs/runtime.jar");
+        Files.createDirectories(runtimeJar.getParent());
+        Files.writeString(runtimeJar, "runtime");
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), runtimeJar + "\n");
+
+        AtomicInteger calls = new AtomicInteger();
+        PyronautValidateConfigMain command = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                calls.incrementAndGet();
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        int exit = new CommandLine(command).execute("--project-dir", project.toString(), "--no-cache");
+
+        assertEquals(8, exit);
+        assertEquals(0, calls.get());
+    }
+
+    @Test
+    void validateConfigAcceptsProductionControlPanelWithSecurity() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+
+            [tool.pyronaut.control-panel]
+            production-enabled = true
+            """);
+        Path runtimeJar = project.resolve("libs/runtime.jar");
+        Path securityJar = project.resolve("m2/io/micronaut/security/micronaut-security/4.0.0/micronaut-security-4.0.0.jar");
+        Files.createDirectories(runtimeJar.getParent());
+        Files.createDirectories(securityJar.getParent());
+        Files.writeString(runtimeJar, "runtime");
+        Files.writeString(securityJar, "security");
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), runtimeJar + "\n" + securityJar + "\n");
+
+        AtomicInteger calls = new AtomicInteger();
+        PyronautValidateConfigMain command = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                calls.incrementAndGet();
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        int exit = new CommandLine(command).execute("--project-dir", project.toString(), "--no-cache");
+
+        assertEquals(0, exit);
+        assertEquals(1, calls.get());
+    }
+
+    @Test
     void validateConfigIncludesConfigDirectoryInDefaultResourceDirs() throws Exception {
         Path project = prepareProject();
         Files.createDirectories(project.resolve("config"));

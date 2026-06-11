@@ -15,6 +15,8 @@
  */
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -30,6 +32,7 @@ import java.util.Map;
  */
 final class ResolutionCache {
     private static final String HASH_FILE = "pyproject.sha256";
+    private static final String INSTALL_CACHE_VERSION = "control-panel-management-v1";
 
     private ResolutionCache() {
     }
@@ -37,10 +40,22 @@ final class ResolutionCache {
     static String installHash(Path pyprojectFile, Path localRepositoryPath) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update("installCacheVersion=".getBytes(StandardCharsets.UTF_8));
+            digest.update(INSTALL_CACHE_VERSION.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
             digest.update(Files.readAllBytes(pyprojectFile));
             digest.update((byte) 0);
             digest.update("localRepository=".getBytes(StandardCharsets.UTF_8));
             digest.update(localRepositoryPath.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update("micronautCoreVersion=".getBytes(StandardCharsets.UTF_8));
+            digest.update(PyronautManagedVersions.micronautCoreVersion().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update("micronautPlatformVersion=".getBytes(StandardCharsets.UTF_8));
+            digest.update(PyronautManagedVersions.micronautPlatformVersion().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update("micronautControlPanelVersion=".getBytes(StandardCharsets.UTF_8));
+            digest.update(PyronautManagedVersions.micronautControlPanelVersion().getBytes(StandardCharsets.UTF_8));
             byte[] hashed = digest.digest();
             return HexFormat.of().formatHex(hashed);
         } catch (NoSuchAlgorithmException e) {

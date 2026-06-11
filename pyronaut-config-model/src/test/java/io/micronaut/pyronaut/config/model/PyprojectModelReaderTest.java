@@ -38,6 +38,9 @@ class PyprojectModelReaderTest {
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());
         assertEquals(true, model.pyronaut().run().bannerEnabled());
+        assertEquals(Boolean.TRUE, model.pyronaut().controlPanel().enabled());
+        assertEquals("/control-panel", model.pyronaut().controlPanel().path());
+        assertEquals(Boolean.FALSE, model.pyronaut().controlPanel().productionEnabled());
         assertEquals("jvm", model.pyronaut().build().mode());
         assertEquals("jit", model.pyronaut().processor().mode());
         assertEquals("src", model.pyronaut().sources().python());
@@ -123,6 +126,47 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals(false, model.pyronaut().run().bannerEnabled());
+    }
+
+    @Test
+    void parseControlPanelConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+
+            [tool.pyronaut.control-panel]
+            enabled = false
+            path = "/admin/control-panel"
+            production-enabled = true
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals(Boolean.FALSE, model.pyronaut().controlPanel().enabled());
+        assertEquals("/admin/control-panel", model.pyronaut().controlPanel().path());
+        assertEquals(Boolean.TRUE, model.pyronaut().controlPanel().productionEnabled());
+    }
+
+    @Test
+    void rejectRelativeControlPanelPath() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+
+            [tool.pyronaut.control-panel]
+            path = "control-panel"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals(
+            "Invalid value for 'tool.pyronaut.control-panel.path': expected an absolute URL path starting with '/'",
+            exception.getMessage()
+        );
     }
 
     @Test

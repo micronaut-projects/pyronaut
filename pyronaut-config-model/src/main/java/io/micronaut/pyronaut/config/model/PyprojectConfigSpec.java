@@ -161,6 +161,27 @@ public final class PyprojectConfigSpec {
         "Whether the Micronaut banner is printed when running the application.",
         true
     );
+    public static final FieldSpec PYRONAUT_CONTROL_PANEL_ENABLED = bool(
+        "tool.pyronaut.control-panel.enabled",
+        "Whether development control panel support is enabled.",
+        Boolean.TRUE,
+        List.of(),
+        List.of("tool.pyronaut.controlPanel.enabled")
+    );
+    public static final FieldSpec PYRONAUT_CONTROL_PANEL_PATH = string(
+        "tool.pyronaut.control-panel.path",
+        "URL path where the control panel is served.",
+        "/control-panel",
+        List.of(),
+        List.of("tool.pyronaut.controlPanel.path")
+    );
+    public static final FieldSpec PYRONAUT_CONTROL_PANEL_PRODUCTION_ENABLED = bool(
+        "tool.pyronaut.control-panel.production-enabled",
+        "Whether control panel support is included in production runtime artifacts.",
+        Boolean.FALSE,
+        List.of(),
+        List.of("tool.pyronaut.controlPanel.productionEnabled")
+    );
     public static final SectionSpec PYRONAUT_SOURCES_SECTION = section(
         "tool.pyronaut.sources",
         true
@@ -710,6 +731,9 @@ public final class PyprojectConfigSpec {
         PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_TEST_MODE,
         PYRONAUT_RUN_BANNER_ENABLED,
+        PYRONAUT_CONTROL_PANEL_ENABLED,
+        PYRONAUT_CONTROL_PANEL_PATH,
+        PYRONAUT_CONTROL_PANEL_PRODUCTION_ENABLED,
         PYRONAUT_SOURCES_PYTHON,
         PYRONAUT_SOURCES_PYTHON_TEST,
         PYRONAUT_SOURCES_JAVA,
@@ -801,6 +825,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.processor", true),
         section("tool.pyronaut.test", true),
         section("tool.pyronaut.run", true),
+        section("tool.pyronaut.control-panel", true, "tool.pyronaut.controlPanel"),
         PYRONAUT_SOURCES_SECTION,
         section("tool.pyronaut.toolchain", true),
         section("tool.pyronaut.build.metadata", true),

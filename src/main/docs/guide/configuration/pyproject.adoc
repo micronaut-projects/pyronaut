@@ -76,6 +76,25 @@ mode = "jit" # jit|native
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
 See the CLI reference for the full build option surface.
 
+== Control Panel
+
+`pyronaut --tui` enables the Micronaut Control Panel for development runs by default and links the TUI health chip to it:
+
+[source,toml]
+----
+[tool.pyronaut.control-panel]
+enabled = true
+path = "/control-panel"
+production-enabled = false
+----
+
+Set `enabled = false` to disable the development/TUI Control Panel.
+When development Control Panel support is enabled, Pyronaut also adds Micronaut Management and the Control Panel management integration to the development runtime so health and diagnostic panels are available.
+The implicitly enabled development Control Panel dependencies are written only to the `development-runtime` dependency manifest, so they are not packaged by `pyronaut build`.
+
+Set `production-enabled = true` only when the application has Micronaut Security on the runtime classpath and the Control Panel should be included in production runtime artifacts.
+Production Control Panel inclusion keeps the Micronaut Control Panel security defaults; the anonymous access used by `pyronaut --tui` is not applied to production builds.
+
 == Toolchain
 
 Commands that delegate to Java use a GraalVM JDK.

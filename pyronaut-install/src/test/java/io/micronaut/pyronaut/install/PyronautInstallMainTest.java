@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.pyronaut.config.model.PyprojectJsonSchemaGenerator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,7 @@ import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -209,6 +211,30 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void installHashChangesWhenBundledControlPanelVersionChanges() throws Exception {
+        Path project = tempDir.resolve("project-managed-version-cache");
+        Files.createDirectories(project);
+        Path pyproject = project.resolve("pyproject.toml");
+        Files.writeString(pyproject, """
+            [project]
+            name = "managed-version-cache"
+
+            [tool.pyronaut]
+            """);
+        Path localRepository = tempDir.resolve("local-repository");
+        String previousControlPanelVersion = System.getProperty("pyronaut.micronaut.control-panel.version");
+        try {
+            System.setProperty("pyronaut.micronaut.control-panel.version", "1.0.0");
+            String firstHash = ResolutionCache.installHash(pyproject, localRepository);
+            System.setProperty("pyronaut.micronaut.control-panel.version", "1.0.1");
+            String secondHash = ResolutionCache.installHash(pyproject, localRepository);
+            assertNotEquals(firstHash, secondHash);
+        } finally {
+            restoreSystemProperty("pyronaut.micronaut.control-panel.version", previousControlPanelVersion);
+        }
+    }
+
+    @Test
     void injectsMicronautManagementOnlyIntoDevelopmentRuntimeManifest() throws Exception {
         Path repository = tempDir.resolve("repo-management-default");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
@@ -259,6 +285,128 @@ class PyronautInstallMainTest {
         assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-management")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-management")));
+        assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-ui")));
+        assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-management")));
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-ui")));
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-management")));
+    }
+
+    @Test
+    void skipsDevelopmentControlPanelWhenDisabled() throws Exception {
+        Path repository = tempDir.resolve("repo-control-panel-disabled");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+        writeArtifact(repository, "io.micronaut", "micronaut-management", "1.2.3");
+        writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "1.0.0",
+            List.of(new ManagedDependency("io.micronaut", "micronaut-management", "1.2.3"))
+        );
+
+        Path project = tempDir.resolve("project-control-panel-disabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository) + """
+
+            [tool.pyronaut.control-panel]
+            enabled = false
+            """);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        List<String> developmentEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-development-runtime-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(developmentEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-ui")));
+        assertTrue(developmentEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-management")));
+    }
+
+    @Test
+    void productionControlPanelRequiresMicronautSecurity() throws Exception {
+        Path repository = tempDir.resolve("repo-control-panel-production-no-security");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-control-panel-production-no-security");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository) + """
+
+            [tool.pyronaut.control-panel]
+            production-enabled = true
+            """);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.CONFIG_ERROR.code(), command.call());
+    }
+
+    @Test
+    void productionControlPanelIsIncludedWhenSecurityIsPresent() throws Exception {
+        Path repository = tempDir.resolve("repo-control-panel-production-security");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "io.micronaut", "micronaut-management", "5.0.0");
+        writeArtifact(repository, "io.micronaut.security", "micronaut-security", "4.0.0");
+        writeBom(
+            repository,
+            "io.micronaut",
+            "micronaut-core-bom",
+            "5.0.0",
+            List.of(new ManagedDependency("io.micronaut", "micronaut-management", "5.0.0"))
+        );
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "5.0.0",
+            List.of(new ManagedDependency("io.micronaut", "micronaut-management", "5.0.0"))
+        );
+
+        Path project = tempDir.resolve("project-control-panel-production-security");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            core.version = "5.0.0"
+            platform.version = "5.0.0"
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0", "io.micronaut.security:micronaut-security:4.0.0"]
+            build = []
+            test = []
+
+            [tool.pyronaut.control-panel]
+            production-enabled = true
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        List<String> runtimeEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-security")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-management")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-ui")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-management")));
     }
 
     @Test
@@ -3506,6 +3654,11 @@ class PyronautInstallMainTest {
     }
 
     private static void writeArtifact(Path repository, String groupId, String artifactId, String version, byte[] jarBytes) throws IOException {
+        writeArtifactRaw(repository, groupId, artifactId, version, jarBytes);
+        ensureDefaultControlPanelArtifact(repository);
+    }
+
+    private static void writeArtifactRaw(Path repository, String groupId, String artifactId, String version, byte[] jarBytes) throws IOException {
         Path artifactDir = repository
             .resolve(groupId.replace('.', '/'))
             .resolve(artifactId)
@@ -3526,6 +3679,39 @@ class PyronautInstallMainTest {
 
         Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
         Files.write(jarFile, jarBytes);
+    }
+
+    private static void ensureDefaultControlPanelArtifact(Path repository) throws IOException {
+        String version = PyronautManagedVersions.micronautControlPanelVersion();
+        if (version == null || version.isBlank()) {
+            return;
+        }
+        Path jarFile = repository
+            .resolve("io/micronaut/controlpanel/micronaut-control-panel-ui")
+            .resolve(version)
+            .resolve("micronaut-control-panel-ui-" + version + ".jar");
+        if (!Files.exists(jarFile)) {
+            writeArtifactRaw(
+                repository,
+                "io.micronaut.controlpanel",
+                "micronaut-control-panel-ui",
+                version,
+                new byte[]{0}
+            );
+        }
+        Path managementJarFile = repository
+            .resolve("io/micronaut/controlpanel/micronaut-control-panel-management")
+            .resolve(version)
+            .resolve("micronaut-control-panel-management-" + version + ".jar");
+        if (!Files.exists(managementJarFile)) {
+            writeArtifactRaw(
+                repository,
+                "io.micronaut.controlpanel",
+                "micronaut-control-panel-management",
+                version,
+                new byte[]{0}
+            );
+        }
     }
 
     private static void writeArtifactWithEntries(Path repository,
@@ -3560,6 +3746,7 @@ class PyronautInstallMainTest {
                 outputStream.closeEntry();
             }
         }
+        ensureDefaultControlPanelArtifact(repository);
     }
 
     private static void writeArtifactWithDependencies(Path repository,
@@ -3598,6 +3785,7 @@ class PyronautInstallMainTest {
 
         Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
         Files.write(jarFile, new byte[]{0});
+        ensureDefaultControlPanelArtifact(repository);
     }
 
     private static void writeCompiledArtifact(Path repository,
@@ -3712,6 +3900,7 @@ class PyronautInstallMainTest {
                 outputStream.closeEntry();
             }
         }
+        ensureDefaultControlPanelArtifact(repository);
     }
 
     private static void writeBom(Path repository,

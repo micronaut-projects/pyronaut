@@ -292,6 +292,12 @@ class PyronautDelegatingTuiCommandTest {
         Path project = tempDir.resolve("managed-run");
         Files.createDirectories(project.resolve("__pyronaut__/classes"));
         Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "managed-run"
+
+            [tool.pyronaut]
+            """, StandardCharsets.UTF_8);
         Path runtimeJar = project.resolve("deps/runtime-one.jar").toAbsolutePath().normalize();
         Files.createDirectories(runtimeJar.getParent());
         Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
@@ -340,6 +346,10 @@ class PyronautDelegatingTuiCommandTest {
         assertTrue(commandLine.contains("-Dendpoints.all.enabled=true"));
         assertTrue(commandLine.contains("-Dendpoints.all.sensitive=false"));
         assertTrue(commandLine.contains("-Dendpoints.loggers.write-sensitive=false"));
+        assertTrue(commandLine.contains("-Dmicronaut.control-panel.enabled=true"));
+        assertTrue(commandLine.contains("-Dmicronaut.control-panel.path=/control-panel"));
+        assertTrue(commandLine.contains("-Dmicronaut.control-panel.security.access=ANONYMOUS"));
+        assertTrue(commandLine.contains("-Dmicronaut.environments=dev"));
         String managementPortArg = commandLine.stream()
             .filter(arg -> arg.startsWith("-Dendpoints.all.port="))
             .findFirst()
@@ -353,6 +363,57 @@ class PyronautDelegatingTuiCommandTest {
         assertFalse(classpath.contains(runtimeJar.toString()));
         assertTrue(classpath.contains(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize().toString()));
         assertTrue(classpath.contains(toolJar.toString()));
+    }
+
+    @Test
+    void buildManagedRunCommandOmitsControlPanelJvmArgsWhenDisabled() throws Exception {
+        Path project = tempDir.resolve("managed-run-control-panel-disabled");
+        Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "managed-run-control-panel-disabled"
+
+            [tool.pyronaut]
+
+            [tool.pyronaut.control-panel]
+            enabled = false
+            """, StandardCharsets.UTF_8);
+        Path developmentRuntimeJar = project.resolve("deps/runtime-dev.jar").toAbsolutePath().normalize();
+        Files.createDirectories(developmentRuntimeJar.getParent());
+        Files.writeString(developmentRuntimeJar, "", StandardCharsets.UTF_8);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-development-runtime-dependencies"),
+            developmentRuntimeJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+
+        Path toolRoot = tempDir.resolve("tool/pyronaut-run-control-panel-disabled");
+        Path executable = toolRoot.resolve("bin/pyronaut-run");
+        Path libDir = toolRoot.resolve("lib");
+        Files.createDirectories(executable.getParent());
+        Files.createDirectories(libDir);
+        Files.writeString(executable, "#!/bin/sh\n", StandardCharsets.UTF_8);
+        executable.toFile().setExecutable(true);
+        Files.writeString(libDir.resolve("micronaut-pyronaut-run.jar"), "", StandardCharsets.UTF_8);
+
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "runExecutable", executable);
+        setField(command, "testExecutable", executable);
+
+        Object target = enumConstant(command, "ManagedCommandTarget", "RUN");
+        Object managedCommand = invoke(
+            command,
+            "buildManagedCommand",
+            new Class<?>[]{Path.class, target.getClass()},
+            project,
+            target
+        );
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(managedCommand, "command", new Class<?>[]{});
+
+        assertTrue(commandLine.stream().noneMatch(arg -> arg.startsWith("-Dmicronaut.control-panel.")));
+        assertTrue(commandLine.stream().noneMatch(arg -> arg.startsWith("-Dmicronaut.environments=")));
     }
 
     @Test
@@ -537,6 +598,82 @@ class PyronautDelegatingTuiCommandTest {
     }
 
     @Test
+    void refreshApplicationEndpointsLinksHealthStatusToControlPanelWhenEnabled() throws Exception {
+        Path project = tempDir.resolve("control-panel-link-enabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "control-panel-link-enabled"
+
+            [tool.pyronaut]
+
+            [tool.pyronaut.control-panel]
+            path = "/dev/panel"
+            """, StandardCharsets.UTF_8);
+
+        HttpServer server = healthRoutesServer();
+        server.start();
+        try {
+            UiController controller = new UiController();
+            PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+            setField(command, "controller", controller);
+            setField(command, "currentProject", project);
+
+            String serverUri = "http://127.0.0.1:" + server.getAddress().getPort();
+            boolean refreshed = (boolean) invoke(
+                command,
+                "refreshApplicationEndpoints",
+                new Class<?>[]{String.class},
+                serverUri
+            );
+
+            assertTrue(refreshed);
+            assertEquals("UP", controller.getManagementHealthStatus());
+            assertEquals(serverUri + "/dev/panel", controller.getManagementHealthUrl());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void refreshApplicationEndpointsLinksHealthStatusToHealthEndpointWhenControlPanelDisabled() throws Exception {
+        Path project = tempDir.resolve("control-panel-link-disabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "control-panel-link-disabled"
+
+            [tool.pyronaut]
+
+            [tool.pyronaut.control-panel]
+            enabled = false
+            """, StandardCharsets.UTF_8);
+
+        HttpServer server = healthRoutesServer();
+        server.start();
+        try {
+            UiController controller = new UiController();
+            PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+            setField(command, "controller", controller);
+            setField(command, "currentProject", project);
+
+            String serverUri = "http://127.0.0.1:" + server.getAddress().getPort();
+            boolean refreshed = (boolean) invoke(
+                command,
+                "refreshApplicationEndpoints",
+                new Class<?>[]{String.class},
+                serverUri
+            );
+
+            assertTrue(refreshed);
+            assertEquals("UP", controller.getManagementHealthStatus());
+            assertEquals(serverUri + "/health", controller.getManagementHealthUrl());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void hasReachableTestResourcesServerAcceptsLiveSocketBackedSettings() throws Exception {
         Path project = tempDir.resolve("reachable-settings");
         Path settingsDir = project.resolve(".micronaut/test-resources");
@@ -554,6 +691,27 @@ class PyronautDelegatingTuiCommandTest {
 
             assertTrue(command.hasReachableTestResourcesServer(settingsDir.resolve("test-resources.properties")));
         }
+    }
+
+    private static HttpServer healthRoutesServer() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/routes", exchange -> {
+            byte[] body = "[{\"method\":\"GET\",\"uri\":\"/hello\"}]".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        server.createContext("/health", exchange -> {
+            byte[] body = "{\"status\":\"UP\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) {
+                output.write(body);
+            }
+        });
+        return server;
     }
 
     private static Object invoke(Object target, String name, Class<?>[] parameterTypes, Object... args) throws Exception {

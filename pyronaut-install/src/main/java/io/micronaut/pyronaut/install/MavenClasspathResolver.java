@@ -17,6 +17,7 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
+import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.testresources.buildtools.KnownModules;
 import io.micronaut.testresources.buildtools.MavenDependency;
 import io.micronaut.testresources.buildtools.ModuleIdentifier;
@@ -74,6 +75,10 @@ final class MavenClasspathResolver {
     private static final String MICRONAUT_CONTEXT_PYTHON_MODULE = "io.micronaut:micronaut-context-python";
     private static final String MICRONAUT_INJECT_PYTHON_MODULE = "io.micronaut:micronaut-inject-python";
     private static final String MICRONAUT_MANAGEMENT_MODULE = "io.micronaut:micronaut-management";
+    private static final String CONTROL_PANEL_MANAGEMENT_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-management";
+    private static final String CONTROL_PANEL_UI_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-ui";
+    private static final String MICRONAUT_SECURITY_GROUP = "io.micronaut.security";
+    private static final String MICRONAUT_SECURITY_ARTIFACT_PREFIX = "micronaut-security";
     private static final String JUNIT_PLATFORM_LAUNCHER_MODULE = "org.junit.platform:junit-platform-launcher";
     private static final String JUNIT_JUPITER_ENGINE_MODULE = "org.junit.jupiter:junit-jupiter-engine";
     private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
@@ -202,6 +207,7 @@ final class MavenClasspathResolver {
                 .filter(Objects::nonNull)
                 .map(artifact -> toResolvedEditorArtifact(artifact, repositories, session))
                 .toList();
+            validateProductionControlPanelSecurity(model, scope, result);
             return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
         } catch (DependencyResolutionException e) {
             String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage();
@@ -269,11 +275,20 @@ final class MavenClasspathResolver {
             if (testResourcesClient != null) {
                 runtime.add(testResourcesClient);
             }
+            if (controlPanelProductionEnabled(model)) {
+                addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+                runtime.add(controlPanelManagementCoordinate());
+                runtime.add(controlPanelUiCoordinate());
+            }
             return List.copyOf(runtime);
         }
         if (scope == InstallScope.DEVELOPMENT_RUNTIME) {
             LinkedHashSet<String> runtime = new LinkedHashSet<>(coordinatesForScope(model, InstallScope.RUNTIME, managedVersions));
             addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+            if (controlPanelEnabled(model)) {
+                runtime.add(controlPanelManagementCoordinate());
+                runtime.add(controlPanelUiCoordinate());
+            }
             return List.copyOf(runtime);
         }
         if (scope == InstallScope.TEST_RESOURCES_SERVER) {
@@ -431,6 +446,60 @@ final class MavenClasspathResolver {
 
     private static String moduleKey(MavenDependency dependency) {
         return dependency.getGroup() + ":" + dependency.getArtifact();
+    }
+
+    private static boolean controlPanelEnabled(PyprojectModel model) {
+        return model.pyronaut() != null
+            && model.pyronaut().controlPanel() != null
+            && Boolean.TRUE.equals(model.pyronaut().controlPanel().enabled());
+    }
+
+    private static boolean controlPanelProductionEnabled(PyprojectModel model) {
+        return model.pyronaut() != null
+            && model.pyronaut().controlPanel() != null
+            && Boolean.TRUE.equals(model.pyronaut().controlPanel().productionEnabled());
+    }
+
+    private static String controlPanelUiCoordinate() {
+        return controlPanelCoordinate(CONTROL_PANEL_UI_MODULE);
+    }
+
+    private static String controlPanelManagementCoordinate() {
+        return controlPanelCoordinate(CONTROL_PANEL_MANAGEMENT_MODULE);
+    }
+
+    private static String controlPanelCoordinate(String module) {
+        String version = normalizedVersion(PyronautManagedVersions.micronautControlPanelVersion());
+        if (version == null) {
+            throw new PyprojectModelException("Missing bundled Micronaut Control Panel version");
+        }
+        return module + ":" + version;
+    }
+
+    private static void validateProductionControlPanelSecurity(PyprojectModel model,
+                                                               InstallScope scope,
+                                                               DependencyResult result) {
+        if (!controlPanelProductionEnabled(model)) {
+            return;
+        }
+        if (scope != InstallScope.RUNTIME && scope != InstallScope.DEVELOPMENT_RUNTIME && scope != InstallScope.TEST) {
+            return;
+        }
+        boolean hasSecurity = result.getArtifactResults().stream()
+            .map(ArtifactResult::getArtifact)
+            .filter(Objects::nonNull)
+            .anyMatch(MavenClasspathResolver::isMicronautSecurityArtifact);
+        if (!hasSecurity) {
+            throw new PyprojectModelException(
+                "tool.pyronaut.control-panel.production-enabled requires a Micronaut Security runtime dependency"
+            );
+        }
+    }
+
+    private static boolean isMicronautSecurityArtifact(Artifact artifact) {
+        return MICRONAUT_SECURITY_GROUP.equals(artifact.getGroupId())
+            && artifact.getArtifactId() != null
+            && artifact.getArtifactId().startsWith(MICRONAUT_SECURITY_ARTIFACT_PREFIX);
     }
 
     private static String normalizedVersion(String version) {

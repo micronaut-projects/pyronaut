@@ -2606,11 +2606,18 @@ additional-test-resources = ["test-fixtures"]
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "stage-demo"
             runtime_jar = Path(temp_dir) / ".m2" / "repository" / "example" / "runtime.jar"
+            control_panel_jar = Path(temp_dir) / ".m2" / "repository" / "io" / "micronaut" / "controlpanel" / "micronaut-control-panel-ui.jar"
             runtime_jar.parent.mkdir(parents=True, exist_ok=True)
+            control_panel_jar.parent.mkdir(parents=True, exist_ok=True)
             runtime_jar.write_text("", encoding="utf-8")
+            control_panel_jar.write_text("", encoding="utf-8")
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
             (project_dir / "config").mkdir(parents=True, exist_ok=True)
             (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(str(runtime_jar.resolve()) + "\n", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "resolved-development-runtime-dependencies").write_text(
+                str(runtime_jar.resolve()) + "\n" + str(control_panel_jar.resolve()) + "\n",
+                encoding="utf-8",
+            )
             staging_dir = Path(temp_dir) / "stage-out"
 
             cli._prepare_build_wheel_staging(  # noqa: SLF001 - internal helper coverage
@@ -2629,6 +2636,10 @@ additional-test-resources = ["test-fixtures"]
             self.assertTrue((launcher_pkg / "app" / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar").exists())
             manifest = (launcher_pkg / "app" / "__pyronaut__" / "resolved-runtime-dependencies").read_text(encoding="utf-8")
             self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", manifest)
+            self.assertNotIn("micronaut-control-panel-ui", manifest)
+            self.assertFalse(
+                (launcher_pkg / "app" / "__pyronaut__" / "m2-repository" / "io" / "micronaut" / "controlpanel" / "micronaut-control-panel-ui.jar").exists()
+            )
             launcher_code = (launcher_pkg / "launcher.py").read_text(encoding="utf-8")
             self.assertIn("example.Main", launcher_code)
             self.assertIn("_build_java_delegate_invocation", launcher_code)
