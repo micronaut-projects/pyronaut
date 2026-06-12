@@ -49,18 +49,26 @@ class PyronautCreateAppMainTest {
         Path project = tempDir.resolve("demo");
         assertEquals(0, execution.exitCode());
         assertTrue(Files.exists(project.resolve("pyproject.toml")));
-        assertTrue(Files.exists(project.resolve("src/demo/controller.py")));
+        assertTrue(Files.exists(project.resolve("src/demo/controllers.py")));
         assertTrue(Files.exists(project.resolve("tests/test_demo.py")));
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-project/SKILL.md")));
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-cli/SKILL.md")));
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-coding/SKILL.md")));
         String pyproject = Files.readString(project.resolve("pyproject.toml"), StandardCharsets.UTF_8);
+        String main = Files.readString(project.resolve("src/main.py"), StandardCharsets.UTF_8);
+        String test = Files.readString(project.resolve("tests/test_demo.py"), StandardCharsets.UTF_8);
         String application = Files.readString(project.resolve("config/application.toml"), StandardCharsets.UTF_8);
         String testApplication = Files.readString(project.resolve("tests-config/application-test.toml"), StandardCharsets.UTF_8);
         assertTrue(pyproject.contains("[tool.pyronaut.test-resources]"));
         assertTrue(pyproject.contains("enabled = false"));
         assertTrue(pyproject.contains("runtime = [\n"));
         assertFalse(pyproject.contains("runtime = ['"));
+        assertTrue(main.contains("import demo.controllers"));
+        assertTrue(main.contains("%cyan(%d{HH:mm:ss.SSS}) %gray([%thread]) %highlight(%-5level) %magenta(%logger{36}) - %msg%n"));
+        assertTrue(test.contains("requests.with_context(application_context)"));
+        assertTrue(test.contains("response = client.get(\"/\")"));
+        assertTrue(test.contains("assert response.text == \"Hello World\""));
+        assertTrue(test.contains("assert response.headers[\"Content-Type\"].startswith(\"text/plain\")"));
         assertTrue(application.contains("[micronaut.application]\nname = 'demo'"));
         assertFalse(application.contains("micronaut.application.name = 'demo'"));
         assertTrue(testApplication.contains("[micronaut.server]\nport = -1"));
@@ -76,7 +84,7 @@ class PyronautCreateAppMainTest {
 
         assertEquals(0, execution.exitCode());
         assertTrue(Files.exists(project.resolve("pyproject.toml")));
-        assertTrue(Files.exists(project.resolve("src/demo/controller.py")));
+        assertTrue(Files.exists(project.resolve("src/demo/controllers.py")));
         assertFalse(Files.exists(project.resolve("demo")));
     }
 
@@ -98,9 +106,9 @@ class PyronautCreateAppMainTest {
             "data-jdbc,mysql,json-schema,test-resources"
         );
 
+        assertEquals(0, execution.exitCode(), execution.err());
         String pyproject = Files.readString(tempDir.resolve("demo/pyproject.toml"), StandardCharsets.UTF_8);
         String application = Files.readString(tempDir.resolve("demo/config/application.toml"), StandardCharsets.UTF_8);
-        assertEquals(0, execution.exitCode());
         assertTrue(pyproject.contains("io.micronaut.data:micronaut-data-jdbc"));
         assertTrue(pyproject.contains("com.mysql:mysql-connector-j"));
         assertTrue(pyproject.contains("[tool.pyronaut.test-resources]"));
@@ -117,7 +125,7 @@ class PyronautCreateAppMainTest {
         assertEquals(0, execution.exitCode());
         assertFalse(Files.exists(project.resolve("src/example/__init__.py")));
         assertFalse(Files.exists(project.resolve("src/example/service/__init__.py")));
-        assertTrue(Files.exists(project.resolve("src/example/service/controller.py")));
+        assertTrue(Files.exists(project.resolve("src/example/service/controllers.py")));
         assertTrue(Files.exists(project.resolve("tests/test_example_service.py")));
     }
 
@@ -127,8 +135,14 @@ class PyronautCreateAppMainTest {
 
         assertEquals(0, execution.exitCode());
         assertTrue(execution.out().contains("http-server-netty"));
+        assertTrue(execution.out().contains("data-jdbc"));
+        assertTrue(execution.out().contains("mysql"));
+        assertTrue(execution.out().contains("json-schema"));
+        assertTrue(execution.out().contains("management"));
         assertTrue(execution.out().contains("pyronaut-pytest"));
         assertFalse(execution.out().contains("gradle -"));
+        assertFalse(execution.out().contains("groovy-json"));
+        assertFalse(execution.out().contains("groovy-yaml"));
     }
 
     @Test
@@ -150,6 +164,14 @@ class PyronautCreateAppMainTest {
     @Test
     void reflectionDependentFeatureFailsWithClearMessage() {
         Execution execution = execute("demo", "--output", tempDir.toString(), "--features", "jackson-databind");
+
+        assertEquals(CommandLine.ExitCode.USAGE, execution.exitCode());
+        assertTrue(execution.err().contains("not supported for Pyronaut/Python projects"));
+    }
+
+    @Test
+    void groovyFeatureFailsWithClearMessage() {
+        Execution execution = execute("demo", "--output", tempDir.toString(), "--features", "groovy-json");
 
         assertEquals(CommandLine.ExitCode.USAGE, execution.exitCode());
         assertTrue(execution.err().contains("not supported for Pyronaut/Python projects"));

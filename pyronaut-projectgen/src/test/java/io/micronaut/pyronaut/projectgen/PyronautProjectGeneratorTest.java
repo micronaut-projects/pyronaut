@@ -31,15 +31,24 @@ class PyronautProjectGeneratorTest {
             ".gitignore",
             "config/application.toml",
             "pyproject.toml",
-            "src/demo/controller.py",
+            "src/demo/controllers.py",
             "src/main.py",
             "tests/test_demo.py",
             "tests-config/application-test.toml"
         ), project.keySet());
         assertFalse(project.containsKey("setup.py"));
-        assertTrue(project.get("src/demo/controller.py").contains("@Controller"));
-        assertTrue(project.get("src/main.py").contains("from demo.controller import MyController"));
+        assertTrue(project.get("src/demo/controllers.py").contains("@Get"));
+        assertTrue(project.get("src/demo/controllers.py").contains("def index() -> str:"));
+        assertFalse(project.get("src/demo/controllers.py").contains("class MyController"));
+        assertTrue(project.get("src/main.py").contains("import demo.controllers"));
+        assertTrue(project.get("src/main.py").contains("%cyan(%d{HH:mm:ss.SSS}) %gray([%thread]) %highlight(%-5level) %magenta(%logger{36}) - %msg%n"));
+        assertTrue(project.get("src/main.py").contains("\"class\": \"ch.qos.logback.core.ConsoleAppender\""));
         assertTrue(project.get("tests/test_demo.py").contains("micronaut_test_fixture"));
+        assertTrue(project.get("tests/test_demo.py").contains("from pyronaut import requests"));
+        assertTrue(project.get("tests/test_demo.py").contains("requests.with_context(application_context)"));
+        assertTrue(project.get("tests/test_demo.py").contains("response = client.get(\"/\")"));
+        assertTrue(project.get("tests/test_demo.py").contains("assert response.text == \"Hello World\""));
+        assertTrue(project.get("tests/test_demo.py").contains("assert response.headers[\"Content-Type\"].startswith(\"text/plain\")"));
         assertTrue(project.get("config/application.toml").contains("[micronaut.application]\nname = 'demo'"));
         assertFalse(project.get("config/application.toml").contains("micronaut.application.name = 'demo'"));
         assertTrue(project.get("tests-config/application-test.toml").contains("[micronaut.server]\nport = -1"));
@@ -138,9 +147,9 @@ class PyronautProjectGeneratorTest {
 
         assertFalse(project.containsKey("src/example/__init__.py"));
         assertFalse(project.containsKey("src/example/service/__init__.py"));
-        assertTrue(project.containsKey("src/example/service/controller.py"));
+        assertTrue(project.containsKey("src/example/service/controllers.py"));
         assertTrue(project.containsKey("tests/test_example_service.py"));
-        assertTrue(project.get("src/main.py").contains("from example.service.controller import MyController"));
+        assertTrue(project.get("src/main.py").contains("import example.service.controllers"));
     }
 
     @Test
@@ -162,12 +171,20 @@ class PyronautProjectGeneratorTest {
     }
 
     @Test
+    void groovyFeaturesFailEarly(PreviewGenerator generator) {
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+            () -> generator.generate(defaultOptions(List.of("groovy-json"))));
+
+        assertTrue(exception.getMessage().contains("not supported for Pyronaut/Python projects"));
+    }
+
+    @Test
     void visibleAvailableFeaturesDoNotExposeUnsupportedFeatures(PyronautAvailableFeatures availableFeatures) {
         List<String> visible = availableFeatures.getFeatures()
             .map(feature -> feature.getName())
             .toList();
 
-        assertTrue(visible.containsAll(List.of("http-server-netty", "serde-jackson", "pyronaut-logback", "pyronaut-pytest")));
+        assertTrue(visible.containsAll(List.of("http-server-netty", "serde-jackson", "data-jdbc", "mysql", "json-schema", "management", "pyronaut-logback", "pyronaut-pytest")));
         assertFalse(visible.contains("serialization-jackson"));
         assertFalse(visible.contains("netty-server"));
         assertFalse(visible.contains("gradle"));
@@ -176,6 +193,7 @@ class PyronautProjectGeneratorTest {
         assertFalse(visible.contains("data-jpa"));
         assertFalse(visible.contains("hibernate-jpa"));
         assertFalse(visible.contains("hibernate-validator"));
+        assertFalse(visible.stream().anyMatch(feature -> feature.startsWith("groovy-")));
     }
 
     private static Options defaultOptions(List<String> features) {

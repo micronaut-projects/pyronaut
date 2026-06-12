@@ -33,6 +33,7 @@ import java.util.Optional;
 @Internal
 @Singleton
 public final class PyronautFeatureCatalog {
+    private static final List<String> UNSUPPORTED_PREFIXES = List.of("groovy-");
     private final Map<String, Feature> features;
 
     public PyronautFeatureCatalog() {
@@ -51,6 +52,12 @@ public final class PyronautFeatureCatalog {
         return features.values().stream()
             .filter(Feature::isVisible)
             .toList();
+    }
+
+    boolean isUnsupported(String name) {
+        Feature feature = features.get(name);
+        return (feature instanceof PyronautCatalogFeature catalogFeature && !catalogFeature.supported)
+            || UNSUPPORTED_PREFIXES.stream().anyMatch(name::startsWith);
     }
 
     private static Map<String, Feature> createFeatures() {

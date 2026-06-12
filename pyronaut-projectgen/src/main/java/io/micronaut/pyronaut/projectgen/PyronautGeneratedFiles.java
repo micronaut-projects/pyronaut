@@ -40,7 +40,7 @@ class PyronautGeneratedFiles implements Feature {
         ModuleContext module = generatorContext.getRootModule();
         String pythonModule = generatorContext.getOptions().packageName();
         String modulePath = pythonModule.replace('.', '/');
-        module.addTemplate("src/" + modulePath + "/controller.py", new StringTemplate("src/" + modulePath + "/controller.py", controller()));
+        module.addTemplate("src/" + modulePath + "/controllers.py", new StringTemplate("src/" + modulePath + "/controllers.py", controller()));
         module.addTemplate("src/main.py", new StringTemplate("src/main.py", main(pythonModule)));
         module.addTemplate("tests/test_" + pythonModule.replace('.', '_') + ".py",
             new StringTemplate("tests/test_" + pythonModule.replace('.', '_') + ".py", test()));
@@ -49,14 +49,12 @@ class PyronautGeneratedFiles implements Feature {
 
     private static String controller() {
         return """
-            from micronaut.http.annotation import Controller, Get
+            from micronaut.http.annotation import Get
 
 
-            @Controller
-            class MyController:
-                @Get(value="/", produces="text/plain")
-                def index(self) -> str:
-                    return "Hello World"
+            @Get(value="/", produces="text/plain")
+            def index() -> str:
+                return "Hello World"
             """;
     }
 
@@ -64,23 +62,22 @@ class PyronautGeneratedFiles implements Feature {
         return """
             from logback.config import dictConfig
 
-            from %s.controller import MyController
+            import %s.controllers
 
 
             LOGGING = {
                 "version": 1,
                 "disable_existing_loggers": False,
                 "formatters": {
-                    "standard": {
-                        "format": "%%(asctime)s [%%(levelname)s] %%(name)s: %%(message)s"
+                    "color": {
+                        "format": "%%cyan(%%d{HH:mm:ss.SSS}) %%gray([%%thread]) %%highlight(%%-5level) %%magenta(%%logger{36}) - %%msg%%n"
                     }
                 },
                 "handlers": {
                     "console": {
-                        "class": "logging.StreamHandler",
+                        "class": "ch.qos.logback.core.ConsoleAppender",
                         "level": "INFO",
-                        "formatter": "standard",
-                        "stream": "ext://sys.stdout"
+                        "formatter": "color"
                     }
                 },
                 "root": {
@@ -95,14 +92,17 @@ class PyronautGeneratedFiles implements Feature {
 
     private static String test() {
         return """
+            from typing import Any
+
             import pytest
 
             from micronaut.runtime.server import EmbeddedServer
+            from pyronaut import requests
             from pyronaut.test import MicronautTest, micronaut_test_fixture
 
 
             @pytest.fixture
-            def application_context(request):
+            def application_context(request: Any) -> Any:
                 fixture = micronaut_test_fixture(
                     request,
                     MicronautTest(environments=["test"], transactional=False)
@@ -111,9 +111,24 @@ class PyronautGeneratedFiles implements Feature {
                 fixture.stop()
 
 
-            def test_application_starts(application_context):
+            @pytest.fixture
+            def client(application_context: Any) -> requests.Session:
+                session = requests.with_context(application_context)
+                yield session
+                session.close()
+
+
+            def test_application_starts(application_context: Any) -> None:
                 server = application_context[EmbeddedServer]
                 assert server.isRunning()
+
+
+            def test_index(client: requests.Session) -> None:
+                response = client.get("/")
+
+                assert response.status_code == 200
+                assert response.text == "Hello World"
+                assert response.headers["Content-Type"].startswith("text/plain")
             """;
     }
 

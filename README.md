@@ -107,17 +107,15 @@ additional-test-resources = ["test-fixtures"]
 
 ## Minimal application
 
-Create `src/controller.py`:
+Create `src/controllers.py`:
 
 ```python
-from micronaut.http.annotation import Controller, Get
+from micronaut.http.annotation import Get
 
 
-@Controller
-class MyController:
-    @Get(value="/", produces="text/plain")
-    def index(self) -> str:
-        return "Hello from Pyronaut"
+@Get(value="/", produces="text/plain")
+def index() -> str:
+    return "Hello from Pyronaut"
 ```
 
 Create `config/application.toml`:

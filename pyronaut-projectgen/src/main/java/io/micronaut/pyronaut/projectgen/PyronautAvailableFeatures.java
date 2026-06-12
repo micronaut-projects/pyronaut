@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.projectgen;
 import io.micronaut.core.annotation.Internal;
 import io.micronaut.core.order.Ordered;
 import io.micronaut.projectgen.core.feature.AvailableFeatures;
+import io.micronaut.projectgen.core.feature.DefaultFeature;
 import io.micronaut.projectgen.core.feature.Feature;
 import io.micronaut.projectgen.core.feature.FeatureContext;
 import io.micronaut.projectgen.core.options.Language;
@@ -37,11 +38,6 @@ import java.util.stream.Stream;
 @Singleton
 final class PyronautAvailableFeatures implements AvailableFeatures {
     private static final String PYRONAUT_PROJECTGEN_PACKAGE = "io.micronaut.pyronaut.projectgen";
-    private static final Set<String> COMPATIBLE_UPSTREAM_NAMES = Set.of(
-        "data-jdbc",
-        "mysql",
-        "json-schema"
-    );
     private static final Map<String, String> VISIBLE_UPSTREAM_ALIASES = Map.of(
         "http-server-netty", "netty-server",
         "serde-jackson", "serialization-jackson"
@@ -66,8 +62,7 @@ final class PyronautAvailableFeatures implements AvailableFeatures {
         for (Feature feature : catalog.features()) {
             merged.put(feature.getName(), feature);
         }
-        addCompatibleUpstreamFeatures(merged, upstreamFeatures);
-        addUnsupportedUpstreamFeatures(merged, upstreamFeatures);
+        addSupportedUpstreamFeatures(merged, upstreamFeatures, catalog);
         this.features = Collections.unmodifiableMap(new LinkedHashMap<>(merged));
     }
 
@@ -115,16 +110,12 @@ final class PyronautAvailableFeatures implements AvailableFeatures {
         return featurePackage != null && featurePackage.getName().startsWith(PYRONAUT_PROJECTGEN_PACKAGE);
     }
 
-    private static void addCompatibleUpstreamFeatures(Map<String, Feature> merged, Map<String, Feature> upstreamFeatures) {
-        for (String name : COMPATIBLE_UPSTREAM_NAMES) {
-            Feature feature = upstreamFeatures.get(name);
-            if (feature != null) {
-                merged.put(name, feature);
-            }
-        }
+    private static void addSupportedUpstreamFeatures(Map<String, Feature> merged,
+                                                     Map<String, Feature> upstreamFeatures,
+                                                     PyronautFeatureCatalog catalog) {
         for (Map.Entry<String, String> entry : VISIBLE_UPSTREAM_ALIASES.entrySet()) {
             Feature feature = upstreamFeatures.get(entry.getValue());
-            if (feature != null) {
+            if (feature != null && !catalog.isUnsupported(entry.getKey())) {
                 merged.put(entry.getKey(), new UpstreamFeatureSelection(entry.getKey(), feature, true, Map.of()));
             }
         }
@@ -146,12 +137,16 @@ final class PyronautAvailableFeatures implements AvailableFeatures {
                 )
             ));
         }
-    }
-
-    private static void addUnsupportedUpstreamFeatures(Map<String, Feature> merged, Map<String, Feature> upstreamFeatures) {
         for (Feature feature : upstreamFeatures.values()) {
-            if (feature.isVisible() && !merged.containsKey(feature.getName())) {
-                merged.put(feature.getName(), PyronautFeatureCatalog.PyronautCatalogFeature.unsupported(feature.getName()));
+            String name = feature.getName();
+            if (feature.isVisible() && !merged.containsKey(name)) {
+                if (catalog.isUnsupported(name)) {
+                    merged.put(name, PyronautFeatureCatalog.PyronautCatalogFeature.unsupported(name));
+                } else {
+                    merged.put(name, feature instanceof DefaultFeature
+                        ? new UpstreamFeatureSelection(name, feature, true, Map.of())
+                        : feature);
+                }
             }
         }
     }

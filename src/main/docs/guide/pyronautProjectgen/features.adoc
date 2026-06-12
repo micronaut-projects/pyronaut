@@ -84,12 +84,13 @@ infer-classpath = true
 
 == Unsupported Features
 
-Build-tool, JVM-language, generated-source, CI/IaC, JVM app-type, and Java reflection-dependent features are hidden for Pyronaut.
+Build-tool, JVM-language, generated-source, CI/IaC, JVM app-type, Groovy extension, and Java reflection-dependent features are hidden for Pyronaut.
 If an unsupported feature is explicitly requested, generation fails before writing the project with a clear unsupported-feature message.
 
 Unsupported examples include:
 
 * build tools and JVM languages: `gradle`, `maven`, `java`, `kotlin`, `groovy`
+* Groovy extension features: all features starting with `groovy-`
 * Java test frameworks: `junit`, `spock`, `kotest`
 * Java reflection-dependent features: `jackson-databind`, `jackson-xml`, `data-jpa`, `hibernate-jpa`, `hibernate-jpamodelgen`, `data-hibernate-reactive`, `hibernate-reactive-jpa`, `hibernate-validator`
 * JVM/container/CI/IaC/application-type features: `docker`, `github-workflow-java-ci`, `kubernetes`, `aws-lambda`, `function-aws`, `oracle-cloud-function`, `gcp-function`, `azure-function`

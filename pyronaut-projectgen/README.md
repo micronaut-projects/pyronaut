@@ -32,7 +32,7 @@ pyproject.toml
 .gitignore
 config/application.toml
 src/main.py
-src/<module>/controller.py
+src/<module>/controllers.py
 tests/test_<module>.py
 tests-config/application-test.toml
 .agents/skills/pyronaut-project/SKILL.md
@@ -60,21 +60,13 @@ The default repository list is `["mavenCentral"]`. Snapshot Micronaut versions a
 
 ## Feature Compatibility
 
-Visible features are limited to behavior that makes sense for Python projects. Current compatible features include:
+Visible features come from the Micronaut ProjectGen starter catalog unless Pyronaut explicitly
+marks them unsupported. Pyronaut keeps local features only for Pyronaut-specific runtime, test,
+logging, and pyproject-only behavior, and aliases the underlying serialization/server features as
+`serde-jackson` and `http-server-netty`.
 
-- `http-server-netty`
-- `serde-jackson`
-- `pyronaut-logback`
-- `pyronaut-pytest`
-- `data-jdbc`
-- `mysql`
-- `json-schema`
-- `test-resources`
-
-`data-jdbc`, `mysql`, `json-schema`, and the underlying serialization/server features come from
-`micronaut-projectgen-micronaut`; Pyronaut keeps local features only for Pyronaut-specific runtime,
-test, logging, and pyproject-only behavior. Build-tool, JVM-language, generated-source, CI/IaC,
-JVM app-type, and Java reflection-dependent features are intentionally hidden. That includes
-`jackson-databind`, `data-jpa`, `hibernate-jpa`, and `hibernate-validator`. If such a feature is
-explicitly requested, generation fails early with a message that the feature is not supported for
-Pyronaut/Python projects.
+Build-tool, JVM-language, generated-source, CI/IaC, JVM app-type, Groovy extension, and Java
+reflection-dependent features are intentionally hidden. That includes `jackson-databind`,
+`data-jpa`, `hibernate-jpa`, `hibernate-validator`, and all features starting with `groovy-`. If such
+a feature is explicitly requested, generation fails early with a message that the feature is not
+supported for Pyronaut/Python projects.
