@@ -7,5 +7,5 @@ from micronaut.serde.annotation import Serdeable
 @MappedEntity
 # @Serdeable
 class Book:
-    id : Annotated[int, Id, GeneratedValue]
+    id : Annotated[int | None, Id, GeneratedValue]
     title : str

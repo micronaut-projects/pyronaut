@@ -6,7 +6,7 @@ from .Book import Book
 class BookController:
      def __init__(self, repository: BookRepository):
         self.repository = repository
-        self.repository.saveBook(Book(-1, "it"))
+        self.repository.saveBook(Book(None, "it"))
 
      @Get("/{title}")
      def show(self, title: str) -> Book:
