@@ -325,13 +325,40 @@ fun Project.runFixtureCommand(command: List<String>, extraEnvironment: Map<Strin
     val processBuilder = ProcessBuilder(command)
         .directory(fixtureAppDir.asFile)
         .redirectInput(ProcessBuilder.Redirect.INHERIT)
-        .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-        .redirectError(ProcessBuilder.Redirect.INHERIT)
+        .redirectErrorStream(true)
     processBuilder.environment().putAll(defaultFixtureEnv() + extraEnvironment)
     val process = processBuilder.start()
+    val maxCapturedCommandOutputChars = 32 * 1024
+    val output = StringBuilder()
+    val outputReader = Thread {
+        process.inputStream.bufferedReader().useLines { lines ->
+            lines.forEach { line ->
+                logger.lifecycle(line)
+                output.appendLine(line)
+                if (output.length > maxCapturedCommandOutputChars) {
+                    output.delete(0, output.length - maxCapturedCommandOutputChars)
+                }
+            }
+        }
+    }
+    outputReader.start()
     val exitCode = process.waitFor()
+    outputReader.join()
     if (exitCode != 0) {
-        throw GradleException("Command failed with exit code $exitCode: $renderedCommand")
+        throw GradleException(buildString {
+            append("Command failed with exit code ")
+            append(exitCode)
+            append(": ")
+            append(renderedCommand)
+            val capturedOutput = output.toString().trimEnd()
+            if (capturedOutput.isNotBlank()) {
+                append(System.lineSeparator())
+                append(System.lineSeparator())
+                append("Last command output:")
+                append(System.lineSeparator())
+                append(capturedOutput)
+            }
+        })
     }
 }
 
@@ -446,6 +473,19 @@ fun pyronautTestExecutableFile(): java.io.File {
 
 fun pyronautCommand(command: String, executable: java.io.File, vararg args: String): List<String> {
     return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + listOf(command, *args)
+}
+
+fun pyronautCommand(command: String, executable: java.io.File, jvmArgs: List<String>, vararg args: String): List<String> {
+    return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + jvmArgs + listOf(command, *args)
+}
+
+fun nativePyronautDevLauncherClasspathJvmArgs(): List<String> {
+    if (!useNativeExecutables.get()) {
+        return emptyList()
+    }
+    return listOf(
+        "-Djava.class.path=${delegateLibEntries(pyronautDevExecutable.get().asFile).joinToString(separator = java.io.File.pathSeparator)}"
+    )
 }
 
 fun nativeJavaHomeJvmArgs(): List<String> {
@@ -1094,6 +1134,28 @@ fun buildFixtureApplicationClasspathEntries(): List<String> {
     return classpathEntries.distinct()
 }
 
+fun fixtureApplicationClasspathEntriesWithoutLauncherProvidedJars(): List<String> {
+    val bundledVfsJarNames = delegateLibEntries(pyronautDevExecutable.get().asFile)
+        .map { java.io.File(it) }
+        .filter(::containsGraalPyVirtualFileSystem)
+        .map(java.io.File::getName)
+        .toSet()
+    return buildFixtureApplicationClasspathEntries()
+        .filterNot { entry -> bundledVfsJarNames.contains(java.io.File(entry).name) }
+        .distinct()
+}
+
+fun containsGraalPyVirtualFileSystem(file: java.io.File): Boolean {
+    if (!file.isFile || file.extension != "jar") {
+        return false
+    }
+    return java.util.jar.JarFile(file).use { jarFile ->
+        jarFile.entries().asSequence().any { entry ->
+            entry.name.startsWith("META-INF/GRAALPY-VFS/micronaut-application/")
+        }
+    }
+}
+
 fun testResourcesJvmArgs(testResourcesEnv: Map<String, String>): List<String> {
     return listOfNotNull(
         testResourcesEnv["MICRONAUT_TEST_RESOURCES_SERVER_URI"]
@@ -1109,19 +1171,19 @@ fun testResourcesJvmArgs(testResourcesEnv: Map<String, String>): List<String> {
 }
 
 fun buildPyronautTestCommand(testResourcesEnv: Map<String, String> = emptyMap()): List<String> {
-    val classpathEntries = buildFixtureApplicationClasspathEntries().toMutableList()
+    val reducedClasspathEntries = fixtureApplicationClasspathEntriesWithoutLauncherProvidedJars().toMutableList()
     if (useNativeExecutables.get()) {
         return listOf(
             pyronautTestExecutableFile().absolutePath,
             *nativeJavaHomeJvmArgs().toTypedArray(),
-            "-Djava.class.path=${classpathEntries.joinToString(separator = java.io.File.pathSeparator)}",
+            "-Djava.class.path=${reducedClasspathEntries.joinToString(separator = java.io.File.pathSeparator)}",
             *testResourcesJvmArgs(testResourcesEnv).toTypedArray(),
             "test",
             "--project-dir",
             fixtureAppDir.asFile.absolutePath,
         )
     }
-    classpathEntries += delegateLibEntries(pyronautDevExecutable.get().asFile)
+    reducedClasspathEntries += delegateLibEntries(pyronautDevExecutable.get().asFile)
 
     return listOf(
         resolveJavaExecutable(),
@@ -1130,7 +1192,7 @@ fun buildPyronautTestCommand(testResourcesEnv: Map<String, String> = emptyMap())
         "-Dpyronaut.test.render-failure-output=true",
         "-Dpyronaut.use.system.application.classloader=true",
         "-cp",
-        classpathEntries.distinct().joinToString(separator = java.io.File.pathSeparator),
+        reducedClasspathEntries.distinct().joinToString(separator = java.io.File.pathSeparator),
         "io.micronaut.pyronaut.dev.PyronautDevMain",
         "test",
         "--project-dir",
@@ -1598,6 +1660,7 @@ tasks.register("test") {
         val startCommand = pyronautCommand(
             "test-resources-server",
             testResourcesExecutable,
+            nativePyronautDevLauncherClasspathJvmArgs(),
             "start",
             "--project-dir",
             fixtureAppDir.asFile.absolutePath,
@@ -1605,6 +1668,7 @@ tasks.register("test") {
         val stopCommand = pyronautCommand(
             "test-resources-server",
             testResourcesExecutable,
+            nativePyronautDevLauncherClasspathJvmArgs(),
             "stop",
             "--project-dir",
             fixtureAppDir.asFile.absolutePath,
