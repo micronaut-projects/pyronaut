@@ -448,7 +448,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
                 request.settingsDir(),
                 request.accessToken(),
                 request.cdsDir(),
-                classpathEntries(request.classpathManifest()),
+                classpathEntries(request.classpathManifest(), TestResourcesServerFactory.selfModuleClasspathEntries()),
                 request.clientTimeout(),
                 request.idleTimeoutMinutes(),
                 serverFactory
@@ -477,22 +477,23 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             return true;
         }
 
-        private static List<File> classpathEntries(Path manifestPath) throws IOException {
+        static List<File> classpathEntries(Path manifestPath,
+                                           Iterable<String> selfClasspathEntries) throws IOException {
             if (manifestPath == null || !Files.exists(manifestPath)) {
                 throw new IllegalStateException(
                     "Missing test resources server classpath manifest: " + (manifestPath == null ? "<null>" : manifestPath.toAbsolutePath())
                 );
             }
             LinkedHashSet<File> entries = new LinkedHashSet<>();
-            for (String line : Files.readAllLines(manifestPath, java.nio.charset.StandardCharsets.UTF_8)) {
-                String value = line == null ? "" : line.trim();
-                if (value.isEmpty()) {
+            for (String value : selfClasspathEntries) {
+                if (value == null || value.isBlank()) {
                     continue;
                 }
                 entries.add(Path.of(value).toAbsolutePath().normalize().toFile());
             }
-            for (String value : TestResourcesServerFactory.selfModuleClasspathEntries()) {
-                if (value == null || value.isBlank()) {
+            for (String line : Files.readAllLines(manifestPath, java.nio.charset.StandardCharsets.UTF_8)) {
+                String value = line == null ? "" : line.trim();
+                if (value.isEmpty()) {
                     continue;
                 }
                 entries.add(Path.of(value).toAbsolutePath().normalize().toFile());
