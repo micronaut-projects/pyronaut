@@ -251,10 +251,10 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
                 ClassPathResourceLoader.defaultLoader(contextClassLoader),
                 new ClassClassPathResourceLoader(PytestMicronautExtension.class)
             ));
-            builder.beanDefinitionsProvider(new ContextClassLoaderBeanDefinitionsProvider());
             registerProjectTypeConverterRegistrars(builder, contextClassLoader);
         }
         if (ImageInfo.inImageRuntimeCode()) {
+            builder.beanDefinitionsProvider(new ContextClassLoaderBeanDefinitionsProvider());
             builder.beanDefinitions(
                 nativeScheduledExecutorDefinition(),
                 nativeNettyThreadFactoryDefinition()

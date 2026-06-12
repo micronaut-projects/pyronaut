@@ -66,6 +66,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String MICRONAUT_SERVER_PORT = "micronaut.server.port";
+    private static final String PYRONAUT_USE_SYSTEM_APPLICATION_CLASSLOADER = "pyronaut.use.system.application.classloader";
     private static final String DEFAULT_TEST_SERVER_PORT = "0";
     private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_IDS = List.of(
         "micronaut-aop",
@@ -701,7 +702,7 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
 
         private static boolean usesNativeSystemClassLoader() {
-            return System.getProperty(NATIVE_IMAGE_CODE) != null
+            return (System.getProperty(NATIVE_IMAGE_CODE) != null || Boolean.getBoolean(PYRONAUT_USE_SYSTEM_APPLICATION_CLASSLOADER))
                 && System.getProperty("java.class.path") != null
                 && !System.getProperty("java.class.path").isBlank();
         }

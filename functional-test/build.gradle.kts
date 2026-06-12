@@ -53,6 +53,8 @@ val useNativeExecutables = providers
 val graalVmDevBuildTag = providers.gradleProperty("pyronautGraalVmDevTag")
 val nativeExecutableSuffix = if (System.getProperty("os.name").lowercase().contains("windows")) ".exe" else ""
 
+val pyronautDevExecutable = project(":micronaut-pyronaut-dev")
+    .layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev")
 val pyronautDevNativeExecutable = project(":micronaut-pyronaut-dev")
     .layout.buildDirectory.file("native/nativeCompile/pyronaut-dev$nativeExecutableSuffix")
 val pyronautInstallExecutable = project(":micronaut-pyronaut-install")
@@ -406,7 +408,7 @@ fun pyronautInstallExecutableFile(): java.io.File {
     return if (useNativeExecutables.get()) {
         pyronautDevNativeExecutable.get().asFile
     } else {
-        pyronautInstallExecutable.get().asFile
+        pyronautDevExecutable.get().asFile
     }
 }
 
@@ -414,7 +416,7 @@ fun pyronautProcessorExecutableFile(): java.io.File {
     return if (useNativeExecutables.get()) {
         pyronautDevNativeExecutable.get().asFile
     } else {
-        pyronautProcessorExecutable.get().asFile
+        pyronautDevExecutable.get().asFile
     }
 }
 
@@ -422,7 +424,7 @@ fun pyronautValidateConfigExecutableFile(): java.io.File {
     return if (useNativeExecutables.get()) {
         pyronautDevNativeExecutable.get().asFile
     } else {
-        pyronautValidateConfigExecutable.get().asFile
+        pyronautDevExecutable.get().asFile
     }
 }
 
@@ -430,7 +432,7 @@ fun pyronautTestResourcesServerExecutableFile(): java.io.File {
     return if (useNativeExecutables.get()) {
         pyronautDevNativeExecutable.get().asFile
     } else {
-        pyronautTestResourcesServerExecutable.get().asFile
+        pyronautDevExecutable.get().asFile
     }
 }
 
@@ -438,16 +440,12 @@ fun pyronautTestExecutableFile(): java.io.File {
     return if (useNativeExecutables.get()) {
         pyronautDevNativeExecutable.get().asFile
     } else {
-        pyronautTestExecutable.get().asFile
+        pyronautDevExecutable.get().asFile
     }
 }
 
 fun pyronautCommand(command: String, executable: java.io.File, vararg args: String): List<String> {
-    return if (useNativeExecutables.get()) {
-        listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + listOf(command, *args)
-    } else {
-        listOf(executable.absolutePath, *args)
-    }
+    return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + listOf(command, *args)
 }
 
 fun nativeJavaHomeJvmArgs(): List<String> {
@@ -1123,16 +1121,18 @@ fun buildPyronautTestCommand(testResourcesEnv: Map<String, String> = emptyMap())
             fixtureAppDir.asFile.absolutePath,
         )
     }
-    classpathEntries += delegateLibEntries(pyronautTestExecutable.get().asFile)
+    classpathEntries += delegateLibEntries(pyronautDevExecutable.get().asFile)
 
     return listOf(
         resolveJavaExecutable(),
         "--sun-misc-unsafe-memory-access=allow",
         "--enable-native-access=ALL-UNNAMED",
         "-Dpyronaut.test.render-failure-output=true",
+        "-Dpyronaut.use.system.application.classloader=true",
         "-cp",
         classpathEntries.distinct().joinToString(separator = java.io.File.pathSeparator),
-        "io.micronaut.pyronaut.test.PyronautTestMain",
+        "io.micronaut.pyronaut.dev.PyronautDevMain",
+        "test",
         "--project-dir",
         fixtureAppDir.asFile.absolutePath,
     )
@@ -1346,11 +1346,7 @@ val installFixtureLaunchers by tasks.registering {
     group = "build setup"
     description = "Builds the local Pyronaut launchers used by the functional-test app."
     dependsOn(
-        project(":micronaut-pyronaut-install").tasks.named("installDist"),
-        project(":micronaut-pyronaut-processor").tasks.named("installDist"),
-        project(":micronaut-pyronaut-test").tasks.named("installDist"),
-        project(":micronaut-pyronaut-validate-config").tasks.named("installDist"),
-        project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"),
+        project(":micronaut-pyronaut-dev").tasks.named("installDist"),
     )
     if (useNativeExecutables.get()) {
         dependsOn(

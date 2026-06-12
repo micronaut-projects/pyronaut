@@ -460,6 +460,22 @@ class PyronautTestMainTest {
     }
 
     @Test
+    void uberCliJvmRuntimeUsesSystemClassLoaderWhenJavaClassPathIsSupplied() {
+        String previousUseSystemApplicationClassLoader = System.getProperty("pyronaut.use.system.application.classloader");
+        String previousClasspath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("pyronaut.use.system.application.classloader", "true");
+            System.setProperty("java.class.path", tempDir.toString());
+            PyronautTestMain.ResolvedProjectLayout layout = new PyronautTestMain.ResolvedProjectLayout(tempDir, List.of());
+
+            assertEquals(ClassLoader.getSystemClassLoader(), layout.applicationClassLoader());
+        } finally {
+            restoreProperty("pyronaut.use.system.application.classloader", previousUseSystemApplicationClassLoader);
+            restoreProperty("java.class.path", previousClasspath);
+        }
+    }
+
+    @Test
     void resolveProjectLayoutSkipsDependenciesAlreadyVisibleToParentClassLoader() throws Exception {
         Path project = tempDir.resolve("project-layout-deduplicated");
         Path classesDir = project.resolve("__pyronaut__/classes");

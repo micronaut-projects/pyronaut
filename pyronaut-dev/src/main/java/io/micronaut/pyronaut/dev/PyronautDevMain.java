@@ -137,10 +137,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (verificationExit != null) {
             System.exit(verificationExit);
         }
-        int exit = execute(args);
-        if (exit != 0) {
-            System.exit(exit);
-        }
+        System.exit(execute(args));
     }
 
     static void configureNativeRuntimeDefaults() {
