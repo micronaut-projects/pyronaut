@@ -18,7 +18,6 @@ package io.micronaut.pyronaut.install;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
-import io.micronaut.testresources.buildtools.KnownModules;
 import io.micronaut.testresources.buildtools.MavenDependency;
 import io.micronaut.testresources.buildtools.ModuleIdentifier;
 import io.micronaut.testresources.buildtools.TestResourcesClasspath;
@@ -83,11 +82,10 @@ final class MavenClasspathResolver {
     private static final String JUNIT_JUPITER_ENGINE_MODULE = "org.junit.jupiter:junit-jupiter-engine";
     private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
     private static final String PYRONAUT_BOM_ARTIFACT = "micronaut-pyronaut-bom";
-    private static final String MYSQL_CONNECTOR_J_MODULE = "mysql:mysql-connector-j";
-    private static final String MYSQL_CONNECTOR_J_MODULE_MODERN = "com.mysql:mysql-connector-j";
     private static final Set<String> EXTRA_FORBIDDEN_SERVER_MODULES = Set.of(
         "io.micronaut.testresources:micronaut-test-resources-build-tools",
-        "io.micronaut.testresources:micronaut-test-resources-client"
+        "io.micronaut.testresources:micronaut-test-resources-client",
+        TEST_RESOURCES_SERVER_MODULE
     );
 
     private final RepositorySystem repositorySystem;
@@ -327,15 +325,6 @@ final class MavenClasspathResolver {
             ? TestResourcesClasspath.inferTestResourcesClasspath(appDependencies)
             : TestResourcesClasspath.inferTestResourcesClasspath(appDependencies, version);
         coordinates.addAll(inferred);
-        if (coordinates.stream().noneMatch(this::isServerModule)) {
-            coordinates.add(new MavenDependency("io.micronaut.testresources", "micronaut-test-resources-server", version));
-        }
-        if (appDependencies.stream().anyMatch(this::isMysqlConnectorJCoordinate)) {
-            coordinates.add(testResourcesModule(KnownModules.JDBC_MYSQL, version));
-            appDependencies.stream()
-                .filter(this::isMysqlConnectorJCoordinate)
-                .forEach(coordinates::add);
-        }
 
         List<String> additionalModules = testResources.additionalModules() == null ? List.of() : testResources.additionalModules();
         for (String additionalModule : additionalModules) {
@@ -372,15 +361,6 @@ final class MavenClasspathResolver {
         return List.copyOf(appCoordinates);
     }
 
-    private boolean isMysqlConnectorJCoordinate(MavenDependency dependency) {
-        String module = dependency.getModule();
-        return MYSQL_CONNECTOR_J_MODULE.equals(module) || MYSQL_CONNECTOR_J_MODULE_MODERN.equals(module);
-    }
-
-    private boolean isServerModule(MavenDependency dependency) {
-        return TEST_RESOURCES_SERVER_MODULE.equals(moduleKey(dependency));
-    }
-
     private MavenDependency normalizeAdditionalModuleCoordinate(String value, String testResourcesVersion) {
         if (value == null) {
             return null;
@@ -404,10 +384,6 @@ final class MavenClasspathResolver {
             ? trimmed
             : "micronaut-test-resources-" + trimmed;
         return new MavenDependency("io.micronaut.testresources", artifactId, testResourcesVersion);
-    }
-
-    private static MavenDependency testResourcesModule(String module, String version) {
-        return new MavenDependency("io.micronaut.testresources", "micronaut-test-resources-" + module, version);
     }
 
     private boolean isDependencyAllowedOnServerClasspath(MavenDependency dependency) {

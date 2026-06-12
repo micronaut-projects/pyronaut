@@ -363,10 +363,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
     }
 
     private static OptimizationResolution resolveOptimization(Path root, PyprojectModel.TestResources config) {
-        String mode = config.startupOptimization() == null ? "auto" : config.startupOptimization().trim().toLowerCase(java.util.Locale.ROOT);
-        if (!config.configured()) {
-            mode = "none";
-        }
+        String mode = config.startupOptimization() == null ? "none" : config.startupOptimization().trim().toLowerCase(java.util.Locale.ROOT);
         Path cdsDir = root.resolve("__pyronaut__/test-resources-cds").normalize();
         List<String> leydenArgs = config.leydenJvmArgs() == null ? List.of() : config.leydenJvmArgs();
         return switch (mode) {

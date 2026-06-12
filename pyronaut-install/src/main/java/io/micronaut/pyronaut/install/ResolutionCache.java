@@ -32,7 +32,7 @@ import java.util.Map;
  */
 final class ResolutionCache {
     private static final String HASH_FILE = "pyproject.sha256";
-    private static final String INSTALL_CACHE_VERSION = "control-panel-management-v1";
+    private static final String INSTALL_CACHE_VERSION = "test-resources-server-classpath-v1";
 
     private ResolutionCache() {
     }

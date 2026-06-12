@@ -67,6 +67,22 @@ class PyronautTestResourcesServerMainTest {
     }
 
     @Test
+    void startDoesNotEnableCdsByDefaultWhenTestResourcesAreConfigured() throws Exception {
+        Path project = prepareProject("""
+            [tool.pyronaut.testResources]
+            enabled = true
+            """);
+
+        RecordingServerManager manager = new RecordingServerManager();
+        PyronautTestResourcesServerMain command = new PyronautTestResourcesServerMain(new PyprojectModelReader(), manager);
+
+        int exit = new CommandLine(command).execute("start", "--project-dir", project.toString());
+
+        assertEquals(0, exit);
+        assertNull(manager.lastStartRequest.cdsDir());
+    }
+
+    @Test
     void leydenModeFallsBackToCdsDirectory() throws Exception {
         Path project = prepareProject("""
             [tool.pyronaut.testResources]

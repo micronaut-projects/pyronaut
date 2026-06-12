@@ -26,8 +26,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -39,7 +39,7 @@ final class TestResourcesServerFactory implements ServerFactory {
     private static final String JMX_REMOTE_SYSTEM_PROPERTY = "com.sun.management.jmxremote";
     private static final String STDIO_LOG_FILE = "launcher-stdio.log";
     private static final String LOGBACK_CONFIGURATION_FILE = "pyronaut-test-resources-logback.xml";
-    private static final File NULL_DEVICE = new File(isWindows() ? "NUL" : "/dev/null");
+    private static final File NULL_DEVICE = new File(isWindows(System.getProperty("os.name", "")) ? "NUL" : "/dev/null");
 
     private final PyronautTestResourcesServerMain.ServerStartRequest request;
     private final ProcessStarter processStarter;
@@ -52,12 +52,6 @@ final class TestResourcesServerFactory implements ServerFactory {
     TestResourcesServerFactory(PyronautTestResourcesServerMain.ServerStartRequest request, ProcessStarter processStarter) {
         this.request = request;
         this.processStarter = processStarter;
-    }
-
-    private static boolean isWindows() {
-        return System.getProperty("os.name", "")
-            .toLowerCase(Locale.ROOT)
-            .contains("win");
     }
 
     @Override
@@ -145,7 +139,7 @@ final class TestResourcesServerFactory implements ServerFactory {
                 }
             }
             if (!resolvedEntries.isEmpty()) {
-                return List.copyOf(resolvedEntries);
+                return orderSelfModuleClasspathEntries(resolvedEntries);
             }
         }
         return discoverExecutableSiblingLibEntries(commandPath);
@@ -169,10 +163,33 @@ final class TestResourcesServerFactory implements ServerFactory {
         for (Path libDir : candidates) {
             List<String> entries = listJarEntries(libDir);
             if (!entries.isEmpty()) {
-                return entries;
+                return orderSelfModuleClasspathEntries(entries);
             }
         }
         return List.of();
+    }
+
+    private static List<String> orderSelfModuleClasspathEntries(Iterable<String> entries) {
+        List<String> normalEntries = new ArrayList<>();
+        List<String> serverEntries = new ArrayList<>();
+        for (String entry : entries) {
+            if (isBundledTestResourcesServerJar(entry)) {
+                serverEntries.add(entry);
+            } else {
+                normalEntries.add(entry);
+            }
+        }
+        normalEntries.addAll(serverEntries);
+        return List.copyOf(normalEntries);
+    }
+
+    private static boolean isBundledTestResourcesServerJar(String entry) {
+        if (entry == null || entry.isBlank()) {
+            return false;
+        }
+        String filename = Path.of(entry).getFileName().toString();
+        return filename.startsWith("micronaut-test-resources-server-")
+            && filename.endsWith(".jar");
     }
 
     private static List<String> listJarEntries(Path libDir) {
@@ -201,6 +218,10 @@ final class TestResourcesServerFactory implements ServerFactory {
             Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING);
             return target.toString();
         }
+    }
+
+    private static boolean isWindows(String osName) {
+        return osName != null && osName.toLowerCase(Locale.ROOT).contains("win");
     }
 
     interface ProcessStarter {

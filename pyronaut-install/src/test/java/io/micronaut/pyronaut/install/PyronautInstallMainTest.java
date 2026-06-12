@@ -603,14 +603,15 @@ class PyronautInstallMainTest {
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
-        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertFalse(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-testcontainers")));
     }
 
     @Test
     void testResourcesServerManifestIncludesInferredAndAdditionalModulesWithFiltering() throws Exception {
         Path repository = tempDir.resolve("repo-test-resources-server-manifest");
-        writeArtifact(repository, "mysql", "mysql-connector-j", "8.3.0");
+        writeArtifact(repository, "com.mysql", "mysql-connector-j", "8.3.0");
+        writeArtifact(repository, "io.micronaut.data", "micronaut-data-jdbc", "4.0.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
@@ -628,7 +629,10 @@ class PyronautInstallMainTest {
             repositories = ["%s"]
 
             [tool.pyronaut.dependencies]
-            runtime = ["mysql:mysql-connector-j:8.3.0"]
+            runtime = [
+              "com.mysql:mysql-connector-j:8.3.0",
+              "io.micronaut.data:micronaut-data-jdbc:4.0.0"
+            ]
             build = []
             test = []
 
@@ -637,6 +641,7 @@ class PyronautInstallMainTest {
             version = "2.9.0"
             additionalModules = [
               "jdbc-postgresql",
+              "server",
               "io.micronaut.testresources:micronaut-test-resources-build-tools"
             ]
             """.formatted(repository.toUri()));
@@ -651,7 +656,7 @@ class PyronautInstallMainTest {
             project.resolve("__pyronaut__").resolve("resolved-test-resources-server-dependencies"),
             StandardCharsets.UTF_8
         );
-        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertFalse(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-testcontainers")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-jdbc-mysql")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-jdbc-postgresql")));
@@ -1695,7 +1700,7 @@ class PyronautInstallMainTest {
         assertFalse(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("2.9.0")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0-RC1")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("4.0.0-RC1")));
-        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server") && entry.contains("4.0.0-RC1")));
+        assertFalse(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
     }
 
     @Test

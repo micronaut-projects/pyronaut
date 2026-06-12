@@ -135,27 +135,41 @@ class TestResourcesServerFactoryTest {
 
         List<String> command = starter.command;
         assertTrue(command.contains("-Xshare:dump"));
+        assertTrue(command.contains("io.micronaut.testresources.server.TestResourcesService"));
         assertTrue(command.stream().noneMatch(token -> token.equals("-Dcom.sun.management.jmxremote")));
     }
 
     @Test
-    void selfModuleClasspathEntriesIncludeSiblingJarsFromLauncherLibDirectory() {
+    void selfModuleClasspathEntriesIncludeSiblingJarsFromLauncherLibDirectory() throws Exception {
+        Path launcherLibDir = tempDir.resolve("launcher/lib").toAbsolutePath().normalize();
+        Files.createDirectories(launcherLibDir);
+        Path wrapperJar = launcherLibDir.resolve("micronaut-pyronaut-test-resources-server-current.jar");
+        Path bundledServerJar = launcherLibDir.resolve("micronaut-test-resources-server-current.jar");
+        Path controlPanelJar = launcherLibDir.resolve("micronaut-test-resources-control-panel-current.jar");
+        Path coreJar = launcherLibDir.resolve("micronaut-control-panel-core-current.jar");
+        Path unrelatedJar = tempDir.resolve("other/location/unrelated.jar").toAbsolutePath().normalize();
+        Files.createDirectories(unrelatedJar.getParent());
+        for (Path jar : List.of(wrapperJar, bundledServerJar, controlPanelJar, coreJar, unrelatedJar)) {
+            Files.writeString(jar, "", java.nio.charset.StandardCharsets.UTF_8);
+        }
         String originalClasspath = System.getProperty("java.class.path");
         try {
             String classpath = String.join(
                 File.pathSeparator,
-                "/tmp/launcher/lib/micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar",
-                "/tmp/launcher/lib/micronaut-test-resources-control-panel-2.9.0.jar",
-                "/tmp/launcher/lib/micronaut-control-panel-core-1.8.0.jar",
-                "/tmp/other/location/unrelated.jar"
+                wrapperJar.toString(),
+                bundledServerJar.toString(),
+                controlPanelJar.toString(),
+                coreJar.toString(),
+                unrelatedJar.toString()
             );
             System.setProperty("java.class.path", classpath);
 
             assertEquals(
                 List.of(
-                    "/tmp/launcher/lib/micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar",
-                    "/tmp/launcher/lib/micronaut-test-resources-control-panel-2.9.0.jar",
-                    "/tmp/launcher/lib/micronaut-control-panel-core-1.8.0.jar"
+                    wrapperJar.toString(),
+                    controlPanelJar.toString(),
+                    coreJar.toString(),
+                    bundledServerJar.toString()
                 ),
                 TestResourcesServerFactory.selfModuleClasspathEntries(classpath, "")
             );
@@ -178,9 +192,9 @@ class TestResourcesServerFactoryTest {
 
         Path nativeBinary = nativeDir.resolve("pyronaut-test-resources-server");
         Files.writeString(nativeBinary, "", java.nio.charset.StandardCharsets.UTF_8);
-        Path wrapperJar = libDir.resolve("micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar");
-        Path controlPanelJar = libDir.resolve("micronaut-test-resources-control-panel-2.9.0.jar");
-        Path coreJar = libDir.resolve("micronaut-control-panel-core-1.8.0.jar");
+        Path wrapperJar = libDir.resolve("micronaut-pyronaut-test-resources-server-current.jar");
+        Path controlPanelJar = libDir.resolve("micronaut-test-resources-control-panel-current.jar");
+        Path coreJar = libDir.resolve("micronaut-control-panel-core-current.jar");
         Files.writeString(wrapperJar, "", java.nio.charset.StandardCharsets.UTF_8);
         Files.writeString(controlPanelJar, "", java.nio.charset.StandardCharsets.UTF_8);
         Files.writeString(coreJar, "", java.nio.charset.StandardCharsets.UTF_8);
