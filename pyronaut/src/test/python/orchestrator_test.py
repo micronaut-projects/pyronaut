@@ -1568,6 +1568,103 @@ additional-test-resources = ["test-fixtures"]
         assert isinstance(run_env, dict)
         self.assertEqual("8181", run_env.get("MICRONAUT_SERVER_PORT"))
 
+    def test_run_and_test_delegation_activate_project_virtualenv(self):
+        for command, main_class in (("run", self._RUN_MAIN), ("test", self._TEST_MAIN)):
+            with self.subTest(command=command):
+                executed = []
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    project_dir = Path(temp_dir) / f"{command}-with-venv"
+                    expected_project_dir = project_dir.resolve()
+                    venv_bin = project_dir / ".venv" / "bin"
+                    venv_bin.mkdir(parents=True, exist_ok=True)
+                    venv_python = venv_bin / "python"
+                    venv_python.write_text("", encoding="utf-8")
+                    (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+                    if command == "test":
+                        (project_dir / "__pyronaut__" / "test-classes").mkdir(parents=True, exist_ok=True)
+                    self._write_manifests(project_dir)
+
+                    def runner_with_env(command_line, env):
+                        executed.append((command_line, env))
+                        return 0
+
+                    with patch.dict(os.environ, {"PATH": "/usr/bin", "PYTHONHOME": "/tmp/python-home"}, clear=False):
+                        exit_code = cli.run(
+                            [command, "--project-dir", str(project_dir)],
+                            runner_with_env=runner_with_env,
+                            resolver=self._resolver(),
+                            platform_name="linux",
+                            java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                        )
+
+                self.assertEqual(0, exit_code)
+                invocation = next((item for item in executed if main_class in item[0]), None)
+                if invocation is None:
+                    self.fail(f"Expected delegated pyronaut-{command} invocation")
+                _, env = invocation
+                self.assertIsInstance(env, dict)
+                assert isinstance(env, dict)
+                self.assertEqual(str(expected_project_dir / ".venv"), env.get("VIRTUAL_ENV"))
+                self.assertEqual(
+                    str(expected_project_dir / ".venv" / "bin" / "python"),
+                    env.get("PYRONAUT_PYTHON_EXECUTABLE"),
+                )
+                self.assertNotIn("PYTHONHOME", env)
+                self.assertTrue(
+                    env.get("PATH", "").startswith(str(expected_project_dir / ".venv" / "bin") + os.pathsep)
+                )
+
+    def test_native_test_delegation_activates_project_virtualenv(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-test-with-venv"
+            expected_project_dir = project_dir.resolve()
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
+            venv_bin = project_dir / ".venv" / "bin"
+            venv_bin.mkdir(parents=True, exist_ok=True)
+            venv_python = venv_bin / "python"
+            venv_python.write_text("", encoding="utf-8")
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.test]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+            native_test = Path(temp_dir) / "pyronaut-test"
+            native_test.write_text("", encoding="utf-8")
+            native_test.chmod(0o755)
+
+            def runner_with_env(command_line, env):
+                executed.append((command_line, env))
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_test if command_name == "pyronaut-test" else None), \
+                    patch.dict(os.environ, {"PATH": "/usr/bin", "PYTHONHOME": "/tmp/python-home"}, clear=False):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+
+        self.assertEqual(0, exit_code)
+        invocation = next((item for item in executed if item[0][0] == str(native_test)), None)
+        if invocation is None:
+            self.fail("Expected native pyronaut-test invocation")
+        _, env = invocation
+        self.assertIsInstance(env, dict)
+        assert isinstance(env, dict)
+        self.assertEqual(str(expected_project_dir / ".venv"), env.get("VIRTUAL_ENV"))
+        self.assertEqual(
+            str(expected_project_dir / ".venv" / "bin" / "python"),
+            env.get("PYRONAUT_PYTHON_EXECUTABLE"),
+        )
+        self.assertNotIn("PYTHONHOME", env)
+        self.assertTrue(env.get("PATH", "").startswith(str(expected_project_dir / ".venv" / "bin") + os.pathsep))
+
     def test_build_does_not_orchestrate_test_resources_lifecycle(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3462,6 +3559,43 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         assert isinstance(executed[1][1], dict)
         self.assertIn("JAVA_HOME", executed[1][1])
         self.assertEqual("http://localhost:18900", executed[1][1].get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
+
+    def test_tui_interactive_activates_project_virtualenv(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "tui-with-venv"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            self._write_test_resources_enabled(project_dir, enabled=False)
+            expected_project_dir = project_dir.resolve()
+            venv_bin = project_dir / ".venv" / "bin"
+            venv_bin.mkdir(parents=True, exist_ok=True)
+            (venv_bin / "python").write_text("", encoding="utf-8")
+
+            with patch.dict(os.environ, {"PATH": "/usr/bin", "PYTHONHOME": "/tmp/python-home"}, clear=False):
+                exit_code = cli.run(
+                    ["--tui", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, len(executed))
+        _, env = executed[0]
+        self.assertIsInstance(env, dict)
+        assert isinstance(env, dict)
+        self.assertEqual(str(expected_project_dir / ".venv"), env.get("VIRTUAL_ENV"))
+        self.assertEqual(
+            str(expected_project_dir / ".venv" / "bin" / "python"),
+            env.get("PYRONAUT_PYTHON_EXECUTABLE"),
+        )
+        self.assertNotIn("PYTHONHOME", env)
+        self.assertTrue(env.get("PATH", "").startswith(str(expected_project_dir / ".venv" / "bin") + os.pathsep))
 
     def test_tui_interactive_suppresses_test_resources_stderr_chatter(self):
         executed = []

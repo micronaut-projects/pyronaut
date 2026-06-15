@@ -1247,7 +1247,10 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             if (trimmed.isEmpty()) {
                 continue;
             }
-            routes.add(summarizeObject("routes", trimmed));
+            String route = summarizeObject("routes", trimmed);
+            if (!isControlPanelRoute(route)) {
+                routes.add(route);
+            }
         }
         return alignRouteRows(List.copyOf(routes));
     }
@@ -1263,7 +1266,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 continue;
             }
             String route = summarizeRouteKey(entry.key);
-            if (route != null && !route.isBlank()) {
+            if (route != null && !route.isBlank() && !isControlPanelRoute(route)) {
                 routes.add(route);
             }
         }
@@ -1314,6 +1317,11 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private static boolean isManagementRoute(String routeValue) {
         String method = jsonString(routeValue, "method");
         return method != null && method.contains(MANAGEMENT_METHOD_PREFIX);
+    }
+
+    private static boolean isControlPanelRoute(String route) {
+        String path = RouteDisplay.parse(route).path;
+        return path != null && (path.equals("/control-panel") || path.startsWith("/control-panel/"));
     }
 
     private static List<RouteEntry> extractTopLevelRouteEntries(String body) {

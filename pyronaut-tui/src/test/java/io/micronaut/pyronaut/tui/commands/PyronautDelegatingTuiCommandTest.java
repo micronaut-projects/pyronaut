@@ -530,6 +530,15 @@ class PyronautDelegatingTuiCommandTest {
             byte[] body = """
                 [
                   {"method":"GET","uri":"/hello/{name}"},
+                  {"method":"GET","uri":"/control-panel"},
+                  {"method":"HEAD","uri":"/control-panel"},
+                  {"method":"POST","uri":"/control-panel/application-control-panel-controller/refresh"},
+                  {"method":"POST","uri":"/control-panel/application-control-panel-controller/stop"},
+                  {"method":"GET","uri":"/control-panel/categories/{categoryId}"},
+                  {"method":"HEAD","uri":"/control-panel/categories/{categoryId}"},
+                  {"method":"POST","uri":"/control-panel/loggers-control-panel-controller/{logger}"},
+                  {"method":"GET","uri":"/control-panel/{controlPanelName}"},
+                  {"method":"HEAD","uri":"/control-panel/{controlPanelName}"},
                   {"method":"POST","uri":"/books"},
                   {"method":"GET","uri":"/hello/{name}"}
                 ]
@@ -568,6 +577,15 @@ class PyronautDelegatingTuiCommandTest {
                 {
                   "{[/hello/{name}],method=[GET],produces=[application/json]}":{"method":"java.util.Map helloworld.Controller.hello()"},
                   "{[/health],method=[GET],produces=[application/json]}":{"method":"java.lang.Object io.micronaut.management.endpoint.health.HealthEndpoint.getHealth()"},
+                  "{[/control-panel],method=[GET],produces=[text/html]}":{"method":"java.lang.Object io.micronaut.controlpanel.ControlPanelController.index()"},
+                  "{[/control-panel],method=[HEAD],produces=[text/html]}":{"method":"java.lang.Object io.micronaut.controlpanel.ControlPanelController.index()"},
+                  "{[/control-panel/application-control-panel-controller/refresh],method=[POST],produces=[application/json]}":{"method":"java.lang.Object io.micronaut.controlpanel.ApplicationControlPanelController.refresh()"},
+                  "{[/control-panel/application-control-panel-controller/stop],method=[POST],produces=[application/json]}":{"method":"java.lang.Object io.micronaut.controlpanel.ApplicationControlPanelController.stop()"},
+                  "{[/control-panel/categories/{categoryId}],method=[GET],produces=[text/html]}":{"method":"java.lang.Object io.micronaut.controlpanel.ControlPanelController.category()"},
+                  "{[/control-panel/categories/{categoryId}],method=[HEAD],produces=[text/html]}":{"method":"java.lang.Object io.micronaut.controlpanel.ControlPanelController.category()"},
+                  "{[/control-panel/loggers-control-panel-controller/{logger}],method=[POST],produces=[application/json]}":{"method":"java.lang.Object io.micronaut.controlpanel.LoggersControlPanelController.setLogger()"},
+                  "{[/control-panel/{controlPanelName}],method=[GET],produces=[text/html]}":{"method":"java.lang.Object io.micronaut.controlpanel.ControlPanelController.panel()"},
+                  "{[/control-panel/{controlPanelName}],method=[HEAD],produces=[text/html]}":{"method":"java.lang.Object io.micronaut.controlpanel.ControlPanelController.panel()"},
                   "{[/books],method=[POST],produces=[application/json]}":{"method":"java.lang.Object helloworld.BookController.create()"}
                 }
                 """.getBytes(StandardCharsets.UTF_8);

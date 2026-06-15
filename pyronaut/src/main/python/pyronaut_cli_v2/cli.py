@@ -374,6 +374,7 @@ def _delegate(
                 print(str(exc), file=sys.stderr)
                 return PRECONDITION_FAILED
             env = _merge_env_overrides(env, env_overrides)
+            env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
             return runner(command_line, env)
 
     if command in {"run", "test"}:
@@ -463,6 +464,7 @@ def _build_java_delegate_invocation(
     project_dir = Path(_extract_project_dir(args)).resolve()
     env = _build_non_test_resources_env(command, java_home_provider)
     env = _merge_env_overrides(env, env_overrides)
+    env = _apply_project_virtualenv(env, project_dir)
     java_exec = _resolve_java_executable(env)
     classpath = _build_delegate_classpath(command, project_dir, resolver)
     jvm_args = _build_delegate_jvm_args(debug_vm)
@@ -1814,6 +1816,37 @@ def _merge_env_overrides(base_env: dict[str, str] | None, env_overrides: dict[st
     merged = dict(base_env or {})
     merged.update(env_overrides)
     return merged
+
+
+def _apply_project_virtualenv(env: dict[str, str] | None, project_dir: Path) -> dict[str, str] | None:
+    venv_dir = project_dir / ".venv"
+    if not venv_dir.is_dir():
+        return env
+
+    activated = dict(os.environ if env is None else env)
+    venv_bin = venv_dir / "bin"
+    activated["VIRTUAL_ENV"] = str(venv_dir)
+    activated.pop("PYTHONHOME", None)
+    if venv_bin.is_dir():
+        activated["PATH"] = _prepend_path_entry(activated.get("PATH", ""), str(venv_bin))
+        venv_python = _resolve_virtualenv_python(venv_bin)
+        if venv_python is not None:
+            activated["PYRONAUT_PYTHON_EXECUTABLE"] = str(venv_python)
+    return activated
+
+
+def _prepend_path_entry(path_value: str, entry: str) -> str:
+    entries = [value for value in path_value.split(os.pathsep) if value]
+    entries = [value for value in entries if value != entry]
+    return os.pathsep.join([entry, *entries])
+
+
+def _resolve_virtualenv_python(venv_bin: Path) -> Path | None:
+    for name in ("python", "python3"):
+        candidate = venv_bin / name
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _strip_test_resources_java_tool_options(env: dict[str, str] | None) -> dict[str, str] | None:
@@ -3317,6 +3350,7 @@ def _run_tamboui_tui(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+    base_env = _apply_project_virtualenv(base_env, project_dir)
 
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
