@@ -137,6 +137,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     @Option(names = "--test-executable", required = true, description = "Path to pyronaut-test executable")
     Path testExecutable;
 
+    @Option(names = "--native-dev-executable", description = "Path to pyronaut-dev native executable")
+    Path nativeDevExecutable;
+
+    @Option(names = "--native-command", split = ",", description = "Lifecycle command to route through pyronaut-dev")
+    Set<String> nativeCommands = Set.of();
+
     @Option(names = "--trace-delegation", description = "Log delegated command lines")
     boolean traceDelegation;
 
@@ -264,7 +270,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
         var validationCode = runForeground(
             project,
-            List.of(validateExecutable.toString(), "--project-dir", project.toString(), "--scenario", "run"),
+            buildForegroundCommand(
+                project,
+                "validate-config",
+                validateExecutable,
+                List.of("--project-dir", project.toString(), "--scenario", "run")
+            ),
             false
         );
         if (validationCode != 0) {
@@ -272,13 +283,21 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             controller.notify("Configuration validation failed with exit code " + validationCode, UiModel.Severity.ERROR);
             return;
         }
-        var installCode = runForeground(project, List.of(installExecutable.toString(), "--project-dir", project.toString()), false);
+        var installCode = runForeground(
+            project,
+            buildForegroundCommand(project, "install", installExecutable, List.of("--project-dir", project.toString())),
+            false
+        );
         if (installCode != 0) {
             controller.stopCompiling();
             controller.notify("Install failed with exit code " + installCode, UiModel.Severity.ERROR);
             return;
         }
-        var processCode = runForeground(project, List.of(processExecutable.toString(), "--project-dir", project.toString()), false);
+        var processCode = runForeground(
+            project,
+            buildForegroundCommand(project, "process", processExecutable, List.of("--project-dir", project.toString())),
+            false
+        );
         if (processCode != 0) {
             controller.stopCompiling();
             controller.notify("Process failed with exit code " + processCode, UiModel.Severity.ERROR);
@@ -314,7 +333,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
         var validationCode = runForeground(
             project,
-            List.of(validateExecutable.toString(), "--project-dir", project.toString(), "--scenario", "test"),
+            buildForegroundCommand(
+                project,
+                "validate-config",
+                validateExecutable,
+                List.of("--project-dir", project.toString(), "--scenario", "test")
+            ),
             false
         );
         if (validationCode != 0) {
@@ -323,7 +347,11 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             controller.stopTesting();
             return;
         }
-        var installCode = runForeground(project, List.of(installExecutable.toString(), "--project-dir", project.toString()), false);
+        var installCode = runForeground(
+            project,
+            buildForegroundCommand(project, "install", installExecutable, List.of("--project-dir", project.toString())),
+            false
+        );
         if (installCode != 0) {
             controller.stopCompiling();
             controller.notify("Install failed with exit code " + installCode, UiModel.Severity.ERROR);
@@ -331,7 +359,11 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             return;
         }
 
-        var processCode = runForeground(project, List.of(processExecutable.toString(), "--project-dir", project.toString()), false);
+        var processCode = runForeground(
+            project,
+            buildForegroundCommand(project, "process", processExecutable, List.of("--project-dir", project.toString())),
+            false
+        );
         if (processCode != 0) {
             controller.stopCompiling();
             controller.notify("Process failed with exit code " + processCode, UiModel.Severity.ERROR);
@@ -430,6 +462,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         Optional<TestResourcesConnection> connection = resolveTestResourcesConnection(project);
         return switch (target) {
             case RUN -> {
+                if (usesNativeCommand("run")) {
+                    yield new ManagedCommand(
+                        buildNativeDevCommand(project, "run", List.of("--project-dir", project.toString()), connection),
+                        null
+                    );
+                }
                 int managementPort = findAvailablePort();
                 String managementServerUri = "http://127.0.0.1:" + managementPort;
                 var jvmArgs = new ArrayList<>(DEV_MANAGEMENT_JVM_FLAGS);
@@ -454,6 +492,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
     private List<String> buildManagedTestCommand(Path project,
                                                  Optional<TestResourcesConnection> connection) throws IOException {
+        if (usesNativeCommand("test")) {
+            return buildNativeDevCommand(project, "test", List.of("--project-dir", project.toString()), connection);
+        }
         if (isJavaLauncherDistribution(testExecutable)) {
             return buildJavaDelegateCommand(
                 project,
@@ -466,6 +507,47 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             );
         }
         return List.of(testExecutable.toString(), "--project-dir", project.toString());
+    }
+
+    private List<String> buildForegroundCommand(Path project,
+                                                String commandName,
+                                                Path executable,
+                                                List<String> arguments) {
+        if (usesNativeCommand(commandName)) {
+            return buildNativeDevCommand(project, commandName, arguments, Optional.empty());
+        }
+        var command = new ArrayList<String>(arguments.size() + 1);
+        command.add(executable.toString());
+        command.addAll(arguments);
+        return command;
+    }
+
+    private boolean usesNativeCommand(String commandName) {
+        return nativeDevExecutable != null && nativeCommands.contains(commandName);
+    }
+
+    private List<String> buildNativeDevCommand(Path project,
+                                               String commandName,
+                                               List<String> arguments,
+                                               Optional<TestResourcesConnection> connection) {
+        if (nativeDevExecutable == null) {
+            throw new IllegalStateException("Missing pyronaut-dev native executable for " + commandName);
+        }
+        var command = new ArrayList<String>();
+        command.add(nativeDevExecutable.toString());
+        if ("run".equals(commandName) || "test".equals(commandName)) {
+            command.add("-Djava.class.path=" + String.join(File.pathSeparator, nativeApplicationClasspathEntries(project, commandName)));
+            if ("test".equals(commandName)) {
+                String testResourcesClientClasspath = nativeTestResourcesClientClasspath(project);
+                if (!testResourcesClientClasspath.isBlank()) {
+                    command.add("-Dpyronaut.dev.test.resources.client.classpath=" + testResourcesClientClasspath);
+                }
+            }
+            connection.ifPresent(value -> value.appendJvmArgs(command));
+        }
+        command.add(commandName);
+        command.addAll(arguments);
+        return command;
     }
 
     private static List<String> buildJavaDelegateCommand(Path project,
@@ -561,6 +643,135 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         entries.add(classesDir.toString());
         addExecutableLibEntries(executable, entries);
         return List.copyOf(entries);
+    }
+
+    private List<String> nativeApplicationClasspathEntries(Path project, String commandName) {
+        try {
+            LinkedHashSet<String> entries = new LinkedHashSet<>();
+            if ("run".equals(commandName)) {
+                entries.addAll(readManifestEntries(resolveRunRuntimeManifest(project), "runtime"));
+                Path classesDir = project.resolve(CLASSES_DIR).toAbsolutePath().normalize();
+                if (!Files.isDirectory(classesDir)) {
+                    throw new IllegalStateException("Missing processed classes directory: " + classesDir + ". Run pyronaut process first.");
+                }
+                entries.add(classesDir.toString());
+            } else if ("test".equals(commandName)) {
+                entries.addAll(readManifestEntries(project.resolve(TEST_DEPENDENCIES), "test"));
+                Path runtimeManifest = project.resolve(RUNTIME_DEPENDENCIES);
+                if (Files.exists(runtimeManifest)) {
+                    entries.addAll(readManifestEntries(runtimeManifest, "runtime"));
+                }
+                Path buildManifest = project.resolve(BUILD_DEPENDENCIES);
+                if (Files.exists(buildManifest)) {
+                    entries.addAll(readManifestEntries(buildManifest, "build"));
+                }
+                Path testClassesDir = project.resolve(TEST_CLASSES_DIR).toAbsolutePath().normalize();
+                Path classesDir = project.resolve(CLASSES_DIR).toAbsolutePath().normalize();
+                if (Files.isDirectory(testClassesDir)) {
+                    entries.add(testClassesDir.toString());
+                } else if (Files.isDirectory(classesDir)) {
+                    entries.add(classesDir.toString());
+                } else {
+                    throw new IllegalStateException("Missing processed classes directory: " + classesDir + ". Run pyronaut process first.");
+                }
+            }
+            return filterNativeLauncherProvidedEntries(entries);
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to build native " + commandName + " classpath: " + e.getMessage(), e);
+        }
+    }
+
+    private String nativeTestResourcesClientClasspath(Path project) {
+        try {
+            LinkedHashSet<String> entries = new LinkedHashSet<>();
+            Path testManifest = project.resolve(TEST_DEPENDENCIES);
+            if (Files.exists(testManifest)) {
+                entries.addAll(readManifestEntries(testManifest, "test").stream()
+                    .filter(PyronautDelegatingTuiCommand::isNativeTestResourcesClientArtifact)
+                    .toList());
+            }
+            Path runtimeManifest = project.resolve(RUNTIME_DEPENDENCIES);
+            if (Files.exists(runtimeManifest)) {
+                entries.addAll(readManifestEntries(runtimeManifest, "runtime").stream()
+                    .filter(PyronautDelegatingTuiCommand::isNativeTestResourcesClientArtifact)
+                    .toList());
+            }
+            return String.join(File.pathSeparator, entries);
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to build native test resources client classpath: " + e.getMessage(), e);
+        }
+    }
+
+    private List<String> filterNativeLauncherProvidedEntries(Set<String> entries) throws IOException {
+        var launcherNames = nativeLauncherProvidedJarNames();
+        var launcherArtifactIds = versionedJarArtifactIds(launcherNames);
+        return entries.stream()
+            .filter(entry -> !isNativeLauncherProvidedArtifact(entry, launcherNames, launcherArtifactIds))
+            .toList();
+    }
+
+    private Set<String> nativeLauncherProvidedJarNames() throws IOException {
+        if (nativeDevExecutable == null) {
+            return Set.of();
+        }
+        Path executable = nativeDevExecutable.toAbsolutePath().normalize();
+        List<Path> candidates = List.of(
+            executable.getParent().getParent().resolve("lib"),
+            executable.getParent().getParent().getParent().resolve("lib")
+        );
+        for (Path candidate : candidates) {
+            if (Files.isDirectory(candidate)) {
+                try (var stream = Files.list(candidate)) {
+                    return stream
+                        .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                        .map(path -> path.getFileName().toString())
+                        .collect(java.util.stream.Collectors.toSet());
+                }
+            }
+        }
+        return Set.of();
+    }
+
+    private static Set<String> versionedJarArtifactIds(Set<String> fileNames) {
+        return fileNames.stream()
+            .map(PyronautDelegatingTuiCommand::versionedJarArtifactId)
+            .flatMap(Optional::stream)
+            .collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static boolean isNativeLauncherProvidedArtifact(String entry,
+                                                           Set<String> launcherNames,
+                                                           Set<String> launcherArtifactIds) {
+        String fileName = Path.of(entry).getFileName().toString();
+        if (isNativeTestResourcesClientArtifact(fileName)) {
+            return true;
+        }
+        if (launcherNames.contains(fileName)) {
+            return true;
+        }
+        return versionedJarArtifactId(fileName)
+            .map(launcherArtifactIds::contains)
+            .orElse(false);
+    }
+
+    private static Optional<String> versionedJarArtifactId(String fileName) {
+        if (!fileName.endsWith(".jar")) {
+            return Optional.empty();
+        }
+        String baseName = fileName.substring(0, fileName.length() - ".jar".length());
+        for (int i = 0; i < baseName.length() - 1; i++) {
+            if (baseName.charAt(i) == '-' && Character.isDigit(baseName.charAt(i + 1))) {
+                return Optional.of(baseName.substring(0, i));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static boolean isNativeTestResourcesClientArtifact(String entry) {
+        String fileName = Path.of(entry).getFileName().toString();
+        return fileName.startsWith("micronaut-test-resources-client-")
+            || fileName.startsWith("micronaut-test-resources-core-")
+            || fileName.startsWith("micronaut-test-resources-codec-");
     }
 
     private static List<String> readTestClasspathEntries(Path project, Path executable) throws IOException {

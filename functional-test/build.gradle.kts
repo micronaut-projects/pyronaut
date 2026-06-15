@@ -1535,7 +1535,7 @@ val installApp by tasks.registering {
         fixtureAppDir.file("setup.py"),
         pytestInstallMarker,
     )
-    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jit" })
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jvm" })
     inputs.file(providers.provider { pyronautInstallExecutableFile() })
     inputs.dir(fixtureStagedRepoDir)
     outputs.file(installAppMarker)
@@ -1549,7 +1549,7 @@ val installApp by tasks.registering {
         }
         logger.lifecycle(
             "Using {} pyronaut-install executable: {}",
-            if (useNativeExecutables.get()) "native" else "JIT",
+            if (useNativeExecutables.get()) "native" else "JVM",
             installExecutable.absolutePath
         )
         project.runFixtureCommand(
@@ -1642,7 +1642,7 @@ val validateConfig by tasks.registering {
         fixtureResolvedRuntimeDependencies,
         fixtureSchemasDir,
     )
-    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jit" })
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jvm" })
     inputs.file(providers.provider { pyronautValidateConfigExecutableFile() })
     outputs.files(fixtureConfigValidationCache)
     outputs.dir(fixtureConfigValidationReportDir)
@@ -1653,7 +1653,7 @@ val validateConfig by tasks.registering {
         }
         logger.lifecycle(
             "Using {} pyronaut-validate-config executable: {}",
-            if (useNativeExecutables.get()) "native" else "JIT",
+            if (useNativeExecutables.get()) "native" else "JVM",
             validateConfigExecutable.absolutePath
         )
         project.runFixtureCommand(
@@ -1677,7 +1677,7 @@ val process by tasks.registering {
     inputs.dir(fixtureAppDir.dir("tests"))
     inputs.property(
         "pyronautExecutableMode",
-        providers.provider { if (useNativeExecutables.get()) "native" else "jit" }
+        providers.provider { if (useNativeExecutables.get()) "native" else "jvm" }
     )
     inputs.files(
         fixtureResolvedBuildDependencies,
@@ -1696,7 +1696,7 @@ val process by tasks.registering {
         }
         logger.lifecycle(
             "Using {} pyronaut-processor executable: {}",
-            if (useNativeExecutables.get()) "native" else "JIT",
+            if (useNativeExecutables.get()) "native" else "JVM",
             processorExecutable.absolutePath
         )
         project.runFixtureCommand(

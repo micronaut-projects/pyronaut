@@ -497,6 +497,7 @@ Optional `pyproject.toml` settings:
 [source,toml]
 ----
 [tool.pyronaut.toolchain]
+type = "native" # jvm|native
 distribution = "dev" # ce|ee|dev
 version = "25.1.0-dev+10.1"
 java-version = 25
@@ -505,6 +506,7 @@ release-tag = "jdk-25.1.0-dev-20260429_0111"
 
 Supported keys:
 
+- `type`: CLI execution toolchain. The default is `jvm`, which launches the existing command-specific Java delegates. `native` routes supported lifecycle commands through the `pyronaut-dev` native uber CLI.
 - `distribution`: requested GraalVM distribution. Supported values are `ce`, `ee`, and `dev`.
 - `version`: exact GraalVM version string to match or download.
 - `java-version`: minimum Java major version. Pyronaut CLI currently requires GraalVM JDK 25 or newer.
@@ -529,6 +531,8 @@ Distribution sources:
 
 Behavior notes:
 
+- `tool.pyronaut.toolchain.type` controls how the `pyronaut` command executes CLI tooling. It does not control whether `pyronaut build` produces JVM or native application output; use `tool.pyronaut.build.mode` or build flags for that.
+- Command-specific `tool.pyronaut.processor.mode` and `tool.pyronaut.test.mode` settings override the global toolchain type for those commands.
 - If no explicit toolchain is configured, Pyronaut CLI accepts any compatible GraalVM JDK 25+ already available on the machine.
 - If an explicit toolchain is configured, Pyronaut only reuses an installed JDK when the distribution, version, and Java major version match the requested spec.
 - Downloaded JDKs are cached under `~/.pyronaut/sdks` for reuse across projects.

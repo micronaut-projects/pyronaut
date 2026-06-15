@@ -67,10 +67,10 @@ Pyronaut supports separate defaults for build, processing, and test execution:
 mode = "jvm" # jvm|native
 
 [tool.pyronaut.processor]
-mode = "jit" # jit|native
+mode = "jvm" # jvm|native
 
 [tool.pyronaut.test]
-mode = "jit" # jit|native
+mode = "jvm" # jvm|native
 ----
 
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
@@ -103,9 +103,11 @@ You can let Pyronaut discover a compatible installed JDK, or pin a toolchain:
 [source,toml]
 ----
 [tool.pyronaut.toolchain]
+type = "jvm" # jvm|native
 distribution = "ce"
 java-version = 25
 version = "25.0.2"
 ----
 
 Development builds can use `distribution = "dev"` with a `release-tag` or explicit `download-url`.
+Use `type = "native"` to route supported CLI lifecycle commands through the native `pyronaut-dev` uber CLI.

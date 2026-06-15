@@ -39,8 +39,8 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"additionalProperties\": false"));
         assertTrue(schema.contains("\"default\": \"jvm\""));
         assertTrue(schema.contains("\"enum\": [\"jvm\", \"native\"]"));
-        assertTrue(schema.contains("\"default\": \"jit\""));
-        assertTrue(schema.contains("\"enum\": [\"jit\", \"native\"]"));
+        assertTrue(schema.contains("\"default\": \"jvm\""));
+        assertTrue(schema.contains("\"enum\": [\"jvm\", \"native\"]"));
     }
 
     @Test

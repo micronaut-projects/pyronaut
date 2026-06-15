@@ -41,6 +41,8 @@ COMMAND_TO_EXECUTABLE = {
 }
 DEV_NATIVE_EXECUTABLE = "pyronaut-dev"
 DEV_NATIVE_COMMANDS = {"install", "process", "run", "test", "validate-config", "test-resources-server"}
+TOOLCHAIN_TYPE_JVM = "jvm"
+TOOLCHAIN_TYPE_NATIVE = "native"
 
 JAVA_MAIN_BY_COMMAND = {
     "run": "io.micronaut.pyronaut.run.PyronautRunMain",
@@ -342,7 +344,13 @@ def _delegate(
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
     try:
-        dev_command_line = _pyronaut_dev_native_command_line(command, args, resolver, env_overrides=env_overrides)
+        dev_command_line = _pyronaut_dev_native_command_line(
+            command,
+            args,
+            resolver,
+            debug_vm=debug_vm,
+            env_overrides=env_overrides,
+        )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -355,6 +363,7 @@ def _delegate(
             print(str(exc), file=sys.stderr)
             return PRECONDITION_FAILED
         env = _merge_env_overrides(env, env_overrides)
+        env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
         return runner(dev_command_line, env)
 
     if command == "test" and not debug_vm:
@@ -705,7 +714,6 @@ def _is_test_launcher_provided_artifact(entry: str) -> bool:
     file_name = Path(entry).name
     return (
         file_name.startswith("micronaut-context-python-")
-        or file_name.startswith("micronaut-pyronaut-logback-")
         or file_name.startswith("micronaut-pyronaut-pytest-")
     )
 
@@ -1683,6 +1691,24 @@ def _read_pyproject_toolchain_spec(project_dir: Path | None) -> _ToolchainSpec:
     return _ToolchainSpec(distribution, version, java_version, release_tag, download_url, explicit)
 
 
+def _read_pyproject_toolchain_type(project_dir: Path) -> str:
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    if not isinstance(pyronaut, dict):
+        return TOOLCHAIN_TYPE_JVM
+    toolchain = pyronaut.get("toolchain")
+    if not isinstance(toolchain, dict):
+        return TOOLCHAIN_TYPE_JVM
+    type_raw = toolchain.get("type")
+    if type_raw is None:
+        return TOOLCHAIN_TYPE_JVM
+    if not isinstance(type_raw, str):
+        raise ValueError("Invalid toolchain type in pyproject.toml. Use tool.pyronaut.toolchain.type = 'jvm' or 'native'")
+    normalized = type_raw.strip().lower()
+    if normalized in {TOOLCHAIN_TYPE_JVM, TOOLCHAIN_TYPE_NATIVE}:
+        return normalized
+    raise ValueError("Invalid toolchain type in pyproject.toml. Use tool.pyronaut.toolchain.type = 'jvm' or 'native'")
+
+
 def _read_pyproject_build_mode(project_dir: Path) -> str | None:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
@@ -1700,35 +1726,49 @@ def _read_pyproject_build_mode(project_dir: Path) -> str | None:
 
 
 def _read_pyproject_processor_mode(project_dir: Path) -> str:
+    configured = _read_pyproject_processor_mode_override(project_dir)
+    return configured or TOOLCHAIN_TYPE_JVM
+
+
+def _read_pyproject_processor_mode_override(project_dir: Path) -> str | None:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
-        return "jit"
+        return None
     processor = pyronaut.get("processor")
     if not isinstance(processor, dict):
-        return "jit"
+        return None
     mode = processor.get("mode")
+    if mode is None:
+        return None
     if not isinstance(mode, str):
-        return "jit"
+        raise ValueError("Invalid processor mode in pyproject.toml. Use tool.pyronaut.processor.mode = 'jvm' or 'native'")
     normalized = mode.strip().lower()
-    if normalized in {"jit", "native"}:
+    if normalized in {TOOLCHAIN_TYPE_JVM, TOOLCHAIN_TYPE_NATIVE}:
         return normalized
-    raise ValueError("Invalid processor mode in pyproject.toml. Use tool.pyronaut.processor.mode = 'jit' or 'native'")
+    raise ValueError("Invalid processor mode in pyproject.toml. Use tool.pyronaut.processor.mode = 'jvm' or 'native'")
 
 
 def _read_pyproject_test_mode(project_dir: Path) -> str:
+    configured = _read_pyproject_test_mode_override(project_dir)
+    return configured or TOOLCHAIN_TYPE_JVM
+
+
+def _read_pyproject_test_mode_override(project_dir: Path) -> str | None:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
-        return "jit"
+        return None
     test = pyronaut.get("test")
     if not isinstance(test, dict):
-        return "jit"
+        return None
     mode = test.get("mode")
+    if mode is None:
+        return None
     if not isinstance(mode, str):
-        return "jit"
+        raise ValueError("Invalid test mode in pyproject.toml. Use tool.pyronaut.test.mode = 'jvm' or 'native'")
     normalized = mode.strip().lower()
-    if normalized in {"jit", "native"}:
+    if normalized in {TOOLCHAIN_TYPE_JVM, TOOLCHAIN_TYPE_NATIVE}:
         return normalized
-    raise ValueError("Invalid test mode in pyproject.toml. Use tool.pyronaut.test.mode = 'jit' or 'native'")
+    raise ValueError("Invalid test mode in pyproject.toml. Use tool.pyronaut.test.mode = 'jvm' or 'native'")
 
 
 def _read_pyproject_test_resources_table(project_dir: Path) -> dict[str, object] | None:
@@ -2816,15 +2856,21 @@ def _pyronaut_dev_native_command_line(
     args: Sequence[str],
     resolver: Callable[[str], str | None],
     *,
+    debug_vm: bool = False,
     env_overrides: dict[str, str] | None = None,
 ) -> list[str] | None:
     if command not in DEV_NATIVE_COMMANDS:
         return None
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    try:
+        if not _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=debug_vm):
+            return None
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     executable_path = _resolve_pyronaut_dev_native_executable(resolver)
     if executable_path is None:
-        return None
+        raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     if command in {"run", "test"}:
-        project_dir = Path(_extract_project_dir(args)).resolve()
         classpath = _build_native_application_classpath(command, project_dir, executable_path)
         jvm_args = [f"-Djava.class.path={classpath}"]
         if command == "test":
@@ -2834,6 +2880,19 @@ def _pyronaut_dev_native_command_line(
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
         return [executable_path, *jvm_args, command, *args]
     return [executable_path, command, *args]
+
+
+def _use_pyronaut_dev_native_toolchain(command: str, project_dir: Path, *, debug_vm: bool = False) -> bool:
+    if _read_pyproject_toolchain_type(project_dir) != TOOLCHAIN_TYPE_NATIVE:
+        return False
+    if command == "process" and _read_pyproject_processor_mode_override(project_dir) is not None:
+        return False
+    if command == "test":
+        if debug_vm:
+            return False
+        if _read_pyproject_test_mode_override(project_dir) is not None:
+            return False
+    return True
 
 
 def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
@@ -2879,7 +2938,7 @@ def _resolve_delegate_executable_path(
             if executable_path is None:
                 raise RuntimeError(
                     "Missing native delegated executable for pyronaut-processor. "
-                    "Build or install a native pyronaut-processor, or set tool.pyronaut.processor.mode = 'jit'."
+                    "Build or install a native pyronaut-processor, or set tool.pyronaut.processor.mode = 'jvm'."
                 )
             return executable_path
         executable_path = resolver(executable_name)
@@ -2893,7 +2952,7 @@ def _resolve_delegate_executable_path(
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
         if _extract_debug_vm(args):
-            test_mode = "jit"
+            test_mode = TOOLCHAIN_TYPE_JVM
         if test_mode == "native":
             executable_path = _resolve_native_preferred_executable(
                 executable_name,
@@ -2903,7 +2962,7 @@ def _resolve_delegate_executable_path(
             if executable_path is None:
                 raise RuntimeError(
                     "Missing native delegated executable for pyronaut-test. "
-                    "Build or install a native pyronaut-test, or set tool.pyronaut.test.mode = 'jit'."
+                    "Build or install a native pyronaut-test, or set tool.pyronaut.test.mode = 'jvm'."
                 )
             return executable_path
 
@@ -3378,6 +3437,24 @@ def _run_tamboui_tui(
     if missing:
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
         return PRECONDITION_FAILED
+    try:
+        native_commands = [
+            command
+            for command in ("validate-config", "install", "process", "run", "test")
+            if _use_pyronaut_dev_native_toolchain(command, project_dir)
+        ]
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    native_dev_executable = None
+    if native_commands:
+        native_dev_executable = _resolve_pyronaut_dev_native_executable(resolver)
+        if native_dev_executable is None:
+            print(
+                "Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.",
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
 
     command_line = [
         tui_executable,
@@ -3399,6 +3476,10 @@ def _run_tamboui_tui(
         "--test-executable",
         str(delegated["test"]),
     ]
+    if native_dev_executable is not None:
+        command_line.extend(["--native-dev-executable", native_dev_executable])
+        for command in native_commands:
+            command_line.extend(["--native-command", command])
     if trace_delegation:
         command_line.append("--trace-delegation")
     if _delegation_trace_enabled():

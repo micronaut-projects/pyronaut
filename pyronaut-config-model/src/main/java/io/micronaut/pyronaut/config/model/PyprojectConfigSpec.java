@@ -147,14 +147,14 @@ public final class PyprojectConfigSpec {
     public static final FieldSpec PYRONAUT_PROCESSOR_MODE = enumString(
         "tool.pyronaut.processor.mode",
         "Processor execution mode.",
-        "jit",
-        List.of("jit", "native")
+        "jvm",
+        List.of("jvm", "native")
     );
     public static final FieldSpec PYRONAUT_TEST_MODE = enumString(
         "tool.pyronaut.test.mode",
         "Test execution mode.",
-        "jit",
-        List.of("jit", "native")
+        "jvm",
+        List.of("jvm", "native")
     );
     public static final FieldSpec PYRONAUT_RUN_BANNER_ENABLED = bool(
         "tool.pyronaut.run.banner-enabled",
@@ -247,6 +247,12 @@ public final class PyprojectConfigSpec {
         "Desired GraalVM distribution/channel.",
         "ce",
         List.of("ce", "ee", "dev")
+    );
+    public static final FieldSpec PYRONAUT_TOOLCHAIN_TYPE = enumString(
+        "tool.pyronaut.toolchain.type",
+        "CLI execution toolchain.",
+        "jvm",
+        List.of("jvm", "native")
     );
     public static final FieldSpec PYRONAUT_TOOLCHAIN_VERSION = string(
         "tool.pyronaut.toolchain.version",
@@ -743,6 +749,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_SOURCES_ADDITIONAL_RESOURCES,
         PYRONAUT_SOURCES_ADDITIONAL_TEST_RESOURCES,
         PYRONAUT_TOOLCHAIN_DISTRIBUTION,
+        PYRONAUT_TOOLCHAIN_TYPE,
         PYRONAUT_TOOLCHAIN_VERSION,
         PYRONAUT_TOOLCHAIN_JAVA_VERSION,
         PYRONAUT_TOOLCHAIN_RELEASE_TAG,

@@ -379,12 +379,14 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual([[str(native_install), "--project-dir", "/tmp/demo"]], executed)
 
-    def test_install_prefers_bundled_pyronaut_dev_native_executable_when_available(self):
+    def test_install_uses_jvm_delegate_by_default_when_pyronaut_dev_native_executable_is_available(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
             native_dev.chmod(0o755)
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
 
             def runner(command_line, env=None):
                 executed.append(command_line)
@@ -392,14 +394,84 @@ class OrchestratorTest(unittest.TestCase):
 
             with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
                 exit_code = cli.run(
-                    ["install", "--project-dir", "/tmp/demo"],
+                    ["install", "--project-dir", str(project_dir)],
                     runner=runner,
                     resolver=self._resolver(),
                     platform_name="linux",
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual([[str(native_dev), "install", "--project-dir", "/tmp/demo"]], executed)
+        self.assertEqual([["/tmp/pyronaut-install", "--project-dir", str(project_dir)]], executed)
+
+    def test_install_uses_bundled_pyronaut_dev_native_executable_when_toolchain_native(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"native\"\n",
+                encoding="utf-8",
+            )
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["install", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([[str(native_dev), "install", "--project-dir", str(project_dir)]], executed)
+
+    def test_install_toolchain_native_fails_when_pyronaut_dev_native_executable_missing(self):
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"native\"\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(cli, "_bundled_native_executable", return_value=None), redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["install", "--project-dir", str(project_dir)],
+                    runner=self._runner_ok(),
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Missing native delegated executable for pyronaut-dev", stderr.getvalue())
+
+    def test_install_rejects_invalid_toolchain_type(self):
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"jit\"\n",
+                encoding="utf-8",
+            )
+
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["install", "--project-dir", str(project_dir)],
+                    runner=self._runner_ok(),
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Invalid toolchain type in pyproject.toml. Use tool.pyronaut.toolchain.type = 'jvm' or 'native'", stderr.getvalue())
 
     def test_direct_source_invocation_uses_pyronaut_dev_native_executable(self):
         executed = []
@@ -447,6 +519,9 @@ class OrchestratorTest(unittest.TestCase):
 [project]
 name = "demo"
 version = "1.0.0"
+
+[tool.pyronaut.toolchain]
+type = "native"
 
 [tool.pyronaut.sources]
 resources = "app-config"
@@ -512,6 +587,9 @@ additional-resources = ["views"]
 [project]
 name = "demo"
 version = "1.0.0"
+
+[tool.pyronaut.toolchain]
+type = "native"
 
 [tool.pyronaut.sources]
 resources = "app-config"
@@ -655,6 +733,69 @@ test-resources = "test-resources"
         self.assertEqual(0, exit_code)
         self.assertEqual([[str(native_processor), "--project-dir", str(project_dir)]], executed)
 
+    def test_process_uses_pyronaut_dev_when_toolchain_native(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-toolchain"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"native\"\n",
+                encoding="utf-8",
+            )
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["process", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([[str(native_dev), "process", "--project-dir", str(project_dir)]], executed)
+
+    def test_process_explicit_jvm_mode_overrides_native_toolchain(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-toolchain-jvm-processor"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[tool.pyronaut.toolchain]
+type = "native"
+
+[tool.pyronaut.processor]
+mode = "jvm"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["process", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([["/tmp/pyronaut-processor", "--project-dir", str(project_dir)]], executed)
+
     def test_process_native_mode_fails_when_native_executable_missing(self):
         stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -705,9 +846,9 @@ test-resources = "test-resources"
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual([str(native_test), "--project-dir", str(project_dir)], executed[4])
+        self.assertEqual([str(native_test), "--project-dir", str(project_dir)], executed[3])
 
-    def test_test_debug_vm_forces_jit_mode_even_when_native_is_configured(self):
+    def test_test_debug_vm_forces_jvm_mode_even_when_native_is_configured(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "native-test-debug"
@@ -738,7 +879,7 @@ test-resources = "test-resources"
                 )
 
         self.assertEqual(0, exit_code)
-        self._assert_test_delegate(executed[4], str(project_dir), ["--debug-vm"])
+        self._assert_test_delegate(executed[3], str(project_dir), ["--debug-vm"])
 
     def test_test_native_mode_fails_when_native_executable_missing(self):
         stderr = io.StringIO()
@@ -1431,10 +1572,9 @@ additional-test-resources = ["test-fixtures"]
             self.assertIn("/tmp/runtime.jar", entries)
             self.assertIn("/tmp/build.jar", entries)
             self.assertNotIn(bundled_pytest_entry, entries)
-            self.assertNotIn(bundled_logback_entry, entries)
+            self.assertIn(bundled_logback_entry, entries)
             self.assertNotIn(bundled_context_python_entry, entries)
             self._assert_no_classpath_artifact_prefix(entries, "micronaut-pyronaut-pytest-")
-            self._assert_no_classpath_artifact_prefix(entries, "micronaut-pyronaut-logback-")
             self._assert_no_classpath_artifact_prefix(entries, "micronaut-context-python-")
             self.assertNotIn(str((project_dir / "app-config").resolve()), entries)
             self.assertNotIn(str((project_dir / "views").resolve()), entries)
@@ -1654,6 +1794,59 @@ additional-test-resources = ["test-fixtures"]
         invocation = next((item for item in executed if item[0][0] == str(native_test)), None)
         if invocation is None:
             self.fail("Expected native pyronaut-test invocation")
+        _, env = invocation
+        self.assertIsInstance(env, dict)
+        assert isinstance(env, dict)
+        self.assertEqual(str(expected_project_dir / ".venv"), env.get("VIRTUAL_ENV"))
+        self.assertEqual(
+            str(expected_project_dir / ".venv" / "bin" / "python"),
+            env.get("PYRONAUT_PYTHON_EXECUTABLE"),
+        )
+        self.assertNotIn("PYTHONHOME", env)
+        self.assertTrue(env.get("PATH", "").startswith(str(expected_project_dir / ".venv" / "bin") + os.pathsep))
+
+    def test_pyronaut_dev_native_test_delegation_activates_project_virtualenv(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-dev-test-with-venv"
+            expected_project_dir = project_dir.resolve()
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
+            venv_bin = project_dir / ".venv" / "bin"
+            venv_bin.mkdir(parents=True, exist_ok=True)
+            venv_python = venv_bin / "python"
+            venv_python.write_text("", encoding="utf-8")
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\n"
+                "type = \"native\"\n"
+                "[tool.pyronaut.test-resources]\n"
+                "enabled = false\n",
+                encoding="utf-8",
+            )
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+
+            def runner_with_env(command_line, env):
+                executed.append((command_line, env))
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None), \
+                    patch.dict(os.environ, {"PATH": "/usr/bin", "PYTHONHOME": "/tmp/python-home"}, clear=False):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+
+        self.assertEqual(0, exit_code)
+        invocation = next((item for item in executed if item[0][0] == str(native_dev) and "test" in item[0]), None)
+        if invocation is None:
+            self.fail("Expected native pyronaut-dev test invocation")
         _, env = invocation
         self.assertIsInstance(env, dict)
         assert isinstance(env, dict)
@@ -3877,6 +4070,46 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
             ],
             executed[2][0],
         )
+
+    def test_tui_interactive_uses_native_dev_for_global_native_toolchain(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\n"
+                "type = \"native\"\n"
+                "[tool.pyronaut.test-resources]\n"
+                "enabled = false\n",
+                encoding="utf-8",
+            )
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["--tui", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, len(executed))
+        self.assertIn("--native-dev-executable", executed[0][0])
+        self.assertIn(str(native_dev), executed[0][0])
+        native_command_names = [
+            executed[0][0][index + 1]
+            for index, token in enumerate(executed[0][0])
+            if token == "--native-command"
+        ]
+        self.assertEqual(["validate-config", "install", "process", "run", "test"], native_command_names)
 
     def test_tui_help_delegates_to_tui_executable_help(self):
         executed = []

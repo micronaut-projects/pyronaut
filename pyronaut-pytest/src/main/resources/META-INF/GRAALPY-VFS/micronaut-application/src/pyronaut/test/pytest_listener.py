@@ -13,6 +13,7 @@ import java
 import inspect
 from typing import get_origin, get_args
 
+PytestFunctionInvoker = java.type("io.micronaut.test.pytest.execution.PytestFunctionInvoker")
 
 _INTERNAL_TRACE_MARKERS = (
     "com.oracle.truffle.",
@@ -87,6 +88,39 @@ def _filter_internal_traceback_frames(text: str) -> str:
     return "\n".join(filtered)
 
 
+def _compact_assertion_failure(result) -> str:
+    if isinstance(result, str):
+        filtered_stack = _filter_internal_traceback_frames(result)
+        lines = [line.rstrip() for line in filtered_stack.splitlines() if line.strip()]
+        return lines[0] if lines else "Python test function failed"
+    message = getattr(result, "message", None)
+    stack = getattr(result, "stack", None)
+    if stack:
+        filtered_stack = _filter_internal_traceback_frames(stack)
+        lines = [line.rstrip() for line in filtered_stack.splitlines() if line.strip()]
+        if lines:
+            return "\n".join(lines)
+    return message or getattr(result, "exceptionClass", None) or "Python test function failed"
+
+
+def _is_foreign_exception(result) -> bool:
+    exception_class = getattr(result, "exceptionClass", None) or ""
+    stack = getattr(result, "stack", None) or ""
+    return (
+        "ForeignException" in exception_class
+        or "PolyglotException" in exception_class
+        or "ForeignException" in stack
+        or "org.graalvm.polyglot" in stack
+    )
+
+
+def _format_call_failure(result) -> str:
+    message = getattr(result, "message", None)
+    if _is_foreign_exception(result):
+        return message or "Java exception raised during pytest execution"
+    return _compact_assertion_failure(result)
+
+
 class _ExpectedFailure:
     def __init__(self, reason: str):
         self.reason = reason or "Expected failure"
@@ -137,7 +171,7 @@ class MicronautPytestPlugin:
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_pyfunc_call(self, pyfuncitem):
-        """Run Python test functions with a Java exception guard before pytest wraps failures."""
+        """Run Python test functions behind the Java foreign-exception boundary."""
         testfunction = pyfuncitem.obj
         if inspect.iscoroutinefunction(testfunction):
             return None
@@ -149,18 +183,11 @@ class MicronautPytestPlugin:
             arg: pyfuncitem.funcargs[arg]
             for arg in fixtureinfo.argnames
         }
-        PytestMicronautExtension = java.type("io.micronaut.test.pytest.extension.PytestMicronautExtension")
-        result = PytestMicronautExtension.invokeTestFunction(lambda: testfunction(**testargs))
-        error = result.getError()
-        if error:
-            raise AssertionError(error) from None
-        return_value = result.getReturnValue()
-        if return_value:
-            pytest.fail(
-                "Expected test function to return None, but it returned "
-                f"{return_value}. Tests must use assert instead of return.",
-                pytrace=False
-            )
+
+        result = PytestFunctionInvoker.call(lambda: testfunction(**testargs))
+        if getattr(result, "success", False):
+            return True
+        pytest.fail(_format_call_failure(result), pytrace=False)
         return True
 
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
