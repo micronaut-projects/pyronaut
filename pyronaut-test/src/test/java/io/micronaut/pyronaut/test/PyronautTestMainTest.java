@@ -392,12 +392,13 @@ class PyronautTestMainTest {
         Path viewsDir = project.resolve("views");
         Path testResourcesDir = project.resolve("src/integration/resources");
         Path testFixturesDir = project.resolve("src/integration/fixtures");
-        Path bundledPytestJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-pytest-1.0.jar");
-        Path bundledLogbackJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-logback-1.0.jar");
-        Path contextJar = project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-context/1.0/micronaut-context-1.0.jar");
-        Path bundledHttpNettyJar = project.resolve("__pyronaut__/launcher-provided/micronaut-http-netty-1.0.jar");
+        String fixtureVersion = "fixture-version";
+        Path bundledPytestJar = launcherProvidedArtifact(project, "micronaut-pyronaut-pytest");
+        Path bundledLogbackJar = launcherProvidedArtifact(project, "micronaut-pyronaut-logback");
+        Path contextJar = mavenArtifact(project, "io/micronaut", "micronaut-context", fixtureVersion);
+        Path bundledHttpNettyJar = launcherProvidedArtifact(project, "micronaut-http-netty");
         Path bundledNettyJar = project.resolve("__pyronaut__/launcher-provided/netty-transport-fixture.jar");
-        Path testHttpClientJar = project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-http-client/1.0/micronaut-http-client-1.0.jar");
+        Path testHttpClientJar = mavenArtifact(project, "io/micronaut", "micronaut-http-client", fixtureVersion);
         Files.createDirectories(classesDir);
         Files.createDirectories(configDir);
         Files.createDirectories(viewsDir);
@@ -568,6 +569,20 @@ class PyronautTestMainTest {
         } else {
             System.setProperty(name, value);
         }
+    }
+
+    private static Path launcherProvidedArtifact(Path project, String artifactId) {
+        return project.resolve("__pyronaut__/launcher-provided")
+            .resolve(artifactId)
+            .resolve(artifactId + ".jar");
+    }
+
+    private static Path mavenArtifact(Path project, String groupPath, String artifactId, String version) {
+        return project.resolve("__pyronaut__/m2-repository")
+            .resolve(groupPath)
+            .resolve(artifactId)
+            .resolve(version)
+            .resolve(artifactId + "-" + version + ".jar");
     }
 
     public static final class PassingTest {

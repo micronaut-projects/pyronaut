@@ -165,7 +165,6 @@ public final class PyronautDevMain implements Callable<Integer> {
             while (input.read() != -1) {
                 // Fully consume the stream to verify the resource is readable.
             }
-            System.out.println("System resource found: " + resource);
             return SUCCESS;
         } catch (IOException e) {
             System.err.println("Unable to read system resource " + resource + ": " + e.getMessage());
@@ -181,20 +180,14 @@ public final class PyronautDevMain implements Callable<Integer> {
         try {
             ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
             Class<?> loadedClass = Class.forName(className, false, systemClassLoader);
-            System.out.println("System class loaded: " + className + " via " + loadedClass.getClassLoader());
-            if (loadedClass.getProtectionDomain() != null && loadedClass.getProtectionDomain().getCodeSource() != null) {
-                System.out.println("System class code source: " + loadedClass.getProtectionDomain().getCodeSource().getLocation());
-            }
             String resource = System.getProperty(VERIFY_SYSTEM_CLASS_RESOURCE);
             if (resource != null && !resource.isBlank()) {
                 URL resourceUrl = loadedClass.getResource(resource);
-                System.out.println("System class resource URL: " + resourceUrl);
                 if (resourceUrl != null) {
                     try (InputStream input = resourceUrl.openStream()) {
                         while (input.read() != -1) {
                             // Fully consume the stream to verify the URL is readable.
                         }
-                        System.out.println("System class resource URL readable: " + resource);
                     }
                 }
                 try (InputStream input = loadedClass.getResourceAsStream(resource)) {
@@ -208,7 +201,6 @@ public final class PyronautDevMain implements Callable<Integer> {
                 }
             }
             Class.forName(className, true, systemClassLoader);
-            System.out.println("System class initialized: " + className + " via " + loadedClass.getClassLoader());
             return SUCCESS;
         } catch (Throwable e) {
             System.err.println("Unable to initialize system class " + className + ": " + e.getMessage());

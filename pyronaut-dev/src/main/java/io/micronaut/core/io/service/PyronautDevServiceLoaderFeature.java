@@ -25,16 +25,26 @@ import java.util.Set;
 /**
  * Pyronaut-dev native-image service loader feature.
  *
- * <p>Most Micronaut services are safe and useful to bake into the image. Environment property
- * loaders and expression resolvers are intentionally left dynamic so the launcher can discover
- * providers from the current application classloader, including user test-resources modules.</p>
+ * <p>Most Micronaut services are safe and useful to bake into the image. Extension points used
+ * while processing or running an application are intentionally left dynamic so the launcher can
+ * discover providers from the current application classloader.</p>
  */
 @Internal
 public final class PyronautDevServiceLoaderFeature extends ServiceLoaderFeature {
     private static final Set<String> DYNAMIC_SERVICES = Set.of(
+        "io.micronaut.context.ApplicationContextConfigurer",
         "io.micronaut.context.env.PropertySourceLoader",
+        "io.micronaut.context.env.PropertySourceImporter",
         "io.micronaut.context.env.PropertyExpressionResolver",
-        "io.micronaut.data.processor.visitors.finders.MethodMatcher"
+        "io.micronaut.context.python.TargetTypeMapping",
+        "io.micronaut.core.convert.TypeConverterRegistrar",
+        "io.micronaut.data.processor.visitors.finders.MethodMatcher",
+        "io.micronaut.inject.annotation.AnnotatedElementValidator",
+        "io.micronaut.inject.visitor.BeanElementVisitor",
+        "io.micronaut.inject.visitor.PackageElementVisitor",
+        "io.micronaut.inject.visitor.TypeElementVisitor",
+        "io.micronaut.serde.config.naming.PropertyNamingStrategy",
+        "io.micronaut.sourcegen.generator.SourceGenerator"
     );
 
     @Override
