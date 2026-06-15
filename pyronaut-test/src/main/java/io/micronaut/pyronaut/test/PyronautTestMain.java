@@ -253,7 +253,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                         }
                     }
                     requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(classpathRoots));
-                    Optional<String> pytestTests = buildPytestTestsParameter(tests);
+                    Optional<String> pytestTests = buildPytestTestsParameter(normalizePytestTestSelectors(root, resolvedTestsDir, tests));
                     if (Files.isDirectory(resolvedPytestSourceDir)) {
                         List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
                         List<Path> selectedFiles = mapToPytestSourceFiles(resolvedTestsDir, resolvedPytestSourceDir, explicitFiles);
@@ -690,6 +690,35 @@ public final class PyronautTestMain implements Callable<Integer> {
         return Optional.of(String.join("|", cleaned));
     }
 
+    static List<String> normalizePytestTestSelectors(Path projectRoot, Path resolvedTestsDir, List<String> rawSelectors) {
+        if (rawSelectors == null || rawSelectors.isEmpty()) {
+            return List.of();
+        }
+        List<String> normalized = new ArrayList<>();
+        for (String raw : rawSelectors) {
+            if (raw == null) {
+                continue;
+            }
+            String value = raw.trim();
+            int nodeIndex = value.indexOf("::");
+            String selector = nodeIndex >= 0 ? value.substring(0, nodeIndex) : value;
+            String nodeSuffix = nodeIndex >= 0 ? value.substring(nodeIndex) : "";
+            if (selector.endsWith(".py") && !selector.contains("*") && !selector.contains("?")) {
+                Path candidate = toProjectPath(projectRoot, resolvedTestsDir, selector).normalize();
+                try {
+                    if (candidate.startsWith(resolvedTestsDir.normalize())) {
+                        normalized.add(toForwardSlash(resolvedTestsDir.normalize().relativize(candidate)) + nodeSuffix);
+                        continue;
+                    }
+                } catch (IllegalArgumentException ignored) {
+                    // Keep the user-provided selector when it is not under the configured tests directory.
+                }
+            }
+            normalized.add(raw);
+        }
+        return List.copyOf(normalized);
+    }
+
     static List<Path> resolveDirectTestFileSelectors(Path projectRoot, Path resolvedTestsDir, List<String> rawSelectors) {
         if (rawSelectors == null || rawSelectors.isEmpty()) {
             return List.of();
@@ -729,6 +758,10 @@ public final class PyronautTestMain implements Callable<Integer> {
             }
         }
         return List.copyOf(resolved);
+    }
+
+    private static String toForwardSlash(Path path) {
+        return path.toString().replace('\\', '/');
     }
 
     static List<Path> mapToPytestSourceFiles(Path resolvedTestsDir, Path pytestSourceDir, List<Path> originalFiles) {

@@ -1,0 +1,60 @@
+= VS Code Test Explorer Extension
+
+Pyronaut includes a small VS Code extension for projects whose tests must run through `pyronaut test`.
+The extension contributes a Pyronaut test controller to VS Code Test Explorer and does not use the Python extension's pytest runner.
+
+The extension is currently installed manually from this repository.
+Build the VSIX:
+
+[source,bash]
+----
+./gradlew :micronaut-pyronaut-vscode:packageVsix
+----
+
+Install the generated package:
+
+[source,bash]
+----
+code --install-extension pyronaut-vscode/build/vsix/pyronaut-vscode-*.vsix
+----
+
+Open a Pyronaut project in VS Code and use the Testing view.
+The extension discovers pytest-style functions from the configured Pyronaut Python test source directory and runs selections with `pyronaut test`.
+
+== Configuration
+
+The extension reads the Pyronaut test source directory from:
+
+[source,toml]
+----
+[tool.pyronaut.sources]
+python-test = "tests"
+----
+
+The default test source directory is `tests`.
+
+The extension settings are:
+
+- `pyronaut.executable`: path to the Pyronaut executable. Defaults to `pyronaut`.
+- `pyronaut.test.extraArgs`: additional arguments appended to `pyronaut test` before test selectors.
+
+== Python Extension Pytest Support
+
+Do not enable VS Code Python pytest discovery for Micronaut-backed Pyronaut tests that import Java-backed APIs such as `micronaut.runtime.server`.
+Those tests need the Pyronaut processed classpath, test resources, and GraalPy runtime bootstrapping provided by `pyronaut test`.
+
+If VS Code Python pytest discovery has already been enabled, disable it in `.vscode/settings.json`:
+
+[source,json]
+----
+{
+  "python.testing.pytestEnabled": false
+}
+----
+
+== Current Limitations
+
+- The extension is not yet published to the VS Code Marketplace.
+- Installation is manual through the generated VSIX.
+- Debug and coverage profiles are not implemented yet.
+- The extension expects `pyronaut` to be available on `PATH` unless `pyronaut.executable` is configured.

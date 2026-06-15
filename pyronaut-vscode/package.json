@@ -1,0 +1,61 @@
+{
+  "name": "pyronaut-vscode",
+  "displayName": "Pyronaut",
+  "description": "Pyronaut Test Explorer integration for VS Code.",
+  "version": "0.1.0",
+  "publisher": "micronaut",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Testing"
+  ],
+  "activationEvents": [
+    "workspaceContains:pyproject.toml",
+    "onCommand:pyronaut.refreshTests",
+    "onCommand:pyronaut.openTestReport"
+  ],
+  "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Pyronaut test integration executes pyronaut test in the workspace."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "pyronaut.refreshTests",
+        "title": "Pyronaut: Refresh Tests"
+      },
+      {
+        "command": "pyronaut.openTestReport",
+        "title": "Pyronaut: Open Test Report"
+      }
+    ],
+    "configuration": {
+      "title": "Pyronaut",
+      "properties": {
+        "pyronaut.executable": {
+          "type": "string",
+          "default": "pyronaut",
+          "description": "Path to the Pyronaut executable used for Test Explorer runs."
+        },
+        "pyronaut.test.extraArgs": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional arguments appended to pyronaut test before selector arguments."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node scripts/compile.js",
+    "test": "node --test test/*.test.js",
+    "package:vsix": "node scripts/package-vsix.js"
+  }
+}
