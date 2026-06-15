@@ -75,11 +75,14 @@ public final class PyronautDevTestResourcesPropertyExpressionResolver implements
     }
 
     private static ClassLoader resolveClassLoader(PropertyResolver propertyResolver) {
+        ClassLoader fallback;
         if (propertyResolver instanceof Environment environment) {
-            return environment.getClassLoader();
+            fallback = environment.getClassLoader();
+        } else {
+            ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+            fallback = contextClassLoader != null ? contextClassLoader : PyronautDevTestResourcesPropertyExpressionResolver.class.getClassLoader();
         }
-        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
-        return contextClassLoader != null ? contextClassLoader : PyronautDevTestResourcesPropertyExpressionResolver.class.getClassLoader();
+        return PyronautDevTestResourcesClassLoader.resolve(fallback);
     }
 
     private static Optional<PropertyExpressionResolver> loadDelegate(ClassLoader classLoader) {

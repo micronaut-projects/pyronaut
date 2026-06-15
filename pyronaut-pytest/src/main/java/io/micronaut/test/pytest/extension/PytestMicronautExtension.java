@@ -18,20 +18,21 @@ package io.micronaut.test.pytest.extension;
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.DefaultApplicationContextBuilder;
-import io.micronaut.context.RuntimeBeanDefinition;
 import io.micronaut.context.annotation.Property;
 import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.core.annotation.NonNull;
 import io.micronaut.core.annotation.Nullable;
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.core.convert.TypeConverterRegistrar;
 import io.micronaut.core.io.ResourceLoader;
 import io.micronaut.core.io.scan.ClassClassPathResourceLoader;
 import io.micronaut.core.io.scan.ClassPathResourceLoader;
 import io.micronaut.core.io.scan.CombinedClassPathResourceLoader;
 import io.micronaut.core.io.service.SoftServiceLoader;
-import io.micronaut.core.type.Argument;
 import io.micronaut.inject.qualifiers.Qualifiers;
-import io.micronaut.scheduling.TaskExecutors;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.Sql;
 import io.micronaut.test.annotation.TransactionMode;
@@ -59,10 +60,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import javax.sql.DataSource;
 
@@ -73,9 +70,9 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
 
     public static final String ID = "_micronaut_test_extension";
     private static final Logger LOG = LoggerFactory.getLogger(PytestMicronautExtension.class);
-    private static final int DEFAULT_SCHEDULED_EXECUTOR_THREADS = 2;
-    private static final String NETTY_EXECUTOR_NAME = "netty";
     private final List<SqlConfig> sqlConfigs;
+    @Nullable
+    private BeanIntrospectionsProvider previousBeanIntrospectionsProvider;
 
     public PytestMicronautExtension(Map<String, Object> pytestProperties, Value node) {
         this(pytestProperties, node, List.of());
@@ -231,8 +228,10 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     @Override
     public void beforeClass(Value context, Class<?> testClass, @Nullable MicronautTestValue testAnnotationValue) {
         try {
+            installNativeBeanIntrospectionsProvider();
             super.beforeClass(context, testClass, testAnnotationValue);
         } catch (RuntimeException e) {
+            restoreNativeBeanIntrospectionsProvider();
             LOG.error("Error PytestMicronautExtension beforeClass: {}", e.getMessage(), e);
             throw new PythonAssertionError(buildFailureMessage(e), e);
         }
@@ -255,10 +254,6 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         }
         if (ImageInfo.inImageRuntimeCode()) {
             builder.beanDefinitionsProvider(new ContextClassLoaderBeanDefinitionsProvider());
-            builder.beanDefinitions(
-                nativeScheduledExecutorDefinition(),
-                nativeNettyThreadFactoryDefinition()
-            );
         }
     }
 
@@ -280,46 +275,6 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         }
     }
 
-    static RuntimeBeanDefinition<ExecutorService> nativeScheduledExecutorDefinition() {
-        return RuntimeBeanDefinition.builder(
-                Argument.of(ExecutorService.class),
-                () -> Executors.newScheduledThreadPool(DEFAULT_SCHEDULED_EXECUTOR_THREADS)
-            )
-            .named(TaskExecutors.SCHEDULED)
-            .singleton(true)
-            .exposedTypes(ExecutorService.class)
-            .build();
-    }
-
-    static RuntimeBeanDefinition<ThreadFactory> nativeNettyThreadFactoryDefinition() {
-        return RuntimeBeanDefinition.builder(
-                Argument.of(ThreadFactory.class),
-                () -> new NamedThreadFactory(NETTY_EXECUTOR_NAME)
-            )
-            .named(NETTY_EXECUTOR_NAME)
-            .singleton(true)
-            .exposedTypes(ThreadFactory.class)
-            .build();
-    }
-
-    private static final class NamedThreadFactory implements ThreadFactory {
-        private final AtomicInteger threadNumber = new AtomicInteger(1);
-        private final String namePrefix;
-
-        private NamedThreadFactory(String name) {
-            namePrefix = name + "-thread-";
-        }
-
-        @Override
-        public Thread newThread(Runnable runnable) {
-            Thread thread = new Thread(runnable, namePrefix + threadNumber.getAndIncrement());
-            if (thread.isDaemon()) {
-                thread.setDaemon(false);
-            }
-            return thread;
-        }
-    }
-
     @Override
     public void afterClass(Value context) {
         try {
@@ -328,6 +283,22 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         } catch (RuntimeException e) {
             LOG.error("Error PytestMicronautExtension afterClass: " + e.getMessage(), e);
             throw e;
+        } finally {
+            restoreNativeBeanIntrospectionsProvider();
+        }
+    }
+
+    private void installNativeBeanIntrospectionsProvider() {
+        if (ImageInfo.inImageRuntimeCode() && previousBeanIntrospectionsProvider == null) {
+            previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
+        }
+    }
+
+    private void restoreNativeBeanIntrospectionsProvider() {
+        BeanIntrospectionsProvider previous = previousBeanIntrospectionsProvider;
+        if (previous != null) {
+            BeanIntrospectionProviders.set(previous);
+            previousBeanIntrospectionsProvider = null;
         }
     }
 

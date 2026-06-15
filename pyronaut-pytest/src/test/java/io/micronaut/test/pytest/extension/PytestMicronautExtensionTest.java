@@ -1,10 +1,7 @@
 package io.micronaut.test.pytest.extension;
 
-import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.context.python.PythonContextRuntime;
-import io.micronaut.inject.qualifiers.Qualifiers;
-import io.micronaut.scheduling.TaskExecutors;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.TransactionMode;
 import io.micronaut.test.pytest.execution.JUnitPytestTestListener;
@@ -21,8 +18,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadFactory;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -119,35 +114,6 @@ class PytestMicronautExtensionTest {
             assertSame(threadClassLoader, PytestMicronautExtension.resolveApplicationClassLoader());
         } finally {
             thread.setContextClassLoader(previous);
-        }
-    }
-
-    @Test
-    void nativeScheduledExecutorDefinitionRegistersNamedExecutorService() {
-        try (ApplicationContext context = ApplicationContext.builder()
-            .beanDefinitionsProvider(classLoader -> List.of())
-            .eventsEnabled(false)
-            .beanDefinitions(PytestMicronautExtension.nativeScheduledExecutorDefinition())
-            .start()) {
-            ExecutorService executorService = context.getBean(ExecutorService.class, Qualifiers.byName(TaskExecutors.SCHEDULED));
-            assertNotNull(executorService);
-        }
-    }
-
-    @Test
-    void nativeNettyThreadFactoryDefinitionRegistersNamedThreadFactory() {
-        try (ApplicationContext context = ApplicationContext.builder()
-            .beanDefinitionsProvider(classLoader -> List.of())
-            .eventsEnabled(false)
-            .beanDefinitions(PytestMicronautExtension.nativeNettyThreadFactoryDefinition())
-            .start()) {
-            ThreadFactory threadFactory = context.getBean(ThreadFactory.class, Qualifiers.byName("netty"));
-            Thread thread = threadFactory.newThread(() -> {
-            });
-
-            assertNotNull(threadFactory);
-            assertTrue(thread.getName().startsWith("netty-thread-"));
-            assertFalse(thread.isDaemon());
         }
     }
 

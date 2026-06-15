@@ -15,7 +15,11 @@
  */
 package io.micronaut.pyronaut.run;
 
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.runtime.Micronaut;
@@ -122,9 +126,11 @@ public final class PyronautRunMain implements Callable<Integer> {
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+        BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
             enableContextClassLoaderIntrospections();
+            previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Class<?> loadedClass = loadConfiguredMainClass(applicationClassLoader);
             contextBootstrapper.bootstrap(applicationClassLoader);
@@ -137,6 +143,9 @@ public final class PyronautRunMain implements Callable<Integer> {
             return 6;
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+            if (previousBeanIntrospectionsProvider != null) {
+                BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
+            }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
         }
     }

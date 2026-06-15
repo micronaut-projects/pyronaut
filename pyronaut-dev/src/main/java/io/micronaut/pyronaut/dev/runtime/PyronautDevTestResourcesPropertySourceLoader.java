@@ -74,11 +74,14 @@ public final class PyronautDevTestResourcesPropertySourceLoader implements Prope
     }
 
     private static ClassLoader resolveClassLoader(ResourceLoader resourceLoader) {
+        ClassLoader fallback;
         if (resourceLoader instanceof Environment environment) {
-            return environment.getClassLoader();
+            fallback = environment.getClassLoader();
+        } else {
+            ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+            fallback = contextClassLoader != null ? contextClassLoader : PyronautDevTestResourcesPropertySourceLoader.class.getClassLoader();
         }
-        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
-        return contextClassLoader != null ? contextClassLoader : PyronautDevTestResourcesPropertySourceLoader.class.getClassLoader();
+        return PyronautDevTestResourcesClassLoader.resolve(fallback);
     }
 
     private static Optional<PropertySourceLoader> loadDelegate(ClassLoader classLoader) {

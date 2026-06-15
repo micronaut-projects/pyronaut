@@ -17,9 +17,12 @@ package io.micronaut.pyronaut.dev;
 
 import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.install.PyronautInstallMain;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
-import io.micronaut.pyronaut.run.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.run.PyronautRunMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
@@ -358,6 +361,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+        BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), PyronautDevMain.class.getClassLoader())) {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(buildDependencies))
@@ -366,6 +370,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
             enableContextClassLoaderIntrospections();
+            previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Class<?> mainClass = applicationClassLoader.loadClass(DEFAULT_MAIN_CLASS);
             GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader);
@@ -382,6 +387,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             return SUCCESS;
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+            if (previousBeanIntrospectionsProvider != null) {
+                BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
+            }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
         }
     }
@@ -401,6 +409,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
+        BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), PyronautDevMain.class.getClassLoader())) {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(buildDependencies))
@@ -409,6 +418,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
             enableContextClassLoaderIntrospections();
+            previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             defaultTestServerPort();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Path testsDir = stagingRoot.resolve(DEFAULT_TESTS_DIR);
@@ -428,6 +438,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             return listener.getSummary().getTotalFailureCount() == 0 ? SUCCESS : 7;
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+            if (previousBeanIntrospectionsProvider != null) {
+                BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
+            }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
             restoreSystemProperty(MICRONAUT_SERVER_PORT, previousServerPortProperty);
         }

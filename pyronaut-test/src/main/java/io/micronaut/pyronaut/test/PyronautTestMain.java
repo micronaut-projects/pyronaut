@@ -16,6 +16,9 @@
 package io.micronaut.pyronaut.test;
 
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
@@ -183,9 +186,11 @@ public final class PyronautTestMain implements Callable<Integer> {
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         Path resolvedPytestSourceDir = resolvePytestSourceDir(root, resolvedTestsDir);
         String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
+        BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
             enableContextClassLoaderIntrospections();
+            previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             defaultTestServerPort();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             try {
@@ -264,6 +269,9 @@ public final class PyronautTestMain implements Callable<Integer> {
             return 7;
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+            if (previousBeanIntrospectionsProvider != null) {
+                BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
+            }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
             restoreSystemProperty(MICRONAUT_SERVER_PORT, previousServerPortProperty);
         }

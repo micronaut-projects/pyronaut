@@ -1134,15 +1134,67 @@ fun buildFixtureApplicationClasspathEntries(): List<String> {
     return classpathEntries.distinct()
 }
 
-fun fixtureApplicationClasspathEntriesWithoutLauncherProvidedJars(): List<String> {
-    val bundledVfsJarNames = delegateLibEntries(pyronautDevExecutable.get().asFile)
-        .map { java.io.File(it) }
-        .filter(::containsGraalPyVirtualFileSystem)
-        .map(java.io.File::getName)
+fun fixtureApplicationClasspathEntriesWithoutDuplicateVfsJars(): List<String> {
+    val bundledVfsJarNames = nativeLauncherProvidedJarNames()
+        .filter { jarName -> containsGraalPyVirtualFileSystem(pyronautDevExecutable.get().asFile.parentFile.parentFile.resolve("lib").resolve(jarName)) }
         .toSet()
     return buildFixtureApplicationClasspathEntries()
         .filterNot { entry -> bundledVfsJarNames.contains(java.io.File(entry).name) }
         .distinct()
+}
+
+fun nativeFixtureApplicationClasspathEntries(): List<String> {
+    val launcherProvidedJarNames = nativeLauncherProvidedJarNames()
+    val launcherProvidedArtifactIds = nativeLauncherProvidedArtifactIds()
+    return fixtureApplicationClasspathEntriesWithoutDuplicateVfsJars()
+        .filterNot { entry ->
+            val fileName = java.io.File(entry).name
+            val artifactId = versionedJarArtifactId(fileName)
+            isNativeTestResourcesClientArtifact(fileName) ||
+                launcherProvidedJarNames.contains(fileName) ||
+                launcherProvidedArtifactIds.contains(artifactId)
+        }
+        .distinct()
+}
+
+fun nativeTestResourcesClientClasspathEntries(): List<String> {
+    val cacheDir = fixtureAppDir.dir("__pyronaut__").asFile
+    return buildList {
+        addAll(readManifestEntries(cacheDir.resolve("resolved-test-dependencies")))
+        val runtimeManifest = cacheDir.resolve("resolved-runtime-dependencies")
+        if (runtimeManifest.isFile) {
+            addAll(readManifestEntries(runtimeManifest))
+        }
+    }
+        .filter { entry -> isNativeTestResourcesClientArtifact(java.io.File(entry).name) }
+        .distinct()
+}
+
+fun nativeLauncherProvidedJarNames(): Set<String> {
+    return delegateLibEntries(pyronautDevExecutable.get().asFile)
+        .map { java.io.File(it).name }
+        .toSet()
+}
+
+fun nativeLauncherProvidedArtifactIds(): Set<String> {
+    return nativeLauncherProvidedJarNames()
+        .mapNotNull(::versionedJarArtifactId)
+        .toSet()
+}
+
+fun versionedJarArtifactId(fileName: String): String? {
+    if (!fileName.endsWith(".jar")) {
+        return null
+    }
+    val baseName = fileName.removeSuffix(".jar")
+    val versionSeparator = Regex("-(?=\\d)").find(baseName) ?: return null
+    return baseName.substring(0, versionSeparator.range.first)
+}
+
+fun isNativeTestResourcesClientArtifact(fileName: String): Boolean {
+    return fileName.startsWith("micronaut-test-resources-client-") ||
+        fileName.startsWith("micronaut-test-resources-core-") ||
+        fileName.startsWith("micronaut-test-resources-codec-")
 }
 
 fun containsGraalPyVirtualFileSystem(file: java.io.File): Boolean {
@@ -1171,18 +1223,21 @@ fun testResourcesJvmArgs(testResourcesEnv: Map<String, String>): List<String> {
 }
 
 fun buildPyronautTestCommand(testResourcesEnv: Map<String, String> = emptyMap()): List<String> {
-    val reducedClasspathEntries = fixtureApplicationClasspathEntriesWithoutLauncherProvidedJars().toMutableList()
     if (useNativeExecutables.get()) {
+        val nativeClasspathEntries = nativeFixtureApplicationClasspathEntries()
+        val testResourcesClientClasspathEntries = nativeTestResourcesClientClasspathEntries()
         return listOf(
             pyronautTestExecutableFile().absolutePath,
             *nativeJavaHomeJvmArgs().toTypedArray(),
-            "-Djava.class.path=${reducedClasspathEntries.joinToString(separator = java.io.File.pathSeparator)}",
+            "-Djava.class.path=${nativeClasspathEntries.joinToString(separator = java.io.File.pathSeparator)}",
+            "-Dpyronaut.dev.test.resources.client.classpath=${testResourcesClientClasspathEntries.joinToString(separator = java.io.File.pathSeparator)}",
             *testResourcesJvmArgs(testResourcesEnv).toTypedArray(),
             "test",
             "--project-dir",
             fixtureAppDir.asFile.absolutePath,
         )
     }
+    val reducedClasspathEntries = fixtureApplicationClasspathEntriesWithoutDuplicateVfsJars().toMutableList()
     reducedClasspathEntries += delegateLibEntries(pyronautDevExecutable.get().asFile)
 
     return listOf(

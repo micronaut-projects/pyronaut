@@ -20,7 +20,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Callable, NamedTuple, Protocol, Sequence
+from typing import Callable, Iterable, NamedTuple, Protocol, Sequence
 
 SUCCESS = 0
 USAGE_ERROR = 2
@@ -569,8 +569,15 @@ def _read_test_delegate_dependency_entries(cache_dir: Path) -> list[str]:
     ]
 
 
-def _build_native_application_classpath(command: str, project_dir: Path) -> str:
-    return os.pathsep.join(_dedupe_classpath_entries(_build_native_application_classpath_entries(command, project_dir)))
+def _build_native_application_classpath(command: str, project_dir: Path, launcher_executable: str | None = None) -> str:
+    return os.pathsep.join(
+        _dedupe_classpath_entries(
+            _filter_native_launcher_provided_entries(
+                _build_native_application_classpath_entries(command, project_dir),
+                launcher_executable,
+            )
+        )
+    )
 
 
 def _build_native_application_classpath_entries(command: str, project_dir: Path) -> list[str]:
@@ -628,6 +635,70 @@ def _dedupe_classpath_entries(entries: Sequence[str]) -> list[str]:
     return deduped
 
 
+def _filter_native_launcher_provided_entries(entries: Sequence[str], launcher_executable: str | None) -> list[str]:
+    launcher_provided_names = _native_launcher_provided_file_names(launcher_executable)
+    launcher_provided_artifact_ids = _versioned_jar_artifact_ids(launcher_provided_names)
+    return [
+        entry
+        for entry in entries
+        if not _is_native_launcher_provided_artifact(entry, launcher_provided_names, launcher_provided_artifact_ids)
+    ]
+
+
+def _native_launcher_provided_file_names(launcher_executable: str | None) -> set[str]:
+    if not launcher_executable:
+        return set()
+    executable_path = Path(launcher_executable)
+    candidate_lib_dirs = [
+        executable_path.parent.parent / "lib",
+        executable_path.parent.parent.parent / "lib",
+    ]
+    for lib_dir in candidate_lib_dirs:
+        if lib_dir.is_dir():
+            return {entry.name for entry in lib_dir.iterdir() if entry.is_file() and entry.suffix == ".jar"}
+    return set()
+
+
+def _versioned_jar_artifact_ids(file_names: Iterable[str]) -> set[str]:
+    return {
+        artifact_id
+        for file_name in file_names
+        if (artifact_id := _versioned_jar_artifact_id(file_name)) is not None
+    }
+
+
+def _versioned_jar_artifact_id(file_name: str) -> str | None:
+    if not file_name.endswith(".jar"):
+        return None
+    base_name = file_name.removesuffix(".jar")
+    for index, character in enumerate(base_name):
+        if character == "-" and index + 1 < len(base_name) and base_name[index + 1].isdigit():
+            return base_name[:index]
+    return None
+
+
+def _is_native_launcher_provided_artifact(
+    entry: str,
+    launcher_provided_names: set[str],
+    launcher_provided_artifact_ids: set[str],
+) -> bool:
+    file_name = Path(entry).name
+    if _is_native_test_resources_client_artifact(file_name):
+        return True
+    if file_name in launcher_provided_names:
+        return True
+    artifact_id = _versioned_jar_artifact_id(file_name)
+    return artifact_id in launcher_provided_artifact_ids
+
+
+def _is_native_test_resources_client_artifact(file_name: str) -> bool:
+    return (
+        file_name.startswith("micronaut-test-resources-client-")
+        or file_name.startswith("micronaut-test-resources-core-")
+        or file_name.startswith("micronaut-test-resources-codec-")
+    )
+
+
 def _is_test_launcher_provided_artifact(entry: str) -> bool:
     file_name = Path(entry).name
     return (
@@ -635,6 +706,21 @@ def _is_test_launcher_provided_artifact(entry: str) -> bool:
         or file_name.startswith("micronaut-pyronaut-logback-")
         or file_name.startswith("micronaut-pyronaut-pytest-")
     )
+
+
+def _build_native_test_resources_client_classpath(project_dir: Path) -> str:
+    cache_dir = project_dir / "__pyronaut__"
+    entries = [
+        entry
+        for manifest in (
+            cache_dir / "resolved-test-dependencies",
+            cache_dir / "resolved-runtime-dependencies",
+        )
+        if manifest.exists()
+        for entry in _read_manifest_entries(manifest)
+        if _is_native_test_resources_client_artifact(Path(entry).name)
+    ]
+    return os.pathsep.join(_dedupe_classpath_entries(entries))
 
 
 def _run_preflight(
@@ -2706,8 +2792,12 @@ def _pyronaut_dev_native_command_line(
         return None
     if command in {"run", "test"}:
         project_dir = Path(_extract_project_dir(args)).resolve()
-        classpath = _build_native_application_classpath(command, project_dir)
+        classpath = _build_native_application_classpath(command, project_dir, executable_path)
         jvm_args = [f"-Djava.class.path={classpath}"]
+        if command == "test":
+            test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
+            if test_resources_client_classpath:
+                jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
         return [executable_path, *jvm_args, command, *args]
     return [executable_path, command, *args]

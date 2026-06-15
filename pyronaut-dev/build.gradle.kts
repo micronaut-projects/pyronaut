@@ -14,6 +14,7 @@ dependencies {
 
     implementation(project(":micronaut-pyronaut-install"))
     implementation(project(":micronaut-pyronaut-processor"))
+    implementation(project(":micronaut-pyronaut-config-model"))
     implementation(project(":micronaut-pyronaut-run"))
     implementation(project(":micronaut-pyronaut-test"))
     implementation(project(":micronaut-pyronaut-validate-config"))
@@ -109,7 +110,6 @@ val nativeImageRuntimeArgs = listOf(
     "--features=io.micronaut.core.io.service.PyronautDevServiceLoaderFeature",
     "--enable-http",
     "--enable-https",
-    "-H:+ImplicitExceptionWithoutStacktraceIsFatal",
     "-H:Preserve=module=java.base,package=java.*,package=jdk.internal.*,package=sun.*,module=java.sql,package=java.sql,package=java.sql.*,package=javax.sql,module=jdk.compiler,module=java.compiler,package=io.micronaut.*,package=jakarta.annotation,package=jakarta.annotation.*,package=jakarta.inject,package=jakarta.inject.*,package=org.junit.*,package=org.opentest4j.*,package=org.objectweb.asm,package=org.objectweb.asm.*,package=com.github.javaparser,package=com.github.javaparser.*,package=org.apache.maven.*,package=org.eclipse.aether.*,package=org.codehaus.plexus.*",
     "-H:Preserve=package=java.lang.*",
     "-H:Preserve=package=java.lang.invoke.*",

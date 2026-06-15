@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.pyronaut.run;
+package io.micronaut.pyronaut.config.classloader;
 
 import io.micronaut.context.BeanDefinitionsProvider;
-import io.micronaut.context.DefaultBeanDefinitionsProvider;
-import io.micronaut.core.reflect.InstantiationUtils;
+import io.micronaut.core.io.service.MicronautMetaServiceLoaderUtils;
+import io.micronaut.core.reflect.ClassUtils;
 import io.micronaut.inject.BeanDefinitionReference;
 
 import java.io.IOException;
@@ -41,18 +41,29 @@ import java.util.stream.Stream;
 public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefinitionsProvider {
     private static final String SERVICE_PATH = "META-INF/micronaut/" + BeanDefinitionReference.class.getName();
 
-    private final BeanDefinitionsProvider delegate = new DefaultBeanDefinitionsProvider();
-
     @Override
     public List<BeanDefinitionReference<?>> provide(ClassLoader classLoader) {
         Map<String, BeanDefinitionReference<?>> references = new LinkedHashMap<>();
-        for (BeanDefinitionReference<?> reference : delegate.provide(classLoader)) {
-            references.put(reference.getName(), reference);
+        ClassLoader launcherClassLoader = ContextClassLoaderBeanDefinitionsProvider.class.getClassLoader();
+        for (BeanDefinitionReference<?> reference : discoverLauncherReferences(launcherClassLoader)) {
+            references.put(reference.getBeanDefinitionName(), reference);
         }
         for (BeanDefinitionReference<?> reference : discoverRuntimeReferences(classLoader)) {
-            references.put(reference.getName(), reference);
+            references.put(reference.getBeanDefinitionName(), reference);
         }
         return List.copyOf(references.values());
+    }
+
+    private static List<BeanDefinitionReference<?>> discoverLauncherReferences(ClassLoader classLoader) {
+        List<BeanDefinitionReference<?>> references = new ArrayList<>();
+        try {
+            for (String className : MicronautMetaServiceLoaderUtils.findMicronautMetaServiceEntries(classLoader, BeanDefinitionReference.class.getName())) {
+                addReference(className, classLoader, references, false);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to discover bean definitions from launcher classloader", e);
+        }
+        return references;
     }
 
     private static List<BeanDefinitionReference<?>> discoverRuntimeReferences(ClassLoader classLoader) {
@@ -86,7 +97,7 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
                 children
                     .filter(Files::isRegularFile)
                     .map(path -> path.getFileName().toString())
-                    .forEach(className -> addReference(className, classLoader, references));
+                    .forEach(className -> addReference(className, classLoader, references, true));
             }
         } catch (URISyntaxException e) {
             throw new IOException("Invalid bean definition service URL: " + resource, e);
@@ -95,6 +106,7 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
 
     private static void collectJarReferences(URL resource, ClassLoader classLoader, List<BeanDefinitionReference<?>> references) throws IOException {
         JarURLConnection connection = (JarURLConnection) resource.openConnection();
+        connection.setUseCaches(false);
         String prefix = connection.getEntryName();
         if (prefix == null) {
             return;
@@ -113,17 +125,26 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
                 if (name.startsWith(prefix)) {
                     String className = name.substring(prefix.length());
                     if (!className.isEmpty() && !className.contains("/")) {
-                        addReference(className, classLoader, references);
+                        addReference(className, classLoader, references, true);
                     }
                 }
             }
         }
     }
 
-    private static void addReference(String className, ClassLoader classLoader, List<BeanDefinitionReference<?>> references) {
-        Object instance = InstantiationUtils.tryInstantiate(className, classLoader).orElse(null);
-        if (instance instanceof BeanDefinitionReference<?> reference && reference.isPresent()) {
+    private static void addReference(String className, ClassLoader classLoader, List<BeanDefinitionReference<?>> references, boolean requirePresent) {
+        Object instance = instantiateReference(className, classLoader);
+        if (instance instanceof BeanDefinitionReference<?> reference && (!requirePresent || reference.isPresent())) {
             references.add(reference);
+        }
+    }
+
+    private static Object instantiateReference(String className, ClassLoader classLoader) {
+        try {
+            Class<?> type = ClassUtils.forName(className, classLoader).orElse(null);
+            return type == null ? null : type.getDeclaredConstructor().newInstance();
+        } catch (Throwable e) {
+            return null;
         }
     }
 }
