@@ -25,6 +25,7 @@ dependencies {
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
     runtimeOnly(libs.micronaut.toml)
+    runtimeOnly(mn.micronaut.http.client)
     runtimeOnly(mn.micronaut.http.server)
     runtimeOnly(mn.micronaut.http.server.netty)
     implementation(project(":micronaut-pyronaut-logback"))
@@ -107,6 +108,8 @@ val nativeImageRuntimeArgs = listOf(
     "-H:+RuntimeClassLoading",
     "-H:+AllowJRTFileSystem",
     "-H:+SharedArenaSupport",
+    "-H:-SupportCompileInIsolates",
+    "-H:Preserve=package=io.micronaut.http.netty.*",
     "--features=io.micronaut.core.io.service.PyronautDevServiceLoaderFeature",
     "--enable-http",
     "--enable-https",
