@@ -33,7 +33,8 @@ import java.util.Set;
 public final class PyronautDevServiceLoaderFeature extends ServiceLoaderFeature {
     private static final Set<String> DYNAMIC_SERVICES = Set.of(
         "io.micronaut.context.env.PropertySourceLoader",
-        "io.micronaut.context.env.PropertyExpressionResolver"
+        "io.micronaut.context.env.PropertyExpressionResolver",
+        "io.micronaut.data.processor.visitors.finders.MethodMatcher"
     );
 
     @Override

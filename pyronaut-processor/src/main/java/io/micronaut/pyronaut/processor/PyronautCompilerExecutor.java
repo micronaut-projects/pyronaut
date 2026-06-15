@@ -15,6 +15,9 @@
  */
 package io.micronaut.pyronaut.processor;
 
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.python.compiler.PyronautCompiler;
 
 import java.io.File;
@@ -46,15 +49,20 @@ interface PyronautCompilerExecutor {
             } catch (IOException e) {
                 throw new PyronautProcessorException("Failed to create target directory: " + request.targetDir(), e);
             }
-            PyronautCompiler.builder()
-                .pythonSrc(request.pythonSrc().toString())
-                .javaSrc(request.javaSrc().toString())
-                .targetDir(request.targetDir().toFile())
-                .annotationProcessorPath(toFiles(request.annotationProcessorPath()))
-                .classpath(toFiles(request.classpath()))
-                .options(request.options())
-                .build()
-                .compile();
+            BeanIntrospectionsProvider previousProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
+            try {
+                PyronautCompiler.builder()
+                    .pythonSrc(request.pythonSrc().toString())
+                    .javaSrc(request.javaSrc().toString())
+                    .targetDir(request.targetDir().toFile())
+                    .annotationProcessorPath(toFiles(request.annotationProcessorPath()))
+                    .classpath(toFiles(request.classpath()))
+                    .options(request.options())
+                    .build()
+                    .compile();
+            } finally {
+                BeanIntrospectionProviders.set(previousProvider);
+            }
         }
 
         private static List<File> toFiles(List<Path> paths) {
