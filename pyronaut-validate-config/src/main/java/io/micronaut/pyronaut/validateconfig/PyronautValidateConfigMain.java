@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.validateconfig;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import picocli.CommandLine;
 
 import java.io.IOException;
@@ -112,6 +113,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.initialize();
         int exit = new CommandLine(new PyronautValidateConfigMain()).execute(args);
         if (exit != 0) {
             System.exit(exit);

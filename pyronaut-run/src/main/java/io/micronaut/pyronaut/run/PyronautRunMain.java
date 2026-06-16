@@ -22,6 +22,7 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinition
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
@@ -411,6 +412,7 @@ public final class PyronautRunMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautRunMain()).execute(args);
         System.exit(exitCode);
     }

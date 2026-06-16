@@ -17,6 +17,7 @@ package io.micronaut.pyronaut.processor;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import picocli.CommandLine;
 
 import java.nio.file.StandardCopyOption;
@@ -269,6 +270,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautProcessorMain()).execute(args);
         System.exit(exitCode);
     }

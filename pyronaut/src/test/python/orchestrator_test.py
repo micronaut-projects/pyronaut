@@ -625,6 +625,44 @@ test-resources = "test-resources"
             self.assertEqual("token", properties["micronaut.test.resources.server.access.token"])
             self.assertEqual(["test", "--project-dir", str(project_dir)], command_line[command_line.index("test") :])
 
+    def test_test_resources_server_pyronaut_dev_native_command_includes_launcher_classpath(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_root = Path(temp_dir) / "pyronaut-dev-install"
+            native_dev = install_root / "bin" / "pyronaut-dev"
+            lib_dir = install_root / "lib"
+            native_dev.parent.mkdir(parents=True, exist_ok=True)
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            logback_jar = lib_dir / "logback-classic-1.5.32.jar"
+            test_resources_jar = lib_dir / "micronaut-pyronaut-test-resources-server-0.0.1-SNAPSHOT.jar"
+            logback_jar.write_text("", encoding="utf-8")
+            test_resources_jar.write_text("", encoding="utf-8")
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"native\"\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                command_line = cli._pyronaut_dev_native_command_line(  # noqa: SLF001 - exercising native CLI argument construction
+                    "test-resources-server",
+                    ["start", "--project-dir", str(project_dir)],
+                    self._resolver(),
+                )
+
+            self.assertIsNotNone(command_line)
+            assert command_line is not None
+            self.assertEqual(str(native_dev), command_line[0])
+            properties = self._extract_native_system_properties(command_line, "test-resources-server")
+            classpath = properties["java.class.path"].split(os.pathsep)
+            self.assertEqual([str(logback_jar.resolve()), str(test_resources_jar.resolve())], classpath)
+            self.assertEqual(
+                ["test-resources-server", "start", "--project-dir", str(project_dir)],
+                command_line[command_line.index("test-resources-server") :],
+            )
+
     def test_install_uses_jvm_delegate_when_no_bundled_native_executable(self):
         executed = []
 

@@ -657,8 +657,12 @@ def _filter_native_launcher_provided_entries(entries: Sequence[str], launcher_ex
 
 
 def _native_launcher_provided_file_names(launcher_executable: str | None) -> set[str]:
+    return {Path(entry).name for entry in _native_launcher_provided_jar_entries(launcher_executable)}
+
+
+def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> list[str]:
     if not launcher_executable:
-        return set()
+        return []
     executable_path = Path(launcher_executable)
     candidate_lib_dirs = [
         executable_path.parent.parent / "lib",
@@ -666,8 +670,12 @@ def _native_launcher_provided_file_names(launcher_executable: str | None) -> set
     ]
     for lib_dir in candidate_lib_dirs:
         if lib_dir.is_dir():
-            return {entry.name for entry in lib_dir.iterdir() if entry.is_file() and entry.suffix == ".jar"}
-    return set()
+            return [
+                str(entry.resolve())
+                for entry in sorted(lib_dir.iterdir())
+                if entry.is_file() and entry.suffix == ".jar"
+            ]
+    return []
 
 
 def _versioned_jar_artifact_ids(file_names: Iterable[str]) -> set[str]:
@@ -2879,6 +2887,10 @@ def _pyronaut_dev_native_command_line(
                 jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
         return [executable_path, *jvm_args, command, *args]
+    if command == "test-resources-server":
+        launcher_classpath = os.pathsep.join(_native_launcher_provided_jar_entries(executable_path))
+        if launcher_classpath:
+            return [executable_path, f"-Djava.class.path={launcher_classpath}", command, *args]
     return [executable_path, command, *args]
 
 

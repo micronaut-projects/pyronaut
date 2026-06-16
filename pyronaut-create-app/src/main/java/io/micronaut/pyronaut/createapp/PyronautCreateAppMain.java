@@ -23,6 +23,7 @@ import io.micronaut.projectgen.core.options.ConfigurationFormat;
 import io.micronaut.projectgen.core.options.GenericOptionsBuilder;
 import io.micronaut.projectgen.core.options.Language;
 import io.micronaut.projectgen.core.options.Options;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.projectgen.PyronautProjectSettings;
 import io.micronaut.pyronaut.projectgen.PyronautProjectSettingsContext;
 import jakarta.inject.Singleton;
@@ -322,6 +323,7 @@ public final class PyronautCreateAppMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.initialize();
         int exitCode;
         try (ApplicationContext context = ApplicationContext.run()) {
             exitCode = new CommandLine(context.getBean(PyronautCreateAppMain.class)).execute(args);
