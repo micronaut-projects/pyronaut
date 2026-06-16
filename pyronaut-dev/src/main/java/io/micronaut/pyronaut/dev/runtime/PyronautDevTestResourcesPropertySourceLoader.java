@@ -35,17 +35,24 @@ import java.util.concurrent.ConcurrentMap;
  */
 @Internal
 public final class PyronautDevTestResourcesPropertySourceLoader implements PropertySourceLoader {
+    public static final String ENABLED_PROPERTY = "pyronaut.dev.test.resources.bridge.enabled";
     private static final String DELEGATE_CLASS = "io.micronaut.testresources.client.TestResourcesClientPropertySourceLoader";
 
     private final ConcurrentMap<ClassLoader, Optional<PropertySourceLoader>> delegates = new ConcurrentHashMap<>();
 
     @Override
     public Optional<PropertySource> load(Environment environment) {
+        if (!enabled()) {
+            return Optional.empty();
+        }
         return resolveDelegate(environment).flatMap(delegate -> delegate.load(environment));
     }
 
     @Override
     public Optional<PropertySource> load(String resourceName, ResourceLoader resourceLoader) {
+        if (!enabled()) {
+            return Optional.empty();
+        }
         return resolveDelegate(resourceLoader)
             .flatMap(delegate -> delegate.load(resourceName, resourceLoader));
     }
@@ -54,6 +61,9 @@ public final class PyronautDevTestResourcesPropertySourceLoader implements Prope
     public Optional<PropertySource> loadEnv(String resourceName,
                                             ResourceLoader resourceLoader,
                                             ActiveEnvironment activeEnvironment) {
+        if (!enabled()) {
+            return Optional.empty();
+        }
         return resolveDelegate(resourceLoader)
             .flatMap(delegate -> delegate.loadEnv(resourceName, resourceLoader, activeEnvironment));
     }
@@ -96,5 +106,9 @@ public final class PyronautDevTestResourcesPropertySourceLoader implements Prope
         } catch (ReflectiveOperationException | LinkageError e) {
             throw new IllegalStateException("Failed to load test resources property source loader from application classpath", e);
         }
+    }
+
+    private static boolean enabled() {
+        return Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"));
     }
 }

@@ -43,6 +43,9 @@ public final class PyronautDevTestResourcesPropertyExpressionResolver implements
         if (!expression.startsWith(TEST_RESOURCES_PREFIX)) {
             return Optional.empty();
         }
+        if (!enabled()) {
+            return Optional.empty();
+        }
         return resolveDelegate(propertyResolver)
             .flatMap(delegate -> delegate.resolve(propertyResolver, conversionService, expression, requiredType));
     }
@@ -97,5 +100,9 @@ public final class PyronautDevTestResourcesPropertyExpressionResolver implements
         } catch (ReflectiveOperationException | LinkageError e) {
             throw new IllegalStateException("Failed to load test resources property expression resolver from application classpath", e);
         }
+    }
+
+    private static boolean enabled() {
+        return Boolean.parseBoolean(System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "true"));
     }
 }

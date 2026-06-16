@@ -35,6 +35,7 @@ public final class PyronautLauncherLogging {
     private static final String LOGBACK_NOP_STATUS_LISTENER = "ch.qos.logback.core.status.NopStatusListener";
     private static final String CONSOLE_APPENDER_NAME = "PYRONAUT_LAUNCHER_CONSOLE";
     private static final String CONSOLE_PATTERN = "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
+    private static final String APPLICATION_CONSOLE_PATTERN = "%cyan(%d{yyyy-MM-dd HH:mm:ss.SSS}) %gray([%level]) %magenta(%logger{36}): %msg%n";
 
     private PyronautLauncherLogging() {
     }
@@ -53,10 +54,29 @@ public final class PyronautLauncherLogging {
         }
     }
 
+    /**
+     * Initialize default application logging for direct source execution.
+     */
+    public static void initializeApplicationDefaults() {
+        setDefaultProperty(LOGBACK_STATUS_LISTENER, LOGBACK_NOP_STATUS_LISTENER);
+
+        ILoggerFactory loggerFactory = LoggerFactory.getILoggerFactory();
+        if (loggerFactory instanceof LoggerContext loggerContext) {
+            loggerContext.reset();
+            Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+            rootLogger.setLevel(Level.INFO);
+            rootLogger.addAppender(createConsoleAppender(loggerContext, APPLICATION_CONSOLE_PATTERN));
+        }
+    }
+
     private static ConsoleAppender<ILoggingEvent> createConsoleAppender(LoggerContext loggerContext) {
+        return createConsoleAppender(loggerContext, CONSOLE_PATTERN);
+    }
+
+    private static ConsoleAppender<ILoggingEvent> createConsoleAppender(LoggerContext loggerContext, String pattern) {
         PatternLayoutEncoder encoder = new PatternLayoutEncoder();
         encoder.setContext(loggerContext);
-        encoder.setPattern(CONSOLE_PATTERN);
+        encoder.setPattern(pattern);
         encoder.start();
 
         ConsoleAppender<ILoggingEvent> appender = new ConsoleAppender<>();

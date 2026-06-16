@@ -16,18 +16,22 @@
 package io.micronaut.pyronaut.dev;
 
 import io.micronaut.context.ApplicationContextBuilder;
+import io.micronaut.context.BeanDefinitionsProvider;
 import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.install.PyronautInstallMain;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
+import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import io.micronaut.pyronaut.run.PyronautRunMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
 import io.micronaut.pyronaut.validateconfig.PyronautValidateConfigMain;
+import io.micronaut.python.compiler.InMemoryBeanDefinitionsProvider;
 import io.micronaut.python.compiler.PyronautCompiler;
+import io.micronaut.inject.BeanDefinitionReference;
 import io.micronaut.runtime.Micronaut;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
@@ -50,6 +54,8 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -98,6 +104,17 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String VERIFY_SYSTEM_RESOURCE = "pyronaut.dev.verify-system-resource";
     private static final String VERIFY_SYSTEM_CLASS = "pyronaut.dev.verify-system-class";
     private static final String VERIFY_SYSTEM_CLASS_RESOURCE = "pyronaut.dev.verify-system-class-resource";
+    private static final String PROPERTY_SOURCE_LOADER_SERVICE = "META-INF/services/io.micronaut.context.env.PropertySourceLoader";
+    private static final String PROPERTY_EXPRESSION_RESOLVER_SERVICE = "META-INF/services/io.micronaut.context.env.PropertyExpressionResolver";
+    private static final String APPLICATION_CONTEXT_CONFIGURER_SERVICE = "META-INF/services/io.micronaut.context.ApplicationContextConfigurer";
+    private static final String TEST_RESOURCES_RESOLVER_SERVICE = "META-INF/services/io.micronaut.testresources.core.TestResourcesResolver";
+    private static final String MICRONAUT_METADATA_PREFIX = "META-INF/micronaut/";
+    private static final String TEST_RESOURCES_PACKAGE = "io.micronaut.testresources.";
+    private static final String PYRONAUT_TEST_RESOURCES_PACKAGE = "io.micronaut.pyronaut.testresources.";
+    private static final List<String> BUNDLED_TEST_RESOURCES_JARS = List.of(
+        "micronaut-test-resources-",
+        "micronaut-pyronaut-test-resources-server-"
+    );
     private static final Set<String> TOOL_COMMANDS = Set.of(
         "install",
         "process",
@@ -319,10 +336,13 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             stageConfig(invocation.configs(), stagingRoot.resolve("config"));
             applyProperties(invocation.properties(), previousProperties);
+            disableTestResourcesBridgeForSetupFreeDirectSource(invocation, previousProperties);
 
-            int install = delegateInvoker.invoke(ToolCommand.INSTALL, "--project-dir", stagingRoot.toString());
-            if (install != SUCCESS) {
-                return install;
+            if (invocation.setup() != null) {
+                int install = delegateInvoker.invoke(ToolCommand.INSTALL, "--project-dir", stagingRoot.toString());
+                if (install != SUCCESS) {
+                    return install;
+                }
             }
             return directSourceRunner.run(invocation, stagingRoot);
         } catch (IllegalArgumentException e) {
@@ -332,7 +352,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             System.err.println("Direct source launch failed: " + e.getMessage());
             return INTERNAL_ERROR;
         } finally {
-            restoreProperties(previousProperties, invocation.properties().keySet());
+            restoreProperties(previousProperties, previousProperties.keySet());
             if (stagingRoot != null) {
                 deleteDirectoryBestEffort(stagingRoot);
             }
@@ -354,7 +374,8 @@ public final class PyronautDevMain implements Callable<Integer> {
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
-        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), PyronautDevMain.class.getClassLoader())) {
+        ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
+        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(buildDependencies))
                 .classpath(toFiles(runtimeDependencies))
@@ -365,10 +386,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Class<?> mainClass = applicationClassLoader.loadClass(DEFAULT_MAIN_CLASS);
+            PyronautDevLogging.initializeApplicationLogging();
             GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader);
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
-                .beanDefinitionsProvider(new ContextClassLoaderBeanDefinitionsProvider())
+                .beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation))
                 .mainClass(mainClass);
             List<String> configLocations = toConfigLocations(invocation.configs());
             if (!configLocations.isEmpty()) {
@@ -402,7 +424,8 @@ public final class PyronautDevMain implements Callable<Integer> {
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
-        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), PyronautDevMain.class.getClassLoader())) {
+        ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
+        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(buildDependencies))
                 .classpath(toFiles(compilerClasspath))
@@ -458,10 +481,6 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static void configureDirectSource(PyronautCompiler.Builder builder, DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
         if (invocation.sources().size() == 1) {
             Path source = invocation.sources().get(0).toAbsolutePath().normalize();
-            if (Files.isRegularFile(source) && source.getFileName().toString().endsWith(".py")) {
-                builder.pythonCode(Files.readString(source));
-                return;
-            }
             if (Files.isDirectory(source)) {
                 builder.pythonSrc(source.toString());
                 return;
@@ -484,6 +503,42 @@ public final class PyronautDevMain implements Callable<Integer> {
             return developmentManifest;
         }
         return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
+    }
+
+    private static ClassLoader directSourceLauncherClassLoader(DirectSourceInvocation invocation) {
+        ClassLoader launcherClassLoader = PyronautDevMain.class.getClassLoader();
+        if (invocation.setup() != null) {
+            return launcherClassLoader;
+        }
+        return new DirectSourceLauncherClassLoader(launcherClassLoader);
+    }
+
+    private static BeanDefinitionsProvider directSourceBeanDefinitionsProvider(DirectSourceInvocation invocation) {
+        BeanDefinitionsProvider inMemoryProvider = new InMemoryBeanDefinitionsProvider();
+        BeanDefinitionsProvider contextClassLoaderProvider = new ContextClassLoaderBeanDefinitionsProvider();
+        return classLoader -> {
+            Map<String, BeanDefinitionReference<?>> references = new LinkedHashMap<>();
+            addBeanDefinitionReferences(references, inMemoryProvider.provide(classLoader), invocation);
+            addBeanDefinitionReferences(references, contextClassLoaderProvider.provide(classLoader), invocation);
+            return List.copyOf(references.values());
+        };
+    }
+
+    private static void addBeanDefinitionReferences(Map<String, BeanDefinitionReference<?>> references,
+                                                    List<BeanDefinitionReference<?>> candidates,
+                                                    DirectSourceInvocation invocation) {
+        for (BeanDefinitionReference<?> reference : candidates) {
+            if (invocation.setup() == null && isTestResourcesBeanDefinition(reference)) {
+                continue;
+            }
+            references.put(reference.getBeanDefinitionName(), reference);
+        }
+    }
+
+    private static boolean isTestResourcesBeanDefinition(BeanDefinitionReference<?> reference) {
+        String name = reference.getBeanDefinitionName();
+        return name.startsWith(TEST_RESOURCES_PACKAGE)
+            || name.startsWith(PYRONAUT_TEST_RESOURCES_PACKAGE);
     }
 
     private static List<Path> readManifest(Path manifest) throws IOException {
@@ -573,13 +628,20 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
-    private static void stageSetup(DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
-        Path pyproject = stagingRoot.resolve("pyproject.toml");
-        if (invocation.setup() != null) {
-            Files.copy(invocation.setup(), pyproject, StandardCopyOption.REPLACE_EXISTING);
+    private static void disableTestResourcesBridgeForSetupFreeDirectSource(DirectSourceInvocation invocation,
+                                                                           Map<String, String> previousProperties) {
+        if (invocation.setup() != null || System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY) != null) {
             return;
         }
-        Files.writeString(pyproject, DEFAULT_PYPROJECT);
+        previousProperties.put(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, null);
+        System.setProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "false");
+    }
+
+    private static void stageSetup(DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
+        if (invocation.setup() != null) {
+            Path pyproject = stagingRoot.resolve("pyproject.toml");
+            Files.copy(invocation.setup(), pyproject, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     private static void stageSources(List<Path> sources, Path targetDir) throws IOException {
@@ -704,6 +766,51 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
+    private static final class DirectSourceLauncherClassLoader extends ClassLoader {
+        DirectSourceLauncherClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        @Override
+        public URL getResource(String name) {
+            URL resource = super.getResource(name);
+            if (isFilteredResource(name, resource)) {
+                return null;
+            }
+            return resource;
+        }
+
+        @Override
+        public Enumeration<URL> getResources(String name) throws IOException {
+            List<URL> resources = Collections.list(super.getResources(name));
+            if (isFilteredResourceName(name)) {
+                resources = resources.stream()
+                    .filter(resource -> !isBundledTestResourcesResource(resource))
+                    .toList();
+            }
+            return Collections.enumeration(resources);
+        }
+
+        private static boolean isFilteredResource(String name, URL resource) {
+            return isFilteredResourceName(name)
+                && resource != null
+                && isBundledTestResourcesResource(resource);
+        }
+
+        private static boolean isFilteredResourceName(String name) {
+            return PROPERTY_SOURCE_LOADER_SERVICE.equals(name)
+                || PROPERTY_EXPRESSION_RESOLVER_SERVICE.equals(name)
+                || APPLICATION_CONTEXT_CONFIGURER_SERVICE.equals(name)
+                || TEST_RESOURCES_RESOLVER_SERVICE.equals(name)
+                || name.startsWith(MICRONAUT_METADATA_PREFIX);
+        }
+
+        private static boolean isBundledTestResourcesResource(URL resource) {
+            String resourceUrl = resource.toString();
+            return BUNDLED_TEST_RESOURCES_JARS.stream().anyMatch(resourceUrl::contains);
+        }
+    }
+
     record DirectSourceInvocation(boolean test,
                                   Path setup,
                                   List<Path> configs,
@@ -718,40 +825,4 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
-    private static final String DEFAULT_PYPROJECT = """
-        [project]
-        name = "pyronaut-direct-source"
-        version = "0.1.0"
-        dynamic = ["scripts"]
-
-        [build-system]
-        requires = ["setuptools", "wheel", "tomli"]
-        build-backend = "setuptools.build_meta"
-
-        [tool.pyronaut]
-        repositories = [
-          "mavenCentral",
-          "https://repo.gradle.org/gradle/libs-releases"
-        ]
-
-        [tool.pyronaut.dependencies]
-        runtime = [
-          "io.micronaut:micronaut-inject-python",
-          "io.micronaut:micronaut-context-python",
-          "io.micronaut:micronaut-http-server-netty",
-          "io.micronaut:micronaut-json-core",
-          "io.micronaut:micronaut-jackson-databind",
-          "ch.qos.logback:logback-classic"
-        ]
-        build = [
-          "io.micronaut:micronaut-inject-python",
-          "io.micronaut:micronaut-context-python"
-        ]
-        test = [
-          "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
-          "io.micronaut.test:micronaut-test-junit5",
-          "org.junit.jupiter:junit-jupiter-engine",
-          "org.junit.platform:junit-platform-launcher"
-        ]
-        """;
 }

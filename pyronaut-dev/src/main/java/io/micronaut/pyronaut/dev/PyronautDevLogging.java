@@ -27,4 +27,8 @@ final class PyronautDevLogging {
     static void initializeLauncherLogging() {
         PyronautLauncherLogging.initialize();
     }
+
+    static void initializeApplicationLogging() {
+        PyronautLauncherLogging.initializeApplicationDefaults();
+    }
 }

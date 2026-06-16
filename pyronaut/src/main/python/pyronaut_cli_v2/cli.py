@@ -193,10 +193,35 @@ def run(
 
     if command not in SUPPORTED_COMMANDS:
         if _looks_like_direct_source_invocation(argv):
-            return _delegate_direct_source(argv, execute, locate)
+            direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
+                runner=runner,
+                runner_with_env=runner_with_env,
+                process_runner=process_runner,
+                project_dir=Path.cwd(),
+            )
+            return _delegate_direct_source(
+                argv,
+                execute,
+                locate,
+                java_home_provider=direct_source_java_home_provider,
+            )
         print(f"Unknown command: {command}", file=sys.stderr)
         _print_usage(stream=sys.stderr)
         return USAGE_ERROR
+
+    if command == "run" and _looks_like_direct_source_invocation(forwarded_args):
+        direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
+            runner=runner,
+            runner_with_env=runner_with_env,
+            process_runner=process_runner,
+            project_dir=Path.cwd(),
+        )
+        return _delegate_direct_source(
+            forwarded_args,
+            execute,
+            locate,
+            java_home_provider=direct_source_java_home_provider,
+        )
 
     if not _is_supported_platform(current_platform):
         print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
@@ -423,15 +448,42 @@ def _delegate_direct_source(
     args: Sequence[str],
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
+    *,
+    java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
     executable_path = _resolve_pyronaut_dev_native_executable(resolver)
     if executable_path is None:
         print("Missing native delegated executable: pyronaut-dev", file=sys.stderr)
         return PRECONDITION_FAILED
-    command_line = [executable_path, *args]
+    try:
+        env = _build_java_home_env("run", java_home_provider)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    jvm_args = _build_direct_source_native_jvm_args(executable_path, env)
+    command_line = [executable_path, *jvm_args, *args]
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
-    return runner(command_line, None)
+    return runner(command_line, env)
+
+
+def _build_direct_source_native_jvm_args(executable_path: str, env: dict[str, str] | None) -> list[str]:
+    jvm_args: list[str] = []
+    java_home = (env or os.environ).get("JAVA_HOME")
+    if java_home:
+        jvm_args.append(f"-Djava.home={java_home}")
+    launcher_classpath = os.pathsep.join(_direct_source_native_compiler_classpath_entries(executable_path))
+    if launcher_classpath:
+        jvm_args.append(f"-Djava.class.path={launcher_classpath}")
+    return jvm_args
+
+
+def _direct_source_native_compiler_classpath_entries(executable_path: str) -> list[str]:
+    return [
+        entry
+        for entry in _native_launcher_provided_jar_entries(executable_path)
+        if not Path(entry).name.startswith("micronaut-inject-python-")
+    ]
 
 
 def _delegate_via_java(
@@ -2911,15 +2963,29 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     if not argv:
         return False
     direct_options = {"--test", "--port", "--property", "-D", "--config", "--setup"}
-    first = argv[0]
-    if first in direct_options or first.startswith("-D"):
-        return True
-    if first.endswith(".py"):
-        return True
-    try:
-        return Path(first).exists()
-    except OSError:
+    value_options = {"--port", "--property", "-D", "--config", "--setup"}
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--":
+            return len(argv) > index + 1
+        if arg in direct_options or arg.startswith("-D"):
+            if arg in value_options:
+                index += 2
+            else:
+                index += 1
+            continue
+        if arg.endswith(".py"):
+            return True
+        try:
+            if Path(arg).is_dir():
+                return True
+        except OSError:
+            return False
         return False
+    if argv[0] in direct_options or argv[0].startswith("-D"):
+        return True
+    return False
 
 
 def _resolve_delegate_executable_path(
