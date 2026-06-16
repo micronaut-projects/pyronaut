@@ -362,6 +362,33 @@ fun Project.runFixtureCommand(command: List<String>, extraEnvironment: Map<Strin
     }
 }
 
+fun Project.runFixtureCommandExpectingFailure(command: List<String>, extraEnvironment: Map<String, String> = emptyMap()): String {
+    val renderedCommand = formatFixtureCommand(command)
+    logger.lifecycle(renderedCommand)
+    val processBuilder = ProcessBuilder(command)
+        .directory(fixtureAppDir.asFile)
+        .redirectInput(ProcessBuilder.Redirect.INHERIT)
+        .redirectErrorStream(true)
+    processBuilder.environment().putAll(defaultFixtureEnv() + extraEnvironment)
+    val process = processBuilder.start()
+    val output = StringBuilder()
+    val outputReader = Thread {
+        process.inputStream.bufferedReader().useLines { lines ->
+            lines.forEach { line ->
+                logger.lifecycle(line)
+                output.appendLine(line)
+            }
+        }
+    }
+    outputReader.start()
+    val exitCode = process.waitFor()
+    outputReader.join()
+    if (exitCode == 0) {
+        throw GradleException("Command unexpectedly succeeded: $renderedCommand")
+    }
+    return output.toString()
+}
+
 fun formatFixtureCommand(command: List<String>): String {
     if (command.isEmpty()) {
         return ">"
@@ -1669,10 +1696,107 @@ val validateConfig by tasks.registering {
     }
 }
 
+val validateInvalidConfig by tasks.registering {
+    group = "verification"
+    description = "Verifies that configuration validation rejects invalid fixture app configuration."
+    dependsOn(installApp)
+    mustRunAfter(validateConfig)
+    inputs.files(
+        fixtureAppDir.file("pyproject.toml"),
+        fixtureResolvedRuntimeDependencies,
+    )
+    inputs.property("invalidConfigProperty", "test.config.enabled")
+    inputs.property("invalidConfigValue", "not-a-bool")
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jvm" })
+    inputs.file(providers.provider {
+        if (useNativeExecutables.get()) {
+            pyronautDevNativeExecutable.get().asFile
+        } else {
+            pyronautValidateConfigExecutable.get().asFile
+        }
+    })
+    doLast {
+        val validateConfigExecutable = if (useNativeExecutables.get()) {
+            pyronautDevNativeExecutable.get().asFile
+        } else {
+            pyronautValidateConfigExecutable.get().asFile
+        }
+        if (!validateConfigExecutable.isFile) {
+            throw GradleException("Missing pyronaut-validate-config executable: ${validateConfigExecutable.absolutePath}")
+        }
+        val classesDir = fixtureAppDir.dir("__pyronaut__/classes").asFile
+        val invalidConfig = classesDir.resolve("application.properties")
+        val schemaFile = classesDir.resolve("META-INF/micronaut-configuration-schemas/functional-test.TestConfig.json")
+        val previousInvalidConfig = invalidConfig.takeIf { it.isFile }?.readText()
+        val previousSchema = schemaFile.takeIf { it.isFile }?.readText()
+        try {
+            invalidConfig.parentFile.mkdirs()
+            invalidConfig.writeText("test.config.enabled=not-a-bool\n")
+            schemaFile.parentFile.mkdirs()
+            schemaFile.writeText(
+                """
+                {
+                  "${'$'}schema": "https://json-schema.org/draft/2020-12/schema",
+                  "title": "FunctionalTestConfig",
+                  "type": "object",
+                  "x-micronaut": {
+                    "prefix": "test.config"
+                  },
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "x-micronaut-javaType": "java.lang.Boolean",
+                      "x-micronaut-path": "test.config.enabled"
+                    }
+                  }
+                }
+                """.trimIndent() + "\n"
+            )
+            val validateArgs = arrayOf(
+                "--project-dir",
+                fixtureAppDir.asFile.absolutePath,
+                "--scenario",
+                "production",
+                "--classpath",
+                classesDir.absolutePath,
+                "--no-cache",
+            )
+            val command = if (useNativeExecutables.get()) {
+                pyronautCommand(
+                    "validate-config",
+                    validateConfigExecutable,
+                    *validateArgs,
+                )
+            } else {
+                listOf(validateConfigExecutable.absolutePath, *validateArgs)
+            }
+            val output = project.runFixtureCommandExpectingFailure(command)
+            val report = fixtureAppDir.file("__pyronaut__/reports/config-validation/production/configuration-errors.json").asFile
+            val reportContent = report.takeIf { it.isFile }?.readText().orEmpty()
+            if (!output.contains("Configuration validation failed") || !reportContent.contains("test.config.enabled")) {
+                throw GradleException(
+                    "Expected invalid fixture configuration to fail schema validation for test.config.enabled."
+                )
+            }
+        } finally {
+            if (previousInvalidConfig == null) {
+                invalidConfig.delete()
+            } else {
+                invalidConfig.writeText(previousInvalidConfig)
+            }
+            if (previousSchema == null) {
+                schemaFile.delete()
+            } else {
+                schemaFile.writeText(previousSchema)
+            }
+        }
+    }
+}
+
 val process by tasks.registering {
     group = "verification"
     description = "Processes the functional-test app sources with the local processor."
-    dependsOn(validateConfig)
+    dependsOn(validateConfig, validateInvalidConfig)
     inputs.dir(fixtureAppDir.dir("src"))
     inputs.dir(fixtureAppDir.dir("tests"))
     inputs.property(
