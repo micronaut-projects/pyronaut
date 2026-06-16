@@ -3,6 +3,8 @@ from jakarta.inject import Singleton
 from micronaut.serde.annotation import Serdeable
 from micronaut.jsonschema import JsonSchema
 from dataclasses import dataclass
+from jakarta.validation.constraints import NotBlank
+from typing import Annotated
 
 @Singleton
 class MessageService:
@@ -16,3 +18,8 @@ class MessageService:
 class Person:
    age: int
    name: str = 'John Doe'
+
+@Serdeable
+@dataclass
+class GreetingRequest:
+   name: Annotated[str, NotBlank]

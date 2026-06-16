@@ -12,26 +12,48 @@ dependencies {
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)
 
-    implementation(project(":micronaut-pyronaut-install"))
+    // processors
+    implementation(mn.micronaut.inject.python)
     implementation(project(":micronaut-pyronaut-processor"))
+    implementation(mnSerde.micronaut.serde.processor)
+    implementation(mnValidation.micronaut.validation.processor)
+
+    // CLI modules
+    implementation(project(":micronaut-pyronaut-install"))
     implementation(project(":micronaut-pyronaut-config-model"))
+    implementation(project(":micronaut-pyronaut-create-app"))
     implementation(project(":micronaut-pyronaut-run"))
     implementation(project(":micronaut-pyronaut-test"))
     implementation(project(":micronaut-pyronaut-validate-config"))
     implementation(project(":micronaut-pyronaut-test-resources-server"))
-    implementation("io.micronaut:micronaut-runtime")
+
     implementation(mn.micronaut.context.python)
-    implementation(mn.micronaut.inject.python)
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
+
+    // runtime build in modules
+    runtimeOnly(mnSerde.micronaut.serde.jackson)
+    runtimeOnly(mn.micronaut.runtime)
+    runtimeOnly(mn.micronaut.retry)
     runtimeOnly(libs.micronaut.toml)
     runtimeOnly(mn.micronaut.http.client)
     runtimeOnly(mn.micronaut.http.server)
     runtimeOnly(mn.micronaut.http.server.netty)
+    runtimeOnly(mnValidation.micronaut.validation)
+
     implementation(project(":micronaut-pyronaut-logback"))
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
+
+    constraints {
+        runtimeOnly("org.antlr:antlr4-runtime") {
+            version {
+                strictly("4.11.1")
+            }
+            because("tomlj 1.1.1 includes parsers generated with ANTLR 4.11.1")
+        }
+    }
 }
 
 configurations.configureEach {
@@ -39,6 +61,7 @@ configurations.configureEach {
 }
 
 configurations.named("nativeImageClasspath") {
+    exclude(group = "org.openrewrite", module = "rewrite-kotlin")
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-client")
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-server")
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-control-panel")
@@ -190,6 +213,12 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
     "--initialize-at-build-time=io.micronaut.core.reflect.ClassUtils\$Optimizations",
     "--initialize-at-run-time=io.micronaut",
+    "--initialize-at-run-time=io.micronaut.inject.annotation.AbstractAnnotationMetadataBuilder",
+    "--initialize-at-build-time=io.micronaut.inject.validation",
+    "--initialize-at-build-time=io.micronaut.serde.processor",
+    "--initialize-at-build-time=io.micronaut.validation",
+    "--initialize-at-build-time=io.micronaut.validation.validator",
+    "--initialize-at-build-time=io.micronaut.validation.validator.DefaultAnnotatedElementValidator",
     "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
     "--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm",
     "--initialize-at-run-time=io.netty",

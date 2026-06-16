@@ -19,8 +19,18 @@ def base_url(my_context):
 
 def test_hello_world(base_url):
     r = requests.get(f"{base_url}/hello/John")
+    assert r.status_code == 200, r.text
     assert r.json()['message'] == "Hello John!!!!!!"
-    assert r.status_code == 200
+
+def test_validated_greeting_accepts_valid_body(base_url):
+    r = requests.post(f"{base_url}/validated-greeting", json={"name": "Jane"})
+    assert r.status_code == 200, r.text
+    assert r.json()["message"] == "Hello Jane!!!!!!"
+
+def test_validated_greeting_rejects_blank_name(base_url):
+    r = requests.post(f"{base_url}/validated-greeting", json={"name": ""})
+    assert r.status_code == 400, r.text
+    assert r.json()["errors"] == ["must not be blank"]
 
 @pytest.fixture
 def my_service(my_context) -> MessageService:
