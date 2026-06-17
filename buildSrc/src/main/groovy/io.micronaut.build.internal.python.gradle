@@ -1,4 +1,6 @@
 import io.micronaut.build.internal.python.PyronautCompilerPlugin
+import io.micronaut.build.internal.python.PythonCompile
+import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 
 pluginManager.apply(PyronautCompilerPlugin)
 def rootProperties = new Properties()
@@ -13,4 +15,15 @@ dependencies {
     pyronautCompiler(platform("io.micronaut:micronaut-core-bom:$micronautCoreVersion"))
     pyronautCompiler("io.micronaut:micronaut-inject-python")
     pyronautCompiler("io.micronaut:micronaut-context-python")
+}
+
+def graalVmDevTag = providers.gradleProperty("pyronautGraalVmDevTag")
+if (graalVmDevTag.present) {
+    def graalVmProvisionTask = PyronautGraalVmDevBuilds.registerProvisionTask(rootProject, graalVmDevTag)
+    def graalVmJavaExecutable = PyronautGraalVmDevBuilds.javaHomeProvider(project, graalVmDevTag)
+        .map { new File(it, "bin/java").absolutePath }
+    tasks.withType(PythonCompile).configureEach {
+        dependsOn(graalVmProvisionTask)
+        javaExecutable.convention(graalVmJavaExecutable)
+    }
 }

@@ -21,11 +21,14 @@ dependencies {
     // CLI modules
     implementation(project(":micronaut-pyronaut-install"))
     implementation(project(":micronaut-pyronaut-config-model"))
-    implementation(project(":micronaut-pyronaut-create-app"))
+    // TODO: this drags in a huge graph of dependencies so exclude for now
+//    implementation(project(":micronaut-pyronaut-create-app"))
     implementation(project(":micronaut-pyronaut-run"))
     implementation(project(":micronaut-pyronaut-test"))
+    implementation(project(":micronaut-pyronaut-native-build"))
     implementation(project(":micronaut-pyronaut-validate-config"))
     implementation(project(":micronaut-pyronaut-test-resources-server"))
+    implementation(project(":micronaut-pyronaut-logback"))
 
     implementation(mn.micronaut.context.python)
     implementation(mnPicocli.picocli)
@@ -33,15 +36,19 @@ dependencies {
 
     // runtime build in modules
     runtimeOnly(mnSerde.micronaut.serde.jackson)
+//    runtimeOnly(mn.micronaut.context.python.netty)
     runtimeOnly(mn.micronaut.runtime)
     runtimeOnly(mn.micronaut.retry)
     runtimeOnly(libs.micronaut.toml)
     runtimeOnly(mn.micronaut.http.client)
     runtimeOnly(mn.micronaut.http.server)
     runtimeOnly(mn.micronaut.http.server.netty)
+    runtimeOnly(mn.micronaut.messaging)
+    runtimeOnly(mn.micronaut.websocket)
+
     runtimeOnly(mnValidation.micronaut.validation)
 
-    implementation(project(":micronaut-pyronaut-logback"))
+
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
@@ -197,6 +204,12 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.inject.processing",
     "--initialize-at-build-time=io.micronaut.inject.writer",
     "--initialize-at-build-time=io.micronaut.inject.provider",
+    "--initialize-at-build-time=io.micronaut.python.compiler",
+    "--initialize-at-build-time=io.micronaut.python.processing",
+    "--initialize-at-build-time=io.micronaut.python.processing.annotation",
+    "--initialize-at-build-time=io.micronaut.python.processing.beans",
+    "--initialize-at-build-time=io.micronaut.python.processing.util",
+    "--initialize-at-build-time=io.micronaut.python.processing.visitor",
     "--initialize-at-build-time=io.micronaut.aop.mapper",
     "--initialize-at-build-time=io.micronaut.context.visitor",
     "--initialize-at-build-time=io.micronaut.core.io",
@@ -213,6 +226,13 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValueResolver",
     "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
     "--initialize-at-build-time=io.micronaut.core.reflect.ClassUtils\$Optimizations",
+    "--initialize-at-build-time=io.micronaut.scheduling.LoomSupport",
+    "--initialize-at-build-time=io.micronaut.pyronaut.install",
+    "--initialize-at-build-time=io.micronaut.pyronaut.processor",
+    "--initialize-at-build-time=io.micronaut.pyronaut.testresources",
+    "--initialize-at-build-time=io.micronaut.pyronaut.nativebuild",
+    "--initialize-at-build-time=io.micronaut.pyronaut.config.classloader",
+    "--initialize-at-build-time=io.micronaut.pyronaut.config.model",
     "--initialize-at-run-time=io.micronaut",
     "--initialize-at-run-time=io.micronaut.inject.annotation.AbstractAnnotationMetadataBuilder",
     "--initialize-at-build-time=io.micronaut.inject.validation",
@@ -224,6 +244,7 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.validation.validator.DefaultAnnotatedElementValidator",
     "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
     "--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm",
+    "--initialize-at-build-time=com.github.javaparser",
     "--initialize-at-run-time=io.netty",
     "-H:IncludeResources=com/mysql/cj/.*\\.properties",
     "--initialize-at-run-time=ch.qos.logback",
@@ -236,6 +257,22 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-run-time=io.micronaut.core.type.RuntimeTypeInformation\$LazyTypeInfo",
     "-H:-UnlockExperimentalVMOptions"
 )
+
+val nativeImagePgoArgs = providers.provider {
+    val instrument = providers.gradleProperty("pyronautDevPgoInstrument")
+        .map(String::toBoolean)
+        .orElse(false)
+        .get()
+    val profile = providers.gradleProperty("pyronautDevPgoProfile")
+        .orNull
+        ?.takeIf(String::isNotBlank)
+
+    when {
+        instrument -> listOf("--pgo-instrument")
+        profile != null -> listOf("--pgo=$profile")
+        else -> emptyList()
+    }
+}
 
 tasks {
     startScripts {
@@ -270,6 +307,7 @@ graalvmNative {
             sharedLibrary.set(false)
             buildArgs.addAll(nativeImageCLibraryPathArgs)
             buildArgs.addAll(nativeImageRuntimeArgs)
+            buildArgs.addAll(nativeImagePgoArgs)
             buildArgs.addAll(runtimeMetadataExclusion)
         }
         all {

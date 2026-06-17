@@ -1,0 +1,2 @@
+{"runId":"beff74d6-0ea9-4d48-9441-2ecd24cba2a5","seq":1,"eventType":"session_started","testId":null,"status":null,"timestamp":"2026-06-17T09:01:41.965243Z","payload":{}}
+{"runId":"beff74d6-0ea9-4d48-9441-2ecd24cba2a5","seq":2,"eventType":"session_finished","testId":null,"status":"SUCCESSFUL","timestamp":"2026-06-17T09:01:41.966275Z","payload":{"total":"0","passed":"0","failed":"0","skipped":"0"}}

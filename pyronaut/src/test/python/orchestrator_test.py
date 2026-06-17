@@ -3732,7 +3732,7 @@ additional-test-resources = ["test-fixtures"]
                 patch.object(cli, "_read_env", lambda name: None, create=True), \
                 patch.object(cli, "_graalvm_jdks_root", lambda: Path(temp_dir) / "sdks", create=True), \
                 patch.object(cli, "_legacy_graalvm_jdks_root", lambda: Path(temp_dir) / "jdks", create=True), \
-                patch.object(cli, "_matches_requested_graalvm_home", lambda home, spec: str(home) == str(expected), create=True), \
+                patch.object(cli, "_matches_requested_graalvm_home", lambda home, spec, **_kwargs: str(home) == str(expected), create=True), \
                 patch.object(cli, "_find_compatible_cached_jdk", lambda _root, _spec=None: None, create=True), \
                 patch.object(cli, "_install_with_sdkman", lambda _root, _spec=None: counts.__setitem__("sdkman", counts["sdkman"] + 1) or None, create=True), \
                 patch.object(cli, "_find_with_jenv", lambda _spec: counts.__setitem__("jenv", counts["jenv"] + 1) or None, create=True), \
@@ -3747,6 +3747,23 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(1, counts["jenv"])
         self.assertEqual(1, counts["gradle"])
         self.assertEqual(1, counts["download"])
+
+    def test_release_tagged_toolchain_rejects_untagged_local_graalvm(self):
+        metadata = cli._GraalVmMetadata("25.0.3", 25, "ee")
+        spec = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
+        with patch.object(cli, "_read_graalvm_metadata", lambda _home: metadata):
+            matched = cli._matches_requested_graalvm_home(Path("/Users/me/.sdkman/candidates/java/25.0.3-graal"), spec)
+
+        self.assertFalse(matched)
+
+    def test_release_tagged_toolchain_accepts_tagged_pyronaut_cache(self):
+        metadata = cli._GraalVmMetadata("25.0.3", 25, "ee")
+        spec = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
+        home = Path("/Users/me/.pyronaut/sdks/jdk-25e1-25.0.3-ea.32/Contents/Home")
+        with patch.object(cli, "_read_graalvm_metadata", lambda _home: metadata):
+            matched = cli._matches_requested_graalvm_home(home, spec)
+
+        self.assertTrue(matched)
 
     def test_read_pyproject_toolchain_spec_supports_dev_builds(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3776,6 +3793,50 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         self.assertEqual(25, spec.java_version)
         self.assertEqual("jdk-25.1.0-dev-20260429_0111", spec.release_tag)
         self.assertEqual("https://example.invalid/graalvm-dev.tar.gz", spec.download_url)
+        self.assertTrue(spec.explicit)
+
+    def test_read_pyproject_toolchain_spec_uses_packaged_default_when_not_explicit(self):
+        packaged = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+
+[tool.pyronaut.toolchain]
+type = "native"
+                """.strip(),
+                encoding="utf-8",
+            )
+
+            with patch.object(cli, "_packaged_toolchain_spec", lambda: packaged):
+                spec = cli._read_pyproject_toolchain_spec(project_dir)
+
+        self.assertEqual(packaged, spec)
+
+    def test_read_pyproject_toolchain_spec_explicit_project_config_overrides_packaged_default(self):
+        packaged = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+
+[tool.pyronaut.toolchain]
+type = "native"
+distribution = "ce"
+java-version = 25
+                """.strip(),
+                encoding="utf-8",
+            )
+
+            with patch.object(cli, "_packaged_toolchain_spec", lambda: packaged):
+                spec = cli._read_pyproject_toolchain_spec(project_dir)
+
+        self.assertEqual("ce", spec.distribution)
+        self.assertIsNone(spec.release_tag)
         self.assertTrue(spec.explicit)
 
     def test_resolve_dev_build_archive_url_uses_ce_dev_builds(self):
@@ -3845,6 +3906,43 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         self.assertEqual("https://example.invalid/oracle-ea.tar.gz", url)
         self.assertEqual(
             "https://api.github.com/repos/graalvm/oracle-graalvm-ea-builds/releases/tags/jdk-25e1-25.0.3-ea.31",
+            requested_urls[0],
+        )
+
+    def test_resolve_graalvm_archive_url_uses_release_tag_for_packaged_oracle_default(self):
+        requested_urls = []
+        payload = {
+            "assets": [
+                {
+                    "name": "graalvm-jdk-25e1-25.0.3-ea.32_linux-x64_bin.tar.gz",
+                    "browser_download_url": "https://example.invalid/oracle-ea.tar.gz",
+                }
+            ]
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(payload).encode("utf-8")
+
+        def urlopen(request):
+            requested_urls.append(request.full_url)
+            return Response()
+
+        spec = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
+        with patch.object(cli.urllib.request, "urlopen", urlopen), \
+                patch.object(cli.platform, "system", lambda: "Linux"), \
+                patch.object(cli.platform, "machine", lambda: "x86_64"):
+            url = cli._resolve_graalvm_archive_url(spec)
+
+        self.assertEqual("https://example.invalid/oracle-ea.tar.gz", url)
+        self.assertEqual(
+            "https://api.github.com/repos/graalvm/oracle-graalvm-ea-builds/releases/tags/jdk-25e1-25.0.3-ea.32",
             requested_urls[0],
         )
 

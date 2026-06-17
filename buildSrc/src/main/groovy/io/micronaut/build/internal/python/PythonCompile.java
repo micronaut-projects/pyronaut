@@ -67,6 +67,10 @@ public abstract class PythonCompile extends DefaultTask {
     @Optional
     public abstract MapProperty<String, String> getEnvironmentVariables();
 
+    @Input
+    @Optional
+    public abstract Property<String> getJavaExecutable();
+
     @Internal
     @Option(option = "debug-python-compiler", description = "Debug the Pyronaut compiler")
     public abstract Property<Boolean> getDebugCompiler();
@@ -113,6 +117,10 @@ public abstract class PythonCompile extends DefaultTask {
             // accept a list of .py files instead
             if (location.getAsFile().isDirectory()) {
                 getExecOperations().javaexec(spec -> {
+                    var javaExecutable = getJavaExecutable().getOrNull();
+                    if (javaExecutable != null && !javaExecutable.isBlank()) {
+                        spec.setExecutable(javaExecutable);
+                    }
                     spec.classpath(getCompilerClasspath(), getClasspath());
                     spec.systemProperties(getMergedSystemProperties());
                     spec.environment(getEnvironmentVariables().getOrElse(Map.of()));

@@ -50,6 +50,13 @@ val useNativeExecutables = providers
     .gradleProperty("native")
     .map(String::toBoolean)
     .orElse(false)
+val collectPyronautDevPgoProfile = providers
+    .gradleProperty("pyronautDevPgoCollect")
+    .map(String::toBoolean)
+    .orElse(false)
+val pyronautDevPgoProfileFile = providers
+    .gradleProperty("pyronautDevPgoProfileFile")
+    .orElse(layout.buildDirectory.file("pgo/pyronaut-dev.iprof").map { it.asFile.absolutePath })
 val graalVmDevBuildTag = providers.gradleProperty("pyronautGraalVmDevTag")
 val nativeExecutableSuffix = if (System.getProperty("os.name").lowercase().contains("windows")) ".exe" else ""
 
@@ -519,7 +526,14 @@ fun nativeJavaHomeJvmArgs(): List<String> {
     if (!useNativeExecutables.get()) {
         return emptyList()
     }
-    return listOf("-Djava.home=${resolveProvisionedGraalVmDevBuildHome().absolutePath}")
+    return buildList {
+        add("-Djava.home=${resolveProvisionedGraalVmDevBuildHome().absolutePath}")
+        if (collectPyronautDevPgoProfile.get()) {
+            val profileFile = java.io.File(pyronautDevPgoProfileFile.get())
+            profileFile.parentFile.mkdirs()
+            add("-XX:ProfilesDumpFile=${profileFile.absolutePath}")
+        }
+    }
 }
 
 fun resolveProvisionedGraalVmDevBuildHome(): java.io.File {
@@ -1567,7 +1581,7 @@ val installApp by tasks.registering {
     inputs.dir(fixtureStagedRepoDir)
     outputs.file(installAppMarker)
     outputs.upToDateWhen {
-        installAppMarker.get().asFile.isFile && installAppOutputsPresent()
+        !collectPyronautDevPgoProfile.get() && installAppMarker.get().asFile.isFile && installAppOutputsPresent()
     }
     doLast {
         val installExecutable = pyronautInstallExecutableFile()
@@ -1673,6 +1687,9 @@ val validateConfig by tasks.registering {
     inputs.file(providers.provider { pyronautValidateConfigExecutableFile() })
     outputs.files(fixtureConfigValidationCache)
     outputs.dir(fixtureConfigValidationReportDir)
+    outputs.upToDateWhen {
+        !collectPyronautDevPgoProfile.get()
+    }
     doLast {
         val validateConfigExecutable = pyronautValidateConfigExecutableFile()
         if (!validateConfigExecutable.isFile) {
@@ -1813,6 +1830,9 @@ val process by tasks.registering {
         fixtureProcessedClassesDir,
         fixtureProcessedTestClassesDir,
     )
+    outputs.upToDateWhen {
+        !collectPyronautDevPgoProfile.get()
+    }
     doLast {
         val processorExecutable = pyronautProcessorExecutableFile()
         if (!processorExecutable.isFile) {

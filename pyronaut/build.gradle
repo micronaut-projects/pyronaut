@@ -129,6 +129,13 @@ def requireMavenVersionDir = { File repositoryDir, String relativePath, String a
         throw new GradleException("Expected ${artifactId} artifacts in ${versionDir.absolutePath}")
     }
 }
+def graalVmDistributionForTag = { String tag ->
+    tag ==~ /(?:jdk-)?\d+e\d+-.+/ ? "ee" : "dev"
+}
+def graalVmJavaVersionForTag = { String tag ->
+    def matcher = tag =~ /(\d+)/
+    matcher.find() ? matcher.group(1) : "25"
+}
 
 tasks.register("prepareSdkMavenLocalEnvironment") {
     group = "build setup"
@@ -259,6 +266,18 @@ tasks.register("prepareWheelSources", Sync) {
             }
         }
 
+        def toolchainDefaultsFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/toolchain-defaults.properties").asFile
+        if (graalVmDevTag.present) {
+            def configuredTag = graalVmDevTag.get().trim()
+            toolchainDefaultsFile.text = """
+distribution=${graalVmDistributionForTag(configuredTag)}
+java-version=${graalVmJavaVersionForTag(configuredTag)}
+release-tag=${configuredTag}
+""".trim() + System.lineSeparator()
+        } else {
+            toolchainDefaultsFile.delete()
+        }
+
         def pyprojectFile = wheelStagingDir.get().file("pyproject.toml").asFile
         pyprojectFile.parentFile.mkdirs()
         pyprojectFile.text = """
@@ -280,7 +299,7 @@ build-backend = "setuptools.build_meta"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-pyronaut_cli_v2 = ["tools/**"]
+pyronaut_cli_v2 = ["tools/**", "toolchain-defaults.properties"]
 """.trim() + System.lineSeparator()
 
         def setupCfgFile = wheelStagingDir.get().file("setup.cfg").asFile
@@ -301,6 +320,7 @@ where = src
 
 [options.package_data]
 pyronaut_cli_v2 =
+    toolchain-defaults.properties
     tools/*
     tools/*/*
     tools/*/*/*

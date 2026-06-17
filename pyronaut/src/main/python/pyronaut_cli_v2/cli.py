@@ -106,6 +106,7 @@ _provisioned_graalvm_home: str | None = None
 _GRAALVM_MIN_JDK_MAJOR = 25
 _DEFAULT_GRAALVM_DOWNLOAD_VERSION = "25.0.2"
 _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION = "ce"
+_PACKAGED_TOOLCHAIN_DEFAULTS = "toolchain-defaults.properties"
 _GRAALVM_CE_DEV_BUILDS_REPOSITORY = "graalvm/graalvm-ce-dev-builds"
 _ORACLE_GRAALVM_EA_BUILDS_REPOSITORY = "graalvm/oracle-graalvm-ea-builds"
 
@@ -1718,13 +1719,13 @@ def _normalize_toolchain_distribution(value: str) -> str:
 
 def _read_pyproject_toolchain_spec(project_dir: Path | None) -> _ToolchainSpec:
     if project_dir is None:
-        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+        return _default_toolchain_spec()
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
-        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+        return _default_toolchain_spec()
     toolchain = pyronaut.get("toolchain")
     if not isinstance(toolchain, dict):
-        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+        return _default_toolchain_spec()
 
     distribution_raw = toolchain.get("distribution")
     distribution = None
@@ -1750,7 +1751,45 @@ def _read_pyproject_toolchain_spec(project_dir: Path | None) -> _ToolchainSpec:
     )
     if explicit and distribution is None:
         distribution = _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION
+    if not explicit:
+        return _default_toolchain_spec()
     return _ToolchainSpec(distribution, version, java_version, release_tag, download_url, explicit)
+
+
+def _default_toolchain_spec() -> _ToolchainSpec:
+    return _packaged_toolchain_spec() or _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+
+
+def _packaged_toolchain_spec() -> _ToolchainSpec | None:
+    defaults_file = Path(__file__).with_name(_PACKAGED_TOOLCHAIN_DEFAULTS)
+    if not defaults_file.is_file():
+        return None
+
+    values: dict[str, str] = {}
+    for line in defaults_file.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip()
+
+    distribution_raw = values.get("distribution")
+    distribution = _normalize_toolchain_distribution(distribution_raw) if distribution_raw else None
+    version = values.get("version") or None
+    release_tag = values.get("release-tag") or None
+    download_url = values.get("download-url") or None
+    java_version = _GRAALVM_MIN_JDK_MAJOR
+    java_version_raw = values.get("java-version")
+    if java_version_raw:
+        try:
+            java_version = int(java_version_raw)
+        except ValueError as exc:
+            raise ValueError(f"Invalid packaged GraalVM toolchain java-version: {java_version_raw}") from exc
+
+    explicit = any(value is not None for value in (distribution, version, release_tag, download_url))
+    if not explicit:
+        return None
+    return _ToolchainSpec(distribution, version, java_version, release_tag, download_url, True)
 
 
 def _read_pyproject_toolchain_type(project_dir: Path) -> str:
@@ -2384,9 +2423,11 @@ def _is_compatible_graalvm_home(java_home: Path) -> bool:
     return metadata is not None and metadata.java_version is not None and metadata.java_version >= _GRAALVM_MIN_JDK_MAJOR
 
 
-def _matches_requested_graalvm_home(java_home: Path, toolchain: _ToolchainSpec) -> bool:
+def _matches_requested_graalvm_home(java_home: Path, toolchain: _ToolchainSpec, *, require_release_tag: bool = True) -> bool:
     metadata = _read_graalvm_metadata(java_home)
     if metadata is None or metadata.java_version is None or metadata.java_version < toolchain.java_version:
+        return False
+    if require_release_tag and toolchain.release_tag is not None and not _matches_release_tagged_home(java_home, toolchain.release_tag):
         return False
     if not toolchain.explicit:
         return True
@@ -2423,6 +2464,14 @@ def _read_graalvm_metadata(java_home: Path) -> _GraalVmMetadata | None:
     major = _parse_java_major_version(output)
     distribution = _detect_graalvm_distribution(output, java_home, version)
     return _GraalVmMetadata(version, major, distribution)
+
+
+def _matches_release_tagged_home(java_home: Path, release_tag: str) -> bool:
+    expected = _graalvm_release_cache_dir_name(release_tag)
+    for path in (java_home, *java_home.parents):
+        if path.name == expected:
+            return True
+    return False
 
 
 def _warn_if_quarantined_graalvm(java_home: Path) -> None:
@@ -2546,22 +2595,34 @@ def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | N
                 extracted_homes.append(normalized)
 
         for home in extracted_homes:
-            if not _matches_requested_graalvm_home(home, spec):
+            if not _matches_requested_graalvm_home(home, spec, require_release_tag=False):
                 continue
-            destination = jdks_root / home.parent.name if (home.parent / "bin" / "java").exists() and home.name == "Home" else jdks_root / home.name
+            destination = jdks_root / _graalvm_cache_dir_name(home, spec)
             if destination.exists():
                 normalized_existing = _normalize_extracted_home(destination) or destination
                 if _matches_requested_graalvm_home(normalized_existing, spec):
                     return normalized_existing
                 shutil.rmtree(destination, ignore_errors=True)
 
-            source_root = home.parent if home.name == "Home" and home.parent.name == "Contents" else home
+            source_root = home.parent.parent if home.name == "Home" and home.parent.name == "Contents" else home
             shutil.copytree(source_root, destination, dirs_exist_ok=True)
             normalized_destination = _normalize_extracted_home(destination) or destination
             if _matches_requested_graalvm_home(normalized_destination, spec):
                 _warn_if_quarantined_graalvm(normalized_destination)
                 return normalized_destination
     return None
+
+
+def _graalvm_cache_dir_name(home: Path, toolchain: _ToolchainSpec) -> str:
+    if toolchain.release_tag is not None:
+        return _graalvm_release_cache_dir_name(toolchain.release_tag)
+    if home.name == "Home" and home.parent.name == "Contents":
+        return home.parent.parent.name
+    return home.name
+
+
+def _graalvm_release_cache_dir_name(release_tag: str) -> str:
+    return release_tag.strip().replace("/", "_")
 
 
 def _resolve_graalvm_archive_url(toolchain: _ToolchainSpec) -> str | None:
@@ -2592,6 +2653,9 @@ def _resolve_graalvm_archive_url(toolchain: _ToolchainSpec) -> str | None:
 
     if os_segment == "macos" and arch == "x64":
         return None
+
+    if toolchain.release_tag is not None:
+        return _resolve_dev_build_archive_url(os_segment, arch, ext, toolchain)
 
     distribution = toolchain.distribution or _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION
     version = toolchain.version or (_DEFAULT_GRAALVM_DOWNLOAD_VERSION if not toolchain.explicit else None)
