@@ -4,6 +4,7 @@ import org.gradle.api.initialization.ConfigurableIncludedBuild
 import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.zip.ZipFile
 
 pluginManagement {
@@ -109,10 +110,44 @@ fun isValidZip(file: java.io.File): Boolean {
     }
     return try {
         ZipFile(file).use { zip ->
-            zip.entries().hasMoreElements()
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            val entries = zip.entries()
+            var hasEntries = false
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                hasEntries = true
+                if (!entry.isDirectory) {
+                    zip.getInputStream(entry).use { input ->
+                        while (input.read(buffer) != -1) {
+                            // Consume the entry to verify the local zip data is readable.
+                        }
+                    }
+                }
+            }
+            hasEntries
         }
     } catch (e: Exception) {
         false
+    }
+}
+
+fun extractZipArchive(file: java.io.File, destination: java.io.File) {
+    val destinationPath = destination.toPath().toAbsolutePath().normalize()
+    ZipFile(file).use { zip ->
+        zip.entries().asSequence().forEach { entry ->
+            val target = destinationPath.resolve(entry.name).normalize()
+            if (!target.startsWith(destinationPath)) {
+                throw GradleException("Refusing to extract zip entry outside destination: ${entry.name}")
+            }
+            if (entry.isDirectory) {
+                Files.createDirectories(target)
+            } else {
+                Files.createDirectories(target.parent)
+                zip.getInputStream(entry).use { input ->
+                    Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
+        }
     }
 }
 
@@ -400,6 +435,7 @@ fun ensureGraalPyBundleRepo(checkoutDir: java.io.File, graalpyVersion: String): 
         Files.move(leftoverZip.toPath(), archiveFile.toPath())
     }
     if (!isValidArchive(archiveFile)) {
+        archiveFile.delete()
         downloadArchive(bundleUrl, archiveFile)
     }
     if (!isValidArchive(archiveFile)) {
@@ -410,7 +446,7 @@ fun ensureGraalPyBundleRepo(checkoutDir: java.io.File, graalpyVersion: String): 
         deleteRecursively(repoDir)
         repoDir.mkdirs()
         if (archiveFile.name.endsWith(".zip")) {
-            runCommand(layout.settingsDirectory.asFile, "unzip", "-q", "-o", archiveFile.absolutePath, "-d", repoDir.absolutePath)
+            extractZipArchive(archiveFile, repoDir)
         } else {
             runCommand(layout.settingsDirectory.asFile, "tar", "-xzf", archiveFile.absolutePath, "-C", repoDir.absolutePath, "--strip-components", "1")
         }

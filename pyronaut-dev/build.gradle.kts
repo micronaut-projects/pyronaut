@@ -123,7 +123,8 @@ val nativeImageCLibraryPathArgs = providers.provider {
 }
 
 val nativeImageRuntimeArgs = listOf(
-    "-Ob",
+    "--emit",
+    "build-report",
     "--enable-native-access=org.graalvm.truffle",
     "--add-modules=jdk.compiler,java.net.http,java.naming",
     "-H:+UnlockExperimentalVMOptions",
