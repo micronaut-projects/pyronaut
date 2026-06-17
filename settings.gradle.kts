@@ -2,6 +2,7 @@ import me.champeau.gradle.igp.gitRepositories
 import org.gradle.api.GradleException
 import org.gradle.api.initialization.ConfigurableIncludedBuild
 import java.io.ByteArrayOutputStream
+import java.net.URLEncoder
 import java.nio.file.Files
 import java.util.zip.ZipFile
 
@@ -182,7 +183,47 @@ fun writeGraalPyMavenSettings(repoDir: java.io.File): java.io.File {
 
 fun configuredGraalVmDevTag(): String? =
     providers.gradleProperty("pyronautGraalVmDevTag").orNull.takeIfNotBlank()
-        ?.removePrefix("jdk-")
+        ?.trim()
+        ?.let { if (isOracleGraalVmEaTag(it)) oracleGraalVmEaReleaseTag(it) else it.removePrefix("jdk-") }
+
+fun isOracleGraalVmEaTag(tag: String): Boolean =
+    Regex("""(?:jdk-)?\d+e\d+-.+""").matches(tag.trim())
+
+fun oracleGraalVmEaReleaseTag(tag: String): String {
+    val trimmed = tag.trim()
+    return if (trimmed.startsWith("jdk-")) trimmed else "jdk-$trimmed"
+}
+
+fun resolveOracleGraalVmEaBundleUrl(tag: String): String {
+    val releaseTag = oracleGraalVmEaReleaseTag(tag)
+    val command = mutableListOf(
+        "curl",
+        "-sSL",
+        "-H",
+        "Accept: application/vnd.github+json",
+        "-H",
+        "X-GitHub-Api-Version: 2022-11-28",
+    )
+    val displayCommand = command.toMutableList()
+    gitHubApiToken?.let { token ->
+        command.addAll(listOf("-H", "Authorization: Bearer $token"))
+        displayCommand.addAll(listOf("-H", "Authorization: Bearer <redacted>"))
+    }
+    val apiUrl = "https://api.github.com/repos/graalvm/oracle-graalvm-ea-builds/releases/tags/" +
+        URLEncoder.encode(releaseTag, Charsets.UTF_8)
+    command.add(apiUrl)
+    displayCommand.add(apiUrl)
+    val releaseJson = runCommand(
+        layout.settingsDirectory.asFile,
+        command,
+        displayCommand
+    )
+    val pattern = Regex(
+        """https://github\.com/graalvm/oracle-graalvm-ea-builds/releases/download/${Regex.escape(releaseTag)}/maven-resource-bundle-[^"\s]+\.zip(?=["\s])"""
+    )
+    return pattern.find(releaseJson)?.value
+        ?: throw GradleException("Unable to find a GraalPy Maven bundle release for GraalVM EA tag $releaseTag")
+}
 
 fun archiveExtension(url: String): String =
     if (url.endsWith(".tar.gz")) {
@@ -246,6 +287,9 @@ fun resolveGraalPyBundleUrl(graalpyVersion: String): String {
         ?.let { return it }
 
     configuredGraalVmDevTag()?.let { tag ->
+        if (isOracleGraalVmEaTag(tag)) {
+            return resolveOracleGraalVmEaBundleUrl(tag)
+        }
         return "https://github.com/graalvm/graalvm-ce-dev-builds/releases/download/$tag/maven-resource-bundle-community-dev.tar.gz"
     }
 

@@ -510,7 +510,7 @@ Supported keys:
 - `distribution`: requested GraalVM distribution. Supported values are `ce`, `ee`, and `dev`.
 - `version`: exact GraalVM version string to match or download.
 - `java-version`: minimum Java major version. Pyronaut CLI currently requires GraalVM JDK 25 or newer.
-- `release-tag`: required for `distribution = "dev"` unless `download-url` is provided directly. This must match the GitHub release tag from `graalvm-ce-dev-builds`.
+- `release-tag`: required for `distribution = "dev"` unless `download-url` is provided directly. This must match the GitHub release tag from `graalvm-ce-dev-builds`, or an Oracle EA tag such as `jdk-25e1-25.0.3-ea.32` from `oracle-graalvm-ea-builds`.
 - `download-url`: optional explicit archive URL override.
 
 Discovery order:
@@ -527,7 +527,7 @@ Distribution sources:
 
 - `ce`: downloads from `https://github.com/graalvm/graalvm-ce-builds/releases`.
 - `ee`: downloads from `https://www.graalvm.org/downloads/`.
-- `dev`: resolves assets from `https://github.com/graalvm/graalvm-ce-dev-builds/releases` using `release-tag`.
+- `dev`: resolves assets from `https://github.com/graalvm/graalvm-ce-dev-builds/releases` using `release-tag`; Oracle EA tags such as `jdk-25e1-25.0.3-ea.32` resolve from `https://github.com/graalvm/oracle-graalvm-ea-builds/releases`.
 
 Behavior notes:
 

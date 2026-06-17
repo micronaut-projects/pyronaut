@@ -3778,6 +3778,76 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         self.assertEqual("https://example.invalid/graalvm-dev.tar.gz", spec.download_url)
         self.assertTrue(spec.explicit)
 
+    def test_resolve_dev_build_archive_url_uses_ce_dev_builds(self):
+        requested_urls = []
+        payload = {
+            "assets": [
+                {
+                    "name": "graalvm-community-dev-linux-amd64.tar.gz",
+                    "browser_download_url": "https://example.invalid/ce-dev.tar.gz",
+                }
+            ]
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(payload).encode("utf-8")
+
+        def urlopen(request):
+            requested_urls.append(request.full_url)
+            return Response()
+
+        spec = cli._ToolchainSpec("dev", None, 25, "jdk-25.1.0-dev-20260429_0111", None, True)
+        with patch.object(cli.urllib.request, "urlopen", urlopen):
+            url = cli._resolve_dev_build_archive_url("linux", "x64", "tar.gz", spec)
+
+        self.assertEqual("https://example.invalid/ce-dev.tar.gz", url)
+        self.assertEqual(
+            "https://api.github.com/repos/graalvm/graalvm-ce-dev-builds/releases/tags/25.1.0-dev-20260429_0111",
+            requested_urls[0],
+        )
+
+    def test_resolve_dev_build_archive_url_uses_oracle_ea_builds(self):
+        requested_urls = []
+        payload = {
+            "assets": [
+                {
+                    "name": "graalvm-jdk-25e1-25.0.3-ea.31_linux-x64_bin.tar.gz",
+                    "browser_download_url": "https://example.invalid/oracle-ea.tar.gz",
+                }
+            ]
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(payload).encode("utf-8")
+
+        def urlopen(request):
+            requested_urls.append(request.full_url)
+            return Response()
+
+        spec = cli._ToolchainSpec("dev", None, 25, "jdk-25e1-25.0.3-ea.31", None, True)
+        with patch.object(cli.urllib.request, "urlopen", urlopen):
+            url = cli._resolve_dev_build_archive_url("linux", "x64", "tar.gz", spec)
+
+        self.assertEqual("https://example.invalid/oracle-ea.tar.gz", url)
+        self.assertEqual(
+            "https://api.github.com/repos/graalvm/oracle-graalvm-ea-builds/releases/tags/jdk-25e1-25.0.3-ea.31",
+            requested_urls[0],
+        )
+
     def test_tui_smoke_delegates_install_process_run(self):
         executed = []
 
