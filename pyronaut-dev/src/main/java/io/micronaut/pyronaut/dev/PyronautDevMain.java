@@ -108,6 +108,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String PROPERTY_EXPRESSION_RESOLVER_SERVICE = "META-INF/services/io.micronaut.context.env.PropertyExpressionResolver";
     private static final String APPLICATION_CONTEXT_CONFIGURER_SERVICE = "META-INF/services/io.micronaut.context.ApplicationContextConfigurer";
     private static final String TEST_RESOURCES_RESOLVER_SERVICE = "META-INF/services/io.micronaut.testresources.core.TestResourcesResolver";
+    private static final String APPLICATION_VFS_FILESLIST_RESOURCE = "META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt";
     private static final String MICRONAUT_METADATA_PREFIX = "META-INF/micronaut/";
     private static final String TEST_RESOURCES_PACKAGE = "io.micronaut.testresources.";
     private static final String PYRONAUT_TEST_RESOURCES_PACKAGE = "io.micronaut.pyronaut.testresources.";
@@ -766,7 +767,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
-    private static final class DirectSourceLauncherClassLoader extends ClassLoader {
+    static final class DirectSourceLauncherClassLoader extends ClassLoader {
         DirectSourceLauncherClassLoader(ClassLoader parent) {
             super(parent);
         }
@@ -802,11 +803,15 @@ public final class PyronautDevMain implements Callable<Integer> {
                 || PROPERTY_EXPRESSION_RESOLVER_SERVICE.equals(name)
                 || APPLICATION_CONTEXT_CONFIGURER_SERVICE.equals(name)
                 || TEST_RESOURCES_RESOLVER_SERVICE.equals(name)
+                || APPLICATION_VFS_FILESLIST_RESOURCE.equals(name)
                 || name.startsWith(MICRONAUT_METADATA_PREFIX);
         }
 
         private static boolean isBundledTestResourcesResource(URL resource) {
             String resourceUrl = resource.toString();
+            if (resourceUrl.contains(".jar!") && resourceUrl.contains(APPLICATION_VFS_FILESLIST_RESOURCE)) {
+                return true;
+            }
             return BUNDLED_TEST_RESOURCES_JARS.stream().anyMatch(resourceUrl::contains);
         }
     }

@@ -24,11 +24,17 @@ import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -254,6 +260,38 @@ final class PyronautDevMainTest {
 
         assertEquals(0, exit);
         assertEquals(List.of(PyronautDevMain.ToolCommand.INSTALL), calls);
+    }
+
+    @Test
+    void directSourceLauncherClassLoaderHidesJarBackedApplicationVfsFileslists(@TempDir Path tempDir) throws IOException {
+        Path jar = tempDir.resolve("micronaut-context-python.jar");
+        writeJar(
+            jar,
+            Map.of(
+                "META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt", "/META-INF/GRAALPY-VFS/micronaut-application/src/micronaut_asyncio.py\n",
+                "META-INF/example.txt", "ok\n"
+            )
+        );
+
+        try (URLClassLoader parent = new URLClassLoader(new URL[]{jar.toUri().toURL()}, null)) {
+            ClassLoader classLoader = new PyronautDevMain.DirectSourceLauncherClassLoader(parent);
+
+            assertEquals(
+                List.of(),
+                Collections.list(classLoader.getResources("META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt"))
+            );
+            assertEquals(1, Collections.list(classLoader.getResources("META-INF/example.txt")).size());
+        }
+    }
+
+    private static void writeJar(Path jar, Map<String, String> entries) throws IOException {
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(jar))) {
+            for (Map.Entry<String, String> entry : entries.entrySet()) {
+                output.putNextEntry(new ZipEntry(entry.getKey()));
+                output.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                output.closeEntry();
+            }
+        }
     }
 
     private static void restoreProperty(String name, String value) {
