@@ -31,7 +31,7 @@ final class PyronautGraalVmDevBuilds {
 
         rootProject.tasks.register(PROVISION_TASK_NAME) { Task task ->
             task.group = "build setup"
-            task.description = "Downloads and installs the configured GraalVM CE dev build for Pyronaut native-image tasks"
+            task.description = "Downloads and installs the configured GraalVM dev build for Pyronaut native-image tasks"
             task.inputs.property("graalVmDevTag", tagProvider.map { normalizeDevBuildTag(it) })
             task.outputs.dir(tagProvider.map { installRoot(rootProject, it) })
             task.doLast {
@@ -45,7 +45,7 @@ final class PyronautGraalVmDevBuilds {
             File javaHome = findJavaHome(installRoot(project.rootProject, tag))
             if (javaHome == null) {
                 throw new GradleException(
-                    "GraalVM CE dev build '${normalizeDevBuildTag(tag)}' has not been provisioned. " +
+                    "GraalVM dev build '${normalizeDevBuildTag(tag)}' has not been provisioned. " +
                         "Make the consuming task depend on :${PROVISION_TASK_NAME}."
                 )
             }
@@ -59,13 +59,13 @@ final class PyronautGraalVmDevBuilds {
             File javaHome = findJavaHome(installRoot(project.rootProject, tag))
             if (javaHome == null) {
                 throw new GradleException(
-                    "GraalVM CE dev build '${normalizedTag}' has not been provisioned. " +
+                    "GraalVM dev build '${normalizedTag}' has not been provisioned. " +
                         "Make the consuming task depend on :${PROVISION_TASK_NAME}."
                 )
             }
             ensureNativeImageLauncherIsUsable(javaHome)
             ensureMacOsGatekeeperDoesNotBlock(javaHome)
-            javaLauncher(project, javaHome, javaVersionFromTag(normalizedTag), normalizedTag)
+            javaLauncher(project, javaHome, javaVersionFromTag(normalizedTag), normalizedTag, vendorForTag(normalizedTag))
         }
     }
 
@@ -101,7 +101,7 @@ final class PyronautGraalVmDevBuilds {
 
         File javaHome = findJavaHome(installRoot)
         if (javaHome == null) {
-            throw new GradleException("Downloaded GraalVM CE dev build '${tag}' did not contain a bin/java launcher")
+            throw new GradleException("Downloaded GraalVM dev build '${tag}' did not contain a bin/java launcher")
         }
         ensureNativeImageLauncherIsUsable(javaHome)
         ensureMacOsGatekeeperDoesNotBlock(javaHome)
@@ -114,7 +114,10 @@ final class PyronautGraalVmDevBuilds {
             throw new GradleException("${DEV_BUILD_TAG_PROPERTY} must not be blank")
         }
         String tag = configuredTag.trim()
-        tag.startsWith("jdk-") ? tag.substring(4) : tag
+        if (isOracleEaTag(tag)) {
+            return releaseTag(tag)
+        }
+        tag.startsWith("jdk-") && !isOracleEaTag(tag) ? tag.substring(4) : tag
     }
 
     static int javaVersionFromTag(String tag) {
@@ -130,40 +133,62 @@ final class PyronautGraalVmDevBuilds {
     }
 
     private static File archiveFile(Project rootProject, String tag) {
-        new File(rootProject.rootDir, ".gradle/pyronaut/downloads/${normalizeDevBuildTag(tag)}/${assetNameForCurrentMachine()}")
+        String normalizedTag = normalizeDevBuildTag(tag)
+        new File(rootProject.rootDir, ".gradle/pyronaut/downloads/${normalizedTag}/${assetNameForCurrentMachine(normalizedTag)}")
     }
 
     private static String downloadUrl(String tag) {
         String normalizedTag = normalizeDevBuildTag(tag)
-        "https://github.com/graalvm/graalvm-ce-dev-builds/releases/download/${normalizedTag}/${assetNameForCurrentMachine()}"
+        String repository = isOracleEaTag(normalizedTag) ? "oracle-graalvm-ea-builds" : "graalvm-ce-dev-builds"
+        "https://github.com/graalvm/${repository}/releases/download/${releaseTag(normalizedTag)}/${assetNameForCurrentMachine(normalizedTag)}"
     }
 
-    private static String assetNameForCurrentMachine() {
+    private static String assetNameForCurrentMachine(String tag) {
         String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT)
         String archName = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT)
+        boolean oracleEaTag = isOracleEaTag(tag)
 
         String os
         if (osName.contains("mac")) {
-            os = "darwin"
+            os = oracleEaTag ? "macos" : "darwin"
         } else if (osName.contains("linux")) {
             os = "linux"
         } else if (osName.contains("win")) {
             os = "windows"
         } else {
-            throw new GradleException("Unsupported operating system for GraalVM CE dev toolchain provisioning: ${osName}")
+            throw new GradleException("Unsupported operating system for GraalVM dev toolchain provisioning: ${osName}")
         }
 
         String arch
         if (archName == "aarch64" || archName == "arm64") {
             arch = "aarch64"
         } else if (archName == "x86_64" || archName == "amd64") {
-            arch = "amd64"
+            arch = oracleEaTag ? "x64" : "amd64"
         } else {
-            throw new GradleException("Unsupported architecture for GraalVM CE dev toolchain provisioning: ${archName}")
+            throw new GradleException("Unsupported architecture for GraalVM dev toolchain provisioning: ${archName}")
         }
 
         String extension = os == "windows" ? "zip" : "tar.gz"
+        if (oracleEaTag) {
+            return "graalvm-jdk-${releaseVersion(tag)}_${os}-${arch}_bin.${extension}"
+        }
         "graalvm-community-dev-${os}-${arch}.${extension}"
+    }
+
+    private static boolean isOracleEaTag(String tag) {
+        tag ==~ /(?:jdk-)?\d+e\d+-.+/
+    }
+
+    private static String releaseTag(String tag) {
+        isOracleEaTag(tag) && !tag.startsWith("jdk-") ? "jdk-${tag}" : tag
+    }
+
+    private static String releaseVersion(String tag) {
+        releaseTag(tag).substring(4)
+    }
+
+    private static String vendorForTag(String tag) {
+        isOracleEaTag(tag) ? "Oracle GraalVM" : "GraalVM Community"
     }
 
     private static void download(String url, File destination) {
@@ -243,14 +268,14 @@ If permissions prevent that, rerun the same command with sudo."""
         }
     }
 
-    private static JavaLauncher javaLauncher(Project project, File javaHome, int javaVersion, String tag) {
+    private static JavaLauncher javaLauncher(Project project, File javaHome, int javaVersion, String tag, String vendor) {
         RegularFile executablePath = project.layout.file(project.providers.provider { new File(javaHome, "bin/java") }).get()
         Directory installationPath = project.layout.dir(project.providers.provider { javaHome }).get()
         JavaInstallationMetadata metadata = [
             getLanguageVersion: { JavaLanguageVersion.of(javaVersion) },
             getJavaRuntimeVersion: { tag },
             getJvmVersion: { tag },
-            getVendor: { "GraalVM Community" },
+            getVendor: { vendor },
             getInstallationPath: { installationPath },
             isCurrentJvm: { false }
         ] as JavaInstallationMetadata

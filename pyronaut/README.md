@@ -149,7 +149,7 @@ Notes:
 
 - `distribution = "ce"` resolves Community builds from `graalvm-ce-builds`.
 - `distribution = "ee"` resolves Oracle GraalVM builds.
-- `distribution = "dev"` resolves development builds from `graalvm-ce-dev-builds` and normally needs `release-tag`.
+- `distribution = "dev"` resolves development builds from `graalvm-ce-dev-builds` and normally needs `release-tag`; Oracle EA tags such as `jdk-25e1-25.0.3-ea.32` resolve from `oracle-graalvm-ea-builds`.
 - `download-url` can be used as an explicit archive override.
 - On macOS, downloaded dev builds may need:
 

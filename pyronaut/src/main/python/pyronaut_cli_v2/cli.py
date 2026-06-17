@@ -102,6 +102,8 @@ _provisioned_graalvm_home: str | None = None
 _GRAALVM_MIN_JDK_MAJOR = 25
 _DEFAULT_GRAALVM_DOWNLOAD_VERSION = "25.0.2"
 _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION = "ce"
+_GRAALVM_CE_DEV_BUILDS_REPOSITORY = "graalvm/graalvm-ce-dev-builds"
+_ORACLE_GRAALVM_EA_BUILDS_REPOSITORY = "graalvm/oracle-graalvm-ea-builds"
 
 
 class _ToolchainSpec(NamedTuple):
@@ -2330,9 +2332,12 @@ def _resolve_dev_build_archive_url(os_segment: str, arch: str, ext: str, toolcha
     release_tag = toolchain.release_tag
     if release_tag is None:
         return None
-    suffix = f"{os_segment}-{arch}_bin.{ext}"
+    repository = _dev_build_repository(release_tag)
+    asset_name = _dev_build_asset_name(release_tag, os_segment, arch, ext)
+    if asset_name is None:
+        return None
     request = urllib.request.Request(
-        f"https://api.github.com/repos/graalvm/graalvm-ce-dev-builds/releases/tags/{urllib.parse.quote(release_tag)}",
+        f"https://api.github.com/repos/{repository}/releases/tags/{urllib.parse.quote(_dev_build_release_tag(release_tag))}",
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": "pyronaut-cli-v2",
@@ -2351,9 +2356,41 @@ def _resolve_dev_build_archive_url(os_segment: str, arch: str, ext: str, toolcha
             continue
         name = asset.get("name")
         download_url = asset.get("browser_download_url")
-        if isinstance(name, str) and isinstance(download_url, str) and name.endswith(suffix):
+        if name == asset_name and isinstance(download_url, str):
             return download_url
     return None
+
+
+def _is_oracle_graalvm_ea_tag(release_tag: str) -> bool:
+    return re.fullmatch(r"(?:jdk-)?\d+e\d+-.+", release_tag.strip()) is not None
+
+
+def _dev_build_repository(release_tag: str) -> str:
+    if _is_oracle_graalvm_ea_tag(release_tag):
+        return _ORACLE_GRAALVM_EA_BUILDS_REPOSITORY
+    return _GRAALVM_CE_DEV_BUILDS_REPOSITORY
+
+
+def _dev_build_release_tag(release_tag: str) -> str:
+    tag = release_tag.strip()
+    if _is_oracle_graalvm_ea_tag(tag) and not tag.startswith("jdk-"):
+        return f"jdk-{tag}"
+    if not _is_oracle_graalvm_ea_tag(tag) and tag.startswith("jdk-"):
+        return tag[4:]
+    return tag
+
+
+def _dev_build_asset_name(release_tag: str, os_segment: str, arch: str, ext: str) -> str | None:
+    tag = _dev_build_release_tag(release_tag)
+    if _is_oracle_graalvm_ea_tag(tag):
+        release_version = tag[4:] if tag.startswith("jdk-") else tag
+        return f"graalvm-jdk-{release_version}_{os_segment}-{arch}_bin.{ext}"
+
+    ce_os_segment = "darwin" if os_segment == "macos" else os_segment
+    ce_arch = "amd64" if arch == "x64" else arch
+    if os_segment == "macos" and ce_arch == "amd64":
+        return None
+    return f"graalvm-community-dev-{ce_os_segment}-{ce_arch}.{ext}"
 
 
 def _extract_debug_vm(args: Sequence[str]) -> bool:
