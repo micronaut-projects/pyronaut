@@ -490,11 +490,7 @@ fun pyronautValidateConfigExecutableFile(): java.io.File {
 }
 
 fun pyronautTestResourcesServerExecutableFile(): java.io.File {
-    return if (useNativeExecutables.get()) {
-        pyronautDevNativeExecutable.get().asFile
-    } else {
-        pyronautDevExecutable.get().asFile
-    }
+    return pyronautTestResourcesServerExecutable.get().asFile
 }
 
 fun pyronautTestExecutableFile(): java.io.File {
@@ -513,13 +509,8 @@ fun pyronautCommand(command: String, executable: java.io.File, jvmArgs: List<Str
     return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + jvmArgs + listOf(command, *args)
 }
 
-fun nativePyronautDevLauncherClasspathJvmArgs(): List<String> {
-    if (!useNativeExecutables.get()) {
-        return emptyList()
-    }
-    return listOf(
-        "-Djava.class.path=${delegateLibEntries(pyronautDevExecutable.get().asFile).joinToString(separator = java.io.File.pathSeparator)}"
-    )
+fun testResourcesServerCommand(executable: java.io.File, vararg args: String): List<String> {
+    return listOf(executable.absolutePath, *args)
 }
 
 fun nativeJavaHomeJvmArgs(): List<String> {
@@ -539,7 +530,7 @@ fun nativeJavaHomeJvmArgs(): List<String> {
 fun resolveProvisionedGraalVmDevBuildHome(): java.io.File {
     val configuredTag = graalVmDevBuildTag.orNull?.trim()
         ?: throw GradleException("Native functional-test requires pyronautGraalVmDevTag to resolve the matching java.home")
-    val tag = configuredTag.removePrefix("jdk-")
+    val tag = normalizeGraalVmDevBuildTag(configuredTag)
     val tagDir = rootProject.layout.projectDirectory
         .dir(".gradle/pyronaut/graalvm-dev-builds")
         .asFile
@@ -552,6 +543,19 @@ fun resolveProvisionedGraalVmDevBuildHome(): java.io.File {
         .sortedBy { candidate -> candidate.absolutePath }
         .firstOrNull()
         ?: throw GradleException("Unable to find java.home in provisioned GraalVM dev build: ${tagDir.absolutePath}")
+}
+
+fun normalizeGraalVmDevBuildTag(configuredTag: String): String {
+    val tag = configuredTag.trim()
+    return if (isOracleGraalVmEaTag(tag)) {
+        if (tag.startsWith("jdk-")) tag else "jdk-$tag"
+    } else {
+        tag.removePrefix("jdk-")
+    }
+}
+
+fun isOracleGraalVmEaTag(tag: String): Boolean {
+    return Regex("(?:jdk-)?\\d+e\\d+-.+").matches(tag)
 }
 
 fun Project.fixturePublishedArtifact(projectPath: String): FixturePublishedArtifact {
@@ -1856,18 +1860,14 @@ tasks.register("test") {
     inputs.dir(fixtureAppDir)
     doLast {
         val testResourcesExecutable = pyronautTestResourcesServerExecutableFile()
-        val startCommand = pyronautCommand(
-            "test-resources-server",
+        val startCommand = testResourcesServerCommand(
             testResourcesExecutable,
-            nativePyronautDevLauncherClasspathJvmArgs(),
             "start",
             "--project-dir",
             fixtureAppDir.asFile.absolutePath,
         )
-        val stopCommand = pyronautCommand(
-            "test-resources-server",
+        val stopCommand = testResourcesServerCommand(
             testResourcesExecutable,
-            nativePyronautDevLauncherClasspathJvmArgs(),
             "stop",
             "--project-dir",
             fixtureAppDir.asFile.absolutePath,

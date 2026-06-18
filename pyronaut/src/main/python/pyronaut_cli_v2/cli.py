@@ -40,7 +40,7 @@ COMMAND_TO_EXECUTABLE = {
     "test-resources-server": "pyronaut-test-resources-server",
 }
 DEV_NATIVE_EXECUTABLE = "pyronaut-dev"
-DEV_NATIVE_COMMANDS = {"install", "process", "run", "test", "validate-config", "test-resources-server"}
+DEV_NATIVE_COMMANDS = {"install", "process", "run", "test", "validate-config"}
 TOOLCHAIN_TYPE_JVM = "jvm"
 TOOLCHAIN_TYPE_NATIVE = "native"
 
@@ -259,7 +259,7 @@ def run(
         install_args = ["--project-dir", project_dir, *_local_repository_install_args()]
         if no_cache:
             install_args.append("--refresh")
-        install_code = _delegate("install", install_args, execute, locate)
+        install_code = _delegate("install", install_args, execute, locate, java_home_provider=effective_java_home_provider)
         if install_code != SUCCESS:
             return install_code
 
@@ -300,7 +300,7 @@ def run(
             if preflight_code != SUCCESS:
                 return preflight_code
             if tr_session is not None:
-                tr_session.ensure_started(runner=execute, resolver=locate)
+                tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
             return _run_with_auto_restart(
                 project_dir=Path(project_dir),
@@ -341,7 +341,7 @@ def run(
                 return preflight_code
 
             if tr_session is not None:
-                tr_session.ensure_started(runner=execute, resolver=locate)
+                tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
 
         return _delegate(
@@ -358,7 +358,7 @@ def run(
         return PRECONDITION_FAILED
     finally:
         if tr_session is not None:
-            tr_session.stop_if_owned(runner=execute, resolver=locate)
+            tr_session.stop_if_owned(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
 
 
 def _delegate(
@@ -371,6 +371,25 @@ def _delegate(
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    if command == "test-resources-server":
+        try:
+            env = _build_non_test_resources_env(command, java_home_provider)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        env = _merge_env_overrides(env, env_overrides)
+        executable_path = _resolve_native_preferred_executable(
+            COMMAND_TO_EXECUTABLE["test-resources-server"],
+            resolver,
+        )
+        if executable_path is None:
+            print("Missing delegated executable: pyronaut-test-resources-server", file=sys.stderr)
+            return PRECONDITION_FAILED
+        command_line = [executable_path, *args]
+        if _delegation_trace_enabled():
+            print(shlex.join(command_line), file=sys.stderr)
+        return runner(command_line, env)
+
     try:
         dev_command_line = _pyronaut_dev_native_command_line(
             command,
@@ -378,6 +397,7 @@ def _delegate(
             resolver,
             debug_vm=debug_vm,
             env_overrides=env_overrides,
+            java_home_provider=java_home_provider,
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
@@ -3019,6 +3039,7 @@ def _pyronaut_dev_native_command_line(
     *,
     debug_vm: bool = False,
     env_overrides: dict[str, str] | None = None,
+    java_home_provider: JavaHomeProvider | None = None,
 ) -> list[str] | None:
     if command not in DEV_NATIVE_COMMANDS:
         return None
@@ -3031,20 +3052,26 @@ def _pyronaut_dev_native_command_line(
     executable_path = _resolve_pyronaut_dev_native_executable(resolver)
     if executable_path is None:
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
+    jvm_args = _native_dev_java_home_jvm_args(java_home_provider)
     if command in {"run", "test"}:
         classpath = _build_native_application_classpath(command, project_dir, executable_path)
-        jvm_args = [f"-Djava.class.path={classpath}"]
+        jvm_args = [*jvm_args, f"-Djava.class.path={classpath}"]
         if command == "test":
             test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
             if test_resources_client_classpath:
                 jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
         return [executable_path, *jvm_args, command, *args]
-    if command == "test-resources-server":
-        launcher_classpath = os.pathsep.join(_native_launcher_provided_jar_entries(executable_path))
-        if launcher_classpath:
-            return [executable_path, f"-Djava.class.path={launcher_classpath}", command, *args]
-    return [executable_path, command, *args]
+    return [executable_path, *jvm_args, command, *args]
+
+
+def _native_dev_java_home_jvm_args(java_home_provider: JavaHomeProvider | None) -> list[str]:
+    if java_home_provider is None:
+        return []
+    java_home = java_home_provider()
+    if java_home is None or not java_home.strip():
+        raise RuntimeError("Unable to locate or provision compatible GraalVM JDK (requires JDK 25+)")
+    return [f"-Djava.home={java_home}"]
 
 
 def _use_pyronaut_dev_native_toolchain(command: str, project_dir: Path, *, debug_vm: bool = False) -> bool:
@@ -3267,7 +3294,13 @@ class _OwnedTestResourcesSession:
     def _new_owner_token() -> str:
         return f"{os.getpid()}-{int(time.time() * 1000)}"
 
-    def ensure_started(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+    def ensure_started(
+        self,
+        *,
+        runner: RunnerWithEnv,
+        resolver: Callable[[str], str | None],
+        java_home_provider: JavaHomeProvider | None = None,
+    ) -> None:
         cache_dir = self._project_dir / "__pyronaut__"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3290,6 +3323,7 @@ class _OwnedTestResourcesSession:
             ],
             runner=runner,
             resolver=resolver,
+            java_home_provider=java_home_provider,
         )
         if exit_code != SUCCESS:
             raise RuntimeError(f"Test resources server failed to start (exit code {exit_code})")
@@ -3302,9 +3336,15 @@ class _OwnedTestResourcesSession:
             self._persist_session(started_at=time.time())
         self._started = True
         self._client_env_overrides = _test_resources_client_env_from_settings(self._settings_file)
-        self._register_shutdown(runner=runner, resolver=resolver)
+        self._register_shutdown(runner=runner, resolver=resolver, java_home_provider=java_home_provider)
 
-    def stop_if_owned(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+    def stop_if_owned(
+        self,
+        *,
+        runner: RunnerWithEnv,
+        resolver: Callable[[str], str | None],
+        java_home_provider: JavaHomeProvider | None = None,
+    ) -> None:
         self._stop_log_mirror()
         if not self._started:
             return
@@ -3329,6 +3369,7 @@ class _OwnedTestResourcesSession:
             ],
             runner=runner,
             resolver=resolver,
+            java_home_provider=java_home_provider,
         )
         if exit_code == SUCCESS:
             self._remove_session_file()
@@ -3357,13 +3398,19 @@ class _OwnedTestResourcesSession:
             port = 443 if parsed.scheme == "https" else 80
         self._emit_status(f"[test-resources] server running on port {port} ({server_uri}){logs_hint}")
 
-    def _register_shutdown(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+    def _register_shutdown(
+        self,
+        *,
+        runner: RunnerWithEnv,
+        resolver: Callable[[str], str | None],
+        java_home_provider: JavaHomeProvider | None = None,
+    ) -> None:
         if self._shutdown_registered:
             return
 
         def _shutdown() -> None:
             try:
-                self.stop_if_owned(runner=runner, resolver=resolver)
+                self.stop_if_owned(runner=runner, resolver=resolver, java_home_provider=java_home_provider)
             except Exception:
                 return
 
@@ -3501,18 +3548,15 @@ class _OwnedTestResourcesSession:
         *,
         runner: RunnerWithEnv,
         resolver: Callable[[str], str | None],
+        java_home_provider: JavaHomeProvider | None = None,
     ) -> int:
-        dev_command_line = _pyronaut_dev_native_command_line("test-resources-server", args, resolver)
-        if dev_command_line is not None:
-            command_line = dev_command_line
-        else:
-            executable_path = _resolve_native_preferred_executable(
-                COMMAND_TO_EXECUTABLE["test-resources-server"],
-                resolver,
-            )
-            if executable_path is None:
-                raise RuntimeError("Missing delegated executable: pyronaut-test-resources-server")
-            command_line = [executable_path, *args]
+        executable_path = _resolve_native_preferred_executable(
+            COMMAND_TO_EXECUTABLE["test-resources-server"],
+            resolver,
+        )
+        if executable_path is None:
+            raise RuntimeError("Missing delegated executable: pyronaut-test-resources-server")
+        command_line = [executable_path, *args]
         if _delegation_trace_enabled():
             print(shlex.join(command_line), file=sys.stderr)
         removed_server_port = os.environ.pop("MICRONAUT_SERVER_PORT", None)
