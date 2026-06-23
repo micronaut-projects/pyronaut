@@ -388,7 +388,6 @@ public final class PyronautDevMain implements Callable<Integer> {
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Class<?> mainClass = applicationClassLoader.loadClass(DEFAULT_MAIN_CLASS);
             PyronautDevLogging.initializeApplicationLogging();
-            GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader);
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
                 .beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation))

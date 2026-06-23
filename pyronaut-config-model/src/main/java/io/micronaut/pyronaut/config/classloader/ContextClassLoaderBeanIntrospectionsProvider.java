@@ -40,6 +40,7 @@ import java.util.stream.Stream;
  */
 public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanIntrospectionsProvider {
     private static final String SERVICE_PATH = "META-INF/micronaut/" + BeanIntrospectionReference.class.getName();
+    private static final String MEMORY_CLASS_OUTPUT_PREFIX = "mem:/CLASS_OUTPUT/";
 
     @Override
     public List<BeanIntrospectionReference<Object>> provide(ClassLoader classLoader) {
@@ -84,6 +85,19 @@ public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanI
             collectFileReferences(resource, classLoader, references);
         } else if ("jar".equals(resource.getProtocol())) {
             collectJarReferences(resource, classLoader, references);
+        } else if ("mem".equals(resource.getProtocol())) {
+            collectMemoryReference(resource, classLoader, references);
+        }
+    }
+
+    private static void collectMemoryReference(URL resource, ClassLoader classLoader, List<BeanIntrospectionReference<Object>> references) {
+        String prefix = MEMORY_CLASS_OUTPUT_PREFIX + SERVICE_PATH + "/";
+        String value = resource.toString();
+        if (value.startsWith(prefix)) {
+            String className = value.substring(prefix.length());
+            if (!className.isEmpty() && !className.contains("/")) {
+                addReference(className, classLoader, references);
+            }
         }
     }
 
