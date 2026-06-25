@@ -27,6 +27,15 @@ class FailureDiagnosticsTest {
         IllegalStateException root = new IllegalStateException("root cause detail");
         root.setStackTrace(new StackTraceElement[] {
             new StackTraceElement("com.oracle.truffle.SomeFrame", "invoke", "SomeFrame.java", 10),
+            new StackTraceElement(
+                null,
+                "org.graalvm.nativeimage.builder",
+                null,
+                "com.oracle.svm.core.reflect.SubstrateMethodAccessor",
+                "invoke",
+                "SubstrateMethodAccessor.java",
+                117
+            ),
             new StackTraceElement("example.micronaut.Fixture", "start", "Fixture.java", 42)
         });
         RuntimeException wrapper = new RuntimeException("fixture failed", root);
@@ -37,5 +46,6 @@ class FailureDiagnosticsTest {
         assertTrue(diagnostic.contains("Caused by: java.lang.IllegalStateException: root cause detail"));
         assertTrue(diagnostic.contains("example.micronaut.Fixture.start(Fixture.java:42)"));
         assertFalse(diagnostic.contains("com.oracle.truffle.SomeFrame"));
+        assertFalse(diagnostic.contains("SubstrateMethodAccessor"));
     }
 }

@@ -17,9 +17,12 @@ PytestFunctionInvoker = java.type("io.micronaut.test.pytest.execution.PytestFunc
 
 _INTERNAL_TRACE_MARKERS = (
     "com.oracle.truffle.",
+    "com.oracle.svm.",
     "com.oracle.graal.python.",
     "org.graalvm.polyglot.",
+    "org.graalvm.nativeimage.builder/",
     "org.graalvm.python.embedding.",
+    "org.graalvm.truffle.runtime.svm/",
     "org.junit.platform.",
     "picocli.",
     "io.micronaut.pyronaut.test.PyronautTestMain",
@@ -141,6 +144,7 @@ class MicronautPytestPlugin:
         self.listener = listener
         self.current_file = None
         self.test_results = {}  # Store test results by test id
+        self.failure_messages = {}  # Store pytest-rendered failure details by test id
         self._failure_reported = set()  # Track tests for which failure block was forwarded
 
     def pytest_sessionstart(self, session):
@@ -292,6 +296,8 @@ class MicronautPytestPlugin:
                 failure_text = ""
             else:
                 failure_text = _filter_internal_traceback_frames(failure_text)
+            if failure_text:
+                self.failure_messages[test_id] = failure_text
             sections = getattr(report, "sections", []) or []
             parts = []
             sep = "_" * 53
@@ -316,7 +322,9 @@ class MicronautPytestPlugin:
         if isinstance(exception, _ExpectedFailure):
             result = self.listener.abortedResult(exception.reason)
         elif exception is not None:
-            result = self.listener.failedAssertionResult(f"{exception}")
+            result = self.listener.failedAssertionResult(
+                self.failure_messages.get(test_id) or f"{exception}"
+            )
         else:
             result = self.listener.successfulResult()
 
@@ -324,6 +332,7 @@ class MicronautPytestPlugin:
 
         # Clean up stored result
         self.test_results.pop(test_id, None)
+        self.failure_messages.pop(test_id, None)
 
     def pytest_collectreport(self, report):
         """Called when collection report is generated."""

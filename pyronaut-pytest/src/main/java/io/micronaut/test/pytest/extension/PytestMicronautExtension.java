@@ -37,6 +37,7 @@ import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.Sql;
 import io.micronaut.test.annotation.TransactionMode;
 import io.micronaut.test.extensions.AbstractMicronautExtension;
+import io.micronaut.test.pytest.FailureDiagnostics;
 import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.support.sql.SqlHandler;
 import org.graalvm.nativeimage.ImageInfo;
@@ -131,7 +132,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             );
             return new FixtureBootstrapResult(extension.getContext(), error);
         } catch (Throwable e) {
-            LOG.error("Error bootstrapping Micronaut pytest fixture: {}", e.getMessage(), e);
+            LOG.error("Error bootstrapping Micronaut pytest fixture:\n{}", FailureDiagnostics.render(e));
             return new FixtureBootstrapResult(null, buildFailureMessage(e));
         }
     }
@@ -150,7 +151,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             }
             return new TestFunctionResult(renderResult(result), null);
         } catch (Throwable e) {
-            LOG.error("Error invoking pytest function: {}", e.getMessage(), e);
+            LOG.error("Error invoking pytest function:\n{}", FailureDiagnostics.render(e));
             return new TestFunctionResult(null, buildFailureMessage(e));
         }
     }
@@ -211,7 +212,9 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             runSql(Sql.Phase.BEFORE_ALL);
             return null;
         } catch (Throwable e) {
-            LOG.error("Error PytestMicronautExtension start: {}", e.getMessage(), e);
+            if (!(e instanceof PythonAssertionError)) {
+                LOG.error("Error PytestMicronautExtension start:\n{}", FailureDiagnostics.render(e));
+            }
             return buildFailureMessage(e);
         }
     }
@@ -232,7 +235,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             super.beforeClass(context, testClass, testAnnotationValue);
         } catch (RuntimeException e) {
             restoreNativeBeanIntrospectionsProvider();
-            LOG.error("Error PytestMicronautExtension beforeClass: {}", e.getMessage(), e);
+            LOG.error("Error PytestMicronautExtension beforeClass:\n{}", FailureDiagnostics.render(e));
             throw new PythonAssertionError(buildFailureMessage(e), e);
         }
     }
@@ -281,7 +284,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             runSql(Sql.Phase.AFTER_ALL);
             super.afterClass(context);
         } catch (RuntimeException e) {
-            LOG.error("Error PytestMicronautExtension afterClass: " + e.getMessage(), e);
+            LOG.error("Error PytestMicronautExtension afterClass:\n{}", FailureDiagnostics.render(e));
             throw e;
         } finally {
             restoreNativeBeanIntrospectionsProvider();

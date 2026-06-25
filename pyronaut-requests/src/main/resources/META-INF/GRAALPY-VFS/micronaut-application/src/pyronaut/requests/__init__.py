@@ -565,7 +565,7 @@ class Session:
         # Use Java invoker to prevent ForeignException crossing into pytest
         result = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
         if getattr(result, 'success', False) or getattr(result, 'response', None) is not None:
-            response = Response(full_url, result, history=[], body=getattr(result, 'body', None))
+            response = Response(full_url, result.response, history=[], body=getattr(result, 'body', None))
             try:
                 for name, sc in response.headers.items():
                     if str(name).lower() != "set-cookie":
@@ -611,7 +611,7 @@ class Session:
                 req = req.header(_jstring(k), _jstring(v))
             r2 = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
             if getattr(r2, 'success', False) or getattr(r2, 'response', None) is not None:
-                response = Response(self._resolve_url(location), r2, history=list(history), body=getattr(r2, 'body', None))
+                response = Response(self._resolve_url(location), r2.response, history=list(history), body=getattr(r2, 'body', None))
                 try:
                     for name, sc in response.headers.items():
                         if str(name).lower() != "set-cookie":

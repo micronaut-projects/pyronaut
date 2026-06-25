@@ -132,6 +132,8 @@ class PytestFunctionInvokerTest {
             context.eval("python", """
                 failure_text = '''AssertionError: assert 200 == 201
                 \tat <python> test_index(test_simple_python.py:27:0)
+                \tat org.graalvm.nativeimage.builder/com.oracle.svm.core.reflect.SubstrateMethodAccessor.invoke(SubstrateMethodAccessor.java:117)
+                \tat com.oracle.svm.truffle.api.SubstrateOptimizedCallTarget.invokeCallBoundary(SubstrateOptimizedCallTarget.java:124)
                 \tat io.micronaut.test.pytest.execution.PytestFunctionInvoker.call(PytestFunctionInvoker.java:33)
                 \tat io.micronaut.test.pytest.execution.PytestTestExecutor.execute(PytestTestExecutor.java:123)
                 \tat io.micronaut.test.pytest.PytestTestEngine.execute(PytestTestEngine.java:159)
@@ -151,6 +153,8 @@ class PytestFunctionInvokerTest {
             assertFalse(filtered.contains("EngineExecutionOrchestrator"));
             assertFalse(filtered.contains("PyronautTestMain"));
             assertFalse(filtered.contains("picocli"));
+            assertFalse(filtered.contains("SubstrateMethodAccessor"));
+            assertFalse(filtered.contains("SubstrateOptimizedCallTarget"));
 
             String compacted = context.getBindings("python").getMember("compacted_assertion_text").asString();
             assertEquals("AssertionError: assert 200 == 201", compacted);
