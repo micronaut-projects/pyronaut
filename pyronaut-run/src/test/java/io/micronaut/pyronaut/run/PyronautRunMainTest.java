@@ -146,7 +146,9 @@ class PyronautRunMainTest {
         writeMinimalPyproject(project);
 
         String previousLoggerConfig = System.getProperty("logger.config");
+        String previousLogbackConfigurationFile = System.getProperty("logback.configurationFile");
         System.clearProperty("logger.config");
+        System.clearProperty("logback.configurationFile");
         AtomicInteger loggingInitializations = new AtomicInteger();
         AtomicReference<String> loggerConfigDuringStart = new AtomicReference<>();
         try {
@@ -168,6 +170,7 @@ class PyronautRunMainTest {
             assertFalse(System.getProperties().containsKey("logger.config"));
         } finally {
             restoreProperty("logger.config", previousLoggerConfig);
+            restoreProperty("logback.configurationFile", previousLogbackConfigurationFile);
         }
     }
 
@@ -184,23 +187,31 @@ class PyronautRunMainTest {
         writeMinimalPyproject(project);
 
         String previousLoggerConfig = System.getProperty("logger.config");
+        String previousLogbackConfigurationFile = System.getProperty("logback.configurationFile");
         System.clearProperty("logger.config");
+        System.clearProperty("logback.configurationFile");
         AtomicInteger loggingInitializations = new AtomicInteger();
+        AtomicReference<String> loggerConfigDuringStart = new AtomicReference<>();
         try {
             PyronautRunMain runMain = new PyronautRunMain(
                 new PyprojectModelReader(),
                 (className, classLoader) -> null,
                 classLoader -> { },
-                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> false,
+                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
+                    loggerConfigDuringStart.set(System.getProperty("logger.config"));
+                    return false;
+                },
                 loggingInitializations::incrementAndGet
             );
             runMain.projectDir = project;
 
             assertEquals(0, runMain.call());
             assertEquals(0, loggingInitializations.get());
+            assertEquals("pyronaut-default-logback.xml", loggerConfigDuringStart.get());
             assertFalse(System.getProperties().containsKey("logger.config"));
         } finally {
             restoreProperty("logger.config", previousLoggerConfig);
+            restoreProperty("logback.configurationFile", previousLogbackConfigurationFile);
         }
     }
 

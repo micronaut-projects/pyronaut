@@ -18,6 +18,7 @@ import javax.tools.ToolProvider;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -120,6 +121,83 @@ class PyronautTestMainTest {
             assertEquals("9090", System.getProperty(property));
         } finally {
             restoreProperty(property, previous);
+        }
+    }
+
+    @Test
+    void defaultsLoggerConfigDuringTestExecution() throws Exception {
+        String property = "logger.config";
+        String previous = System.getProperty(property);
+        String previousLogbackConfigurationFile = System.getProperty("logback.configurationFile");
+        System.clearProperty(property);
+        System.clearProperty("logback.configurationFile");
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("pyronaut-default-logback.xml", propertyDuringBootstrap.get());
+            assertFalse(System.getProperties().containsKey(property));
+        } finally {
+            restoreProperty(property, previous);
+            restoreProperty("logback.configurationFile", previousLogbackConfigurationFile);
+        }
+    }
+
+    @Test
+    void preservesExplicitLoggerConfigDuringTestExecution() throws Exception {
+        String property = "logger.config";
+        String previous = System.getProperty(property);
+        System.setProperty(property, "custom-logback.xml");
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("custom-logback.xml", propertyDuringBootstrap.get());
+            assertEquals("custom-logback.xml", System.getProperty(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
+    void preservesExplicitLogbackConfigurationFileDuringTestExecution() throws Exception {
+        String loggerConfig = "logger.config";
+        String logbackConfigurationFile = "logback.configurationFile";
+        String previousLoggerConfig = System.getProperty(loggerConfig);
+        String previousLogbackConfigurationFile = System.getProperty(logbackConfigurationFile);
+        System.clearProperty(loggerConfig);
+        System.setProperty(logbackConfigurationFile, "custom-file-logback.xml");
+        try {
+            Path project = setupProject();
+            AtomicReference<String> loggerConfigDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> loggerConfigDuringBootstrap.set(System.getProperty(loggerConfig))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertNull(loggerConfigDuringBootstrap.get());
+            assertFalse(System.getProperties().containsKey(loggerConfig));
+            assertEquals("custom-file-logback.xml", System.getProperty(logbackConfigurationFile));
+        } finally {
+            restoreProperty(loggerConfig, previousLoggerConfig);
+            restoreProperty(logbackConfigurationFile, previousLogbackConfigurationFile);
         }
     }
 

@@ -21,6 +21,7 @@ import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
@@ -69,6 +70,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String MICRONAUT_SERVER_PORT = "micronaut.server.port";
+    private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String PYRONAUT_USE_SYSTEM_APPLICATION_CLASSLOADER = "pyronaut.use.system.application.classloader";
     private static final String DEFAULT_TEST_SERVER_PORT = "0";
     private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_IDS = List.of(
@@ -186,9 +188,11 @@ public final class PyronautTestMain implements Callable<Integer> {
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         Path resolvedPytestSourceDir = resolvePytestSourceDir(root, resolvedTestsDir);
         String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
+        String previousLoggerConfigProperty = System.getProperty(LOGGER_CONFIG_PROPERTY);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
+            PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             defaultTestServerPort();
@@ -274,6 +278,7 @@ public final class PyronautTestMain implements Callable<Integer> {
             }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
             restoreSystemProperty(MICRONAUT_SERVER_PORT, previousServerPortProperty);
+            restoreSystemProperty(LOGGER_CONFIG_PROPERTY, previousLoggerConfigProperty);
         }
     }
 
@@ -687,6 +692,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautTestMain()).execute(args);
         System.exit(exitCode);
     }

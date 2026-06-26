@@ -53,8 +53,6 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String PYTHON_APPLICATION_MAIN = "META-INF/GRAALPY-VFS/micronaut-application/src/main.py";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
-    private static final String LOGBACK_CONFIGURATION_FILE_PROPERTY = "logback.configurationFile";
-    private static final String DEFAULT_LOGBACK_CONFIGURATION = "pyronaut-default-logback.xml";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -151,8 +149,10 @@ public final class PyronautRunMain implements Callable<Integer> {
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
-            if (!hasPythonApplicationMain(applicationClassLoader)) {
-                initializeApplicationLoggingDefaults();
+            boolean hasPythonApplicationMain = hasPythonApplicationMain(applicationClassLoader);
+            boolean defaultLoggingConfigurationApplied = PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
+            if (!hasPythonApplicationMain && defaultLoggingConfigurationApplied) {
+                loggingInitializer.initializeApplicationDefaults();
             }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
@@ -178,14 +178,6 @@ public final class PyronautRunMain implements Callable<Integer> {
 
     private static boolean hasPythonApplicationMain(ClassLoader classLoader) {
         return classLoader.getResource(PYTHON_APPLICATION_MAIN) != null;
-    }
-
-    private void initializeApplicationLoggingDefaults() {
-        if (System.getProperty(LOGBACK_CONFIGURATION_FILE_PROPERTY) == null
-            && System.getProperty(LOGGER_CONFIG_PROPERTY) == null) {
-            System.setProperty(LOGGER_CONFIG_PROPERTY, DEFAULT_LOGBACK_CONFIGURATION);
-            loggingInitializer.initializeApplicationDefaults();
-        }
     }
 
     static void enableContextClassLoaderIntrospections() {

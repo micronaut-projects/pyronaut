@@ -1845,9 +1845,8 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
     private ReportSummary summarizeReports(Path reportsDir) {
         var junit = reportsDir.resolve("junit.xml");
-        var lastNodeId = readOptionalTrimmed(reportsDir.resolve(".pyronaut-last-nodeid.txt"));
         if (!Files.exists(junit)) {
-            return new ReportSummary(0, 0, 0, 0, List.of(), lastNodeId);
+            return new ReportSummary(0, 0, 0, 0, List.of());
         }
 
         try {
@@ -1857,18 +1856,18 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
             dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
             var document = dbf.newDocumentBuilder().parse(junit.toFile());
-            return summarizeDocument(document, lastNodeId);
+            return summarizeDocument(document);
         } catch (Exception e) {
             controller.notify("Failed parsing junit report: " + e.getMessage(), UiModel.Severity.WARNING);
-            return new ReportSummary(0, 0, 0, 0, List.of(), lastNodeId);
+            return new ReportSummary(0, 0, 0, 0, List.of());
         }
     }
 
-    private ReportSummary summarizeDocument(Document document, String lastNodeId) {
+    private ReportSummary summarizeDocument(Document document) {
         var suites = new ArrayList<Element>();
         var root = document.getDocumentElement();
         if (root == null) {
-            return new ReportSummary(0, 0, 0, 0, List.of(), lastNodeId);
+            return new ReportSummary(0, 0, 0, 0, List.of());
         }
         if ("testsuite".equals(root.getTagName())) {
             suites.add(root);
@@ -1905,7 +1904,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             total = cases.size();
         }
         int passed = Math.max(0, total - failed - skipped);
-        return new ReportSummary(total, passed, failed, skipped, cases, lastNodeId);
+        return new ReportSummary(total, passed, failed, skipped, cases);
     }
 
     private TestCaseResult toCase(Element testcase) {
@@ -1950,9 +1949,6 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         }
 
         controller.updateTestSummary(summary.passed, summary.failed, summary.skipped, 0, 0);
-        if (summary.lastNodeId != null && !summary.lastNodeId.isBlank()) {
-            controller.addActivityOutput("[tui] last failing test: " + summary.lastNodeId);
-        }
         if (summary.total == 0) {
             controller.notify("No test reports found under " + reportDir, UiModel.Severity.WARNING);
         }
@@ -1988,18 +1984,6 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             } catch (NumberFormatException ignored) {
                 return 0;
             }
-        }
-    }
-
-    private static String readOptionalTrimmed(Path path) {
-        if (!Files.exists(path)) {
-            return null;
-        }
-        try {
-            var text = Files.readString(path).trim();
-            return text.isEmpty() ? null : text;
-        } catch (IOException e) {
-            return null;
         }
     }
 
@@ -2634,15 +2618,13 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         private final int failed;
         private final int skipped;
         private final List<TestCaseResult> cases;
-        private final String lastNodeId;
 
-        private ReportSummary(int total, int passed, int failed, int skipped, List<TestCaseResult> cases, String lastNodeId) {
+        private ReportSummary(int total, int passed, int failed, int skipped, List<TestCaseResult> cases) {
             this.total = total;
             this.passed = passed;
             this.failed = failed;
             this.skipped = skipped;
             this.cases = cases;
-            this.lastNodeId = lastNodeId;
         }
     }
 

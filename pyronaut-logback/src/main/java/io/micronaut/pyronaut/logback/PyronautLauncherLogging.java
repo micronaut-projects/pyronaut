@@ -30,9 +30,13 @@ import org.slf4j.LoggerFactory;
  */
 @Internal
 public final class PyronautLauncherLogging {
+    public static final String DEFAULT_APPLICATION_LOGBACK_CONFIGURATION = "pyronaut-default-logback.xml";
+
     private static final String SIMPLE_LOGGER_DEFAULT_LEVEL = "org.slf4j.simpleLogger.defaultLogLevel";
     private static final String LOGBACK_STATUS_LISTENER = "logback.statusListenerClass";
     private static final String LOGBACK_NOP_STATUS_LISTENER = "ch.qos.logback.core.status.NopStatusListener";
+    private static final String LOGBACK_CONFIGURATION_FILE_PROPERTY = "logback.configurationFile";
+    private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String CONSOLE_APPENDER_NAME = "PYRONAUT_LAUNCHER_CONSOLE";
     private static final String CONSOLE_PATTERN = "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
     private static final String APPLICATION_CONSOLE_PATTERN = "%cyan(%d{yyyy-MM-dd HH:mm:ss.SSS}) %gray([%level]) %magenta(%logger{36}): %msg%n";
@@ -67,6 +71,20 @@ public final class PyronautLauncherLogging {
             rootLogger.setLevel(Level.INFO);
             rootLogger.addAppender(createConsoleAppender(loggerContext, APPLICATION_CONSOLE_PATTERN));
         }
+    }
+
+    /**
+     * Configure Micronaut's default application logging resource when the user did not provide one.
+     *
+     * @return {@code true} when the default was applied
+     */
+    public static boolean setDefaultApplicationConfigurationProperty() {
+        if (System.getProperty(LOGBACK_CONFIGURATION_FILE_PROPERTY) == null
+            && System.getProperty(LOGGER_CONFIG_PROPERTY) == null) {
+            System.setProperty(LOGGER_CONFIG_PROPERTY, DEFAULT_APPLICATION_LOGBACK_CONFIGURATION);
+            return true;
+        }
+        return false;
     }
 
     private static ConsoleAppender<ILoggingEvent> createConsoleAppender(LoggerContext loggerContext) {
