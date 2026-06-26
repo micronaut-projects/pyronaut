@@ -176,6 +176,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                     if (noCache) {
                         progressReporter.cacheBypass("main", mainSourceCount);
                     }
+                    prepareGeneratedOutputDirectory(resolvedMainTargetDir);
                     compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
                         resolvedMainPythonSrc,
                         resolvedMainJavaSrc,
@@ -201,7 +202,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                     + ProcessorSourceCache.countSources(mergedTestJavaSrc, ".java");
                 progressReporter.startPass("test", testSourceCount);
                 if (testSourceCount == 0L) {
-                    Files.createDirectories(resolvedTestTargetDir);
+                    prepareGeneratedOutputDirectory(resolvedTestTargetDir);
                     syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                     progressReporter.noSources("test");
                     testStatus = "no sources";
@@ -222,6 +223,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         if (noCache) {
                             progressReporter.cacheBypass("test", testSourceCount);
                         }
+                        prepareGeneratedOutputDirectory(resolvedTestTargetDir);
                         compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
                             mergedTestPythonSrc,
                             mergedTestJavaSrc,
@@ -299,6 +301,15 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static void mergeSourceTrees(Path primarySource, Path overlaySource, Path targetDirectory) {
         copyTree(primarySource, targetDirectory);
         copyTree(overlaySource, targetDirectory);
+    }
+
+    private static void prepareGeneratedOutputDirectory(Path targetDirectory) {
+        deleteTree(targetDirectory);
+        try {
+            Files.createDirectories(targetDirectory);
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed to create generated output directory: " + targetDirectory, e);
+        }
     }
 
     private static void syncProcessedTestSources(Path testTargetDir, Path testSourcesDir, Path originalTestSourceDir) {
