@@ -53,6 +53,7 @@ import org.eclipse.aether.util.repository.DefaultProxySelector;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -151,10 +152,7 @@ final class MavenClasspathResolver {
                                              Path localRepositoryPath,
                                              boolean offline,
                                              boolean forceUpdates) {
-        List<RemoteRepository> repositories = toRepositories(
-            model.pyronaut() == null ? List.of() : model.pyronaut().repositories(),
-            forceUpdates
-        );
+        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
@@ -228,9 +226,29 @@ final class MavenClasspathResolver {
             if (!artifactPath.startsWith(localRepositoryRoot)) {
                 continue;
             }
+            if (isMavenLocalArtifact(artifactResult, artifactPath)) {
+                continue;
+            }
             evicted |= deleteLocalArtifactFile(artifactPath);
         }
         return evicted;
+    }
+
+    private static boolean isMavenLocalArtifact(ArtifactResult artifactResult, Path artifactPath) {
+        if (artifactResult.getRepository() != null && "mavenLocal".equals(artifactResult.getRepository().getId())) {
+            return true;
+        }
+        Path remoteRepositories = artifactPath.resolveSibling("_remote.repositories");
+        if (!Files.exists(remoteRepositories)) {
+            return true;
+        }
+        try {
+            String localInstallMarker = artifactPath.getFileName() + ">=";
+            return Files.readAllLines(remoteRepositories).stream()
+                .anyMatch(line -> line.equals(localInstallMarker));
+        } catch (IOException e) {
+            throw new PyprojectModelException("Failed reading local dependency provenance: " + remoteRepositories, e);
+        }
     }
 
     private static boolean deleteLocalArtifactFile(Path artifactPath) {
@@ -795,6 +813,22 @@ final class MavenClasspathResolver {
             }
         }
         return List.copyOf(resolved.values());
+    }
+
+    private static List<String> repositoriesForModel(PyprojectModel model) {
+        if (model.pyronaut() == null) {
+            return List.of();
+        }
+        List<String> repositories = model.pyronaut().repositories() == null ? List.of() : model.pyronaut().repositories();
+        if (model.pyronaut().coreVersion() != null
+            && model.pyronaut().coreVersion().endsWith("-SNAPSHOT")
+            && repositories.stream().noneMatch(repository -> repository != null && "mavenlocal".equals(repository.trim().toLowerCase(Locale.ROOT)))) {
+            List<String> withMavenLocal = new ArrayList<>(repositories.size() + 1);
+            withMavenLocal.add("mavenLocal");
+            withMavenLocal.addAll(repositories);
+            return withMavenLocal;
+        }
+        return repositories;
     }
 
     private static RemoteRepository newRemoteRepository(String id, String url, boolean forceUpdates) {

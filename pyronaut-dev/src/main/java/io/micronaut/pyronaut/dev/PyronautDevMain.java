@@ -24,6 +24,7 @@ import io.micronaut.pyronaut.install.PyronautInstallMain;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import io.micronaut.pyronaut.run.PyronautRunMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
@@ -758,8 +759,14 @@ public final class PyronautDevMain implements Callable<Integer> {
             return switch (command) {
                 case INSTALL -> new CommandLine(new PyronautInstallMain()).execute(args);
                 case PROCESS -> new CommandLine(new PyronautProcessorMain()).execute(args);
-                case RUN -> new CommandLine(new PyronautRunMain()).execute(args);
-                case TEST -> new CommandLine(new PyronautTestMain()).execute(args);
+                case RUN -> {
+                    PyronautLauncherLogging.initializeApplicationDefaults();
+                    yield new CommandLine(new PyronautRunMain()).execute(args);
+                }
+                case TEST -> {
+                    PyronautLauncherLogging.initializeApplicationDefaults();
+                    yield new CommandLine(new PyronautTestMain()).execute(args);
+                }
                 case VALIDATE_CONFIG -> new CommandLine(new PyronautValidateConfigMain()).execute(args);
                 case TEST_RESOURCES_SERVER -> new CommandLine(new PyronautTestResourcesServerMain()).execute(args);
             };

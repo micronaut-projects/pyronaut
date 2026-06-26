@@ -1308,6 +1308,54 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void snapshotCoreVersionUsesMavenLocalForStaleRepositoryConfiguration() throws Exception {
+        Path repository = defaultLocalRepository();
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        Path artifactDir = repository.resolve("com/example/runtime-dep/1.0.0");
+        Files.writeString(artifactDir.resolve("_remote.repositories"), """
+            #NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.
+            runtime-dep-1.0.0.jar>=
+            runtime-dep-1.0.0.pom>=
+            """);
+
+        Path project = tempDir.resolve("project-snapshot-core-maven-local");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "snapshot-core-maven-local"
+
+            [tool.pyronaut]
+            repositories = ["mavenCentral"]
+
+            [tool.pyronaut.core]
+            version = "5.1.0-SNAPSHOT"
+
+            [tool.pyronaut.platform]
+            version = ""
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """);
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+        command.noCache = true;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        List<String> runtimeEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertEquals(1, runtimeEntries.size());
+        assertTrue(runtimeEntries.getFirst().startsWith(repository.toString()));
+    }
+
+    @Test
     void resolvesVersionlessDependenciesUsingManagedBoms() throws Exception {
         Path repository = tempDir.resolve("repo-managed");
         writeBom(

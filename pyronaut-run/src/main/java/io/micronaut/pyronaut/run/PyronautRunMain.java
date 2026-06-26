@@ -51,6 +51,10 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
+    private static final String PYTHON_APPLICATION_MAIN = "META-INF/GRAALPY-VFS/micronaut-application/src/main.py";
+    private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
+    private static final String LOGBACK_CONFIGURATION_FILE_PROPERTY = "logback.configurationFile";
+    private static final String DEFAULT_LOGBACK_CONFIGURATION = "pyronaut-default-logback.xml";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -85,13 +89,15 @@ public final class PyronautRunMain implements Callable<Integer> {
     private final ContextBootstrapper contextBootstrapper;
     private final ApplicationStarter applicationStarter;
     private final PyprojectModelReader modelReader;
+    private final LoggingInitializer loggingInitializer;
 
     public PyronautRunMain() {
         this(
             new PyprojectModelReader(),
             (className, classLoader) -> Class.forName(className, true, classLoader),
             classLoader -> { },
-            PyronautRunMain::startMicronautApplication
+            PyronautRunMain::startMicronautApplication,
+            PyronautLauncherLogging::initializeApplicationDefaults
         );
     }
 
@@ -99,10 +105,25 @@ public final class PyronautRunMain implements Callable<Integer> {
                     ClassResolver classResolver,
                     ContextBootstrapper contextBootstrapper,
                     ApplicationStarter applicationStarter) {
+        this(
+            modelReader,
+            classResolver,
+            contextBootstrapper,
+            applicationStarter,
+            PyronautLauncherLogging::initializeApplicationDefaults
+        );
+    }
+
+    PyronautRunMain(PyprojectModelReader modelReader,
+                    ClassResolver classResolver,
+                    ContextBootstrapper contextBootstrapper,
+                    ApplicationStarter applicationStarter,
+                    LoggingInitializer loggingInitializer) {
         this.modelReader = modelReader;
         this.classResolver = classResolver;
         this.contextBootstrapper = contextBootstrapper;
         this.applicationStarter = applicationStarter;
+        this.loggingInitializer = loggingInitializer;
     }
 
     @Override
@@ -126,9 +147,13 @@ public final class PyronautRunMain implements Callable<Integer> {
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+        String previousLoggerConfigProperty = System.getProperty(LOGGER_CONFIG_PROPERTY);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
+            if (!hasPythonApplicationMain(applicationClassLoader)) {
+                initializeApplicationLoggingDefaults();
+            }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
@@ -147,6 +172,19 @@ public final class PyronautRunMain implements Callable<Integer> {
                 BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
             }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
+            restoreSystemProperty(LOGGER_CONFIG_PROPERTY, previousLoggerConfigProperty);
+        }
+    }
+
+    private static boolean hasPythonApplicationMain(ClassLoader classLoader) {
+        return classLoader.getResource(PYTHON_APPLICATION_MAIN) != null;
+    }
+
+    private void initializeApplicationLoggingDefaults() {
+        if (System.getProperty(LOGBACK_CONFIGURATION_FILE_PROPERTY) == null
+            && System.getProperty(LOGGER_CONFIG_PROPERTY) == null) {
+            System.setProperty(LOGGER_CONFIG_PROPERTY, DEFAULT_LOGBACK_CONFIGURATION);
+            loggingInitializer.initializeApplicationDefaults();
         }
     }
 
@@ -326,6 +364,11 @@ public final class PyronautRunMain implements Callable<Integer> {
     @FunctionalInterface
     interface ApplicationStarter {
         boolean start(Class<?> loadedClass, Path resolvedClassesDir, Boolean bannerEnabled, List<String> appArgs) throws Exception;
+    }
+
+    @FunctionalInterface
+    interface LoggingInitializer {
+        void initializeApplicationDefaults();
     }
 
     record ResolvedProjectLayout(Path processedClassesRoot, List<URL> classpathUrls) implements AutoCloseable {

@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -136,6 +137,71 @@ class PyronautRunMainTest {
         String stderr = errBuffer.toString();
         assertEquals(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize(), startedClassesDir.get());
         assertFalse(stderr.contains("ClassNotFoundException"));
+    }
+
+    @Test
+    void initializesApplicationLoggingDefaultsWhenPythonMainIsAbsent() throws Exception {
+        Path project = tempDir.resolve("project-without-python-main");
+        Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        writeMinimalPyproject(project);
+
+        String previousLoggerConfig = System.getProperty("logger.config");
+        System.clearProperty("logger.config");
+        AtomicInteger loggingInitializations = new AtomicInteger();
+        AtomicReference<String> loggerConfigDuringStart = new AtomicReference<>();
+        try {
+            PyronautRunMain runMain = new PyronautRunMain(
+                new PyprojectModelReader(),
+                (className, classLoader) -> null,
+                classLoader -> { },
+                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
+                    loggerConfigDuringStart.set(System.getProperty("logger.config"));
+                    return false;
+                },
+                loggingInitializations::incrementAndGet
+            );
+            runMain.projectDir = project;
+
+            assertEquals(0, runMain.call());
+            assertEquals(1, loggingInitializations.get());
+            assertEquals("pyronaut-default-logback.xml", loggerConfigDuringStart.get());
+            assertFalse(System.getProperties().containsKey("logger.config"));
+        } finally {
+            restoreProperty("logger.config", previousLoggerConfig);
+        }
+    }
+
+    @Test
+    void leavesApplicationLoggingToPythonMainWhenPresent() throws Exception {
+        Path project = tempDir.resolve("project-with-python-main");
+        Path classes = project.resolve("__pyronaut__/classes");
+        Files.createDirectories(classes.resolve("META-INF/GRAALPY-VFS/micronaut-application/src"));
+        Files.writeString(
+            classes.resolve("META-INF/GRAALPY-VFS/micronaut-application/src/main.py"),
+            "from logback.config import dictConfig\n",
+            StandardCharsets.UTF_8
+        );
+        writeMinimalPyproject(project);
+
+        String previousLoggerConfig = System.getProperty("logger.config");
+        System.clearProperty("logger.config");
+        AtomicInteger loggingInitializations = new AtomicInteger();
+        try {
+            PyronautRunMain runMain = new PyronautRunMain(
+                new PyprojectModelReader(),
+                (className, classLoader) -> null,
+                classLoader -> { },
+                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> false,
+                loggingInitializations::incrementAndGet
+            );
+            runMain.projectDir = project;
+
+            assertEquals(0, runMain.call());
+            assertEquals(0, loggingInitializations.get());
+            assertFalse(System.getProperties().containsKey("logger.config"));
+        } finally {
+            restoreProperty("logger.config", previousLoggerConfig);
+        }
     }
 
     @Test
