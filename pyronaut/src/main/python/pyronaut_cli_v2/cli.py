@@ -296,7 +296,15 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-            preflight_code = _run_preflight(project_dir, no_cache, local_repository, execute, locate)
+            preflight_code = _run_preflight(
+                project_dir,
+                no_cache,
+                local_repository,
+                execute,
+                locate,
+                install=False,
+                process_pass="main",
+            )
             if preflight_code != SUCCESS:
                 return preflight_code
             if tr_session is not None:
@@ -319,6 +327,7 @@ def run(
                 sleep=sleep,
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
+                process_pass="main",
             )
 
         if command in {"run", "test"}:
@@ -336,7 +345,15 @@ def run(
                 if validation_code != SUCCESS:
                     return validation_code
 
-            preflight_code = _run_preflight(project_dir, no_cache, local_repository, execute, locate)
+            preflight_code = _run_preflight(
+                project_dir,
+                no_cache,
+                local_repository,
+                execute,
+                locate,
+                install=False,
+                process_pass="main" if command == "run" else "test",
+            )
             if preflight_code != SUCCESS:
                 return preflight_code
 
@@ -822,15 +839,21 @@ def _run_preflight(
     local_repository: str | None,
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
+    *,
+    install: bool = True,
+    process_pass: str | None = None,
 ) -> int:
-    install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
-    if no_cache:
-        install_args.append("--no-cache")
-    install_code = _delegate("install", install_args, runner, resolver)
-    if install_code != SUCCESS:
-        return install_code
+    if install:
+        install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
+        if no_cache:
+            install_args.append("--no-cache")
+        install_code = _delegate("install", install_args, runner, resolver)
+        if install_code != SUCCESS:
+            return install_code
 
     process_args = ["--project-dir", project_dir]
+    if process_pass is not None:
+        process_args.extend(["--pass", process_pass])
     if no_cache:
         process_args.append("--no-cache")
     return _delegate("process", process_args, runner, resolver)
@@ -2122,6 +2145,7 @@ def _run_with_auto_restart(
     sleep: Callable[[float], None],
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
+    process_pass: str | None = None,
 ) -> int:
     if poll_interval <= 0:
         poll_interval = 0.25
@@ -2135,7 +2159,15 @@ def _run_with_auto_restart(
         if initial_preflight_done:
             initial_preflight_done = False
         else:
-            preflight_code = _run_preflight(str(project_root), no_cache, local_repository, execute, resolver)
+            preflight_code = _run_preflight(
+                str(project_root),
+                no_cache,
+                local_repository,
+                execute,
+                resolver,
+                install=False,
+                process_pass=process_pass,
+            )
             if preflight_code != SUCCESS:
                 return preflight_code
 
@@ -2194,7 +2226,15 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
-                        refresh_code = _run_preflight(str(project_root), no_cache, local_repository, execute, resolver)
+                        refresh_code = _run_preflight(
+                            str(project_root),
+                            no_cache,
+                            local_repository,
+                            execute,
+                            resolver,
+                            install=False,
+                            process_pass=process_pass,
+                        )
                     except BaseException as exc:
                         refresh_exception = exc
                         refresh_code = INTERNAL_ERROR

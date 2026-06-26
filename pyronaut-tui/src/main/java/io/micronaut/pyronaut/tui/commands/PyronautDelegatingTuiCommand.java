@@ -265,7 +265,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         if (restart) {
             controller.notify("Change detected, restarting run workflow", UiModel.Severity.INFO);
         }
-        controller.notify(reason + " (validate -> install -> process -> run)", UiModel.Severity.INFO);
+        controller.notify(reason + " (validate -> process -> run)", UiModel.Severity.INFO);
         controller.startCompiling();
 
         var validationCode = runForeground(
@@ -283,19 +283,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             controller.notify("Configuration validation failed with exit code " + validationCode, UiModel.Severity.ERROR);
             return;
         }
-        var installCode = runForeground(
-            project,
-            buildForegroundCommand(project, "install", installExecutable, List.of("--project-dir", project.toString())),
-            false
-        );
-        if (installCode != 0) {
-            controller.stopCompiling();
-            controller.notify("Install failed with exit code " + installCode, UiModel.Severity.ERROR);
-            return;
-        }
         var processCode = runForeground(
             project,
-            buildForegroundCommand(project, "process", processExecutable, List.of("--project-dir", project.toString())),
+            buildForegroundCommand(project, "process", processExecutable, List.of("--project-dir", project.toString(), "--pass", "main")),
             false
         );
         if (processCode != 0) {
@@ -328,7 +318,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         if (restart) {
             controller.notify("Change detected, rerunning tests", UiModel.Severity.INFO);
         }
-        controller.notify(reason + " (validate -> install -> process -> test)", UiModel.Severity.INFO);
+        controller.notify(reason + " (validate -> process -> test)", UiModel.Severity.INFO);
         controller.startCompiling();
 
         var validationCode = runForeground(
@@ -347,21 +337,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             controller.stopTesting();
             return;
         }
-        var installCode = runForeground(
-            project,
-            buildForegroundCommand(project, "install", installExecutable, List.of("--project-dir", project.toString())),
-            false
-        );
-        if (installCode != 0) {
-            controller.stopCompiling();
-            controller.notify("Install failed with exit code " + installCode, UiModel.Severity.ERROR);
-            controller.stopTesting();
-            return;
-        }
-
         var processCode = runForeground(
             project,
-            buildForegroundCommand(project, "process", processExecutable, List.of("--project-dir", project.toString())),
+            buildForegroundCommand(project, "process", processExecutable, List.of("--project-dir", project.toString(), "--pass", "test")),
             false
         );
         if (processCode != 0) {
