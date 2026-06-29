@@ -627,12 +627,11 @@ additional-resources = ["views"]
         self.assertEqual(
             [
                 [str(native_dev), "validate-config", "--project-dir", str(project_dir), "--scenario", "run"],
-                [str(native_dev), "install", "--project-dir", str(project_dir)],
-                [str(native_dev), "process", "--project-dir", str(project_dir)],
+                [str(native_dev), "process", "--project-dir", str(project_dir), "--pass", "main"],
             ],
-            executed[:3],
+            executed[:2],
         )
-        run_command = executed[3]
+        run_command = executed[2]
         self.assertNotIn("-cp", run_command)
         self.assertEqual(str(native_dev), run_command[0])
         properties = self._extract_native_system_properties(run_command, "run")
@@ -644,6 +643,76 @@ additional-resources = ["views"]
         self.assertIn(str((project_dir / "views").resolve()), classpath)
         self.assertNotIn("/tmp/pyronaut-run.jar", classpath)
         self.assertEqual(["run", "--project-dir", str(project_dir), "--main-class", "example.Main"], run_command[run_command.index("run") :])
+
+    def test_run_auto_restart_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):
+        executed = []
+        started = []
+        original_test_resources_disabled = os.environ.get("PYRONAUT_TEST_RESOURCES_DISABLED")
+        os.environ["PYRONAUT_TEST_RESOURCES_DISABLED"] = "true"
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                native_dev = Path(temp_dir) / "pyronaut-dev"
+                native_dev.write_text("", encoding="utf-8")
+                native_dev.chmod(0o755)
+                project_dir = Path(temp_dir) / "demo"
+                (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+                self._write_manifests(project_dir, development_runtime=True)
+                (project_dir / "pyproject.toml").write_text(
+                    """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.toolchain]
+type = "native"
+""".strip()
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                class FakeProcess:
+                    def poll(self):
+                        return 0
+
+                def runner(command_line, env=None):
+                    executed.append(command_line)
+                    return 0
+
+                def process_runner(command_line, env):
+                    started.append((command_line, env))
+                    return FakeProcess()
+
+                with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                    exit_code = cli.run(
+                        ["run", "--project-dir", str(project_dir)],
+                        runner=runner,
+                        process_runner=process_runner,
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                    )
+        finally:
+            if original_test_resources_disabled is None:
+                os.environ.pop("PYRONAUT_TEST_RESOURCES_DISABLED", None)
+            else:
+                os.environ["PYRONAUT_TEST_RESOURCES_DISABLED"] = original_test_resources_disabled
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [
+                [str(native_dev), "validate-config", "--project-dir", str(project_dir), "--scenario", "run"],
+                [str(native_dev), "process", "--project-dir", str(project_dir), "--pass", "main"],
+            ],
+            executed,
+        )
+        self.assertEqual(1, len(started))
+        run_command = started[0][0]
+        self.assertEqual(str(native_dev), run_command[0])
+        self.assertNotIn("-cp", run_command)
+        properties = self._extract_native_system_properties(run_command, "run")
+        classpath = properties["java.class.path"].split(os.pathsep)
+        self.assertEqual("/tmp/runtime-dev.jar", classpath[0])
+        self.assertIn(str((project_dir / "__pyronaut__" / "classes").resolve()), classpath)
+        self.assertEqual(["run", "--project-dir", str(project_dir)], run_command[run_command.index("run") :])
 
     def test_test_prefers_bundled_pyronaut_dev_native_executable_with_test_classpath_and_resources_properties(self):
         with tempfile.TemporaryDirectory() as temp_dir:

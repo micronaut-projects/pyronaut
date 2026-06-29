@@ -2172,8 +2172,7 @@ def _run_with_auto_restart(
                 return preflight_code
 
         try:
-            command_line, env = _build_java_delegate_invocation(
-                "run",
+            command_line, env = _build_run_delegate_invocation(
                 run_args,
                 resolver,
                 debug_vm=debug_vm,
@@ -2263,6 +2262,37 @@ def _run_with_auto_restart(
         except KeyboardInterrupt:
             _stop_managed_process(process)
             return 130
+
+
+def _build_run_delegate_invocation(
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool,
+    env_overrides: dict[str, str] | None,
+    java_home_provider: JavaHomeProvider | None,
+) -> tuple[list[str], dict[str, str]]:
+    dev_command_line = _pyronaut_dev_native_command_line(
+        "run",
+        args,
+        resolver,
+        debug_vm=debug_vm,
+        env_overrides=env_overrides,
+        java_home_provider=java_home_provider,
+    )
+    if dev_command_line is not None:
+        env = _build_non_test_resources_env("run", java_home_provider)
+        env = _merge_env_overrides(env, env_overrides)
+        env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
+        return dev_command_line, env
+    return _build_java_delegate_invocation(
+        "run",
+        args,
+        resolver,
+        debug_vm=debug_vm,
+        env_overrides=env_overrides,
+        java_home_provider=java_home_provider,
+    )
 
 
 def _stop_managed_process(process: ManagedProcess) -> bool:
