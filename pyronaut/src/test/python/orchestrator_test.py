@@ -588,6 +588,18 @@ class OrchestratorTest(unittest.TestCase):
                 (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
                 (project_dir / "views").mkdir(parents=True, exist_ok=True)
                 self._write_manifests(project_dir, development_runtime=True)
+                (project_dir / "__pyronaut__" / "resolved-development-runtime-dependencies").write_text(
+                    "\n".join(
+                        [
+                            "/tmp/runtime-dev.jar",
+                            "/tmp/micronaut-test-resources-client-4.0.0.jar",
+                            "/tmp/micronaut-test-resources-core-4.0.0.jar",
+                            "/tmp/micronaut-test-resources-codec-4.0.0.jar",
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
                 (project_dir / "pyproject.toml").write_text(
                     """
 [project]
@@ -641,8 +653,58 @@ additional-resources = ["views"]
         self.assertIn(str((project_dir / "__pyronaut__" / "classes").resolve()), classpath)
         self.assertIn(str((project_dir / "app-config").resolve()), classpath)
         self.assertIn(str((project_dir / "views").resolve()), classpath)
+        self.assertNotIn("/tmp/micronaut-test-resources-client-4.0.0.jar", classpath)
         self.assertNotIn("/tmp/pyronaut-run.jar", classpath)
+        test_resources_client_classpath = properties["pyronaut.dev.test.resources.client.classpath"].split(os.pathsep)
+        self.assertEqual(
+            [
+                "/tmp/micronaut-test-resources-client-4.0.0.jar",
+                "/tmp/micronaut-test-resources-core-4.0.0.jar",
+                "/tmp/micronaut-test-resources-codec-4.0.0.jar",
+            ],
+            test_resources_client_classpath,
+        )
         self.assertEqual(["run", "--project-dir", str(project_dir), "--main-class", "example.Main"], run_command[run_command.index("run") :])
+
+    def test_native_application_classpath_filters_only_manifested_native_image_jars(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            (native_dev.parent / "native-provided-classpath.txt").write_text(
+                "\n".join(
+                    [
+                        "micronaut-context-python-5.1.0.jar",
+                        "micronaut-runtime-5.1.0.jar",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-development-runtime-dependencies").write_text(
+                "\n".join(
+                    [
+                        "/tmp/micronaut-context-python-5.1.0.jar",
+                        "/tmp/micronaut-runtime-5.1.0.jar",
+                        "/tmp/micronaut-runtime-5.2.0.jar",
+                        "/tmp/micronaut-views-core-6.0.0.jar",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classpath = cli._build_native_application_classpath("run", project_dir.resolve(), str(native_dev))  # noqa: SLF001
+
+        entries = classpath.split(os.pathsep)
+        self.assertNotIn("/tmp/micronaut-context-python-5.1.0.jar", entries)
+        self.assertNotIn("/tmp/micronaut-runtime-5.1.0.jar", entries)
+        self.assertIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
+        self.assertIn("/tmp/micronaut-views-core-6.0.0.jar", entries)
 
     def test_run_auto_restart_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):
         executed = []

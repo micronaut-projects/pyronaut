@@ -287,6 +287,14 @@ tasks.register("prepareWheelSources", Sync) {
                 if (nativeBinary.exists()) {
                     nativeBinary.setExecutable(true)
                 }
+                def nativeProvidedClasspath = project(cliProject.path).configurations.nativeImageClasspath.files
+                    .collect { it.name }
+                    .unique()
+                    .sort()
+                    .join(System.lineSeparator())
+                def nativeProvidedFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-provided-classpath.txt").asFile
+                nativeProvidedFile.parentFile.mkdirs()
+                nativeProvidedFile.text = nativeProvidedClasspath + System.lineSeparator()
             }
         }
 

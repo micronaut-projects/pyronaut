@@ -740,7 +740,7 @@ def _dedupe_classpath_entries(entries: Sequence[str]) -> list[str]:
 
 def _filter_native_launcher_provided_entries(entries: Sequence[str], launcher_executable: str | None) -> list[str]:
     launcher_provided_names = _native_launcher_provided_file_names(launcher_executable)
-    launcher_provided_artifact_ids = _versioned_jar_artifact_ids(launcher_provided_names)
+    launcher_provided_artifact_ids = _native_launcher_provided_artifact_ids(launcher_executable, launcher_provided_names)
     return [
         entry
         for entry in entries
@@ -749,7 +749,29 @@ def _filter_native_launcher_provided_entries(entries: Sequence[str], launcher_ex
 
 
 def _native_launcher_provided_file_names(launcher_executable: str | None) -> set[str]:
+    manifest_names = _native_launcher_provided_manifest_file_names(launcher_executable)
+    if manifest_names:
+        return manifest_names
     return {Path(entry).name for entry in _native_launcher_provided_jar_entries(launcher_executable)}
+
+
+def _native_launcher_provided_artifact_ids(launcher_executable: str | None, file_names: set[str]) -> set[str]:
+    if _native_launcher_provided_manifest_file_names(launcher_executable):
+        return set()
+    return _versioned_jar_artifact_ids(file_names)
+
+
+def _native_launcher_provided_manifest_file_names(launcher_executable: str | None) -> set[str]:
+    if not launcher_executable:
+        return set()
+    manifest = Path(launcher_executable).parent / "native-provided-classpath.txt"
+    if not manifest.is_file():
+        return set()
+    return {
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
 
 
 def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> list[str]:
@@ -823,6 +845,7 @@ def _build_native_test_resources_client_classpath(project_dir: Path) -> str:
     entries = [
         entry
         for manifest in (
+            cache_dir / "resolved-development-runtime-dependencies",
             cache_dir / "resolved-test-dependencies",
             cache_dir / "resolved-runtime-dependencies",
         )
@@ -3126,10 +3149,9 @@ def _pyronaut_dev_native_command_line(
     if command in {"run", "test"}:
         classpath = _build_native_application_classpath(command, project_dir, executable_path)
         jvm_args = [*jvm_args, f"-Djava.class.path={classpath}"]
-        if command == "test":
-            test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
-            if test_resources_client_classpath:
-                jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
+        test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
+        if test_resources_client_classpath:
+            jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
         return [executable_path, *jvm_args, command, *args]
     return [executable_path, *jvm_args, command, *args]
