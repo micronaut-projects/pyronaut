@@ -515,11 +515,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         command.add(nativeDevExecutable.toString());
         if ("run".equals(commandName) || "test".equals(commandName)) {
             command.add("-Djava.class.path=" + String.join(File.pathSeparator, nativeApplicationClasspathEntries(project, commandName)));
-            if ("test".equals(commandName)) {
-                String testResourcesClientClasspath = nativeTestResourcesClientClasspath(project);
-                if (!testResourcesClientClasspath.isBlank()) {
-                    command.add("-Dpyronaut.dev.test.resources.client.classpath=" + testResourcesClientClasspath);
-                }
+            String testResourcesClientClasspath = nativeTestResourcesClientClasspath(project);
+            if (!testResourcesClientClasspath.isBlank()) {
+                command.add("-Dpyronaut.dev.test.resources.client.classpath=" + testResourcesClientClasspath);
             }
             connection.ifPresent(value -> value.appendJvmArgs(command));
         }
@@ -662,6 +660,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     private String nativeTestResourcesClientClasspath(Path project) {
         try {
             LinkedHashSet<String> entries = new LinkedHashSet<>();
+            Path developmentRuntimeManifest = project.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES);
+            if (Files.exists(developmentRuntimeManifest)) {
+                entries.addAll(readManifestEntries(developmentRuntimeManifest, "development-runtime").stream()
+                    .filter(PyronautDelegatingTuiCommand::isNativeTestResourcesClientArtifact)
+                    .toList());
+            }
             Path testManifest = project.resolve(TEST_DEPENDENCIES);
             if (Files.exists(testManifest)) {
                 entries.addAll(readManifestEntries(testManifest, "test").stream()
@@ -681,14 +685,39 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private List<String> filterNativeLauncherProvidedEntries(Set<String> entries) throws IOException {
-        var launcherNames = nativeLauncherProvidedJarNames();
-        var launcherArtifactIds = versionedJarArtifactIds(launcherNames);
+        var manifestNames = nativeLauncherProvidedManifestJarNames();
+        Set<String> launcherNames;
+        Set<String> launcherArtifactIds;
+        if (manifestNames.isEmpty()) {
+            launcherNames = nativeLauncherProvidedLibJarNames();
+            launcherArtifactIds = versionedJarArtifactIds(launcherNames);
+        } else {
+            launcherNames = manifestNames;
+            launcherArtifactIds = Set.of();
+        }
         return entries.stream()
             .filter(entry -> !isNativeLauncherProvidedArtifact(entry, launcherNames, launcherArtifactIds))
             .toList();
     }
 
-    private Set<String> nativeLauncherProvidedJarNames() throws IOException {
+    private Set<String> nativeLauncherProvidedManifestJarNames() throws IOException {
+        if (nativeDevExecutable == null) {
+            return Set.of();
+        }
+        Path manifest = nativeDevExecutable.toAbsolutePath().normalize().getParent().resolve("native-provided-classpath.txt");
+        if (!Files.isRegularFile(manifest)) {
+            return Set.of();
+        }
+        try (var lines = Files.lines(manifest, StandardCharsets.UTF_8)) {
+            return lines
+                .map(String::trim)
+                .filter(line -> !line.isEmpty())
+                .filter(line -> !line.startsWith("#"))
+                .collect(java.util.stream.Collectors.toSet());
+        }
+    }
+
+    private Set<String> nativeLauncherProvidedLibJarNames() throws IOException {
         if (nativeDevExecutable == null) {
             return Set.of();
         }

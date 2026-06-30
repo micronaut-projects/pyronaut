@@ -13,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -414,6 +415,69 @@ class PyronautDelegatingTuiCommandTest {
 
         assertTrue(commandLine.stream().noneMatch(arg -> arg.startsWith("-Dmicronaut.control-panel.")));
         assertTrue(commandLine.stream().noneMatch(arg -> arg.startsWith("-Dmicronaut.environments=")));
+    }
+
+    @Test
+    void buildManagedNativeRunCommandUsesManifestProvidedClasspathFilter() throws Exception {
+        Path project = tempDir.resolve("managed-run-native-filter");
+        Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Path runtimeJar = project.resolve("deps/micronaut-context-python-5.1.0.jar").toAbsolutePath().normalize();
+        Path viewsJar = project.resolve("deps/micronaut-views-core-6.0.0.jar").toAbsolutePath().normalize();
+        Path testResourcesClientJar = project.resolve("deps/micronaut-test-resources-client-4.0.0.jar").toAbsolutePath().normalize();
+        Files.createDirectories(runtimeJar.getParent());
+        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
+        Files.writeString(viewsJar, "", StandardCharsets.UTF_8);
+        Files.writeString(testResourcesClientJar, "", StandardCharsets.UTF_8);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-development-runtime-dependencies"),
+            runtimeJar + System.lineSeparator() + viewsJar + System.lineSeparator() + testResourcesClientJar + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+
+        Path nativeExecutable = tempDir.resolve("tool/pyronaut-dev/native/pyronaut-dev");
+        Path libDir = tempDir.resolve("tool/pyronaut-dev/lib");
+        Files.createDirectories(nativeExecutable.getParent());
+        Files.createDirectories(libDir);
+        Files.writeString(nativeExecutable, "#!/bin/sh\n", StandardCharsets.UTF_8);
+        nativeExecutable.toFile().setExecutable(true);
+        Files.writeString(nativeExecutable.getParent().resolve("native-provided-classpath.txt"), """
+            micronaut-context-python-5.1.0.jar
+            """, StandardCharsets.UTF_8);
+        Files.writeString(libDir.resolve("micronaut-context-python-5.1.0.jar"), "", StandardCharsets.UTF_8);
+        Files.writeString(libDir.resolve("micronaut-views-core-6.0.0.jar"), "", StandardCharsets.UTF_8);
+
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "nativeDevExecutable", nativeExecutable);
+        setField(command, "nativeCommands", Set.of("run"));
+
+        Object target = enumConstant(command, "ManagedCommandTarget", "RUN");
+        Object managedCommand = invoke(
+            command,
+            "buildManagedCommand",
+            new Class<?>[]{Path.class, target.getClass()},
+            project,
+            target
+        );
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(managedCommand, "command", new Class<?>[]{});
+
+        assertEquals(nativeExecutable.toString(), commandLine.getFirst());
+        String classpath = commandLine.stream()
+            .filter(arg -> arg.startsWith("-Djava.class.path="))
+            .findFirst()
+            .orElseThrow()
+            .substring("-Djava.class.path=".length());
+        assertFalse(classpath.contains(runtimeJar.toString()));
+        assertTrue(classpath.contains(viewsJar.toString()));
+        assertFalse(classpath.contains(testResourcesClientJar.toString()));
+        assertTrue(classpath.contains(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize().toString()));
+        String testResourcesClientClasspath = commandLine.stream()
+            .filter(arg -> arg.startsWith("-Dpyronaut.dev.test.resources.client.classpath="))
+            .findFirst()
+            .orElseThrow()
+            .substring("-Dpyronaut.dev.test.resources.client.classpath=".length());
+        assertTrue(testResourcesClientClasspath.contains(testResourcesClientJar.toString()));
     }
 
     @Test
