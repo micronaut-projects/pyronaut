@@ -80,6 +80,8 @@ _DEFAULT_JAVA_SOURCE_DIR = "src-java"
 _DEFAULT_JAVA_TEST_DIR = "test-java"
 _DEFAULT_RESOURCES_DIR = "config"
 _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
+_ANSI_YELLOW = "\033[33m"
+_ANSI_RESET = "\033[0m"
 
 Runner = Callable[[list[str]], int]
 RunnerWithEnv = Callable[[list[str], dict[str, str] | None], int]
@@ -211,6 +213,14 @@ def run(
         print(f"Unknown command: {command}", file=sys.stderr)
         _print_usage(stream=sys.stderr)
         return USAGE_ERROR
+
+    if command == "run" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
+        _print_run_usage()
+        return SUCCESS
+
+    if command == "test" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
+        _print_test_usage()
+        return SUCCESS
 
     if command == "run" and _looks_like_direct_source_invocation(forwarded_args):
         direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
@@ -3311,6 +3321,114 @@ def _print_build_usage(stream=None) -> None:
     stream.write(
         "Usage: pyronaut build [--project-dir <dir>] [--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
     )
+
+
+def _print_run_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    _write_command_help(
+        stream,
+        usage_lines=[
+            "Usage: pyronaut run [-hV] [--debug-vm] [--no-cache] [--no-validate]",
+            "                    [--classes-dir=<classesDir>]",
+            "                    [--config-dir=<configDir>]",
+            "                    [--main-class=<mainClass>]",
+            "                    [--project-dir=<projectDir>] [<appArgs>...]",
+            "       pyronaut run [--port=<port>] [--property=<name=value>]",
+            "                    [-D<name=value>] [--config=<file-or-dir>]",
+            "                    [--setup=<pyproject.toml>]",
+            "                    <source.py|source-dir>...",
+        ],
+        description="Run a processed Pyronaut application or direct Python sources",
+        options=[
+            ("[<appArgs>...]", "Arguments passed to the processed application"),
+            ("<source.py|source-dir>...", "Python source files or directories for direct source execution"),
+            ("-D<name=value>", "Set a Micronaut/system property for direct source execution"),
+            ("--classes-dir=<classesDir>", "Processed classes directory"),
+            ("--config=<file-or-dir>", "Configuration file or directory for direct source execution"),
+            ("--config-dir=<configDir>", "Processed application configuration directory"),
+            ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
+            ("-h, --help", "Show this help message and exit."),
+            ("--main-class=<mainClass>", "Main class to invoke"),
+            ("--no-cache", "Bypass run preflight cache reads where applicable"),
+            ("--no-validate", "Skip run scenario configuration validation"),
+            ("--port=<port>", "Set micronaut.server.port for direct source execution"),
+            ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),
+            ("--property=<name=value>", "Set a Micronaut/system property for direct source execution"),
+            ("--setup=<pyproject.toml>", "pyproject.toml to stage for direct source execution"),
+            ("-V, --version", "Print version information and exit."),
+        ],
+    )
+
+
+def _print_test_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    _write_command_help(
+        stream,
+        usage_lines=[
+            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-validate]",
+            "                     [--classes-dir=<classesDir>]",
+            "                     [--config-dir=<configDir>]",
+            "                     [--project-dir=<projectDir>]",
+            "                     [--select-class=<selectClasses>]",
+            "                     [--test-classes-dir=<testClassesDir>]",
+            "                     [--tests=<tests>] [--tests-dir=<testsDir>]",
+            "       pyronaut --test [--port=<port>] [--property=<name=value>]",
+            "                       [-D<name=value>] [--config=<file-or-dir>]",
+            "                       [--setup=<pyproject.toml>]",
+            "                       <source.py|source-dir>...",
+            "                       [-- <test-source.py|test-dir>...]",
+        ],
+        description="Run tests for a processed Pyronaut application or direct Python sources",
+        options=[
+            ("<source.py|source-dir>...", "Python application sources for direct source test execution"),
+            ("<test-source.py|test-dir>...", "Python test sources for direct source test execution"),
+            ("-D<name=value>", "Set a Micronaut/system property for direct source execution"),
+            ("--classes-dir=<classesDir>", "Processed classes directory"),
+            ("--config=<file-or-dir>", "Configuration file or directory for direct source execution"),
+            ("--config-dir=<configDir>", "Configuration directory"),
+            ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
+            ("-h, --help", "Show this help message and exit."),
+            ("--no-cache", "Bypass test preflight cache reads where applicable"),
+            ("--no-validate", "Skip test scenario configuration validation"),
+            ("--port=<port>", "Set micronaut.server.port for direct source execution"),
+            ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),
+            ("--property=<name=value>", "Set a Micronaut/system property for direct source execution"),
+            ("--select-class=<selectClasses>", "Select class to execute"),
+            ("--setup=<pyproject.toml>", "pyproject.toml to stage for direct source execution"),
+            ("--test-classes-dir=<testClassesDir>", "Processed test classes directory"),
+            ("--tests=<tests>", "Select tests (Gradle-like). Repeatable."),
+            ("--tests-dir=<testsDir>", "Python tests directory"),
+            ("-V, --version", "Print version information and exit."),
+        ],
+    )
+
+
+def _write_command_help(stream, *, usage_lines: Sequence[str], description: str, options: Sequence[tuple[str, str]]) -> None:
+    color = _help_color_enabled(stream)
+    for line in usage_lines:
+        stream.write(line + "\n")
+    stream.write(description + "\n")
+    option_width = max(len(names) for names, _description in options)
+    for names, option_description in options:
+        stream.write(f"{_help_option(names, color):<{option_width + (_help_color_extra(color))}}  {option_description}\n")
+
+
+def _help_option(value: str, color: bool) -> str:
+    if not color:
+        return value
+    return _ANSI_YELLOW + value + _ANSI_RESET
+
+
+def _help_color_extra(color: bool) -> int:
+    if not color:
+        return 0
+    return len(_ANSI_YELLOW) + len(_ANSI_RESET)
+
+
+def _help_color_enabled(stream) -> bool:
+    return bool(getattr(stream, "isatty", lambda: False)()) and _read_env("NO_COLOR") is None
 
 
 def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Callable[[str], str | None]) -> int:

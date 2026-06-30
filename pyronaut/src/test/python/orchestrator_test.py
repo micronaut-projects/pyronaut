@@ -245,6 +245,76 @@ class OrchestratorTest(unittest.TestCase):
             self._assert_run_delegate(executed[3], str(project_dir), ["--main-class", "example.Main"])
             self._assert_test_resources_stop(executed[4], str(project_dir))
 
+    def test_run_help_prints_orchestrator_help_without_lifecycle_phases(self):
+        executed = []
+
+        def runner(command_line, env=None):
+            executed.append(command_line)
+            return 0
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = cli.run(
+                ["run", "--help"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([], executed)
+        help_text = stdout.getvalue()
+        self.assertIn("Usage: pyronaut run", help_text)
+        self.assertIn("Run a processed Pyronaut application or direct Python sources", help_text)
+        self.assertIn("--port=<port>", help_text)
+        self.assertIn("--no-validate", help_text)
+        self.assertIn("<source.py|source-dir>...", help_text)
+        self.assertNotIn("pyronaut-run", help_text)
+
+    def test_test_help_prints_orchestrator_help_without_lifecycle_phases(self):
+        executed = []
+
+        def runner(command_line, env=None):
+            executed.append(command_line)
+            return 0
+
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = cli.run(
+                ["test", "--help"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([], executed)
+        help_text = stdout.getvalue()
+        self.assertIn("Usage: pyronaut test", help_text)
+        self.assertIn("Run tests for a processed Pyronaut application or direct Python sources", help_text)
+        self.assertIn("--tests=<tests>", help_text)
+        self.assertIn("--test-classes-dir=<testClassesDir>", help_text)
+        self.assertIn("pyronaut --test", help_text)
+        self.assertNotIn("pyronaut-test", help_text)
+
+    def test_run_help_colors_options_on_tty(self):
+        class TtyStringIO(io.StringIO):
+            def isatty(self):
+                return True
+
+        previous_no_color = os.environ.pop("NO_COLOR", None)
+        try:
+            stdout = TtyStringIO()
+
+            cli._print_run_usage(stdout)
+
+            help_text = stdout.getvalue()
+            self.assertIn("\033[33m--port=<port>\033[0m", help_text)
+            self.assertIn("\033[33m-h, --help\033[0m", help_text)
+        finally:
+            if previous_no_color is not None:
+                os.environ["NO_COLOR"] = previous_no_color
+
     def test_run_processes_main_when_artifacts_already_exist(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
