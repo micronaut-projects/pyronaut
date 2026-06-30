@@ -194,10 +194,12 @@ public record PyprojectModel(Project project,
      * tool.pyronaut.dependencies table.
      *
      * @param runtime runtime dependencies
+     * @param developmentRuntime development runtime dependencies
      * @param build build dependencies
      * @param test test dependencies
      */
     public record Dependencies(List<String> runtime,
+                               List<String> developmentRuntime,
                                List<String> build,
                                List<String> test) {
     }

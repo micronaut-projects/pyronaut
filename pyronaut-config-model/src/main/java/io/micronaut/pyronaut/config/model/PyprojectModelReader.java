@@ -83,6 +83,7 @@ public final class PyprojectModelReader {
         PyprojectModel.Sources sources = resolveSources(parsed);
 
         List<String> runtime = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_RUNTIME);
+        List<String> developmentRuntime = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_DEVELOPMENT_RUNTIME);
         List<String> build = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_BUILD);
 
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
@@ -91,6 +92,7 @@ public final class PyprojectModelReader {
             readStringList(parsed, PyprojectConfigSpec.PYRONAUT_REPOSITORIES),
             new PyprojectModel.Dependencies(
                 runtime,
+                developmentRuntime,
                 build,
                 readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST)
             ),

@@ -35,6 +35,8 @@ class PyprojectModelReaderTest {
         assertEquals(PyronautManagedVersions.micronautPlatformVersion(), model.pyronaut().platformVersion());
         assertEquals(2, model.pyronaut().repositories().size());
         assertEquals(8, model.pyronaut().dependencies().runtime().size());
+        assertEquals(1, model.pyronaut().dependencies().developmentRuntime().size());
+        assertEquals("io.micronaut.controlpanel:micronaut-control-panel-management", model.pyronaut().dependencies().developmentRuntime().getFirst());
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());
         assertEquals(true, model.pyronaut().run().bannerEnabled());

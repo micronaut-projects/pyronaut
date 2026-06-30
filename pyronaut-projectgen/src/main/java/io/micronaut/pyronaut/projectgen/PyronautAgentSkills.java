@@ -84,7 +84,7 @@ class PyronautAgentSkills implements Feature {
             - `[tool.pyronaut.ide-stubs]`: Java-backed Python stub generation.
             - `[tool.pyronaut.validation]`: lifecycle configuration validation.
             - `[tool.pyronaut.test-resources]`: test resources support when enabled.
-            - `[tool.pyronaut.dependencies]`: runtime, build, and test dependency coordinates.
+            - `[tool.pyronaut.dependencies]`: runtime, development-runtime, build, and test dependency coordinates.
 
             Prefer kebab-case option names, such as `python-test`, `test-resources`, and `additional-modules`.
             Use split managed versions only: `[tool.pyronaut.core] version = ...` and `[tool.pyronaut.platform] version = ...`. Do not add the legacy `tool.pyronaut.version` key.
@@ -94,6 +94,7 @@ class PyronautAgentSkills implements Feature {
             Add JVM dependency coordinates in `[tool.pyronaut.dependencies]`:
 
             - `runtime`: application runtime libraries, such as HTTP server, serde, data, security, cloud, messaging, views, and logging modules.
+            - `development-runtime`: dependencies available only to `pyronaut run` and development runtime launches.
             - `build`: annotation processors and compile-time support, such as `micronaut-serde-processor`, `micronaut-security-processor`, or `micronaut-data-processor`.
             - `test`: pytest integration, test clients, test-resources modules, and test-only libraries.
 

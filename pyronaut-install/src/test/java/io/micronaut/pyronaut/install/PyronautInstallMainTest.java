@@ -238,6 +238,7 @@ class PyronautInstallMainTest {
     void injectsMicronautManagementOnlyIntoDevelopmentRuntimeManifest() throws Exception {
         Path repository = tempDir.resolve("repo-management-default");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "development-dep", "1.0.0");
         writeArtifact(repository, "io.micronaut", "micronaut-management", "1.2.3");
         writeArtifact(repository, "io.micronaut.cache", "micronaut-cache-caffeine", "1.2.3");
         writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
@@ -270,6 +271,7 @@ class PyronautInstallMainTest {
 
             [tool.pyronaut.dependencies]
             runtime = ["com.example:runtime-dep:1.0.0"]
+            development-runtime = ["com.example:development-dep:1.0.0"]
             build = []
             test = []
 
@@ -286,9 +288,11 @@ class PyronautInstallMainTest {
         List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
         List<String> developmentEntries = Files.readAllLines(cacheDir.resolve("resolved-development-runtime-dependencies"), StandardCharsets.UTF_8);
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
+        assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("development-dep")));
         assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-management")));
         assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-cache-caffeine")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("development-dep")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-management")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-cache-caffeine")));
         assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-ui")));

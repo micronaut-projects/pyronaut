@@ -124,6 +124,10 @@ public final class PyprojectConfigSpec {
         List.of(),
         List.of("tool.pyronaut.dependencies.compile")
     );
+    public static final FieldSpec PYRONAUT_DEPENDENCIES_DEVELOPMENT_RUNTIME = stringArray(
+        "tool.pyronaut.dependencies.development-runtime",
+        "Development runtime dependencies used by pyronaut run."
+    );
     public static final FieldSpec PYRONAUT_DEPENDENCIES_BUILD = stringArray(
         "tool.pyronaut.dependencies.build",
         "Build-time dependencies used during processing.",
@@ -731,6 +735,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_PLATFORM_VERSION,
         PYRONAUT_REPOSITORIES,
         PYRONAUT_DEPENDENCIES_RUNTIME,
+        PYRONAUT_DEPENDENCIES_DEVELOPMENT_RUNTIME,
         PYRONAUT_DEPENDENCIES_BUILD,
         PYRONAUT_DEPENDENCIES_TEST,
         PYRONAUT_BUILD_MODE,

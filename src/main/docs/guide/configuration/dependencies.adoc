@@ -70,3 +70,6 @@ Useful install flags include:
 - `--refresh` to force re-resolution and manifest rewrite
 - `--no-cache` to bypass manifest cache reads
 - `--offline` to resolve without remote repository access
+
+Use `tool.pyronaut.dependencies.development-runtime` for dependencies that should be available only to `pyronaut run` and other development runtime launches.
+Those artifacts are written to `__pyronaut__/resolved-development-runtime-dependencies` and are not included in the production runtime manifest used by build/package flows.

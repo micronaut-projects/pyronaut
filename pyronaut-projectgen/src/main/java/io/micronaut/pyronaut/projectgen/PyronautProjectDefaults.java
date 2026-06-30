@@ -24,7 +24,7 @@ import java.util.Properties;
 @Internal
 final class PyronautProjectDefaults {
     private static final String DEFAULTS_RESOURCE = "/io/micronaut/pyronaut/projectgen/defaults.properties";
-    private static final String FALLBACK_MICRONAUT_VERSION = "5.0.0-SNAPSHOT";
+    private static final String FALLBACK_MICRONAUT_VERSION = "5.0.0";
 
     private PyronautProjectDefaults() {
     }

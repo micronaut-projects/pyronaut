@@ -309,6 +309,9 @@ final class MavenClasspathResolver {
         }
         if (scope == InstallScope.DEVELOPMENT_RUNTIME) {
             LinkedHashSet<String> runtime = new LinkedHashSet<>(coordinatesForScope(model, InstallScope.RUNTIME, managedVersions));
+            if (dependencies.developmentRuntime() != null) {
+                runtime.addAll(dependencies.developmentRuntime());
+            }
             addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
             addDefaultCacheImplementationIfMissing(runtime, managedVersions);
             if (controlPanelEnabled(model)) {
@@ -528,6 +531,7 @@ final class MavenClasspathResolver {
         }
         PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
         return containsVersionlessPyronautDependency(dependencies.runtime())
+            || containsVersionlessPyronautDependency(dependencies.developmentRuntime())
             || containsVersionlessPyronautDependency(dependencies.build())
             || containsVersionlessPyronautDependency(dependencies.test());
     }

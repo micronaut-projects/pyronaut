@@ -91,6 +91,7 @@ production-enabled = false
 Set `enabled = false` to disable the development/TUI Control Panel.
 When development Control Panel support is enabled, Pyronaut also adds Micronaut Management and the Control Panel management integration to the development runtime so health and diagnostic panels are available.
 The implicitly enabled development Control Panel dependencies are written only to the `development-runtime` dependency manifest, so they are not packaged by `pyronaut build`.
+Applications can declare their own development-only runtime dependencies with `development-runtime = [...]` under `[tool.pyronaut.dependencies]`.
 
 Set `production-enabled = true` only when the application has Micronaut Security on the runtime classpath and the Control Panel should be included in production runtime artifacts.
 Production Control Panel inclusion keeps the Micronaut Control Panel security defaults; the anonymous access used by `pyronaut --tui` is not applied to production builds.

@@ -30,6 +30,9 @@ build = [
     "io.micronaut:micronaut-inject-python",
     "io.micronaut:micronaut-context-python",
 ]
+development-runtime = [
+    "io.micronaut.controlpanel:micronaut-control-panel-management",
+]
 test = [
     "org.junit.platform:junit-platform-launcher",
     "io.micronaut:micronaut-pytest-engine",
