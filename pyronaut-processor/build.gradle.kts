@@ -39,7 +39,7 @@ dependencies {
     implementation(mn.micronaut.context.python)
     implementation(mn.micronaut.inject.python)
 
-    runtimeOnly(libs.slf4j.simple)
+    implementation(project(":micronaut-pyronaut-logback"))
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

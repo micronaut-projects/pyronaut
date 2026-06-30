@@ -31,6 +31,7 @@ runtime = [
     "io.micronaut:micronaut-json-core",
     "io.micronaut.serde:micronaut-serde-jackson",
     "io.micronaut.serde:micronaut-serde-api",
+    "io.micronaut.validation:micronaut-validation",
     "io.micronaut.data:micronaut-data-jdbc",
     "io.micronaut.sql:micronaut-jdbc-hikari",
     "io.micronaut.pyronaut:micronaut-pyronaut-logback",
@@ -41,6 +42,8 @@ runtime = [
 ]
 
 build = [
+    "io.micronaut:micronaut-http-validation",
+    "io.micronaut.validation:micronaut-validation-processor",
     "io.micronaut.data:micronaut-data-processor",
     "io.micronaut.serde:micronaut-serde-processor",
     "io.micronaut.jsonschema:micronaut-json-schema-processor"

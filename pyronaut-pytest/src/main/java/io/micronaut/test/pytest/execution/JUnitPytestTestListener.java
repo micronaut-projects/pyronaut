@@ -17,6 +17,7 @@ package io.micronaut.test.pytest.execution;
 
 import io.micronaut.test.pytest.FailureDiagnostics;
 import io.micronaut.test.pytest.PytestTestDescriptor;
+import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.pytest.extension.PytestMicronautExtension;
 import io.micronaut.test.pytest.listener.PytestTestListener;
 import org.graalvm.polyglot.Value;
@@ -79,6 +80,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     private final List<TestOutcome> outcomes = new ArrayList<>();
     private final Set<String> writtenNodeIds = new HashSet<>();
     private final Map<String, TestStreamOutput> outputByTest = new LinkedHashMap<>();
+    private final Map<String, TestExecutionResult> lifecycleFailures = new LinkedHashMap<>();
     private TestExecutionResult sessionResult = TestExecutionResult.successful();
     private boolean failedTestReported;
     private boolean nonTestFailureReported;
@@ -163,49 +165,38 @@ public class JUnitPytestTestListener implements PytestTestListener {
             .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
             .findAny().ifPresent(testDescriptor -> {
                 junitListener.executionStarted(testDescriptor);
-                Value extValue = item.getMember(PytestMicronautExtension.ID);
-                if (extValue != null) {
-                    PytestMicronautExtension extension = extValue.as(PytestMicronautExtension.class);
-                    extension.beforeEach(item, null, null, List.of());
-                }
+                runBeforeEach(testId, item);
             });
     }
 
     @Override
     public void afterTest(String testId, Value item, TestExecutionResult result) {
         LOG.debug("Pytest finished test: {} with result: {}", testId, result);
-        writeNodeId(testId);
-        outcomes.add(new TestOutcome(testId, result));
-        var payload = new LinkedHashMap<String, String>();
-        if (result.getStatus() == TestExecutionResult.Status.FAILED) {
-            failedTestReported = true;
-            result.getThrowable().ifPresent(throwable -> payload.put("failure", FailureDiagnostics.render(throwable)));
-        } else if (result.getStatus() == TestExecutionResult.Status.ABORTED) {
-            result.getThrowable().ifPresent(throwable -> payload.put("reason", FailureDiagnostics.render(throwable)));
-        }
-        writeEvent("test_finished", testId, result.getStatus().name(), payload);
-        if (result.getStatus() == TestExecutionResult.Status.FAILED && renderFailureOutputEnabled()) {
-            emitFailureDiagnostics(testId, result);
-        }
+        TestExecutionResult finalResult = mergeLifecycleFailure(testId, result);
         allDescriptors
             .stream()
             .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
-            .findAny().ifPresent(td -> {
-                junitListener.executionFinished(td, result);
-                Value extValue = item.getMember(PytestMicronautExtension.ID);
-                if (extValue != null) {
-                    PytestMicronautExtension extension = extValue.as(PytestMicronautExtension.class);
-                    try {
-                        extension.afterEach(item);
-                    } catch (Exception e) {
-                        if (e instanceof RuntimeException re) {
-                            throw re;
-                        } else {
-                            throw new RuntimeException(e);
-                        }
-                    }
-                }
-            });
+            .findAny().ifPresent(td -> runAfterEach(testId, item));
+        finalResult = mergeLifecycleFailure(testId, finalResult);
+        writeNodeId(testId);
+        outcomes.add(new TestOutcome(testId, finalResult));
+        var payload = new LinkedHashMap<String, String>();
+        if (finalResult.getStatus() == TestExecutionResult.Status.FAILED) {
+            failedTestReported = true;
+            finalResult.getThrowable().ifPresent(throwable -> payload.put("failure", FailureDiagnostics.render(throwable)));
+        } else if (finalResult.getStatus() == TestExecutionResult.Status.ABORTED) {
+            finalResult.getThrowable().ifPresent(throwable -> payload.put("reason", FailureDiagnostics.render(throwable)));
+        }
+        writeEvent("test_finished", testId, finalResult.getStatus().name(), payload);
+        if (finalResult.getStatus() == TestExecutionResult.Status.FAILED && renderFailureOutputEnabled()) {
+            emitFailureDiagnostics(testId, finalResult);
+        }
+        TestExecutionResult finishedResult = finalResult;
+        allDescriptors
+            .stream()
+            .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
+            .findAny().ifPresent(td -> junitListener.executionFinished(td, finishedResult));
+        lifecycleFailures.remove(testId);
     }
 
     @Override
@@ -259,6 +250,78 @@ public class JUnitPytestTestListener implements PytestTestListener {
             .stream()
             .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
             .findAny().ifPresent(td -> junitListener.reportingEntryPublished(td, ReportEntry.from(stream, text)));
+    }
+
+    private void runBeforeEach(String testId, Value item) {
+        PytestMicronautExtension extension = getExtension(item);
+        if (extension == null) {
+            return;
+        }
+        try {
+            extension.beforeEach(item, null, null, List.of());
+        } catch (Throwable e) {
+            recordLifecycleFailure(testId, "Micronaut beforeEach failed", e);
+        }
+    }
+
+    private void runAfterEach(String testId, Value item) {
+        PytestMicronautExtension extension = getExtension(item);
+        if (extension == null) {
+            return;
+        }
+        try {
+            extension.afterEach(item);
+        } catch (Throwable e) {
+            recordLifecycleFailure(testId, "Micronaut afterEach failed", e);
+        }
+    }
+
+    private PytestMicronautExtension getExtension(Value item) {
+        if (item == null) {
+            return null;
+        }
+        Value extValue = item.getMember(PytestMicronautExtension.ID);
+        if (extValue == null || extValue.isNull()) {
+            return null;
+        }
+        return extValue.as(PytestMicronautExtension.class);
+    }
+
+    private void recordLifecycleFailure(String testId, String phase, Throwable e) {
+        LOG.error("{} for {}: {}", phase, testId, e.getMessage(), e);
+        TestExecutionResult result = TestExecutionResult.failed(new PythonAssertionError(compactMessage(phase, e), e));
+        lifecycleFailures.put(testId, result);
+        onOutput(testId, "log", compactMessage(phase, e));
+    }
+
+    private TestExecutionResult mergeLifecycleFailure(String testId, TestExecutionResult result) {
+        TestExecutionResult lifecycleFailure = lifecycleFailures.get(testId);
+        if (lifecycleFailure == null) {
+            return result;
+        }
+        if (result == null || result.getStatus() == TestExecutionResult.Status.SUCCESSFUL) {
+            return lifecycleFailure;
+        }
+        return result;
+    }
+
+    private static String compactMessage(String phase, Throwable e) {
+        String message = e.getMessage();
+        if (message == null || message.isBlank()) {
+            message = e.getClass().getName();
+        }
+        Throwable cause = e.getCause();
+        if (cause == null || cause == e) {
+            return phase + ": " + message;
+        }
+        String causeMessage = cause.getMessage();
+        if (causeMessage == null || causeMessage.isBlank()) {
+            causeMessage = cause.getClass().getName();
+        }
+        if (message.equals(causeMessage)) {
+            return phase + ": " + message;
+        }
+        return phase + ": " + message + System.lineSeparator() + causeMessage;
     }
 
     private void writeNodeId(String testId) {

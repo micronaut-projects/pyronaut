@@ -17,6 +17,7 @@ package io.micronaut.pyronaut.processor;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import picocli.CommandLine;
 
 import java.nio.file.StandardCopyOption;
@@ -24,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
@@ -88,6 +90,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     @CommandLine.Option(names = "--no-cache", description = "Bypass processor source cache reads/writes")
     boolean noCache;
 
+    @CommandLine.Option(names = "--pass", defaultValue = "all", description = "Processing pass to run: all|main|test")
+    String pass = "all";
+
     @CommandLine.Option(names = {"-v", "--verbose"}, description = "Verbose output with stacktraces on failures")
     boolean verbose;
 
@@ -121,6 +126,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         try {
             PyprojectModel model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
+            ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
 
             List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()
                 ? ClasspathManifestReader.read(
@@ -128,20 +134,6 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                 "Missing build scope cache. Run pyronaut-install first"
             )
                 : annotationProcessorPath;
-
-            List<Path> effectiveClasspath = classpath == null || classpath.isEmpty()
-                ? ClasspathManifestReader.read(
-                root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"),
-                "Missing runtime scope cache. Run pyronaut-install first"
-            )
-                : classpath;
-
-            List<Path> effectiveTestClasspath = testClasspath == null || testClasspath.isEmpty()
-                ? ClasspathManifestReader.read(
-                root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-dependencies"),
-                "Missing test scope cache. Run pyronaut-install first"
-            )
-                : testClasspath;
 
             Path resolvedMainPythonSrc = resolveConfiguredPath(root, pythonSrc, DEFAULT_PYTHON_SRC, model.pyronaut().sources().python(), "--python-src");
             Path resolvedMainJavaSrc = resolveConfiguredPath(root, javaSrc, DEFAULT_JAVA_SRC, model.pyronaut().sources().java(), "--java-src");
@@ -156,86 +148,110 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             String mainStatus;
             String testStatus;
             try (ProcessorProgressReporter progressReporter = ProcessorProgressReporter.create(progress)) {
-                long mainSourceCount = ProcessorSourceCache.countSources(resolvedMainPythonSrc, ".py")
-                    + ProcessorSourceCache.countSources(resolvedMainJavaSrc, ".java");
-                progressReporter.startPass("main", mainSourceCount);
+                if (selectedPass.includesMain()) {
+                    List<Path> effectiveClasspath = classpath == null || classpath.isEmpty()
+                        ? ClasspathManifestReader.read(
+                        root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"),
+                        "Missing runtime scope cache. Run pyronaut-install first"
+                    )
+                        : classpath;
 
-                String mainFingerprint = ProcessorSourceCache.fingerprint(
-                    resolvedMainPythonSrc,
-                    resolvedMainJavaSrc,
-                    effectiveProcessorPath,
-                    effectiveClasspath,
-                    options
-                );
-                if (!noCache
-                    && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint, resolvedMainTargetDir)) {
-                    progressReporter.cacheHit("main", mainSourceCount);
-                    mainStatus = "cache hit";
-                } else {
-                    if (noCache) {
-                        progressReporter.cacheBypass("main", mainSourceCount);
-                    }
-                    compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
+                    long mainSourceCount = ProcessorSourceCache.countSources(resolvedMainPythonSrc, ".py")
+                        + ProcessorSourceCache.countSources(resolvedMainJavaSrc, ".java");
+                    progressReporter.startPass("main", mainSourceCount);
+
+                    String mainFingerprint = ProcessorSourceCache.fingerprint(
                         resolvedMainPythonSrc,
                         resolvedMainJavaSrc,
-                        resolvedMainTargetDir,
                         effectiveProcessorPath,
                         effectiveClasspath,
                         options
-                    ));
-                    if (!noCache) {
-                        ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint);
-                    }
-                    progressReporter.finishPass("main", mainSourceCount);
-                    mainStatus = "processed";
-                }
-
-                mergedTestRoot = Files.createTempDirectory("pyronaut-test-sources-");
-                Path mergedTestPythonSrc = mergedTestRoot.resolve("python");
-                Path mergedTestJavaSrc = mergedTestRoot.resolve("java");
-                mergeSourceTrees(resolvedMainPythonSrc, resolvedTestPythonSrc, mergedTestPythonSrc);
-                mergeSourceTrees(resolvedMainJavaSrc, resolvedTestJavaSrc, mergedTestJavaSrc);
-
-                long testSourceCount = ProcessorSourceCache.countSources(mergedTestPythonSrc, ".py")
-                    + ProcessorSourceCache.countSources(mergedTestJavaSrc, ".java");
-                progressReporter.startPass("test", testSourceCount);
-                if (testSourceCount == 0L) {
-                    Files.createDirectories(resolvedTestTargetDir);
-                    syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
-                    progressReporter.noSources("test");
-                    testStatus = "no sources";
-                } else {
-                    String testFingerprint = ProcessorSourceCache.fingerprint(
-                        mergedTestPythonSrc,
-                        mergedTestJavaSrc,
-                        effectiveProcessorPath,
-                        effectiveTestClasspath,
-                        options
                     );
                     if (!noCache
-                        && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint, resolvedTestTargetDir)) {
-                        syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
-                        progressReporter.cacheHit("test", testSourceCount);
-                        testStatus = "cache hit";
+                        && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint, resolvedMainTargetDir)) {
+                        progressReporter.cacheHit("main", mainSourceCount);
+                        mainStatus = "cache hit";
                     } else {
                         if (noCache) {
-                            progressReporter.cacheBypass("test", testSourceCount);
+                            progressReporter.cacheBypass("main", mainSourceCount);
                         }
+                        prepareGeneratedOutputDirectory(resolvedMainTargetDir);
                         compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
-                            mergedTestPythonSrc,
-                            mergedTestJavaSrc,
-                            resolvedTestTargetDir,
+                            resolvedMainPythonSrc,
+                            resolvedMainJavaSrc,
+                            resolvedMainTargetDir,
                             effectiveProcessorPath,
-                            effectiveTestClasspath,
+                            effectiveClasspath,
                             options
                         ));
                         if (!noCache) {
-                            ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint);
+                            ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint);
                         }
-                        syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
-                        progressReporter.finishPass("test", testSourceCount);
-                        testStatus = "processed";
+                        progressReporter.finishPass("main", mainSourceCount);
+                        mainStatus = "processed";
                     }
+                } else {
+                    mainStatus = "skipped";
+                }
+
+                if (selectedPass.includesTest()) {
+                    List<Path> effectiveTestClasspath = testClasspath == null || testClasspath.isEmpty()
+                        ? ClasspathManifestReader.read(
+                        root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-dependencies"),
+                        "Missing test scope cache. Run pyronaut-install first"
+                    )
+                        : testClasspath;
+
+                    mergedTestRoot = Files.createTempDirectory("pyronaut-test-sources-");
+                    Path mergedTestPythonSrc = mergedTestRoot.resolve("python");
+                    Path mergedTestJavaSrc = mergedTestRoot.resolve("java");
+                    mergeSourceTrees(resolvedMainPythonSrc, resolvedTestPythonSrc, mergedTestPythonSrc);
+                    mergeSourceTrees(resolvedMainJavaSrc, resolvedTestJavaSrc, mergedTestJavaSrc);
+
+                    long testSourceCount = ProcessorSourceCache.countSources(mergedTestPythonSrc, ".py")
+                        + ProcessorSourceCache.countSources(mergedTestJavaSrc, ".java");
+                    progressReporter.startPass("test", testSourceCount);
+                    if (testSourceCount == 0L) {
+                        prepareGeneratedOutputDirectory(resolvedTestTargetDir);
+                        syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
+                        progressReporter.noSources("test");
+                        testStatus = "no sources";
+                    } else {
+                        String testFingerprint = ProcessorSourceCache.fingerprint(
+                            mergedTestPythonSrc,
+                            mergedTestJavaSrc,
+                            effectiveProcessorPath,
+                            effectiveTestClasspath,
+                            options
+                        );
+                        if (!noCache
+                            && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint, resolvedTestTargetDir)) {
+                            syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
+                            progressReporter.cacheHit("test", testSourceCount);
+                            testStatus = "cache hit";
+                        } else {
+                            if (noCache) {
+                                progressReporter.cacheBypass("test", testSourceCount);
+                            }
+                            prepareGeneratedOutputDirectory(resolvedTestTargetDir);
+                            compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
+                                mergedTestPythonSrc,
+                                mergedTestJavaSrc,
+                                resolvedTestTargetDir,
+                                effectiveProcessorPath,
+                                effectiveTestClasspath,
+                                options
+                            ));
+                            if (!noCache) {
+                                ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint);
+                            }
+                            syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
+                            progressReporter.finishPass("test", testSourceCount);
+                            testStatus = "processed";
+                        }
+                    }
+                } else {
+                    testStatus = "skipped";
                 }
 
                 progressReporter.complete(mainStatus, testStatus);
@@ -269,6 +285,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautProcessorMain()).execute(args);
         System.exit(exitCode);
     }
@@ -297,6 +314,15 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static void mergeSourceTrees(Path primarySource, Path overlaySource, Path targetDirectory) {
         copyTree(primarySource, targetDirectory);
         copyTree(overlaySource, targetDirectory);
+    }
+
+    private static void prepareGeneratedOutputDirectory(Path targetDirectory) {
+        deleteTree(targetDirectory);
+        try {
+            Files.createDirectories(targetDirectory);
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed to create generated output directory: " + targetDirectory, e);
+        }
     }
 
     private static void syncProcessedTestSources(Path testTargetDir, Path testSourcesDir, Path originalTestSourceDir) {
@@ -380,6 +406,32 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             throw e;
         } catch (Exception e) {
             throw new PyronautProcessorException("Failed walking path: " + directory, e);
+        }
+    }
+
+    private enum ProcessingPass {
+        ALL,
+        MAIN,
+        TEST;
+
+        static ProcessingPass fromCliValue(String value) {
+            if (value == null || value.isBlank()) {
+                return ALL;
+            }
+            return switch (value.trim().toLowerCase(Locale.ROOT)) {
+                case "all" -> ALL;
+                case "main" -> MAIN;
+                case "test" -> TEST;
+                default -> throw new IllegalArgumentException("Invalid value for --pass. Use all|main|test");
+            };
+        }
+
+        boolean includesMain() {
+            return this == ALL || this == MAIN;
+        }
+
+        boolean includesTest() {
+            return this == ALL || this == TEST;
         }
     }
 

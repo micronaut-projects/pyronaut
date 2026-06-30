@@ -53,6 +53,7 @@ import org.eclipse.aether.util.repository.DefaultProxySelector;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -74,6 +75,7 @@ final class MavenClasspathResolver {
     private static final String MICRONAUT_CONTEXT_PYTHON_MODULE = "io.micronaut:micronaut-context-python";
     private static final String MICRONAUT_INJECT_PYTHON_MODULE = "io.micronaut:micronaut-inject-python";
     private static final String MICRONAUT_MANAGEMENT_MODULE = "io.micronaut:micronaut-management";
+    private static final String MICRONAUT_CACHE_CAFFEINE_MODULE = "io.micronaut.cache:micronaut-cache-caffeine";
     private static final String CONTROL_PANEL_MANAGEMENT_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-management";
     private static final String CONTROL_PANEL_UI_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-ui";
     private static final String MICRONAUT_SECURITY_GROUP = "io.micronaut.security";
@@ -86,6 +88,13 @@ final class MavenClasspathResolver {
         "io.micronaut.testresources:micronaut-test-resources-build-tools",
         "io.micronaut.testresources:micronaut-test-resources-client",
         TEST_RESOURCES_SERVER_MODULE
+    );
+    private static final Set<String> MICRONAUT_CACHE_IMPLEMENTATION_MODULES = Set.of(
+        MICRONAUT_CACHE_CAFFEINE_MODULE,
+        "io.micronaut.cache:micronaut-cache-ehcache",
+        "io.micronaut.cache:micronaut-cache-hazelcast",
+        "io.micronaut.cache:micronaut-cache-infinispan",
+        "io.micronaut.cache:micronaut-cache-noop"
     );
 
     private final RepositorySystem repositorySystem;
@@ -151,10 +160,7 @@ final class MavenClasspathResolver {
                                              Path localRepositoryPath,
                                              boolean offline,
                                              boolean forceUpdates) {
-        List<RemoteRepository> repositories = toRepositories(
-            model.pyronaut() == null ? List.of() : model.pyronaut().repositories(),
-            forceUpdates
-        );
+        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
@@ -228,9 +234,29 @@ final class MavenClasspathResolver {
             if (!artifactPath.startsWith(localRepositoryRoot)) {
                 continue;
             }
+            if (isMavenLocalArtifact(artifactResult, artifactPath)) {
+                continue;
+            }
             evicted |= deleteLocalArtifactFile(artifactPath);
         }
         return evicted;
+    }
+
+    private static boolean isMavenLocalArtifact(ArtifactResult artifactResult, Path artifactPath) {
+        if (artifactResult.getRepository() != null && "mavenLocal".equals(artifactResult.getRepository().getId())) {
+            return true;
+        }
+        Path remoteRepositories = artifactPath.resolveSibling("_remote.repositories");
+        if (!Files.exists(remoteRepositories)) {
+            return true;
+        }
+        try {
+            String localInstallMarker = artifactPath.getFileName() + ">=";
+            return Files.readAllLines(remoteRepositories).stream()
+                .anyMatch(line -> line.equals(localInstallMarker));
+        } catch (IOException e) {
+            throw new PyprojectModelException("Failed reading local dependency provenance: " + remoteRepositories, e);
+        }
     }
 
     private static boolean deleteLocalArtifactFile(Path artifactPath) {
@@ -275,6 +301,7 @@ final class MavenClasspathResolver {
             }
             if (controlPanelProductionEnabled(model)) {
                 addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+                addDefaultCacheImplementationIfMissing(runtime, managedVersions);
                 runtime.add(controlPanelManagementCoordinate());
                 runtime.add(controlPanelUiCoordinate());
             }
@@ -283,6 +310,7 @@ final class MavenClasspathResolver {
         if (scope == InstallScope.DEVELOPMENT_RUNTIME) {
             LinkedHashSet<String> runtime = new LinkedHashSet<>(coordinatesForScope(model, InstallScope.RUNTIME, managedVersions));
             addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+            addDefaultCacheImplementationIfMissing(runtime, managedVersions);
             if (controlPanelEnabled(model)) {
                 runtime.add(controlPanelManagementCoordinate());
                 runtime.add(controlPanelUiCoordinate());
@@ -579,9 +607,29 @@ final class MavenClasspathResolver {
         }
     }
 
+    private static void addDefaultCacheImplementationIfMissing(Set<String> coordinates, Map<String, String> managedVersions) {
+        if (!hasCacheImplementation(coordinates)) {
+            addDefaultCoordinate(coordinates, MICRONAUT_CACHE_CAFFEINE_MODULE, managedVersions);
+        }
+    }
+
+    private static boolean hasCacheImplementation(Set<String> coordinates) {
+        return coordinates.stream()
+            .map(MavenClasspathResolver::moduleKey)
+            .anyMatch(MICRONAUT_CACHE_IMPLEMENTATION_MODULES::contains);
+    }
+
     private static String defaultManagedCoordinate(String module, Map<String, String> managedVersions) {
         String version = normalizedVersion(managedVersions.get(module));
         return version == null ? null : module + ":" + version;
+    }
+
+    private static String moduleKey(String coordinate) {
+        String[] parts = coordinate.split(":");
+        if (parts.length < 2) {
+            return coordinate;
+        }
+        return parts[0] + ":" + parts[1];
     }
 
     private boolean isTestResourcesDisabledViaEnvironment() {
@@ -780,7 +828,14 @@ final class MavenClasspathResolver {
                 resolved.put("mavenCentral", newRemoteRepository("mavenCentral", "https://repo1.maven.org/maven2/", forceUpdates));
             } else if ("mavenlocal".equals(lower)) {
                 String localPath = resolveLocalMavenRepository().toUri().toString();
-                resolved.put("mavenLocal", newRemoteRepository("mavenLocal", localPath, forceUpdates));
+                RepositoryPolicy localPolicy = new RepositoryPolicy(true, RepositoryPolicy.UPDATE_POLICY_NEVER, RepositoryPolicy.CHECKSUM_POLICY_IGNORE);
+                resolved.put(
+                    "mavenLocal",
+                    new RemoteRepository.Builder("mavenLocal", "default", localPath)
+                        .setReleasePolicy(localPolicy)
+                        .setSnapshotPolicy(localPolicy)
+                        .build()
+                );
             } else {
                 String id = "repo-" + resolved.size();
                 String url = value.contains("://") ? value : Path.of(value).toAbsolutePath().toUri().toString();
@@ -788,6 +843,22 @@ final class MavenClasspathResolver {
             }
         }
         return List.copyOf(resolved.values());
+    }
+
+    private static List<String> repositoriesForModel(PyprojectModel model) {
+        if (model.pyronaut() == null) {
+            return List.of();
+        }
+        List<String> repositories = model.pyronaut().repositories() == null ? List.of() : model.pyronaut().repositories();
+        if (model.pyronaut().coreVersion() != null
+            && model.pyronaut().coreVersion().endsWith("-SNAPSHOT")
+            && repositories.stream().noneMatch(repository -> repository != null && "mavenlocal".equals(repository.trim().toLowerCase(Locale.ROOT)))) {
+            List<String> withMavenLocal = new ArrayList<>(repositories.size() + 1);
+            withMavenLocal.add("mavenLocal");
+            withMavenLocal.addAll(repositories);
+            return withMavenLocal;
+        }
+        return repositories;
     }
 
     private static RemoteRepository newRemoteRepository(String id, String url, boolean forceUpdates) {

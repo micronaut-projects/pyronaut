@@ -16,8 +16,12 @@
 package io.micronaut.pyronaut.test;
 
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
@@ -65,10 +69,32 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
-    private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_PREFIXES = List.of(
-        "micronaut-pyronaut-logback-",
-        "micronaut-pyronaut-pytest-"
+    private static final String MICRONAUT_SERVER_PORT = "micronaut.server.port";
+    private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
+    private static final String PYRONAUT_USE_SYSTEM_APPLICATION_CLASSLOADER = "pyronaut.use.system.application.classloader";
+    private static final String DEFAULT_TEST_SERVER_PORT = "0";
+    private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_IDS = List.of(
+        "micronaut-aop",
+        "micronaut-buffer-netty",
+        "micronaut-context-propagation",
+        "micronaut-context-python",
+        "micronaut-core",
+        "micronaut-core-reactive",
+        "micronaut-discovery-core",
+        "micronaut-http",
+        "micronaut-http-netty",
+        "micronaut-http-server",
+        "micronaut-http-server-netty",
+        "micronaut-inject",
+        "micronaut-jackson-core",
+        "micronaut-json-core",
+        "micronaut-pyronaut-logback",
+        "micronaut-pyronaut-pytest",
+        "micronaut-retry",
+        "micronaut-router",
+        "micronaut-runtime"
     );
+    private static final List<String> LAUNCHER_PROVIDED_ARTIFACT_PREFIXES = List.of();
     private static final String PYTEST_SOURCE_DIR = "pytest.src.dir";
 
     private static final String PYTEST_TESTS = "pytest.tests";
@@ -161,8 +187,15 @@ public final class PyronautTestMain implements Callable<Integer> {
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         Path resolvedPytestSourceDir = resolvePytestSourceDir(root, resolvedTestsDir);
-        try (URLClassLoader applicationClassLoader = layout.applicationClassLoader()) {
+        String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
+        String previousLoggerConfigProperty = System.getProperty(LOGGER_CONFIG_PROPERTY);
+        BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
+        try (layout) {
+            ClassLoader applicationClassLoader = layout.applicationClassLoader();
+            PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
             enableContextClassLoaderIntrospections();
+            previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
+            defaultTestServerPort();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             try {
                 contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedPytestSourceDir));
@@ -240,13 +273,24 @@ public final class PyronautTestMain implements Callable<Integer> {
             return 7;
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+            if (previousBeanIntrospectionsProvider != null) {
+                BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
+            }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
+            restoreSystemProperty(MICRONAUT_SERVER_PORT, previousServerPortProperty);
+            restoreSystemProperty(LOGGER_CONFIG_PROPERTY, previousLoggerConfigProperty);
         }
     }
 
     static void enableContextClassLoaderIntrospections() {
         if (System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER) == null) {
             System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, "true");
+        }
+    }
+
+    static void defaultTestServerPort() {
+        if (System.getProperty(MICRONAUT_SERVER_PORT) == null) {
+            System.setProperty(MICRONAUT_SERVER_PORT, DEFAULT_TEST_SERVER_PORT);
         }
     }
 
@@ -327,10 +371,7 @@ public final class PyronautTestMain implements Callable<Integer> {
         addResourceDirectories(urls, additionalResourceDirs);
         addPathIfDirectory(urls, testResourcesDir);
         addResourceDirectories(urls, additionalTestResourceDirs);
-        return new ResolvedProjectLayout(
-            processedClassesRoot,
-            new URLClassLoader(urls.toArray(URL[]::new), resolveApplicationClassLoader())
-        );
+        return new ResolvedProjectLayout(processedClassesRoot, List.copyOf(urls));
     }
 
     private Path resolveConfiguredPath(Path root,
@@ -425,7 +466,18 @@ public final class PyronautTestMain implements Callable<Integer> {
             return false;
         }
         String fileName = path.getFileName().toString();
-        return LAUNCHER_PROVIDED_ARTIFACT_PREFIXES.stream().anyMatch(fileName::startsWith);
+        return LAUNCHER_PROVIDED_ARTIFACT_IDS.stream().anyMatch(artifactId -> matchesLauncherProvidedArtifact(path, fileName, artifactId))
+            || LAUNCHER_PROVIDED_ARTIFACT_PREFIXES.stream().anyMatch(fileName::startsWith);
+    }
+
+    private static boolean matchesLauncherProvidedArtifact(Path path, String fileName, String artifactId) {
+        if (path.getParent() != null && path.getParent().getFileName() != null && artifactId.equals(path.getParent().getFileName().toString())) {
+            return true;
+        }
+        String prefix = artifactId + "-";
+        return fileName.startsWith(prefix)
+            && fileName.length() > prefix.length()
+            && Character.isDigit(fileName.charAt(prefix.length()));
     }
 
     private static void addPathIfDirectory(LinkedHashSet<URL> urls, Path path) throws IOException {
@@ -640,11 +692,34 @@ public final class PyronautTestMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautTestMain()).execute(args);
         System.exit(exitCode);
     }
 
-    record ResolvedProjectLayout(Path processedClassesRoot, URLClassLoader applicationClassLoader) {
+    record ResolvedProjectLayout(Path processedClassesRoot, List<URL> classpathUrls) implements AutoCloseable {
+        private static final String NATIVE_IMAGE_CODE = "org.graalvm.nativeimage.imagecode";
+
+        ResolvedProjectLayout {
+            classpathUrls = List.copyOf(classpathUrls);
+        }
+
+        ClassLoader applicationClassLoader() {
+            if (usesNativeSystemClassLoader()) {
+                return ClassLoader.getSystemClassLoader();
+            }
+            return new URLClassLoader(classpathUrls.toArray(URL[]::new), resolveApplicationClassLoader());
+        }
+
+        @Override
+        public void close() throws IOException {
+        }
+
+        private static boolean usesNativeSystemClassLoader() {
+            return (System.getProperty(NATIVE_IMAGE_CODE) != null || Boolean.getBoolean(PYRONAUT_USE_SYSTEM_APPLICATION_CLASSLOADER))
+                && System.getProperty("java.class.path") != null
+                && !System.getProperty("java.class.path").isBlank();
+        }
     }
 
     record ParentClasspath(LinkedHashSet<Path> paths, LinkedHashSet<String> fileNames) {

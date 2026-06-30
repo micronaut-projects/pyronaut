@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
 @Internal
 public final class FailureDiagnostics {
     private static final Pattern INTERNAL_STACK_FRAME = Pattern.compile(
-        "^(com\\.oracle\\.truffle\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|java\\.base/).*"
+        "^(com\\.oracle\\.truffle\\.|com\\.oracle\\.svm\\.|com\\.oracle\\.graal\\.python\\.|org\\.graalvm\\.polyglot\\.|org\\.graalvm\\.python\\.embedding\\.|java\\.base/).*"
     );
 
     private FailureDiagnostics() {
@@ -73,6 +73,8 @@ public final class FailureDiagnostics {
 
     private static boolean isInternal(StackTraceElement element) {
         return "java.base".equals(element.getModuleName())
+            || "org.graalvm.nativeimage.builder".equals(element.getModuleName())
+            || "org.graalvm.truffle.runtime.svm".equals(element.getModuleName())
             || INTERNAL_STACK_FRAME.matcher(element.getClassName()).matches();
     }
 

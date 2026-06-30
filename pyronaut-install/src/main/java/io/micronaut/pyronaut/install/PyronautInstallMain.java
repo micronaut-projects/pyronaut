@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.install;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import picocli.CommandLine;
 
 import java.io.IOException;
@@ -252,6 +253,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautInstallMain()).execute(args);
         System.exit(exitCode);
     }

@@ -182,6 +182,17 @@ Option behavior:
 - `--progress`: `auto`, `on`, or `off` (`auto` enables interactive rendering only on TTY).
 - `--color`: `auto`, `always`, or `never` (`auto` only emits ANSI where supported).
 
+## Process preflight
+
+`pyronaut process` processes both main and test sources by default. Use `--pass main` or `--pass test` to process only one output set:
+
+```bash
+pyronaut process --project-dir /path/to/app --pass main
+pyronaut process --project-dir /path/to/app --pass test
+```
+
+`pyronaut run` uses the main pass and `pyronaut test` uses the test pass during their preflight. They do not regenerate IDE stubs or refresh dependency manifests; run `pyronaut install` explicitly after changing dependencies, repositories, source layout, or IDE stub settings.
+
 ### Proxy configuration precedence
 
 `pyronaut install` can apply proxy settings for Maven artifact resolution with this precedence:

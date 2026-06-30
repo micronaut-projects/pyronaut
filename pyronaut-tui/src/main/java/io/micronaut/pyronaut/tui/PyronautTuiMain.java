@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.tui;
 
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.tui.commands.PyronautDelegatingTuiCommand;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -36,6 +37,8 @@ public final class PyronautTuiMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
+        PyronautLauncherLogging.initialize();
         var exitCode = new CommandLine(new PyronautTuiMain()).execute(args);
         System.exit(exitCode);
     }

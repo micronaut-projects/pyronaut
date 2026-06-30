@@ -3,6 +3,7 @@ plugins {
 }
 
 dependencies {
+    implementation(mn.micronaut.context)
     implementation(libs.tomlj)
 
     testImplementation(mnTest.junit.jupiter.api)

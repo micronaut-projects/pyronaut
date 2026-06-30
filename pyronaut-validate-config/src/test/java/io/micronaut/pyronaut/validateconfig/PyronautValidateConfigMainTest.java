@@ -291,6 +291,54 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void runScenarioUsesDevelopmentRuntimeManifestWhenPresent() throws Exception {
+        Path project = prepareProject();
+        Path runtimeJar = project.resolve("libs/runtime.jar");
+        Path developmentRuntimeJar = project.resolve("libs/development.jar");
+        Files.createDirectories(runtimeJar.getParent());
+        Files.writeString(runtimeJar, "runtime");
+        Files.writeString(developmentRuntimeJar, "development");
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), runtimeJar + "\n");
+        Files.writeString(project.resolve("__pyronaut__/resolved-development-runtime-dependencies"), developmentRuntimeJar + "\n");
+
+        AtomicReference<List<String>> runClasspath = new AtomicReference<>(List.of());
+        PyronautValidateConfigMain runCommand = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                runClasspath.set(settings.classpathElements());
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        AtomicReference<List<String>> productionClasspath = new AtomicReference<>(List.of());
+        PyronautValidateConfigMain productionCommand = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                productionClasspath.set(settings.classpathElements());
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        int runExit = new CommandLine(runCommand).execute("--project-dir", project.toString(), "--scenario", "run", "--no-cache");
+        int productionExit = new CommandLine(productionCommand).execute("--project-dir", project.toString(), "--no-cache");
+
+        assertEquals(0, runExit);
+        assertEquals(0, productionExit);
+        assertTrue(runClasspath.get().stream().anyMatch(entry -> entry.endsWith("development.jar")));
+        assertFalse(runClasspath.get().stream().anyMatch(entry -> entry.endsWith("runtime.jar")));
+        assertTrue(productionClasspath.get().stream().anyMatch(entry -> entry.endsWith("runtime.jar")));
+        assertFalse(productionClasspath.get().stream().anyMatch(entry -> entry.endsWith("development.jar")));
+    }
+
+    @Test
     void validateConfigRejectsProductionControlPanelWithoutSecurity() throws Exception {
         Path project = prepareProject("""
             [project]

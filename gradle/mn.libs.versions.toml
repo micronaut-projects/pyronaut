@@ -4,10 +4,15 @@ graalpy = "25.1.0-SNAPSHOT"
 [libraries]
 micronaut-context = { module = "io.micronaut:micronaut-context", version.ref = "micronaut" }
 micronaut-context-python = { module = "io.micronaut:micronaut-context-python", version.ref = "micronaut" }
+micronaut-context-python-netty = { module = "io.micronaut:micronaut-context-python-netty", version.ref = "micronaut" }
 micronaut-core = { module = "io.micronaut:micronaut-core", version.ref = "micronaut" }
 micronaut-http = { module = "io.micronaut:micronaut-http", version.ref = "micronaut" }
+micronaut-runtime = { module = "io.micronaut:micronaut-runtime", version.ref = "micronaut" }
+micronaut-retry = { module = "io.micronaut:micronaut-retry", version.ref = "micronaut" }
 micronaut-http-client = { module = "io.micronaut:micronaut-http-client", version.ref = "micronaut" }
 micronaut-http-server = { module = "io.micronaut:micronaut-http-server", version.ref = "micronaut" }
+micronaut-messaging = { module = "io.micronaut:micronaut-messaging", version.ref = "micronaut" }
+micronaut-websocket = { module = "io.micronaut:micronaut-websocket", version.ref = "micronaut" }
 micronaut-http-server-netty = { module = "io.micronaut:micronaut-http-server-netty", version.ref = "micronaut" }
 micronaut-http-validation = { module = "io.micronaut:micronaut-http-validation", version.ref = "micronaut" }
 micronaut-inject-java = { module = "io.micronaut:micronaut-inject-java", version.ref = "micronaut" }

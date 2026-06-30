@@ -28,7 +28,7 @@ dependencies {
     implementation(libs.tomlj)
     implementation(libs.javaparser.core)
 
-    runtimeOnly(libs.slf4j.simple)
+    implementation(project(":micronaut-pyronaut-logback"))
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

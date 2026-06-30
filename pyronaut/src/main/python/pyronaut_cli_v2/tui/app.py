@@ -61,10 +61,7 @@ class TuiApp:
                     self._log(summary)
             return 0 if self._options.smoke else code
 
-        code = self._delegate("install", ["--project-dir", str(self._options.project_dir)])
-        if code != 0:
-            return code
-        code = self._delegate("process", ["--project-dir", str(self._options.project_dir)])
+        code = self._delegate("process", ["--project-dir", str(self._options.project_dir), "--pass", "main"])
         if code != 0:
             return code
         if self._options.smoke:

@@ -22,33 +22,45 @@ import io.micronaut.context.annotation.Property;
 import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.core.annotation.NonNull;
 import io.micronaut.core.annotation.Nullable;
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.core.convert.TypeConverterRegistrar;
 import io.micronaut.core.io.ResourceLoader;
+import io.micronaut.core.io.scan.ClassClassPathResourceLoader;
 import io.micronaut.core.io.scan.ClassPathResourceLoader;
+import io.micronaut.core.io.scan.CombinedClassPathResourceLoader;
 import io.micronaut.core.io.service.SoftServiceLoader;
 import io.micronaut.inject.qualifiers.Qualifiers;
-import io.micronaut.test.pytest.FailureDiagnostics;
-import io.micronaut.test.pytest.PythonAssertionError;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.Sql;
 import io.micronaut.test.annotation.TransactionMode;
 import io.micronaut.test.extensions.AbstractMicronautExtension;
+import io.micronaut.test.pytest.FailureDiagnostics;
+import io.micronaut.test.pytest.PythonAssertionError;
 import io.micronaut.test.support.sql.SqlHandler;
+import org.graalvm.nativeimage.ImageInfo;
+import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.AnnotatedElement;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.AnnotatedElement;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import javax.sql.DataSource;
 
@@ -60,6 +72,8 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     public static final String ID = "_micronaut_test_extension";
     private static final Logger LOG = LoggerFactory.getLogger(PytestMicronautExtension.class);
     private final List<SqlConfig> sqlConfigs;
+    @Nullable
+    private BeanIntrospectionsProvider previousBeanIntrospectionsProvider;
 
     public PytestMicronautExtension(Map<String, Object> pytestProperties, Value node) {
         this(pytestProperties, node, List.of());
@@ -118,8 +132,27 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             );
             return new FixtureBootstrapResult(extension.getContext(), error);
         } catch (Throwable e) {
-            LOG.error("Error bootstrapping Micronaut pytest fixture: {}", e.getMessage(), e);
+            LOG.error("Error bootstrapping Micronaut pytest fixture:\n{}", FailureDiagnostics.render(e));
             return new FixtureBootstrapResult(null, buildFailureMessage(e));
+        }
+    }
+
+    /**
+     * Invokes a pytest test function through Java so Java exceptions are converted before pytest wrappers see them.
+     *
+     * @param invocation A zero-argument Python callable that invokes the test function with pytest fixtures.
+     * @return The invocation result.
+     */
+    public static TestFunctionResult invokeTestFunction(Value invocation) {
+        try {
+            Value result = invocation.execute();
+            if (result == null || result.isNull()) {
+                return new TestFunctionResult(null, null);
+            }
+            return new TestFunctionResult(renderResult(result), null);
+        } catch (Throwable e) {
+            LOG.error("Error invoking pytest function:\n{}", FailureDiagnostics.render(e));
+            return new TestFunctionResult(null, buildFailureMessage(e));
         }
     }
 
@@ -179,7 +212,9 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             runSql(Sql.Phase.BEFORE_ALL);
             return null;
         } catch (Throwable e) {
-            LOG.error("Error PytestMicronautExtension start: {}", e.getMessage(), e);
+            if (!(e instanceof PythonAssertionError)) {
+                LOG.error("Error PytestMicronautExtension start:\n{}", FailureDiagnostics.render(e));
+            }
             return buildFailureMessage(e);
         }
     }
@@ -196,10 +231,12 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     @Override
     public void beforeClass(Value context, Class<?> testClass, @Nullable MicronautTestValue testAnnotationValue) {
         try {
+            installNativeBeanIntrospectionsProvider();
             super.beforeClass(context, testClass, testAnnotationValue);
         } catch (RuntimeException e) {
-            LOG.error("Error PytestMicronautExtension beforeClass: {}", e.getMessage(), e);
-            throw new PythonAssertionError(e.getMessage(), e);
+            restoreNativeBeanIntrospectionsProvider();
+            LOG.error("Error PytestMicronautExtension beforeClass:\n{}", FailureDiagnostics.render(e));
+            throw new PythonAssertionError(buildFailureMessage(e), e);
         }
     }
 
@@ -212,8 +249,14 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         ClassLoader contextClassLoader = resolveApplicationClassLoader();
         if (contextClassLoader != null) {
             builder.classLoader(contextClassLoader);
-            builder.resourceResolver(ClassPathResourceLoader.defaultLoader(contextClassLoader));
+            builder.resourceResolver(CombinedClassPathResourceLoader.of(
+                ClassPathResourceLoader.defaultLoader(contextClassLoader),
+                new ClassClassPathResourceLoader(PytestMicronautExtension.class)
+            ));
             registerProjectTypeConverterRegistrars(builder, contextClassLoader);
+        }
+        if (ImageInfo.inImageRuntimeCode()) {
+            builder.beanDefinitionsProvider(new ContextClassLoaderBeanDefinitionsProvider());
         }
     }
 
@@ -241,8 +284,24 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
             runSql(Sql.Phase.AFTER_ALL);
             super.afterClass(context);
         } catch (RuntimeException e) {
-            LOG.error("Error PytestMicronautExtension afterClass: " + e.getMessage(), e);
+            LOG.error("Error PytestMicronautExtension afterClass:\n{}", FailureDiagnostics.render(e));
             throw e;
+        } finally {
+            restoreNativeBeanIntrospectionsProvider();
+        }
+    }
+
+    private void installNativeBeanIntrospectionsProvider() {
+        if (ImageInfo.inImageRuntimeCode() && previousBeanIntrospectionsProvider == null) {
+            previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
+        }
+    }
+
+    private void restoreNativeBeanIntrospectionsProvider() {
+        BeanIntrospectionsProvider previous = previousBeanIntrospectionsProvider;
+        if (previous != null) {
+            BeanIntrospectionProviders.set(previous);
+            previousBeanIntrospectionsProvider = null;
         }
     }
 
@@ -380,11 +439,58 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     }
 
     static String buildFailureMessage(Throwable e) {
-        String message = FailureDiagnostics.render(e);
-        if (message == null || message.isBlank()) {
-            return e.getMessage() == null || e.getMessage().isBlank() ? e.getClass().getName() : e.getMessage();
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> messages = new LinkedHashSet<>();
+        collectFailureMessages(e, visited, messages);
+        return String.join(System.lineSeparator(), messages);
+    }
+
+    private static void collectFailureMessages(Throwable throwable, Set<Throwable> visited, Set<String> messages) {
+        if (throwable == null || !visited.add(throwable)) {
+            return;
         }
-        return message;
+        Throwable rendered = unwrapPolyglotHostException(throwable);
+        if (rendered != throwable && !visited.add(rendered)) {
+            return;
+        }
+        messages.add(renderThrowable(rendered));
+        if (rendered instanceof ExceptionInInitializerError initializerError) {
+            collectFailureMessages(initializerError.getException(), visited, messages);
+        }
+        for (Throwable suppressed : rendered.getSuppressed()) {
+            collectFailureMessages(suppressed, visited, messages);
+        }
+        collectFailureMessages(rendered.getCause(), visited, messages);
+    }
+
+    private static Throwable unwrapPolyglotHostException(Throwable throwable) {
+        if (throwable instanceof PolyglotException polyglotException && polyglotException.isHostException()) {
+            return polyglotException.asHostException();
+        }
+        return throwable;
+    }
+
+    private static String renderThrowable(Throwable throwable) {
+        throwable = unwrapPolyglotHostException(throwable);
+        String message = throwable.getMessage();
+        if (throwable instanceof PythonAssertionError) {
+            return message == null || message.isBlank() ? throwable.getClass().getName() : message;
+        }
+        if (message == null || message.isBlank()) {
+            return throwable.getClass().getName();
+        }
+        return throwable.getClass().getName() + ": " + message;
+    }
+
+    private static String renderResult(Value result) {
+        try {
+            if (result.isString()) {
+                return result.asString();
+            }
+            return result.toString();
+        } catch (Throwable e) {
+            return result.getClass().getName();
+        }
     }
 
     /**
@@ -402,6 +508,29 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         @Nullable
         public ApplicationContext getContext() {
             return context;
+        }
+
+        @Nullable
+        public String getError() {
+            return error;
+        }
+    }
+
+    /**
+     * Result wrapper for pytest function invocation.
+     */
+    public static final class TestFunctionResult {
+        private final String returnValue;
+        private final String error;
+
+        TestFunctionResult(@Nullable String returnValue, @Nullable String error) {
+            this.returnValue = returnValue;
+            this.error = error;
+        }
+
+        @Nullable
+        public String getReturnValue() {
+            return returnValue;
         }
 
         @Nullable

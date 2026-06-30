@@ -107,6 +107,33 @@ class RequestsResponseTest {
     }
 
     @Test
+    void sessionBuildsResponseFromInvokerResponseWrapper() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+                import pyronaut.requests as requests
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+
+                class FakeInvoker:
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        return type("Result", (), {
+                            "success": True,
+                            "response": HttpResponse.ok(),
+                            "body": b'{"status":"ok"}',
+                        })()
+
+                requests.HttpClientInvoker = FakeInvoker
+                response = requests.Session(register=False).get("/health")
+                response.status_code == 200 and response.json()["status"] == "ok"
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
     void dictQueryListValuesAreExpanded() {
         try (Context context = newPythonContext()) {
             Value result = context.eval("python", """

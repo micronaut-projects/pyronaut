@@ -498,7 +498,7 @@ public final class RootView extends Component<RootView> {
     private StyledElement<?> stateWidget(UiState state) {
         stateWave.advance();
         return switch (state) {
-            case COMPILING -> waveText("Compiling...").state(stateWave).addClass(stateClassFor(state));
+            case COMPILING -> waveText("Processing...").state(stateWave).addClass(stateClassFor(state));
             case TESTING -> waveText("Running tests...").state(stateWave).addClass(stateClassFor(state));
             case RUNNING -> waveText("Running...").state(stateWave).addClass(stateClassFor(state));
             case IDLE -> waveText("Waiting for changes...").state(stateWave).addClass(stateClassFor(state));

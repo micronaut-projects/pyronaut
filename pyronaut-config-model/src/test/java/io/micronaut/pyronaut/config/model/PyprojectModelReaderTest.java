@@ -42,7 +42,7 @@ class PyprojectModelReaderTest {
         assertEquals("/control-panel", model.pyronaut().controlPanel().path());
         assertEquals(Boolean.FALSE, model.pyronaut().controlPanel().productionEnabled());
         assertEquals("jvm", model.pyronaut().build().mode());
-        assertEquals("jit", model.pyronaut().processor().mode());
+        assertEquals("jvm", model.pyronaut().processor().mode());
         assertEquals("src", model.pyronaut().sources().python());
         assertEquals("tests", model.pyronaut().sources().pythonTest());
         assertEquals("src-java", model.pyronaut().sources().java());
@@ -52,6 +52,7 @@ class PyprojectModelReaderTest {
         assertEquals(List.of(), model.pyronaut().sources().additionalResources());
         assertEquals(List.of(), model.pyronaut().sources().additionalTestResources());
         assertEquals("ce", model.pyronaut().toolchain().distribution());
+        assertEquals("jvm", model.pyronaut().toolchain().type());
         assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
         assertNotNull(model.pyronaut().ideStubs());
         assertEquals(Boolean.TRUE, model.pyronaut().ideStubs().enabled());
@@ -281,7 +282,7 @@ class PyprojectModelReaderTest {
     }
 
     @Test
-    void parseProcessorModeDefaultsToJitWhenMissing() throws IOException {
+    void parseProcessorModeDefaultsToJvmWhenMissing() throws IOException {
         Path file = tempDir.resolve("pyproject.toml");
         Files.writeString(file, """
             [project]
@@ -291,7 +292,7 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModel model = reader.readFile(file);
-        assertEquals("jit", model.pyronaut().processor().mode());
+        assertEquals("jvm", model.pyronaut().processor().mode());
     }
 
     @Test
@@ -342,11 +343,11 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
-        assertEquals("Invalid value for 'tool.pyronaut.processor.mode': expected one of [jit, native]", exception.getMessage());
+        assertEquals("Invalid value for 'tool.pyronaut.processor.mode': expected one of [jvm, native]", exception.getMessage());
     }
 
     @Test
-    void parseTestModeDefaultsToJitWhenMissing() throws IOException {
+    void parseTestModeDefaultsToJvmWhenMissing() throws IOException {
         Path file = tempDir.resolve("pyproject.toml");
         Files.writeString(file, """
             [project]
@@ -356,7 +357,7 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModel model = reader.readFile(file);
-        assertEquals("jit", model.pyronaut().test().mode());
+        assertEquals("jvm", model.pyronaut().test().mode());
     }
 
     @Test
@@ -391,6 +392,7 @@ class PyprojectModelReaderTest {
 
             [tool.pyronaut.toolchain]
             distribution = "dev"
+            type = "native"
             version = "25.1.0-dev+10.1"
             java-version = 25
             release-tag = "jdk-25.1.0-dev-20260429_0111"
@@ -399,6 +401,7 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals("dev", model.pyronaut().toolchain().distribution());
+        assertEquals("native", model.pyronaut().toolchain().type());
         assertEquals("25.1.0-dev+10.1", model.pyronaut().toolchain().version());
         assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
         assertEquals("jdk-25.1.0-dev-20260429_0111", model.pyronaut().toolchain().releaseTag());
@@ -427,9 +430,25 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals("ee", model.pyronaut().toolchain().distribution());
+        assertEquals("jvm", model.pyronaut().toolchain().type());
         assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
         assertEquals("jdk-25.1.0-dev-20260429_0111", model.pyronaut().toolchain().releaseTag());
         assertEquals("https://example.invalid/graalvm-ee.tar.gz", model.pyronaut().toolchain().downloadUrl());
+    }
+
+    @Test
+    void rejectInvalidToolchainTypeValue() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.toolchain]
+            type = "jit"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid value for 'tool.pyronaut.toolchain.type': expected one of [jvm, native]", exception.getMessage());
     }
 
     @Test
@@ -463,7 +482,7 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
-        assertEquals("Invalid value for 'tool.pyronaut.test.mode': expected one of [jit, native]", exception.getMessage());
+        assertEquals("Invalid value for 'tool.pyronaut.test.mode': expected one of [jvm, native]", exception.getMessage());
     }
 
     @Test

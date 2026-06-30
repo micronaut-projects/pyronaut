@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.testresources;
 
+import io.micronaut.context.annotation.Requires;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
@@ -34,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 
 @Controller("/api/test-resources")
+@Requires(classes = DockerHealthControlPanel.class)
 final class TestResourcesInsightsController {
     private static final String ACCESS_TOKEN_HEADER = "Access-Token";
 

@@ -20,7 +20,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Callable, NamedTuple, Protocol, Sequence
+from typing import Callable, Iterable, NamedTuple, Protocol, Sequence
 
 SUCCESS = 0
 USAGE_ERROR = 2
@@ -39,6 +39,10 @@ COMMAND_TO_EXECUTABLE = {
     "validate-config": "pyronaut-validate-config",
     "test-resources-server": "pyronaut-test-resources-server",
 }
+DEV_NATIVE_EXECUTABLE = "pyronaut-dev"
+DEV_NATIVE_COMMANDS = {"install", "process", "run", "test", "validate-config"}
+TOOLCHAIN_TYPE_JVM = "jvm"
+TOOLCHAIN_TYPE_NATIVE = "native"
 
 JAVA_MAIN_BY_COMMAND = {
     "run": "io.micronaut.pyronaut.run.PyronautRunMain",
@@ -102,6 +106,7 @@ _provisioned_graalvm_home: str | None = None
 _GRAALVM_MIN_JDK_MAJOR = 25
 _DEFAULT_GRAALVM_DOWNLOAD_VERSION = "25.0.2"
 _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION = "ce"
+_PACKAGED_TOOLCHAIN_DEFAULTS = "toolchain-defaults.properties"
 _GRAALVM_CE_DEV_BUILDS_REPOSITORY = "graalvm/graalvm-ce-dev-builds"
 _ORACLE_GRAALVM_EA_BUILDS_REPOSITORY = "graalvm/oracle-graalvm-ea-builds"
 
@@ -190,9 +195,36 @@ def run(
     forwarded_args = _remove_debug_vm(forwarded_args)
 
     if command not in SUPPORTED_COMMANDS:
+        if _looks_like_direct_source_invocation(argv):
+            direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
+                runner=runner,
+                runner_with_env=runner_with_env,
+                process_runner=process_runner,
+                project_dir=Path.cwd(),
+            )
+            return _delegate_direct_source(
+                argv,
+                execute,
+                locate,
+                java_home_provider=direct_source_java_home_provider,
+            )
         print(f"Unknown command: {command}", file=sys.stderr)
         _print_usage(stream=sys.stderr)
         return USAGE_ERROR
+
+    if command == "run" and _looks_like_direct_source_invocation(forwarded_args):
+        direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
+            runner=runner,
+            runner_with_env=runner_with_env,
+            process_runner=process_runner,
+            project_dir=Path.cwd(),
+        )
+        return _delegate_direct_source(
+            forwarded_args,
+            execute,
+            locate,
+            java_home_provider=direct_source_java_home_provider,
+        )
 
     if not _is_supported_platform(current_platform):
         print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
@@ -227,7 +259,7 @@ def run(
         install_args = ["--project-dir", project_dir, *_local_repository_install_args()]
         if no_cache:
             install_args.append("--refresh")
-        install_code = _delegate("install", install_args, execute, locate)
+        install_code = _delegate("install", install_args, execute, locate, java_home_provider=effective_java_home_provider)
         if install_code != SUCCESS:
             return install_code
 
@@ -264,11 +296,19 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-            preflight_code = _run_preflight(project_dir, no_cache, local_repository, execute, locate)
+            preflight_code = _run_preflight(
+                project_dir,
+                no_cache,
+                local_repository,
+                execute,
+                locate,
+                install=False,
+                process_pass="main",
+            )
             if preflight_code != SUCCESS:
                 return preflight_code
             if tr_session is not None:
-                tr_session.ensure_started(runner=execute, resolver=locate)
+                tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
             return _run_with_auto_restart(
                 project_dir=Path(project_dir),
@@ -287,6 +327,7 @@ def run(
                 sleep=sleep,
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
+                process_pass="main",
             )
 
         if command in {"run", "test"}:
@@ -304,12 +345,20 @@ def run(
                 if validation_code != SUCCESS:
                     return validation_code
 
-            preflight_code = _run_preflight(project_dir, no_cache, local_repository, execute, locate)
+            preflight_code = _run_preflight(
+                project_dir,
+                no_cache,
+                local_repository,
+                execute,
+                locate,
+                install=False,
+                process_pass="main" if command == "run" else "test",
+            )
             if preflight_code != SUCCESS:
                 return preflight_code
 
             if tr_session is not None:
-                tr_session.ensure_started(runner=execute, resolver=locate)
+                tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
 
         return _delegate(
@@ -326,7 +375,7 @@ def run(
         return PRECONDITION_FAILED
     finally:
         if tr_session is not None:
-            tr_session.stop_if_owned(runner=execute, resolver=locate)
+            tr_session.stop_if_owned(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
 
 
 def _delegate(
@@ -339,6 +388,49 @@ def _delegate(
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    if command == "test-resources-server":
+        try:
+            env = _build_non_test_resources_env(command, java_home_provider)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        env = _merge_env_overrides(env, env_overrides)
+        executable_path = _resolve_native_preferred_executable(
+            COMMAND_TO_EXECUTABLE["test-resources-server"],
+            resolver,
+        )
+        if executable_path is None:
+            print("Missing delegated executable: pyronaut-test-resources-server", file=sys.stderr)
+            return PRECONDITION_FAILED
+        command_line = [executable_path, *args]
+        if _delegation_trace_enabled():
+            print(shlex.join(command_line), file=sys.stderr)
+        return runner(command_line, env)
+
+    try:
+        dev_command_line = _pyronaut_dev_native_command_line(
+            command,
+            args,
+            resolver,
+            debug_vm=debug_vm,
+            env_overrides=env_overrides,
+            java_home_provider=java_home_provider,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    if dev_command_line is not None:
+        if _delegation_trace_enabled():
+            print(shlex.join(dev_command_line), file=sys.stderr)
+        try:
+            env = _build_non_test_resources_env(command, java_home_provider)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        env = _merge_env_overrides(env, env_overrides)
+        env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
+        return runner(dev_command_line, env)
+
     if command == "test" and not debug_vm:
         try:
             executable_path = _resolve_delegate_executable_path(command, args, resolver)
@@ -390,6 +482,48 @@ def _delegate(
         return PRECONDITION_FAILED
     env = _merge_env_overrides(env, env_overrides)
     return runner(command_line, env)
+
+
+def _delegate_direct_source(
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    *,
+    java_home_provider: JavaHomeProvider | None = None,
+) -> int:
+    executable_path = _resolve_pyronaut_dev_native_executable(resolver)
+    if executable_path is None:
+        print("Missing native delegated executable: pyronaut-dev", file=sys.stderr)
+        return PRECONDITION_FAILED
+    try:
+        env = _build_java_home_env("run", java_home_provider)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    jvm_args = _build_direct_source_native_jvm_args(executable_path, env)
+    command_line = [executable_path, *jvm_args, *args]
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    return runner(command_line, env)
+
+
+def _build_direct_source_native_jvm_args(executable_path: str, env: dict[str, str] | None) -> list[str]:
+    jvm_args: list[str] = []
+    java_home = (env or os.environ).get("JAVA_HOME")
+    if java_home:
+        jvm_args.append(f"-Djava.home={java_home}")
+    launcher_classpath = os.pathsep.join(_direct_source_native_compiler_classpath_entries(executable_path))
+    if launcher_classpath:
+        jvm_args.append(f"-Djava.class.path={launcher_classpath}")
+    return jvm_args
+
+
+def _direct_source_native_compiler_classpath_entries(executable_path: str) -> list[str]:
+    return [
+        entry
+        for entry in _native_launcher_provided_jar_entries(executable_path)
+        if not Path(entry).name.startswith("micronaut-inject-python-")
+    ]
 
 
 def _delegate_via_java(
@@ -538,13 +672,188 @@ def _read_test_delegate_dependency_entries(cache_dir: Path) -> list[str]:
     ]
 
 
+def _build_native_application_classpath(command: str, project_dir: Path, launcher_executable: str | None = None) -> str:
+    return os.pathsep.join(
+        _dedupe_classpath_entries(
+            _filter_native_launcher_provided_entries(
+                _build_native_application_classpath_entries(command, project_dir),
+                launcher_executable,
+            )
+        )
+    )
+
+
+def _build_native_application_classpath_entries(command: str, project_dir: Path) -> list[str]:
+    cache_dir = project_dir / "__pyronaut__"
+    layout = _read_pyproject_sources(project_dir)
+    entries: list[str] = []
+    if command == "run":
+        classes_dir = cache_dir / "classes"
+        if not classes_dir.is_dir():
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+        entries.extend(_read_manifest_entries(_resolve_run_manifest(cache_dir)))
+        entries.append(str(classes_dir.resolve()))
+        _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
+        for resource_dir in layout.additional_resources_dirs:
+            _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
+    elif command == "test":
+        for manifest in (
+            cache_dir / "resolved-test-dependencies",
+            cache_dir / "resolved-runtime-dependencies",
+            cache_dir / "resolved-build-dependencies",
+        ):
+            if manifest.exists():
+                entries.extend(_read_manifest_entries(manifest))
+        test_classes_dir = cache_dir / "test-classes"
+        classes_dir = cache_dir / "classes"
+        if test_classes_dir.is_dir():
+            entries.append(str(test_classes_dir.resolve()))
+        elif classes_dir.is_dir():
+            entries.append(str(classes_dir.resolve()))
+        else:
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+        _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
+        for resource_dir in layout.additional_resources_dirs:
+            _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
+        _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.test_resources_dir))
+        for resource_dir in layout.additional_test_resources_dirs:
+            _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
+    else:
+        raise RuntimeError(f"Native application classpath is not supported for command: {command}")
+    return entries
+
+
+def _add_classpath_dir(entries: list[str], directory: Path) -> None:
+    if directory.is_dir():
+        entries.append(str(directory.resolve()))
+
+
+def _dedupe_classpath_entries(entries: Sequence[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if entry not in seen:
+            deduped.append(entry)
+            seen.add(entry)
+    return deduped
+
+
+def _filter_native_launcher_provided_entries(entries: Sequence[str], launcher_executable: str | None) -> list[str]:
+    launcher_provided_names = _native_launcher_provided_file_names(launcher_executable)
+    launcher_provided_artifact_ids = _native_launcher_provided_artifact_ids(launcher_executable, launcher_provided_names)
+    return [
+        entry
+        for entry in entries
+        if not _is_native_launcher_provided_artifact(entry, launcher_provided_names, launcher_provided_artifact_ids)
+    ]
+
+
+def _native_launcher_provided_file_names(launcher_executable: str | None) -> set[str]:
+    manifest_names = _native_launcher_provided_manifest_file_names(launcher_executable)
+    if manifest_names:
+        return manifest_names
+    return {Path(entry).name for entry in _native_launcher_provided_jar_entries(launcher_executable)}
+
+
+def _native_launcher_provided_artifact_ids(launcher_executable: str | None, file_names: set[str]) -> set[str]:
+    if _native_launcher_provided_manifest_file_names(launcher_executable):
+        return set()
+    return _versioned_jar_artifact_ids(file_names)
+
+
+def _native_launcher_provided_manifest_file_names(launcher_executable: str | None) -> set[str]:
+    if not launcher_executable:
+        return set()
+    manifest = Path(launcher_executable).parent / "native-provided-classpath.txt"
+    if not manifest.is_file():
+        return set()
+    return {
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
+def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> list[str]:
+    if not launcher_executable:
+        return []
+    executable_path = Path(launcher_executable)
+    candidate_lib_dirs = [
+        executable_path.parent.parent / "lib",
+        executable_path.parent.parent.parent / "lib",
+    ]
+    for lib_dir in candidate_lib_dirs:
+        if lib_dir.is_dir():
+            return [
+                str(entry.resolve())
+                for entry in sorted(lib_dir.iterdir())
+                if entry.is_file() and entry.suffix == ".jar"
+            ]
+    return []
+
+
+def _versioned_jar_artifact_ids(file_names: Iterable[str]) -> set[str]:
+    return {
+        artifact_id
+        for file_name in file_names
+        if (artifact_id := _versioned_jar_artifact_id(file_name)) is not None
+    }
+
+
+def _versioned_jar_artifact_id(file_name: str) -> str | None:
+    if not file_name.endswith(".jar"):
+        return None
+    base_name = file_name.removesuffix(".jar")
+    for index, character in enumerate(base_name):
+        if character == "-" and index + 1 < len(base_name) and base_name[index + 1].isdigit():
+            return base_name[:index]
+    return None
+
+
+def _is_native_launcher_provided_artifact(
+    entry: str,
+    launcher_provided_names: set[str],
+    launcher_provided_artifact_ids: set[str],
+) -> bool:
+    file_name = Path(entry).name
+    if _is_native_test_resources_client_artifact(file_name):
+        return True
+    if file_name in launcher_provided_names:
+        return True
+    artifact_id = _versioned_jar_artifact_id(file_name)
+    return artifact_id in launcher_provided_artifact_ids
+
+
+def _is_native_test_resources_client_artifact(file_name: str) -> bool:
+    return (
+        file_name.startswith("micronaut-test-resources-client-")
+        or file_name.startswith("micronaut-test-resources-core-")
+        or file_name.startswith("micronaut-test-resources-codec-")
+    )
+
+
 def _is_test_launcher_provided_artifact(entry: str) -> bool:
     file_name = Path(entry).name
     return (
         file_name.startswith("micronaut-context-python-")
-        or file_name.startswith("micronaut-pyronaut-logback-")
         or file_name.startswith("micronaut-pyronaut-pytest-")
     )
+
+
+def _build_native_test_resources_client_classpath(project_dir: Path) -> str:
+    cache_dir = project_dir / "__pyronaut__"
+    entries = [
+        entry
+        for manifest in (
+            cache_dir / "resolved-development-runtime-dependencies",
+            cache_dir / "resolved-test-dependencies",
+            cache_dir / "resolved-runtime-dependencies",
+        )
+        if manifest.exists()
+        for entry in _read_manifest_entries(manifest)
+        if _is_native_test_resources_client_artifact(Path(entry).name)
+    ]
+    return os.pathsep.join(_dedupe_classpath_entries(entries))
 
 
 def _run_preflight(
@@ -553,15 +862,21 @@ def _run_preflight(
     local_repository: str | None,
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
+    *,
+    install: bool = True,
+    process_pass: str | None = None,
 ) -> int:
-    install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
-    if no_cache:
-        install_args.append("--no-cache")
-    install_code = _delegate("install", install_args, runner, resolver)
-    if install_code != SUCCESS:
-        return install_code
+    if install:
+        install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
+        if no_cache:
+            install_args.append("--no-cache")
+        install_code = _delegate("install", install_args, runner, resolver)
+        if install_code != SUCCESS:
+            return install_code
 
     process_args = ["--project-dir", project_dir]
+    if process_pass is not None:
+        process_args.extend(["--pass", process_pass])
     if no_cache:
         process_args.append("--no-cache")
     return _delegate("process", process_args, runner, resolver)
@@ -1470,13 +1785,13 @@ def _normalize_toolchain_distribution(value: str) -> str:
 
 def _read_pyproject_toolchain_spec(project_dir: Path | None) -> _ToolchainSpec:
     if project_dir is None:
-        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+        return _default_toolchain_spec()
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
-        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+        return _default_toolchain_spec()
     toolchain = pyronaut.get("toolchain")
     if not isinstance(toolchain, dict):
-        return _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+        return _default_toolchain_spec()
 
     distribution_raw = toolchain.get("distribution")
     distribution = None
@@ -1502,7 +1817,63 @@ def _read_pyproject_toolchain_spec(project_dir: Path | None) -> _ToolchainSpec:
     )
     if explicit and distribution is None:
         distribution = _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION
+    if not explicit:
+        return _default_toolchain_spec()
     return _ToolchainSpec(distribution, version, java_version, release_tag, download_url, explicit)
+
+
+def _default_toolchain_spec() -> _ToolchainSpec:
+    return _packaged_toolchain_spec() or _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
+
+
+def _packaged_toolchain_spec() -> _ToolchainSpec | None:
+    defaults_file = Path(__file__).with_name(_PACKAGED_TOOLCHAIN_DEFAULTS)
+    if not defaults_file.is_file():
+        return None
+
+    values: dict[str, str] = {}
+    for line in defaults_file.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip()
+
+    distribution_raw = values.get("distribution")
+    distribution = _normalize_toolchain_distribution(distribution_raw) if distribution_raw else None
+    version = values.get("version") or None
+    release_tag = values.get("release-tag") or None
+    download_url = values.get("download-url") or None
+    java_version = _GRAALVM_MIN_JDK_MAJOR
+    java_version_raw = values.get("java-version")
+    if java_version_raw:
+        try:
+            java_version = int(java_version_raw)
+        except ValueError as exc:
+            raise ValueError(f"Invalid packaged GraalVM toolchain java-version: {java_version_raw}") from exc
+
+    explicit = any(value is not None for value in (distribution, version, release_tag, download_url))
+    if not explicit:
+        return None
+    return _ToolchainSpec(distribution, version, java_version, release_tag, download_url, True)
+
+
+def _read_pyproject_toolchain_type(project_dir: Path) -> str:
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    if not isinstance(pyronaut, dict):
+        return TOOLCHAIN_TYPE_JVM
+    toolchain = pyronaut.get("toolchain")
+    if not isinstance(toolchain, dict):
+        return TOOLCHAIN_TYPE_JVM
+    type_raw = toolchain.get("type")
+    if type_raw is None:
+        return TOOLCHAIN_TYPE_JVM
+    if not isinstance(type_raw, str):
+        raise ValueError("Invalid toolchain type in pyproject.toml. Use tool.pyronaut.toolchain.type = 'jvm' or 'native'")
+    normalized = type_raw.strip().lower()
+    if normalized in {TOOLCHAIN_TYPE_JVM, TOOLCHAIN_TYPE_NATIVE}:
+        return normalized
+    raise ValueError("Invalid toolchain type in pyproject.toml. Use tool.pyronaut.toolchain.type = 'jvm' or 'native'")
 
 
 def _read_pyproject_build_mode(project_dir: Path) -> str | None:
@@ -1522,35 +1893,49 @@ def _read_pyproject_build_mode(project_dir: Path) -> str | None:
 
 
 def _read_pyproject_processor_mode(project_dir: Path) -> str:
+    configured = _read_pyproject_processor_mode_override(project_dir)
+    return configured or TOOLCHAIN_TYPE_JVM
+
+
+def _read_pyproject_processor_mode_override(project_dir: Path) -> str | None:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
-        return "jit"
+        return None
     processor = pyronaut.get("processor")
     if not isinstance(processor, dict):
-        return "jit"
+        return None
     mode = processor.get("mode")
+    if mode is None:
+        return None
     if not isinstance(mode, str):
-        return "jit"
+        raise ValueError("Invalid processor mode in pyproject.toml. Use tool.pyronaut.processor.mode = 'jvm' or 'native'")
     normalized = mode.strip().lower()
-    if normalized in {"jit", "native"}:
+    if normalized in {TOOLCHAIN_TYPE_JVM, TOOLCHAIN_TYPE_NATIVE}:
         return normalized
-    raise ValueError("Invalid processor mode in pyproject.toml. Use tool.pyronaut.processor.mode = 'jit' or 'native'")
+    raise ValueError("Invalid processor mode in pyproject.toml. Use tool.pyronaut.processor.mode = 'jvm' or 'native'")
 
 
 def _read_pyproject_test_mode(project_dir: Path) -> str:
+    configured = _read_pyproject_test_mode_override(project_dir)
+    return configured or TOOLCHAIN_TYPE_JVM
+
+
+def _read_pyproject_test_mode_override(project_dir: Path) -> str | None:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
-        return "jit"
+        return None
     test = pyronaut.get("test")
     if not isinstance(test, dict):
-        return "jit"
+        return None
     mode = test.get("mode")
+    if mode is None:
+        return None
     if not isinstance(mode, str):
-        return "jit"
+        raise ValueError("Invalid test mode in pyproject.toml. Use tool.pyronaut.test.mode = 'jvm' or 'native'")
     normalized = mode.strip().lower()
-    if normalized in {"jit", "native"}:
+    if normalized in {TOOLCHAIN_TYPE_JVM, TOOLCHAIN_TYPE_NATIVE}:
         return normalized
-    raise ValueError("Invalid test mode in pyproject.toml. Use tool.pyronaut.test.mode = 'jit' or 'native'")
+    raise ValueError("Invalid test mode in pyproject.toml. Use tool.pyronaut.test.mode = 'jvm' or 'native'")
 
 
 def _read_pyproject_test_resources_table(project_dir: Path) -> dict[str, object] | None:
@@ -1783,6 +2168,7 @@ def _run_with_auto_restart(
     sleep: Callable[[float], None],
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
+    process_pass: str | None = None,
 ) -> int:
     if poll_interval <= 0:
         poll_interval = 0.25
@@ -1796,13 +2182,20 @@ def _run_with_auto_restart(
         if initial_preflight_done:
             initial_preflight_done = False
         else:
-            preflight_code = _run_preflight(str(project_root), no_cache, local_repository, execute, resolver)
+            preflight_code = _run_preflight(
+                str(project_root),
+                no_cache,
+                local_repository,
+                execute,
+                resolver,
+                install=False,
+                process_pass=process_pass,
+            )
             if preflight_code != SUCCESS:
                 return preflight_code
 
         try:
-            command_line, env = _build_java_delegate_invocation(
-                "run",
+            command_line, env = _build_run_delegate_invocation(
                 run_args,
                 resolver,
                 debug_vm=debug_vm,
@@ -1855,7 +2248,15 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
-                        refresh_code = _run_preflight(str(project_root), no_cache, local_repository, execute, resolver)
+                        refresh_code = _run_preflight(
+                            str(project_root),
+                            no_cache,
+                            local_repository,
+                            execute,
+                            resolver,
+                            install=False,
+                            process_pass=process_pass,
+                        )
                     except BaseException as exc:
                         refresh_exception = exc
                         refresh_code = INTERNAL_ERROR
@@ -1884,6 +2285,37 @@ def _run_with_auto_restart(
         except KeyboardInterrupt:
             _stop_managed_process(process)
             return 130
+
+
+def _build_run_delegate_invocation(
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool,
+    env_overrides: dict[str, str] | None,
+    java_home_provider: JavaHomeProvider | None,
+) -> tuple[list[str], dict[str, str]]:
+    dev_command_line = _pyronaut_dev_native_command_line(
+        "run",
+        args,
+        resolver,
+        debug_vm=debug_vm,
+        env_overrides=env_overrides,
+        java_home_provider=java_home_provider,
+    )
+    if dev_command_line is not None:
+        env = _build_non_test_resources_env("run", java_home_provider)
+        env = _merge_env_overrides(env, env_overrides)
+        env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
+        return dev_command_line, env
+    return _build_java_delegate_invocation(
+        "run",
+        args,
+        resolver,
+        debug_vm=debug_vm,
+        env_overrides=env_overrides,
+        java_home_provider=java_home_provider,
+    )
 
 
 def _stop_managed_process(process: ManagedProcess) -> bool:
@@ -2104,9 +2536,11 @@ def _is_compatible_graalvm_home(java_home: Path) -> bool:
     return metadata is not None and metadata.java_version is not None and metadata.java_version >= _GRAALVM_MIN_JDK_MAJOR
 
 
-def _matches_requested_graalvm_home(java_home: Path, toolchain: _ToolchainSpec) -> bool:
+def _matches_requested_graalvm_home(java_home: Path, toolchain: _ToolchainSpec, *, require_release_tag: bool = True) -> bool:
     metadata = _read_graalvm_metadata(java_home)
     if metadata is None or metadata.java_version is None or metadata.java_version < toolchain.java_version:
+        return False
+    if require_release_tag and toolchain.release_tag is not None and not _matches_release_tagged_home(java_home, toolchain.release_tag):
         return False
     if not toolchain.explicit:
         return True
@@ -2143,6 +2577,14 @@ def _read_graalvm_metadata(java_home: Path) -> _GraalVmMetadata | None:
     major = _parse_java_major_version(output)
     distribution = _detect_graalvm_distribution(output, java_home, version)
     return _GraalVmMetadata(version, major, distribution)
+
+
+def _matches_release_tagged_home(java_home: Path, release_tag: str) -> bool:
+    expected = _graalvm_release_cache_dir_name(release_tag)
+    for path in (java_home, *java_home.parents):
+        if path.name == expected:
+            return True
+    return False
 
 
 def _warn_if_quarantined_graalvm(java_home: Path) -> None:
@@ -2266,22 +2708,34 @@ def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | N
                 extracted_homes.append(normalized)
 
         for home in extracted_homes:
-            if not _matches_requested_graalvm_home(home, spec):
+            if not _matches_requested_graalvm_home(home, spec, require_release_tag=False):
                 continue
-            destination = jdks_root / home.parent.name if (home.parent / "bin" / "java").exists() and home.name == "Home" else jdks_root / home.name
+            destination = jdks_root / _graalvm_cache_dir_name(home, spec)
             if destination.exists():
                 normalized_existing = _normalize_extracted_home(destination) or destination
                 if _matches_requested_graalvm_home(normalized_existing, spec):
                     return normalized_existing
                 shutil.rmtree(destination, ignore_errors=True)
 
-            source_root = home.parent if home.name == "Home" and home.parent.name == "Contents" else home
+            source_root = home.parent.parent if home.name == "Home" and home.parent.name == "Contents" else home
             shutil.copytree(source_root, destination, dirs_exist_ok=True)
             normalized_destination = _normalize_extracted_home(destination) or destination
             if _matches_requested_graalvm_home(normalized_destination, spec):
                 _warn_if_quarantined_graalvm(normalized_destination)
                 return normalized_destination
     return None
+
+
+def _graalvm_cache_dir_name(home: Path, toolchain: _ToolchainSpec) -> str:
+    if toolchain.release_tag is not None:
+        return _graalvm_release_cache_dir_name(toolchain.release_tag)
+    if home.name == "Home" and home.parent.name == "Contents":
+        return home.parent.parent.name
+    return home.name
+
+
+def _graalvm_release_cache_dir_name(release_tag: str) -> str:
+    return release_tag.strip().replace("/", "_")
 
 
 def _resolve_graalvm_archive_url(toolchain: _ToolchainSpec) -> str | None:
@@ -2312,6 +2766,9 @@ def _resolve_graalvm_archive_url(toolchain: _ToolchainSpec) -> str | None:
 
     if os_segment == "macos" and arch == "x64":
         return None
+
+    if toolchain.release_tag is not None:
+        return _resolve_dev_build_archive_url(os_segment, arch, ext, toolchain)
 
     distribution = toolchain.distribution or _DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION
     version = toolchain.version or (_DEFAULT_GRAALVM_DOWNLOAD_VERSION if not toolchain.explicit else None)
@@ -2656,6 +3113,101 @@ def _resolve_native_preferred_executable(
     return None
 
 
+def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None]) -> str | None:
+    env_key = DEV_NATIVE_EXECUTABLE.upper().replace("-", "_") + "_NATIVE_EXECUTABLE"
+    override = _read_env(env_key)
+    if override:
+        return override
+
+    bundled = _bundled_native_executable(DEV_NATIVE_EXECUTABLE)
+    if bundled is not None and bundled.exists():
+        return str(bundled)
+    return None
+
+
+def _pyronaut_dev_native_command_line(
+    command: str,
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool = False,
+    env_overrides: dict[str, str] | None = None,
+    java_home_provider: JavaHomeProvider | None = None,
+) -> list[str] | None:
+    if command not in DEV_NATIVE_COMMANDS:
+        return None
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    try:
+        if not _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=debug_vm):
+            return None
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    executable_path = _resolve_pyronaut_dev_native_executable(resolver)
+    if executable_path is None:
+        raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
+    jvm_args = _native_dev_java_home_jvm_args(java_home_provider)
+    if command in {"run", "test"}:
+        classpath = _build_native_application_classpath(command, project_dir, executable_path)
+        jvm_args = [*jvm_args, f"-Djava.class.path={classpath}"]
+        test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
+        if test_resources_client_classpath:
+            jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
+        jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
+        return [executable_path, *jvm_args, command, *args]
+    return [executable_path, *jvm_args, command, *args]
+
+
+def _native_dev_java_home_jvm_args(java_home_provider: JavaHomeProvider | None) -> list[str]:
+    if java_home_provider is None:
+        return []
+    java_home = java_home_provider()
+    if java_home is None or not java_home.strip():
+        raise RuntimeError("Unable to locate or provision compatible GraalVM JDK (requires JDK 25+)")
+    return [f"-Djava.home={java_home}"]
+
+
+def _use_pyronaut_dev_native_toolchain(command: str, project_dir: Path, *, debug_vm: bool = False) -> bool:
+    if _read_pyproject_toolchain_type(project_dir) != TOOLCHAIN_TYPE_NATIVE:
+        return False
+    if command == "process" and _read_pyproject_processor_mode_override(project_dir) is not None:
+        return False
+    if command == "test":
+        if debug_vm:
+            return False
+        if _read_pyproject_test_mode_override(project_dir) is not None:
+            return False
+    return True
+
+
+def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
+    if not argv:
+        return False
+    direct_options = {"--test", "--port", "--property", "-D", "--config", "--setup"}
+    value_options = {"--port", "--property", "-D", "--config", "--setup"}
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--":
+            return len(argv) > index + 1
+        if arg in direct_options or arg.startswith("-D"):
+            if arg in value_options:
+                index += 2
+            else:
+                index += 1
+            continue
+        if arg.endswith(".py"):
+            return True
+        try:
+            if Path(arg).is_dir():
+                return True
+        except OSError:
+            return False
+        return False
+    if argv[0] in direct_options or argv[0].startswith("-D"):
+        return True
+    return False
+
+
 def _resolve_delegate_executable_path(
     command: str,
     args: Sequence[str],
@@ -2684,7 +3236,7 @@ def _resolve_delegate_executable_path(
             if executable_path is None:
                 raise RuntimeError(
                     "Missing native delegated executable for pyronaut-processor. "
-                    "Build or install a native pyronaut-processor, or set tool.pyronaut.processor.mode = 'jit'."
+                    "Build or install a native pyronaut-processor, or set tool.pyronaut.processor.mode = 'jvm'."
                 )
             return executable_path
         executable_path = resolver(executable_name)
@@ -2698,7 +3250,7 @@ def _resolve_delegate_executable_path(
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
         if _extract_debug_vm(args):
-            test_mode = "jit"
+            test_mode = TOOLCHAIN_TYPE_JVM
         if test_mode == "native":
             executable_path = _resolve_native_preferred_executable(
                 executable_name,
@@ -2708,7 +3260,7 @@ def _resolve_delegate_executable_path(
             if executable_path is None:
                 raise RuntimeError(
                     "Missing native delegated executable for pyronaut-test. "
-                    "Build or install a native pyronaut-test, or set tool.pyronaut.test.mode = 'jit'."
+                    "Build or install a native pyronaut-test, or set tool.pyronaut.test.mode = 'jvm'."
                 )
             return executable_path
 
@@ -2834,7 +3386,13 @@ class _OwnedTestResourcesSession:
     def _new_owner_token() -> str:
         return f"{os.getpid()}-{int(time.time() * 1000)}"
 
-    def ensure_started(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+    def ensure_started(
+        self,
+        *,
+        runner: RunnerWithEnv,
+        resolver: Callable[[str], str | None],
+        java_home_provider: JavaHomeProvider | None = None,
+    ) -> None:
         cache_dir = self._project_dir / "__pyronaut__"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2857,6 +3415,7 @@ class _OwnedTestResourcesSession:
             ],
             runner=runner,
             resolver=resolver,
+            java_home_provider=java_home_provider,
         )
         if exit_code != SUCCESS:
             raise RuntimeError(f"Test resources server failed to start (exit code {exit_code})")
@@ -2869,9 +3428,15 @@ class _OwnedTestResourcesSession:
             self._persist_session(started_at=time.time())
         self._started = True
         self._client_env_overrides = _test_resources_client_env_from_settings(self._settings_file)
-        self._register_shutdown(runner=runner, resolver=resolver)
+        self._register_shutdown(runner=runner, resolver=resolver, java_home_provider=java_home_provider)
 
-    def stop_if_owned(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+    def stop_if_owned(
+        self,
+        *,
+        runner: RunnerWithEnv,
+        resolver: Callable[[str], str | None],
+        java_home_provider: JavaHomeProvider | None = None,
+    ) -> None:
         self._stop_log_mirror()
         if not self._started:
             return
@@ -2896,6 +3461,7 @@ class _OwnedTestResourcesSession:
             ],
             runner=runner,
             resolver=resolver,
+            java_home_provider=java_home_provider,
         )
         if exit_code == SUCCESS:
             self._remove_session_file()
@@ -2924,13 +3490,19 @@ class _OwnedTestResourcesSession:
             port = 443 if parsed.scheme == "https" else 80
         self._emit_status(f"[test-resources] server running on port {port} ({server_uri}){logs_hint}")
 
-    def _register_shutdown(self, *, runner: RunnerWithEnv, resolver: Callable[[str], str | None]) -> None:
+    def _register_shutdown(
+        self,
+        *,
+        runner: RunnerWithEnv,
+        resolver: Callable[[str], str | None],
+        java_home_provider: JavaHomeProvider | None = None,
+    ) -> None:
         if self._shutdown_registered:
             return
 
         def _shutdown() -> None:
             try:
-                self.stop_if_owned(runner=runner, resolver=resolver)
+                self.stop_if_owned(runner=runner, resolver=resolver, java_home_provider=java_home_provider)
             except Exception:
                 return
 
@@ -3068,6 +3640,7 @@ class _OwnedTestResourcesSession:
         *,
         runner: RunnerWithEnv,
         resolver: Callable[[str], str | None],
+        java_home_provider: JavaHomeProvider | None = None,
     ) -> int:
         executable_path = _resolve_native_preferred_executable(
             COMMAND_TO_EXECUTABLE["test-resources-server"],
@@ -3179,6 +3752,24 @@ def _run_tamboui_tui(
     if missing:
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
         return PRECONDITION_FAILED
+    try:
+        native_commands = [
+            command
+            for command in ("validate-config", "install", "process", "run", "test")
+            if _use_pyronaut_dev_native_toolchain(command, project_dir)
+        ]
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    native_dev_executable = None
+    if native_commands:
+        native_dev_executable = _resolve_pyronaut_dev_native_executable(resolver)
+        if native_dev_executable is None:
+            print(
+                "Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.",
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
 
     command_line = [
         tui_executable,
@@ -3200,6 +3791,10 @@ def _run_tamboui_tui(
         "--test-executable",
         str(delegated["test"]),
     ]
+    if native_dev_executable is not None:
+        command_line.extend(["--native-dev-executable", native_dev_executable])
+        for command in native_commands:
+            command_line.extend(["--native-command", command])
     if trace_delegation:
         command_line.append("--trace-delegation")
     if _delegation_trace_enabled():

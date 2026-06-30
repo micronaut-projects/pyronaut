@@ -25,6 +25,7 @@ dependencies {
 
     annotationProcessor(libs.tamboui.annotation.processor)
 
+    implementation(project(":micronaut-pyronaut-logback"))
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mnPicocli.picocli)
 

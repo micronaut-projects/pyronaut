@@ -15,18 +15,66 @@ from typing import get_origin, get_args
 
 PytestFunctionInvoker = java.type("io.micronaut.test.pytest.execution.PytestFunctionInvoker")
 
-
 _INTERNAL_TRACE_MARKERS = (
     "com.oracle.truffle.",
+    "com.oracle.svm.",
     "com.oracle.graal.python.",
     "org.graalvm.polyglot.",
+    "org.graalvm.nativeimage.builder/",
     "org.graalvm.python.embedding.",
+    "org.graalvm.truffle.runtime.svm/",
     "org.junit.platform.",
     "picocli.",
     "io.micronaut.pyronaut.test.PyronautTestMain",
     "io.micronaut.test.pytest.",
     "at java.base/",
 )
+
+
+def _foreign_exception_failure(outcome):
+    excinfo = getattr(outcome, 'excinfo', None)
+    if excinfo is None:
+        return None
+
+    if isinstance(excinfo, tuple):
+        if len(excinfo) >= 2:
+            exc = excinfo[1]
+        elif len(excinfo) == 1:
+            exc = excinfo[0]
+        else:
+            exc = None
+    else:
+        exc = getattr(excinfo, 'value', excinfo)
+
+    if exc is None:
+        return None
+
+    message = _foreign_exception_message(exc)
+    if message is not None:
+        return message
+    name = getattr(getattr(exc, '__class__', type(exc)), '__name__', '')
+    text = f"{exc}"
+    if name == 'TypeError' and 'ForeignException' in text:
+        return f"Java exception raised during pytest execution: {text}"
+    return None
+
+
+def _foreign_exception_message(exc):
+    if exc is None:
+        return None
+    name = getattr(getattr(exc, '__class__', type(exc)), '__name__', '')
+    module = getattr(getattr(exc, '__class__', type(exc)), '__module__', '')
+    if name == 'ForeignException' or 'Foreign' in name or module == 'polyglot':
+        message = f"{exc}"
+        return message if message else "Java exception raised during pytest execution"
+    return None
+
+
+def _force_python_failure(outcome, message: str) -> bool:
+    if message is None:
+        return False
+    outcome.force_exception(AssertionError(message))
+    return True
 
 
 def _filter_internal_traceback_frames(text: str) -> str:
@@ -43,48 +91,42 @@ def _filter_internal_traceback_frames(text: str) -> str:
     return "\n".join(filtered)
 
 
-def _compact_assertion_failure(text: str) -> Optional[str]:
-    if not text:
-        return None
-
-    lines = text.splitlines()
-    if not lines or not lines[0].startswith("AssertionError:"):
-        return None
-
-    compacted = []
-    for line in lines:
-        if line.strip().startswith("at "):
-            break
-        compacted.append(line)
-
-    return "\n".join(compacted).strip() or None
+def _compact_assertion_failure(result) -> str:
+    if isinstance(result, str):
+        filtered_stack = _filter_internal_traceback_frames(result)
+        lines = [line.rstrip() for line in filtered_stack.splitlines() if line.strip()]
+        return lines[0] if lines else "Python test function failed"
+    message = getattr(result, "message", None)
+    stack = getattr(result, "stack", None)
+    if stack:
+        filtered_stack = _filter_internal_traceback_frames(stack)
+        lines = [line.rstrip() for line in filtered_stack.splitlines() if line.strip()]
+        if lines:
+            return "\n".join(lines)
+    return message or getattr(result, "exceptionClass", None) or "Python test function failed"
 
 
-class _ExpectedFailure:
-    def __init__(self, reason: str):
-        self.reason = reason or "Expected failure"
-
-
-def _is_foreign_exception(exc: BaseException) -> bool:
-    name = getattr(getattr(exc, "__class__", type(exc)), "__name__", "")
-    return name == "ForeignException" or "Foreign" in name or (
-        isinstance(exc, TypeError)
-        and "exceptions must be classes or instances deriving from BaseException, not ForeignException" in str(exc)
+def _is_foreign_exception(result) -> bool:
+    exception_class = getattr(result, "exceptionClass", None) or ""
+    stack = getattr(result, "stack", None) or ""
+    return (
+        "ForeignException" in exception_class
+        or "PolyglotException" in exception_class
+        or "ForeignException" in stack
+        or "org.graalvm.polyglot" in stack
     )
 
 
 def _format_call_failure(result) -> str:
     message = getattr(result, "message", None)
-    exception_class = getattr(result, "exceptionClass", None)
-    stack = getattr(result, "stack", None)
-    if stack:
-        filtered_stack = _filter_internal_traceback_frames(str(stack))
-        return _compact_assertion_failure(filtered_stack) or filtered_stack
-    if message:
-        return str(message)
-    if exception_class:
-        return str(exception_class)
-    return "Python test failed with a foreign exception"
+    if _is_foreign_exception(result):
+        return message or "Java exception raised during pytest execution"
+    return _compact_assertion_failure(result)
+
+
+class _ExpectedFailure:
+    def __init__(self, reason: str):
+        self.reason = reason or "Expected failure"
 
 
 class MicronautPytestPlugin:
@@ -102,6 +144,7 @@ class MicronautPytestPlugin:
         self.listener = listener
         self.current_file = None
         self.test_results = {}  # Store test results by test id
+        self.failure_messages = {}  # Store pytest-rendered failure details by test id
         self._failure_reported = set()  # Track tests for which failure block was forwarded
 
     def pytest_sessionstart(self, session):
@@ -111,21 +154,8 @@ class MicronautPytestPlugin:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_fixture_setup(self, fixturedef, request):
         outcome = yield
-        excinfo = getattr(outcome, 'excinfo', None)
-        if excinfo is not None:
-            exc = None
-            if isinstance(excinfo, tuple):
-                if len(excinfo) >= 2:
-                    exc = excinfo[1]
-                elif len(excinfo) == 1:
-                    exc = excinfo[0]
-            else:
-                exc = getattr(excinfo, 'value', excinfo)
-            if exc is not None:
-                name = getattr(exc, '__class__', type(exc)).__name__
-                if name == 'ForeignException' or 'Foreign' in name:
-                    outcome.force_result(None)
-                    pytest.fail(f"{exc}", pytrace=False)
+        failure = _foreign_exception_failure(outcome)
+        _force_python_failure(outcome, failure)
 
     def pytest_sessionfinish(self, session, exitstatus):
         """Called when pytest session finishes."""
@@ -145,20 +175,24 @@ class MicronautPytestPlugin:
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_pyfunc_call(self, pyfuncitem):
+        """Run Python test functions behind the Java foreign-exception boundary."""
         testfunction = pyfuncitem.obj
         if inspect.iscoroutinefunction(testfunction):
             return None
         fixtureinfo = getattr(pyfuncitem, "_fixtureinfo", None)
-        argnames = getattr(fixtureinfo, "argnames", ())
-        testargs = {arg: pyfuncitem.funcargs[arg] for arg in argnames}
+        if fixtureinfo is None:
+            return None
 
-        def invoke():
-            testfunction(**testargs)
+        testargs = {
+            arg: pyfuncitem.funcargs[arg]
+            for arg in fixtureinfo.argnames
+        }
 
-        result = PytestFunctionInvoker.call(invoke)
+        result = PytestFunctionInvoker.call(lambda: testfunction(**testargs))
         if getattr(result, "success", False):
             return True
         pytest.fail(_format_call_failure(result), pytrace=False)
+        return True
 
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_runtest_call(self, item):
@@ -171,13 +205,12 @@ class MicronautPytestPlugin:
         import io, contextlib
         buf_out = io.StringIO()
         buf_err = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
-                outcome = yield
-        except BaseException as exc:
-            if _is_foreign_exception(exc):
-                pytest.fail(f"{exc}", pytrace=False)
-            raise
+        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            outcome = yield
+        failure = _foreign_exception_failure(outcome)
+        if _force_python_failure(outcome, failure):
+            self._pending_wrap = (test_id, "", "")
+            return
         # Heuristic: if pytest capture is active, capstdout/capstderr will be non-empty in logreport(call),
         # so skip forwarding here to avoid duplicates. We only forward here if buffers are non-empty
         # AND we detect that pytest capture is likely disabled (-s) by checking for empty capstdout later.
@@ -263,6 +296,8 @@ class MicronautPytestPlugin:
                 failure_text = ""
             else:
                 failure_text = _filter_internal_traceback_frames(failure_text)
+            if failure_text:
+                self.failure_messages[test_id] = failure_text
             sections = getattr(report, "sections", []) or []
             parts = []
             sep = "_" * 53
@@ -279,44 +314,25 @@ class MicronautPytestPlugin:
             except Exception:
                 import traceback; traceback.print_exc()
 
-    @pytest.hookimpl(hookwrapper=True, trylast=True)
     def pytest_runtest_teardown(self, item):
         """Called after test teardown."""
         test_id = self._get_test_id(item)
-        outcome = yield
-        teardown_exception = None
-        excinfo = getattr(outcome, "excinfo", None)
-        if excinfo is not None:
-            if isinstance(excinfo, tuple):
-                if len(excinfo) >= 2:
-                    teardown_exception = excinfo[1]
-                elif len(excinfo) == 1:
-                    teardown_exception = excinfo[0]
-            else:
-                teardown_exception = getattr(excinfo, "value", excinfo)
-
-        exception = teardown_exception or self.test_results.get(test_id)
+        exception = self.test_results.get(test_id)
 
         if isinstance(exception, _ExpectedFailure):
             result = self.listener.abortedResult(exception.reason)
         elif exception is not None:
-            result = self.listener.failedAssertionResult(f"{exception}")
+            result = self.listener.failedAssertionResult(
+                self.failure_messages.get(test_id) or f"{exception}"
+            )
         else:
             result = self.listener.successfulResult()
 
-        def notify_after_test():
-            self.listener.afterTest(test_id, item, result)
-
-        after_test_result = PytestFunctionInvoker.call(notify_after_test)
-        if not getattr(after_test_result, "success", False):
-            pytest.fail(_format_call_failure(after_test_result), pytrace=False)
+        self.listener.afterTest(test_id, item, result)
 
         # Clean up stored result
         self.test_results.pop(test_id, None)
-
-        if teardown_exception is not None and _is_foreign_exception(teardown_exception):
-            outcome.force_result(None)
-            pytest.fail(f"{teardown_exception}", pytrace=False)
+        self.failure_messages.pop(test_id, None)
 
     def pytest_collectreport(self, report):
         """Called when collection report is generated."""

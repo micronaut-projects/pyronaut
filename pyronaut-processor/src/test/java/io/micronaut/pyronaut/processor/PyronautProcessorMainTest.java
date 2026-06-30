@@ -131,6 +131,64 @@ class PyronautProcessorMainTest {
     }
 
     @Test
+    void mainPassOnlyProcessesMainSourcesAndDoesNotRequireTestCache() throws Exception {
+        Path project = tempDir.resolve("project-main-pass");
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(project.resolve("tests"));
+        Files.writeString(project.resolve("src").resolve("sample.py"), "VALUE = 42\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("tests").resolve("sample_test.py"), "def test_example():\n    assert True\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"), List.of("/tmp/runtime-a.jar"), StandardCharsets.UTF_8);
+
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+        command.pass = "main";
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(1, executor.requests.size());
+        assertEquals(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize(), executor.requests.getFirst().targetDir());
+    }
+
+    @Test
+    void testPassOnlyProcessesTestSourcesAndDoesNotRequireRuntimeCache() throws Exception {
+        Path project = tempDir.resolve("project-test-pass");
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(project.resolve("tests"));
+        Files.writeString(project.resolve("src").resolve("sample.py"), "VALUE = 42\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("tests").resolve("sample_test.py"), "def test_example():\n    assert True\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-test-dependencies"), List.of("/tmp/test-a.jar"), StandardCharsets.UTF_8);
+
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+        command.pass = "test";
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(1, executor.requests.size());
+        assertEquals(project.resolve("__pyronaut__/test-classes").toAbsolutePath().normalize(), executor.requests.getFirst().targetDir());
+        assertEquals(Path.of("/tmp/test-a.jar"), executor.requests.getFirst().classpath().getFirst());
+    }
+
+    @Test
+    void invalidPassReturnsUsageError() throws Exception {
+        Path project = tempDir.resolve("project-invalid-pass");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
+
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), new CapturingExecutor());
+        command.projectDir = project;
+        command.pass = "everything";
+
+        assertEquals(PyronautProcessorExitCode.USAGE_ERROR.code(), command.call());
+    }
+
+    @Test
     void failsWhenTestCacheMissing() throws Exception {
         Path project = tempDir.resolve("project-missing-test-cache");
         Files.createDirectories(project.resolve("__pyronaut__"));
@@ -248,6 +306,103 @@ class PyronautProcessorMainTest {
 
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
         assertEquals(2, executor.requests.size());
+    }
+
+    @Test
+    void clearsMainOutputBeforeRecompileWhenSourcesChange() throws Exception {
+        Path project = tempDir.resolve("project-clear-main-output");
+        setupProjectWithSourcesAndCaches(project);
+
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+        command.progress = "off";
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(2, executor.requests.size());
+
+        Path staleOutput = project.resolve("__pyronaut__/classes/stale/BeanDefinition.class");
+        Files.createDirectories(staleOutput.getParent());
+        Files.writeString(staleOutput, "stale", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("src").resolve("sample.py"), "VALUE = 99\n", StandardCharsets.UTF_8);
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(4, executor.requests.size());
+        assertFalse(Files.exists(staleOutput));
+    }
+
+    @Test
+    void clearsTestOutputBeforeRecompileWhenSourcesChange() throws Exception {
+        Path project = tempDir.resolve("project-clear-test-output");
+        setupProjectWithSourcesAndCaches(project);
+
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+        command.progress = "off";
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(2, executor.requests.size());
+
+        Path staleOutput = project.resolve("__pyronaut__/test-classes/stale/TestBeanDefinition.class");
+        Files.createDirectories(staleOutput.getParent());
+        Files.writeString(staleOutput, "stale", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("tests").resolve("sample_test.py"), "def test_example():\n    assert 2 == 2\n", StandardCharsets.UTF_8);
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(3, executor.requests.size());
+        assertEquals(project.resolve("__pyronaut__/test-classes").toAbsolutePath().normalize(), executor.requests.get(2).targetDir());
+        assertFalse(Files.exists(staleOutput));
+    }
+
+    @Test
+    void preservesTargetOutputOnCacheHitForUnchangedSources() throws Exception {
+        Path project = tempDir.resolve("project-cache-hit-preserves-output");
+        setupProjectWithSourcesAndCaches(project);
+
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+        command.progress = "off";
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(2, executor.requests.size());
+
+        Path mainOutput = project.resolve("__pyronaut__/classes/keep-main.txt");
+        Path testOutput = project.resolve("__pyronaut__/test-classes/keep-test.txt");
+        Files.writeString(mainOutput, "keep", StandardCharsets.UTF_8);
+        Files.writeString(testOutput, "keep", StandardCharsets.UTF_8);
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(2, executor.requests.size());
+        assertTrue(Files.isRegularFile(mainOutput));
+        assertTrue(Files.isRegularFile(testOutput));
+    }
+
+    @Test
+    void clearsStaleTestOutputWhenNoProcessableTestSourcesRemain() throws Exception {
+        Path project = tempDir.resolve("project-clear-empty-test-output");
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(project.resolve("tests"));
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"), List.of("/tmp/runtime-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__").resolve("resolved-test-dependencies"), List.of("/tmp/test-a.jar"), StandardCharsets.UTF_8);
+
+        Path staleOutput = project.resolve("__pyronaut__/test-classes/stale/TestBeanDefinition.class");
+        Files.createDirectories(staleOutput.getParent());
+        Files.writeString(staleOutput, "stale", StandardCharsets.UTF_8);
+
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+        command.progress = "off";
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertFalse(Files.exists(staleOutput));
+        assertTrue(Files.isDirectory(project.resolve("__pyronaut__/test-classes")));
+        assertTrue(Files.isDirectory(project.resolve("__pyronaut__/test-sources")));
     }
 
     @Test

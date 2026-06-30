@@ -131,6 +131,68 @@ Common options:
 - `--no-cache`: bypass Pyronaut manifest cache reads before rewriting manifests
 - `--offline`: resolve using offline repository mode
 
+Proxy configuration:
+
+`pyronaut install` uses the configured proxy for Maven dependency resolution, including dependencies resolved from `tool.pyronaut.repositories`.
+Proxy configuration is discovered in this order:
+
+. Environment variables: `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy`
+. Pyronaut user settings: `~/.pyronaut/settings.toml`
+. Maven user settings: `~/.m2/settings.xml`
+
+Environment proxy URLs may include credentials and may omit the scheme, in which case `http` is used.
+`NO_PROXY` or `no_proxy` configures hosts that should bypass the proxy.
+Comma-separated and pipe-separated bypass lists are both accepted.
+
+[source,bash]
+----
+export HTTPS_PROXY=https://user:password@proxy.example.com:8443
+export NO_PROXY=localhost,127.0.0.1,*.internal.example.com
+pyronaut install --project-dir /path/to/app
+----
+
+For a persistent Pyronaut-specific proxy configuration, create `~/.pyronaut/settings.toml`:
+
+[source,toml]
+----
+[proxy]
+url = "https://user:password@proxy.example.com:8443"
+nonProxyHosts = "localhost|127.0.0.1|*.internal.example.com"
+----
+
+The same file can also split the proxy into individual fields:
+
+[source,toml]
+----
+[proxy]
+protocol = "https"
+host = "proxy.example.com"
+port = 8443
+username = "user"
+password = "password"
+noProxyHosts = "localhost,127.0.0.1,*.internal.example.com"
+----
+
+If neither environment variables nor `~/.pyronaut/settings.toml` define a proxy, `pyronaut install` reads the first active Maven proxy from `~/.m2/settings.xml`.
+If no proxy is marked active, the first proxy entry is used.
+
+[source,xml]
+----
+<settings>
+  <proxies>
+    <proxy>
+      <active>true</active>
+      <protocol>https</protocol>
+      <host>proxy.example.com</host>
+      <port>8443</port>
+      <username>user</username>
+      <password>password</password>
+      <nonProxyHosts>localhost|127.0.0.1|*.internal.example.com</nonProxyHosts>
+    </proxy>
+  </proxies>
+</settings>
+----
+
 Generated manifests:
 
 - `__pyronaut__/resolved-build-dependencies`
@@ -435,6 +497,7 @@ Optional `pyproject.toml` settings:
 [source,toml]
 ----
 [tool.pyronaut.toolchain]
+type = "native" # jvm|native
 distribution = "dev" # ce|ee|dev
 version = "25.1.0-dev+10.1"
 java-version = 25
@@ -443,6 +506,7 @@ release-tag = "jdk-25.1.0-dev-20260429_0111"
 
 Supported keys:
 
+- `type`: CLI execution toolchain. The default is `jvm`, which launches the existing command-specific Java delegates. `native` routes supported lifecycle commands through the `pyronaut-dev` native uber CLI.
 - `distribution`: requested GraalVM distribution. Supported values are `ce`, `ee`, and `dev`.
 - `version`: exact GraalVM version string to match or download.
 - `java-version`: minimum Java major version. Pyronaut CLI currently requires GraalVM JDK 25 or newer.
@@ -467,6 +531,8 @@ Distribution sources:
 
 Behavior notes:
 
+- `tool.pyronaut.toolchain.type` controls how the `pyronaut` command executes CLI tooling. It does not control whether `pyronaut build` produces JVM or native application output; use `tool.pyronaut.build.mode` or build flags for that.
+- Command-specific `tool.pyronaut.processor.mode` and `tool.pyronaut.test.mode` settings override the global toolchain type for those commands.
 - If no explicit toolchain is configured, Pyronaut CLI accepts any compatible GraalVM JDK 25+ already available on the machine.
 - If an explicit toolchain is configured, Pyronaut only reuses an installed JDK when the distribution, version, and Java major version match the requested spec.
 - Downloaded JDKs are cached under `~/.pyronaut/sdks` for reuse across projects.

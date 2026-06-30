@@ -4,6 +4,7 @@ import org.gradle.api.initialization.ConfigurableIncludedBuild
 import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.zip.ZipFile
 
 pluginManagement {
@@ -73,6 +74,10 @@ fun runCommand(workingDir: java.io.File, command: List<String>, displayCommand: 
 fun runCommand(workingDir: java.io.File, vararg command: String): String =
     runCommand(workingDir, command.toList())
 
+fun pyronautSettingsMessage(message: String) {
+    println("[pyronaut] $message")
+}
+
 fun mavenVersionDirReady(versionDir: java.io.File, artifactId: String): Boolean {
     if (!versionDir.isDirectory) {
         return false
@@ -109,10 +114,44 @@ fun isValidZip(file: java.io.File): Boolean {
     }
     return try {
         ZipFile(file).use { zip ->
-            zip.entries().hasMoreElements()
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            val entries = zip.entries()
+            var hasEntries = false
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                hasEntries = true
+                if (!entry.isDirectory) {
+                    zip.getInputStream(entry).use { input ->
+                        while (input.read(buffer) != -1) {
+                            // Consume the entry to verify the local zip data is readable.
+                        }
+                    }
+                }
+            }
+            hasEntries
         }
     } catch (e: Exception) {
         false
+    }
+}
+
+fun extractZipArchive(file: java.io.File, destination: java.io.File) {
+    val destinationPath = destination.toPath().toAbsolutePath().normalize()
+    ZipFile(file).use { zip ->
+        zip.entries().asSequence().forEach { entry ->
+            val target = destinationPath.resolve(entry.name).normalize()
+            if (!target.startsWith(destinationPath)) {
+                throw GradleException("Refusing to extract zip entry outside destination: ${entry.name}")
+            }
+            if (entry.isDirectory) {
+                Files.createDirectories(target)
+            } else {
+                Files.createDirectories(target.parent)
+                zip.getInputStream(entry).use { input ->
+                    Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
+        }
     }
 }
 
@@ -240,6 +279,9 @@ fun downloadArchive(url: String, destination: java.io.File) {
     var lastFailure: GradleException? = null
     for (attempt in 1..3) {
         try {
+            pyronautSettingsMessage(
+                "Downloading GraalPy Maven bundle (${attempt}/3) to ${destination.relativeTo(layout.settingsDirectory.asFile)}"
+            )
             runCommand(
                 layout.settingsDirectory.asFile,
                 listOf(
@@ -272,10 +314,13 @@ fun downloadArchive(url: String, destination: java.io.File) {
                 )
             )
             if (isValidArchive(destination)) {
+                pyronautSettingsMessage("Downloaded GraalPy Maven bundle: ${destination.relativeTo(layout.settingsDirectory.asFile)}")
                 return
             }
+            pyronautSettingsMessage("Downloaded GraalPy Maven bundle was incomplete; retrying")
         } catch (e: GradleException) {
             lastFailure = e
+            pyronautSettingsMessage("GraalPy Maven bundle download failed on attempt $attempt; retrying")
         }
     }
     destination.delete()
@@ -392,30 +437,38 @@ fun ensureGraalPyBundleRepo(checkoutDir: java.io.File, graalpyVersion: String): 
         return repoDir
     }
 
+    pyronautSettingsMessage(
+        "Preparing GraalPy Maven bundle for $graalpyVersion from ${checkoutSha.take(12)} into ${repoDir.relativeTo(layout.settingsDirectory.asFile)}"
+    )
     repoDir.mkdirs()
     val archiveFile = layout.settingsDirectory.file("checkouts/maven-bundles/graalpy/$checkoutSha-${safePathSegment(bundleKey)}.${archiveExtension(bundleUrl)}").asFile
     archiveFile.parentFile.mkdirs()
     val leftoverZip = checkoutDir.resolve("maven-resource-bundle.zip")
     if (archiveFile.name.endsWith(".zip") && isValidZip(leftoverZip) && !archiveFile.exists()) {
+        pyronautSettingsMessage("Reusing GraalPy Maven bundle archive from ${leftoverZip.relativeTo(layout.settingsDirectory.asFile)}")
         Files.move(leftoverZip.toPath(), archiveFile.toPath())
     }
     if (!isValidArchive(archiveFile)) {
+        archiveFile.delete()
         downloadArchive(bundleUrl, archiveFile)
     }
+    pyronautSettingsMessage("Validated GraalPy Maven bundle archive: ${archiveFile.relativeTo(layout.settingsDirectory.asFile)}")
     if (!isValidArchive(archiveFile)) {
         archiveFile.delete()
         throw GradleException("Downloaded GraalPy bundle archive is invalid or incomplete: ${archiveFile.absolutePath}")
     }
     if (!graalPyBundleReady(repoDir, graalpyVersion) || !extractedBundleMarker.isFile) {
+        pyronautSettingsMessage("Extracting GraalPy Maven bundle to ${repoDir.relativeTo(layout.settingsDirectory.asFile)}")
         deleteRecursively(repoDir)
         repoDir.mkdirs()
         if (archiveFile.name.endsWith(".zip")) {
-            runCommand(layout.settingsDirectory.asFile, "unzip", "-q", "-o", archiveFile.absolutePath, "-d", repoDir.absolutePath)
+            extractZipArchive(archiveFile, repoDir)
         } else {
             runCommand(layout.settingsDirectory.asFile, "tar", "-xzf", archiveFile.absolutePath, "-C", repoDir.absolutePath, "--strip-components", "1")
         }
         extractedBundleMarker.writeText(bundleUrl + System.lineSeparator())
     }
+    pyronautSettingsMessage("GraalPy Maven bundle ready at ${repoDir.relativeTo(layout.settingsDirectory.asFile)}")
     archiveFile.delete()
 
     if (!graalPyBundleReady(repoDir, graalpyVersion)) {
@@ -425,6 +478,7 @@ fun ensureGraalPyBundleRepo(checkoutDir: java.io.File, graalpyVersion: String): 
     }
 
     if (!graalPyExtensionsReady(repoDir, graalpyVersion)) {
+        pyronautSettingsMessage("Publishing GraalPy extension artifacts to ${repoDir.relativeTo(layout.settingsDirectory.asFile)}")
         val mavenSettingsFile = writeGraalPyMavenSettings(repoDir)
         runCommand(
             checkoutDir,
@@ -445,6 +499,7 @@ fun ensureGraalPyBundleRepo(checkoutDir: java.io.File, graalpyVersion: String): 
             "-Dmaven.repo.local=${repoDir.absolutePath}",
             "-Dlocal.repo.url=${repoDir.toURI()}"
         )
+        pyronautSettingsMessage("GraalPy extension artifacts ready at ${repoDir.relativeTo(layout.settingsDirectory.asFile)}")
     }
 
     if (!graalPyExtensionsReady(repoDir, graalpyVersion)) {
@@ -599,6 +654,7 @@ include("pyronaut")
 include("pyronaut-config-model")
 include("pyronaut-install")
 include("pyronaut-processor")
+include("pyronaut-dev")
 include("pyronaut-run")
 include("pyronaut-test")
 include("pyronaut-create-app")

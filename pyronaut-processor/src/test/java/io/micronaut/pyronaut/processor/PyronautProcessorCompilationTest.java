@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -113,6 +114,35 @@ class PyronautProcessorCompilationTest {
         assertTrue(Files.exists(cacheDir.resolve(ProcessorSourceCache.TEST_HASH_FILE)));
     }
 
+    @Test
+    void removesGeneratedControllerArtifactsWhenSourceIsDeleted() throws Exception {
+        Path project = tempDir.resolve("project-delete-controller");
+        Path srcDir = project.resolve("src");
+        Path cacheDir = project.resolve("__pyronaut__");
+        Files.createDirectories(srcDir);
+        Files.createDirectories(cacheDir);
+
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
+        Path controller = srcDir.resolve("controller.py");
+        Files.copy(resolveFixture("/fixtures/python/controller.py"), controller);
+        writeClasspathCaches(cacheDir);
+
+        PyronautProcessorMain command = new PyronautProcessorMain();
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        assertTrue(hasClassContaining(classesDir, "MyController"));
+        assertTrue(hasFileContaining(classesDir, "MyController"));
+
+        Files.delete(controller);
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertFalse(hasClassContaining(classesDir, "MyController"));
+        assertFalse(hasFileContaining(classesDir, "MyController"));
+    }
+
     private static boolean hasClassContaining(Path root, String token) throws Exception {
         try (var files = Files.walk(root)) {
             return files
@@ -120,6 +150,25 @@ class PyronautProcessorCompilationTest {
                 .map(path -> path.getFileName().toString())
                 .anyMatch(name -> name.endsWith(".class") && name.contains(token));
         }
+    }
+
+    private static boolean hasFileContaining(Path root, String token) throws Exception {
+        try (var files = Files.walk(root)) {
+            return files
+                .filter(Files::isRegularFile)
+                .map(path -> path.getFileName().toString())
+                .anyMatch(name -> name.contains(token));
+        }
+    }
+
+    private static void writeClasspathCaches(Path cacheDir) throws Exception {
+        List<String> classpathEntries = Arrays.stream(System.getProperty("java.class.path", "").split(System.getProperty("path.separator")))
+            .map(String::trim)
+            .filter(entry -> !entry.isEmpty())
+            .toList();
+        Files.write(cacheDir.resolve("resolved-build-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+        Files.write(cacheDir.resolve("resolved-runtime-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+        Files.write(cacheDir.resolve("resolved-test-dependencies"), classpathEntries, StandardCharsets.UTF_8);
     }
 
     private static Path resolveFixture(String resourcePath) throws URISyntaxException {

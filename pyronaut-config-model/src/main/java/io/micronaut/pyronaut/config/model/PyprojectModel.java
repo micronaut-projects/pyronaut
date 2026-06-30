@@ -88,7 +88,7 @@ public record PyprojectModel(Project project,
     /**
      * tool.pyronaut.processor table.
      *
-     * @param mode processor execution mode (for example jit or native)
+     * @param mode processor execution mode (for example jvm or native)
      */
     public record Processor(String mode) {
     }
@@ -96,7 +96,7 @@ public record PyprojectModel(Project project,
     /**
      * tool.pyronaut.test table.
      *
-     * @param mode test execution mode (for example jit or native)
+     * @param mode test execution mode (for example jvm or native)
      */
     public record Test(String mode) {
     }
@@ -160,12 +160,14 @@ public record PyprojectModel(Project project,
      * tool.pyronaut.toolchain table.
      *
      * @param distribution desired GraalVM distribution/channel (for example ce, ee, or dev)
+     * @param type CLI execution toolchain (jvm or native)
      * @param version desired GraalVM version string
      * @param javaVersion minimum required Java major version
      * @param releaseTag release tag used to resolve dev builds
      * @param downloadUrl explicit archive URL override
      */
     public record Toolchain(String distribution,
+                            String type,
                             String version,
                             Integer javaVersion,
                             String releaseTag,

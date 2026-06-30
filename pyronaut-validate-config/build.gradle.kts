@@ -16,7 +16,7 @@ dependencies {
     implementation(mnPicocli.picocli)
     implementation(libs.micronaut.json.schema.configuration.validator)
     implementation(mnSerde.micronaut.serde.jackson)
-    runtimeOnly(libs.slf4j.simple)
+    implementation(project(":micronaut-pyronaut-logback"))
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

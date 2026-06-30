@@ -87,7 +87,7 @@ Feature flags in capabilities should be used for optional behavior negotiation (
 
 - `build` defaults to JVM wheel behavior and supports native mode selection via CLI or `tool.pyronaut.build.mode`.
 - `install` prefers a bundled native launcher automatically when one is available.
-- `process` defaults to JIT and can opt into a native processor with `tool.pyronaut.processor.mode = "native"`.
+- `process` defaults to JVM and can opt into a native processor with `tool.pyronaut.processor.mode = "native"`.
 - Native mode delegates to `pyronaut-native-build` and may pass unconsumed native-image arguments through to the native-image command.
 - `--tui` is a global orchestrator mode that delegates to `pyronaut-tui` and may drive run/test flows in interactive or smoke/non-interactive paths.
 

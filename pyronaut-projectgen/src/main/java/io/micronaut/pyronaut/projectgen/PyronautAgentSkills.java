@@ -154,8 +154,8 @@ class PyronautAgentSkills implements Feature {
 
             - `pyronaut install`: resolves dependencies, writes scoped manifests under `__pyronaut__/`, materializes TOML schemas, and generates IDE stubs.
             - `pyronaut process`: processes `src/` and `tests/` sources into `__pyronaut__/classes` and `__pyronaut__/test-classes`.
-            - `pyronaut run`: validates config for the `run` scenario, performs install/process preflight, starts the app, and manages test resources when enabled.
-            - `pyronaut test`: validates config for the `test` scenario, performs install/process preflight, runs pytest through Pyronaut, and writes reports under `__pyronaut__/reports/tests`.
+            - `pyronaut run`: validates config for the `run` scenario, processes main sources, starts the app, and manages test resources when enabled. Run `pyronaut install` explicitly after dependency or editor-support changes.
+            - `pyronaut test`: validates config for the `test` scenario, processes test sources, runs pytest through Pyronaut, and writes reports under `__pyronaut__/reports/tests`. Run `pyronaut install` explicitly after dependency or editor-support changes.
             - `pyronaut validate-config --scenario run|test|production`: validates lifecycle configuration for a specific scenario and writes reports under `__pyronaut__/reports/config-validation/<scenario>`.
             - `pyronaut test-resources-server start|status|stop`: manages a reusable test-resources server. `run` and `test` can also start an owned server automatically when test resources are enabled.
 

@@ -10,9 +10,9 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -140,6 +140,82 @@ class PyronautRunMainTest {
     }
 
     @Test
+    void initializesApplicationLoggingDefaultsWhenPythonMainIsAbsent() throws Exception {
+        Path project = tempDir.resolve("project-without-python-main");
+        Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        writeMinimalPyproject(project);
+
+        String previousLoggerConfig = System.getProperty("logger.config");
+        String previousLogbackConfigurationFile = System.getProperty("logback.configurationFile");
+        System.clearProperty("logger.config");
+        System.clearProperty("logback.configurationFile");
+        AtomicInteger loggingInitializations = new AtomicInteger();
+        AtomicReference<String> loggerConfigDuringStart = new AtomicReference<>();
+        try {
+            PyronautRunMain runMain = new PyronautRunMain(
+                new PyprojectModelReader(),
+                (className, classLoader) -> null,
+                classLoader -> { },
+                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
+                    loggerConfigDuringStart.set(System.getProperty("logger.config"));
+                    return false;
+                },
+                loggingInitializations::incrementAndGet
+            );
+            runMain.projectDir = project;
+
+            assertEquals(0, runMain.call());
+            assertEquals(1, loggingInitializations.get());
+            assertEquals("pyronaut-default-logback.xml", loggerConfigDuringStart.get());
+            assertFalse(System.getProperties().containsKey("logger.config"));
+        } finally {
+            restoreProperty("logger.config", previousLoggerConfig);
+            restoreProperty("logback.configurationFile", previousLogbackConfigurationFile);
+        }
+    }
+
+    @Test
+    void leavesApplicationLoggingToPythonMainWhenPresent() throws Exception {
+        Path project = tempDir.resolve("project-with-python-main");
+        Path classes = project.resolve("__pyronaut__/classes");
+        Files.createDirectories(classes.resolve("META-INF/GRAALPY-VFS/micronaut-application/src"));
+        Files.writeString(
+            classes.resolve("META-INF/GRAALPY-VFS/micronaut-application/src/main.py"),
+            "from logback.config import dictConfig\n",
+            StandardCharsets.UTF_8
+        );
+        writeMinimalPyproject(project);
+
+        String previousLoggerConfig = System.getProperty("logger.config");
+        String previousLogbackConfigurationFile = System.getProperty("logback.configurationFile");
+        System.clearProperty("logger.config");
+        System.clearProperty("logback.configurationFile");
+        AtomicInteger loggingInitializations = new AtomicInteger();
+        AtomicReference<String> loggerConfigDuringStart = new AtomicReference<>();
+        try {
+            PyronautRunMain runMain = new PyronautRunMain(
+                new PyprojectModelReader(),
+                (className, classLoader) -> null,
+                classLoader -> { },
+                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
+                    loggerConfigDuringStart.set(System.getProperty("logger.config"));
+                    return false;
+                },
+                loggingInitializations::incrementAndGet
+            );
+            runMain.projectDir = project;
+
+            assertEquals(0, runMain.call());
+            assertEquals(0, loggingInitializations.get());
+            assertEquals("pyronaut-default-logback.xml", loggerConfigDuringStart.get());
+            assertFalse(System.getProperties().containsKey("logger.config"));
+        } finally {
+            restoreProperty("logger.config", previousLoggerConfig);
+            restoreProperty("logback.configurationFile", previousLogbackConfigurationFile);
+        }
+    }
+
+    @Test
     void appliesTestResourcesPropertiesFromEnvironment() {
         String previousUri = System.getProperty("micronaut.test.resources.server.uri");
         String previousToken = System.getProperty("micronaut.test.resources.server.access.token");
@@ -178,18 +254,26 @@ class PyronautRunMainTest {
         Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
 
         PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
-        try (var classLoader = layout.applicationClassLoader()) {
-            assertEquals(classesDir.toAbsolutePath().normalize(), layout.processedClassesRoot());
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains(runtimeJar.getFileName().toString()))
-            );
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("__pyronaut__/classes"))
-            );
-            assertTrue(
-                java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().contains("config/"))
-                    || java.util.Arrays.stream(classLoader.getURLs()).anyMatch(url -> url.toString().endsWith("/config"))
-            );
+        List<String> urls = layout.classpathUrls().stream().map(URL::toString).toList();
+        assertEquals(classesDir.toAbsolutePath().normalize(), layout.processedClassesRoot());
+        assertTrue(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("__pyronaut__/classes/")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("config/")) || urls.stream().anyMatch(url -> url.endsWith("/config")));
+    }
+
+    @Test
+    void nativeRuntimeUsesSystemClassLoaderWhenJavaClassPathIsSupplied() throws Exception {
+        String previousNativeImageCode = System.getProperty("org.graalvm.nativeimage.imagecode");
+        String previousClasspath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("org.graalvm.nativeimage.imagecode", "runtime");
+            System.setProperty("java.class.path", tempDir.toString());
+            PyronautRunMain.ResolvedProjectLayout layout = new PyronautRunMain.ResolvedProjectLayout(tempDir, List.of());
+
+            assertEquals(ClassLoader.getSystemClassLoader(), layout.applicationClassLoader());
+        } finally {
+            restoreProperty("org.graalvm.nativeimage.imagecode", previousNativeImageCode);
+            restoreProperty("java.class.path", previousClasspath);
         }
     }
 
@@ -210,13 +294,11 @@ class PyronautRunMainTest {
         Files.writeString(pyronautDir.resolve("resolved-development-runtime-dependencies"), developmentRuntimeJar + "\n", StandardCharsets.UTF_8);
 
         PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
-        try (var classLoader = layout.applicationClassLoader()) {
-            List<String> urls = Arrays.stream(classLoader.getURLs())
-                .map(URL::toString)
-                .toList();
-            assertTrue(urls.stream().anyMatch(url -> url.contains(developmentRuntimeJar.getFileName().toString())));
-            assertFalse(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
-        }
+        List<String> urls = layout.classpathUrls().stream()
+            .map(URL::toString)
+            .toList();
+        assertTrue(urls.stream().anyMatch(url -> url.contains(developmentRuntimeJar.getFileName().toString())));
+        assertFalse(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
     }
 
     @Test

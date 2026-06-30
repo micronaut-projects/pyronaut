@@ -243,6 +243,7 @@ public final class PyprojectModelReader {
     private static PyprojectModel.Toolchain resolveToolchain(TomlParseResult parsed) {
         return new PyprojectModel.Toolchain(
             readEnum(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_DISTRIBUTION),
+            readEnum(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_TYPE),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_VERSION),
             readInteger(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_JAVA_VERSION),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_RELEASE_TAG),

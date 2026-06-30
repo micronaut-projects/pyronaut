@@ -18,6 +18,7 @@ import javax.tools.ToolProvider;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -74,6 +75,129 @@ class PyronautTestMainTest {
             assertFalse(System.getProperties().containsKey(property));
         } finally {
             restoreProperty(property, previous);
+        }
+    }
+
+    @Test
+    void defaultsTestServerToRandomPortDuringTestExecution() throws Exception {
+        String property = "micronaut.server.port";
+        String previous = System.getProperty(property);
+        System.clearProperty(property);
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("0", propertyDuringBootstrap.get());
+            assertFalse(System.getProperties().containsKey(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
+    void preservesExplicitTestServerPortDuringTestExecution() throws Exception {
+        String property = "micronaut.server.port";
+        String previous = System.getProperty(property);
+        System.setProperty(property, "9090");
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("9090", propertyDuringBootstrap.get());
+            assertEquals("9090", System.getProperty(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
+    void defaultsLoggerConfigDuringTestExecution() throws Exception {
+        String property = "logger.config";
+        String previous = System.getProperty(property);
+        String previousLogbackConfigurationFile = System.getProperty("logback.configurationFile");
+        System.clearProperty(property);
+        System.clearProperty("logback.configurationFile");
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("pyronaut-default-logback.xml", propertyDuringBootstrap.get());
+            assertFalse(System.getProperties().containsKey(property));
+        } finally {
+            restoreProperty(property, previous);
+            restoreProperty("logback.configurationFile", previousLogbackConfigurationFile);
+        }
+    }
+
+    @Test
+    void preservesExplicitLoggerConfigDuringTestExecution() throws Exception {
+        String property = "logger.config";
+        String previous = System.getProperty(property);
+        System.setProperty(property, "custom-logback.xml");
+        try {
+            Path project = setupProject();
+            AtomicReference<String> propertyDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> propertyDuringBootstrap.set(System.getProperty(property))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertEquals("custom-logback.xml", propertyDuringBootstrap.get());
+            assertEquals("custom-logback.xml", System.getProperty(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
+    void preservesExplicitLogbackConfigurationFileDuringTestExecution() throws Exception {
+        String loggerConfig = "logger.config";
+        String logbackConfigurationFile = "logback.configurationFile";
+        String previousLoggerConfig = System.getProperty(loggerConfig);
+        String previousLogbackConfigurationFile = System.getProperty(logbackConfigurationFile);
+        System.clearProperty(loggerConfig);
+        System.setProperty(logbackConfigurationFile, "custom-file-logback.xml");
+        try {
+            Path project = setupProject();
+            AtomicReference<String> loggerConfigDuringBootstrap = new AtomicReference<>();
+            PyronautTestMain command = new PyronautTestMain(
+                new PyprojectModelReader(),
+                (classLoader, applicationMain) -> loggerConfigDuringBootstrap.set(System.getProperty(loggerConfig))
+            );
+            command.projectDir = project;
+            command.selectClasses = java.util.List.of(PassingTest.class.getName());
+
+            assertEquals(0, command.call());
+            assertNull(loggerConfigDuringBootstrap.get());
+            assertFalse(System.getProperties().containsKey(loggerConfig));
+            assertEquals("custom-file-logback.xml", System.getProperty(logbackConfigurationFile));
+        } finally {
+            restoreProperty(loggerConfig, previousLoggerConfig);
+            restoreProperty(logbackConfigurationFile, previousLogbackConfigurationFile);
         }
     }
 
@@ -346,8 +470,13 @@ class PyronautTestMainTest {
         Path viewsDir = project.resolve("views");
         Path testResourcesDir = project.resolve("src/integration/resources");
         Path testFixturesDir = project.resolve("src/integration/fixtures");
-        Path bundledPytestJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-pytest-fixture.jar");
-        Path bundledLogbackJar = project.resolve("__pyronaut__/launcher-provided/micronaut-pyronaut-logback-fixture.jar");
+        String fixtureVersion = "fixture-version";
+        Path bundledPytestJar = launcherProvidedArtifact(project, "micronaut-pyronaut-pytest");
+        Path bundledLogbackJar = launcherProvidedArtifact(project, "micronaut-pyronaut-logback");
+        Path contextJar = mavenArtifact(project, "io/micronaut", "micronaut-context", fixtureVersion);
+        Path bundledHttpNettyJar = launcherProvidedArtifact(project, "micronaut-http-netty");
+        Path bundledNettyJar = project.resolve("__pyronaut__/launcher-provided/netty-transport-fixture.jar");
+        Path testHttpClientJar = mavenArtifact(project, "io/micronaut", "micronaut-http-client", fixtureVersion);
         Files.createDirectories(classesDir);
         Files.createDirectories(configDir);
         Files.createDirectories(viewsDir);
@@ -356,10 +485,18 @@ class PyronautTestMainTest {
         Files.createDirectories(project.resolve("__pyronaut__"));
         Files.createDirectories(bundledPytestJar.getParent());
         Files.createDirectories(bundledLogbackJar.getParent());
+        Files.createDirectories(contextJar.getParent());
+        Files.createDirectories(bundledHttpNettyJar.getParent());
+        Files.createDirectories(bundledNettyJar.getParent());
+        Files.createDirectories(testHttpClientJar.getParent());
         Files.writeString(bundledPytestJar, "", StandardCharsets.UTF_8);
         Files.writeString(bundledLogbackJar, "", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n" + bundledPytestJar + "\n", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n" + bundledLogbackJar + "\n", StandardCharsets.UTF_8);
+        Files.writeString(contextJar, "", StandardCharsets.UTF_8);
+        Files.writeString(bundledHttpNettyJar, "", StandardCharsets.UTF_8);
+        Files.writeString(bundledNettyJar, "", StandardCharsets.UTF_8);
+        Files.writeString(testHttpClientJar, "", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("__pyronaut__/resolved-test-dependencies"), "/tmp/test.jar\n" + bundledPytestJar + "\n" + testHttpClientJar + "\n", StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), "/tmp/runtime.jar\n" + bundledLogbackJar + "\n" + contextJar + "\n" + bundledHttpNettyJar + "\n" + bundledNettyJar + "\n", StandardCharsets.UTF_8);
         Files.writeString(project.resolve("__pyronaut__/resolved-build-dependencies"), "/tmp/build.jar\n", StandardCharsets.UTF_8);
 
         PyronautTestMain.ResolvedProjectLayout layout = PyronautTestMain.resolveProjectLayout(
@@ -372,14 +509,48 @@ class PyronautTestMainTest {
             List.of(testFixturesDir)
         );
 
-        try (var classLoader = layout.applicationClassLoader()) {
-            List<String> urls = java.util.Arrays.stream(classLoader.getURLs()).map(Object::toString).toList();
-            assertTrue(urls.stream().anyMatch(url -> url.contains("app-config")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("views")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
-            assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/fixtures")));
-            assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-pytest")));
-            assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-logback")));
+        List<String> urls = layout.classpathUrls().stream().map(Object::toString).toList();
+        assertTrue(urls.stream().anyMatch(url -> url.contains("app-config")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("views")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/resources")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("src/integration/fixtures")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-context")));
+        assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-pytest")));
+        assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-pyronaut-logback")));
+        assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-http-netty")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("netty-transport")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-http-client")));
+    }
+
+    @Test
+    void nativeRuntimeUsesSystemClassLoaderWhenJavaClassPathIsSupplied() {
+        String previousNativeImageCode = System.getProperty("org.graalvm.nativeimage.imagecode");
+        String previousClasspath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("org.graalvm.nativeimage.imagecode", "runtime");
+            System.setProperty("java.class.path", tempDir.toString());
+            PyronautTestMain.ResolvedProjectLayout layout = new PyronautTestMain.ResolvedProjectLayout(tempDir, List.of());
+
+            assertEquals(ClassLoader.getSystemClassLoader(), layout.applicationClassLoader());
+        } finally {
+            restoreProperty("org.graalvm.nativeimage.imagecode", previousNativeImageCode);
+            restoreProperty("java.class.path", previousClasspath);
+        }
+    }
+
+    @Test
+    void uberCliJvmRuntimeUsesSystemClassLoaderWhenJavaClassPathIsSupplied() {
+        String previousUseSystemApplicationClassLoader = System.getProperty("pyronaut.use.system.application.classloader");
+        String previousClasspath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("pyronaut.use.system.application.classloader", "true");
+            System.setProperty("java.class.path", tempDir.toString());
+            PyronautTestMain.ResolvedProjectLayout layout = new PyronautTestMain.ResolvedProjectLayout(tempDir, List.of());
+
+            assertEquals(ClassLoader.getSystemClassLoader(), layout.applicationClassLoader());
+        } finally {
+            restoreProperty("pyronaut.use.system.application.classloader", previousUseSystemApplicationClassLoader);
+            restoreProperty("java.class.path", previousClasspath);
         }
     }
 
@@ -411,11 +582,9 @@ class PyronautTestMainTest {
                 project.resolve("tests-config")
             );
 
-            try (var classLoader = layout.applicationClassLoader()) {
-                List<String> urls = java.util.Arrays.stream(classLoader.getURLs()).map(Object::toString).toList();
-                assertFalse(urls.stream().anyMatch(url -> url.contains("duplicate.jar")));
-                assertTrue(urls.stream().anyMatch(url -> url.contains("unique.jar")));
-            }
+            List<String> urls = layout.classpathUrls().stream().map(Object::toString).toList();
+            assertFalse(urls.stream().anyMatch(url -> url.contains("duplicate.jar")));
+            assertTrue(urls.stream().anyMatch(url -> url.contains("unique.jar")));
         } finally {
             restoreProperty("java.class.path", previousClasspath);
         }
@@ -478,6 +647,20 @@ class PyronautTestMainTest {
         } else {
             System.setProperty(name, value);
         }
+    }
+
+    private static Path launcherProvidedArtifact(Path project, String artifactId) {
+        return project.resolve("__pyronaut__/launcher-provided")
+            .resolve(artifactId)
+            .resolve(artifactId + ".jar");
+    }
+
+    private static Path mavenArtifact(Path project, String groupPath, String artifactId, String version) {
+        return project.resolve("__pyronaut__/m2-repository")
+            .resolve(groupPath)
+            .resolve(artifactId)
+            .resolve(version)
+            .resolve(artifactId + "-" + version + ".jar");
     }
 
     public static final class PassingTest {

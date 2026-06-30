@@ -50,22 +50,28 @@ val useNativeExecutables = providers
     .gradleProperty("native")
     .map(String::toBoolean)
     .orElse(false)
+val collectPyronautDevPgoProfile = providers
+    .gradleProperty("pyronautDevPgoCollect")
+    .map(String::toBoolean)
+    .orElse(false)
+val pyronautDevPgoProfileFile = providers
+    .gradleProperty("pyronautDevPgoProfileFile")
+    .orElse(layout.buildDirectory.file("pgo/pyronaut-dev.iprof").map { it.asFile.absolutePath })
+val graalVmDevBuildTag = providers.gradleProperty("pyronautGraalVmDevTag")
 val nativeExecutableSuffix = if (System.getProperty("os.name").lowercase().contains("windows")) ".exe" else ""
 
+val pyronautDevExecutable = project(":micronaut-pyronaut-dev")
+    .layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev")
+val pyronautDevNativeExecutable = project(":micronaut-pyronaut-dev")
+    .layout.buildDirectory.file("native/nativeCompile/pyronaut-dev$nativeExecutableSuffix")
 val pyronautInstallExecutable = project(":micronaut-pyronaut-install")
     .layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install")
-val pyronautInstallNativeExecutable = project(":micronaut-pyronaut-install")
-    .layout.buildDirectory.file("native/nativeCompile/pyronaut-install$nativeExecutableSuffix")
 val pyronautProcessorExecutable = project(":micronaut-pyronaut-processor")
     .layout.buildDirectory.file("install/micronaut-pyronaut-processor/bin/pyronaut-processor")
-val pyronautProcessorNativeExecutable = project(":micronaut-pyronaut-processor")
-    .layout.buildDirectory.file("native/nativeCompile/pyronaut-processor$nativeExecutableSuffix")
 val pyronautTestExecutable = project(":micronaut-pyronaut-test")
     .layout.buildDirectory.file("install/micronaut-pyronaut-test/bin/pyronaut-test")
 val pyronautValidateConfigExecutable = project(":micronaut-pyronaut-validate-config")
     .layout.buildDirectory.file("install/micronaut-pyronaut-validate-config/bin/pyronaut-validate-config")
-val pyronautValidateConfigNativeExecutable = project(":micronaut-pyronaut-validate-config")
-    .layout.buildDirectory.file("native/nativeCompile/pyronaut-validate-config$nativeExecutableSuffix")
 val pyronautTestResourcesServerExecutable = project(":micronaut-pyronaut-test-resources-server")
     .layout.buildDirectory.file("install/micronaut-pyronaut-test-resources-server/bin/pyronaut-test-resources-server")
 
@@ -326,14 +332,68 @@ fun Project.runFixtureCommand(command: List<String>, extraEnvironment: Map<Strin
     val processBuilder = ProcessBuilder(command)
         .directory(fixtureAppDir.asFile)
         .redirectInput(ProcessBuilder.Redirect.INHERIT)
-        .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-        .redirectError(ProcessBuilder.Redirect.INHERIT)
+        .redirectErrorStream(true)
     processBuilder.environment().putAll(defaultFixtureEnv() + extraEnvironment)
     val process = processBuilder.start()
-    val exitCode = process.waitFor()
-    if (exitCode != 0) {
-        throw GradleException("Command failed with exit code $exitCode: $renderedCommand")
+    val maxCapturedCommandOutputChars = 32 * 1024
+    val output = StringBuilder()
+    val outputReader = Thread {
+        process.inputStream.bufferedReader().useLines { lines ->
+            lines.forEach { line ->
+                logger.lifecycle(line)
+                output.appendLine(line)
+                if (output.length > maxCapturedCommandOutputChars) {
+                    output.delete(0, output.length - maxCapturedCommandOutputChars)
+                }
+            }
+        }
     }
+    outputReader.start()
+    val exitCode = process.waitFor()
+    outputReader.join()
+    if (exitCode != 0) {
+        throw GradleException(buildString {
+            append("Command failed with exit code ")
+            append(exitCode)
+            append(": ")
+            append(renderedCommand)
+            val capturedOutput = output.toString().trimEnd()
+            if (capturedOutput.isNotBlank()) {
+                append(System.lineSeparator())
+                append(System.lineSeparator())
+                append("Last command output:")
+                append(System.lineSeparator())
+                append(capturedOutput)
+            }
+        })
+    }
+}
+
+fun Project.runFixtureCommandExpectingFailure(command: List<String>, extraEnvironment: Map<String, String> = emptyMap()): String {
+    val renderedCommand = formatFixtureCommand(command)
+    logger.lifecycle(renderedCommand)
+    val processBuilder = ProcessBuilder(command)
+        .directory(fixtureAppDir.asFile)
+        .redirectInput(ProcessBuilder.Redirect.INHERIT)
+        .redirectErrorStream(true)
+    processBuilder.environment().putAll(defaultFixtureEnv() + extraEnvironment)
+    val process = processBuilder.start()
+    val output = StringBuilder()
+    val outputReader = Thread {
+        process.inputStream.bufferedReader().useLines { lines ->
+            lines.forEach { line ->
+                logger.lifecycle(line)
+                output.appendLine(line)
+            }
+        }
+    }
+    outputReader.start()
+    val exitCode = process.waitFor()
+    outputReader.join()
+    if (exitCode == 0) {
+        throw GradleException("Command unexpectedly succeeded: $renderedCommand")
+    }
+    return output.toString()
 }
 
 fun formatFixtureCommand(command: List<String>): String {
@@ -344,6 +404,14 @@ fun formatFixtureCommand(command: List<String>): String {
     var index = 0
     while (index < command.size) {
         val argument = command[index]
+        if (argument.startsWith("-Djava.class.path=")) {
+            val classpathEntries = argument.substringAfter("=")
+                .split(java.io.File.pathSeparatorChar)
+                .count { it.isNotBlank() }
+            rendered += "-Djava.class.path=<classpath:$classpathEntries entries>"
+            index++
+            continue
+        }
         rendered += argument
         if ((argument == "-cp" || argument == "-classpath" || argument == "--class-path") && index + 1 < command.size) {
             val classpathEntries = command[index + 1]
@@ -399,26 +467,95 @@ fun resolveFixturePythonExecutable(): String {
 
 fun pyronautInstallExecutableFile(): java.io.File {
     return if (useNativeExecutables.get()) {
-        pyronautInstallNativeExecutable.get().asFile
+        pyronautDevNativeExecutable.get().asFile
     } else {
-        pyronautInstallExecutable.get().asFile
+        pyronautDevExecutable.get().asFile
     }
 }
 
 fun pyronautProcessorExecutableFile(): java.io.File {
     return if (useNativeExecutables.get()) {
-        pyronautProcessorNativeExecutable.get().asFile
+        pyronautDevNativeExecutable.get().asFile
     } else {
-        pyronautProcessorExecutable.get().asFile
+        pyronautDevExecutable.get().asFile
     }
 }
 
 fun pyronautValidateConfigExecutableFile(): java.io.File {
     return if (useNativeExecutables.get()) {
-        pyronautValidateConfigNativeExecutable.get().asFile
+        pyronautDevNativeExecutable.get().asFile
     } else {
-        pyronautValidateConfigExecutable.get().asFile
+        pyronautDevExecutable.get().asFile
     }
+}
+
+fun pyronautTestResourcesServerExecutableFile(): java.io.File {
+    return pyronautTestResourcesServerExecutable.get().asFile
+}
+
+fun pyronautTestExecutableFile(): java.io.File {
+    return if (useNativeExecutables.get()) {
+        pyronautDevNativeExecutable.get().asFile
+    } else {
+        pyronautDevExecutable.get().asFile
+    }
+}
+
+fun pyronautCommand(command: String, executable: java.io.File, vararg args: String): List<String> {
+    return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + listOf(command, *args)
+}
+
+fun pyronautCommand(command: String, executable: java.io.File, jvmArgs: List<String>, vararg args: String): List<String> {
+    return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + jvmArgs + listOf(command, *args)
+}
+
+fun testResourcesServerCommand(executable: java.io.File, vararg args: String): List<String> {
+    return listOf(executable.absolutePath, *args)
+}
+
+fun nativeJavaHomeJvmArgs(): List<String> {
+    if (!useNativeExecutables.get()) {
+        return emptyList()
+    }
+    return buildList {
+        add("-Djava.home=${resolveProvisionedGraalVmDevBuildHome().absolutePath}")
+        if (collectPyronautDevPgoProfile.get()) {
+            val profileFile = java.io.File(pyronautDevPgoProfileFile.get())
+            profileFile.parentFile.mkdirs()
+            add("-XX:ProfilesDumpFile=${profileFile.absolutePath}")
+        }
+    }
+}
+
+fun resolveProvisionedGraalVmDevBuildHome(): java.io.File {
+    val configuredTag = graalVmDevBuildTag.orNull?.trim()
+        ?: throw GradleException("Native functional-test requires pyronautGraalVmDevTag to resolve the matching java.home")
+    val tag = normalizeGraalVmDevBuildTag(configuredTag)
+    val tagDir = rootProject.layout.projectDirectory
+        .dir(".gradle/pyronaut/graalvm-dev-builds")
+        .asFile
+        .resolve(tag)
+    if (!tagDir.isDirectory) {
+        throw GradleException("Missing provisioned GraalVM dev build for '$configuredTag': ${tagDir.absolutePath}")
+    }
+    return tagDir.walkTopDown()
+        .filter { candidate -> candidate.isDirectory && candidate.resolve("bin/java").isFile }
+        .sortedBy { candidate -> candidate.absolutePath }
+        .firstOrNull()
+        ?: throw GradleException("Unable to find java.home in provisioned GraalVM dev build: ${tagDir.absolutePath}")
+}
+
+fun normalizeGraalVmDevBuildTag(configuredTag: String): String {
+    val tag = configuredTag.trim()
+    return if (isOracleGraalVmEaTag(tag)) {
+        if (tag.startsWith("jdk-")) tag else "jdk-$tag"
+    } else {
+        tag.removePrefix("jdk-")
+    }
+}
+
+fun isOracleGraalVmEaTag(tag: String): Boolean {
+    return Regex("(?:jdk-)?\\d+e\\d+-.+").matches(tag)
 }
 
 fun Project.fixturePublishedArtifact(projectPath: String): FixturePublishedArtifact {
@@ -1016,7 +1153,7 @@ fun requireFixtureFileContains(file: java.io.File, expected: String, description
     }
 }
 
-fun buildPyronautTestCommand(): List<String> {
+fun buildFixtureApplicationClasspathEntries(): List<String> {
     val cacheDir = fixtureAppDir.dir("__pyronaut__").asFile
     val classpathEntries = mutableListOf<String>()
     classpathEntries += readManifestEntries(cacheDir.resolve("resolved-test-dependencies"))
@@ -1039,16 +1176,125 @@ fun buildPyronautTestCommand(): List<String> {
     if (configDir.isDirectory) {
         classpathEntries += configDir.absolutePath
     }
-    classpathEntries += delegateLibEntries(pyronautTestExecutable.get().asFile)
+    return classpathEntries.distinct()
+}
+
+fun fixtureApplicationClasspathEntriesWithoutDuplicateVfsJars(): List<String> {
+    val bundledVfsJarNames = nativeLauncherProvidedJarNames()
+        .filter { jarName -> containsGraalPyVirtualFileSystem(pyronautDevExecutable.get().asFile.parentFile.parentFile.resolve("lib").resolve(jarName)) }
+        .toSet()
+    return buildFixtureApplicationClasspathEntries()
+        .filterNot { entry -> bundledVfsJarNames.contains(java.io.File(entry).name) }
+        .distinct()
+}
+
+fun nativeFixtureApplicationClasspathEntries(): List<String> {
+    val launcherProvidedJarNames = nativeLauncherProvidedJarNames()
+    val launcherProvidedArtifactIds = nativeLauncherProvidedArtifactIds()
+    return fixtureApplicationClasspathEntriesWithoutDuplicateVfsJars()
+        .filterNot { entry ->
+            val fileName = java.io.File(entry).name
+            val artifactId = versionedJarArtifactId(fileName)
+            isNativeTestResourcesClientArtifact(fileName) ||
+                launcherProvidedJarNames.contains(fileName) ||
+                launcherProvidedArtifactIds.contains(artifactId)
+        }
+        .distinct()
+}
+
+fun nativeTestResourcesClientClasspathEntries(): List<String> {
+    val cacheDir = fixtureAppDir.dir("__pyronaut__").asFile
+    return buildList {
+        addAll(readManifestEntries(cacheDir.resolve("resolved-test-dependencies")))
+        val runtimeManifest = cacheDir.resolve("resolved-runtime-dependencies")
+        if (runtimeManifest.isFile) {
+            addAll(readManifestEntries(runtimeManifest))
+        }
+    }
+        .filter { entry -> isNativeTestResourcesClientArtifact(java.io.File(entry).name) }
+        .distinct()
+}
+
+fun nativeLauncherProvidedJarNames(): Set<String> {
+    return delegateLibEntries(pyronautDevExecutable.get().asFile)
+        .map { java.io.File(it).name }
+        .toSet()
+}
+
+fun nativeLauncherProvidedArtifactIds(): Set<String> {
+    return nativeLauncherProvidedJarNames()
+        .mapNotNull(::versionedJarArtifactId)
+        .toSet()
+}
+
+fun versionedJarArtifactId(fileName: String): String? {
+    if (!fileName.endsWith(".jar")) {
+        return null
+    }
+    val baseName = fileName.removeSuffix(".jar")
+    val versionSeparator = Regex("-(?=\\d)").find(baseName) ?: return null
+    return baseName.substring(0, versionSeparator.range.first)
+}
+
+fun isNativeTestResourcesClientArtifact(fileName: String): Boolean {
+    return fileName.startsWith("micronaut-test-resources-client-") ||
+        fileName.startsWith("micronaut-test-resources-core-") ||
+        fileName.startsWith("micronaut-test-resources-codec-")
+}
+
+fun containsGraalPyVirtualFileSystem(file: java.io.File): Boolean {
+    if (!file.isFile || file.extension != "jar") {
+        return false
+    }
+    return java.util.jar.JarFile(file).use { jarFile ->
+        jarFile.entries().asSequence().any { entry ->
+            entry.name.startsWith("META-INF/GRAALPY-VFS/micronaut-application/")
+        }
+    }
+}
+
+fun testResourcesJvmArgs(testResourcesEnv: Map<String, String>): List<String> {
+    return listOfNotNull(
+        testResourcesEnv["MICRONAUT_TEST_RESOURCES_SERVER_URI"]
+            ?.takeIf(String::isNotBlank)
+            ?.let { "-Dmicronaut.test.resources.server.uri=$it" },
+        testResourcesEnv["MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN"]
+            ?.takeIf(String::isNotBlank)
+            ?.let { "-Dmicronaut.test.resources.server.access.token=$it" },
+        testResourcesEnv["MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT"]
+            ?.takeIf(String::isNotBlank)
+            ?.let { "-Dmicronaut.test.resources.server.client.read.timeout=$it" },
+    )
+}
+
+fun buildPyronautTestCommand(testResourcesEnv: Map<String, String> = emptyMap()): List<String> {
+    if (useNativeExecutables.get()) {
+        val nativeClasspathEntries = nativeFixtureApplicationClasspathEntries()
+        val testResourcesClientClasspathEntries = nativeTestResourcesClientClasspathEntries()
+        return listOf(
+            pyronautTestExecutableFile().absolutePath,
+            *nativeJavaHomeJvmArgs().toTypedArray(),
+            "-Djava.class.path=${nativeClasspathEntries.joinToString(separator = java.io.File.pathSeparator)}",
+            "-Dpyronaut.dev.test.resources.client.classpath=${testResourcesClientClasspathEntries.joinToString(separator = java.io.File.pathSeparator)}",
+            *testResourcesJvmArgs(testResourcesEnv).toTypedArray(),
+            "test",
+            "--project-dir",
+            fixtureAppDir.asFile.absolutePath,
+        )
+    }
+    val reducedClasspathEntries = fixtureApplicationClasspathEntriesWithoutDuplicateVfsJars().toMutableList()
+    reducedClasspathEntries += delegateLibEntries(pyronautDevExecutable.get().asFile)
 
     return listOf(
         resolveJavaExecutable(),
         "--sun-misc-unsafe-memory-access=allow",
         "--enable-native-access=ALL-UNNAMED",
         "-Dpyronaut.test.render-failure-output=true",
+        "-Dpyronaut.use.system.application.classloader=true",
         "-cp",
-        classpathEntries.distinct().joinToString(separator = java.io.File.pathSeparator),
-        "io.micronaut.pyronaut.test.PyronautTestMain",
+        reducedClasspathEntries.distinct().joinToString(separator = java.io.File.pathSeparator),
+        "io.micronaut.pyronaut.dev.PyronautDevMain",
+        "test",
         "--project-dir",
         fixtureAppDir.asFile.absolutePath,
     )
@@ -1262,17 +1508,11 @@ val installFixtureLaunchers by tasks.registering {
     group = "build setup"
     description = "Builds the local Pyronaut launchers used by the functional-test app."
     dependsOn(
-        project(":micronaut-pyronaut-install").tasks.named("installDist"),
-        project(":micronaut-pyronaut-processor").tasks.named("installDist"),
-        project(":micronaut-pyronaut-test").tasks.named("installDist"),
-        project(":micronaut-pyronaut-validate-config").tasks.named("installDist"),
-        project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"),
+        project(":micronaut-pyronaut-dev").tasks.named("installDist"),
     )
     if (useNativeExecutables.get()) {
         dependsOn(
-            project(":micronaut-pyronaut-install").tasks.named("nativeCompile"),
-            project(":micronaut-pyronaut-processor").tasks.named("nativeCompile"),
-            project(":micronaut-pyronaut-validate-config").tasks.named("nativeCompile"),
+            project(":micronaut-pyronaut-dev").tasks.named("nativeCompile"),
         )
     }
 }
@@ -1340,12 +1580,12 @@ val installApp by tasks.registering {
         fixtureAppDir.file("setup.py"),
         pytestInstallMarker,
     )
-    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jit" })
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jvm" })
     inputs.file(providers.provider { pyronautInstallExecutableFile() })
     inputs.dir(fixtureStagedRepoDir)
     outputs.file(installAppMarker)
     outputs.upToDateWhen {
-        installAppMarker.get().asFile.isFile && installAppOutputsPresent()
+        !collectPyronautDevPgoProfile.get() && installAppMarker.get().asFile.isFile && installAppOutputsPresent()
     }
     doLast {
         val installExecutable = pyronautInstallExecutableFile()
@@ -1354,11 +1594,11 @@ val installApp by tasks.registering {
         }
         logger.lifecycle(
             "Using {} pyronaut-install executable: {}",
-            if (useNativeExecutables.get()) "native" else "JIT",
+            if (useNativeExecutables.get()) "native" else "JVM",
             installExecutable.absolutePath
         )
         project.runFixtureCommand(
-            listOf(installExecutable.absolutePath, "--project-dir", fixtureAppDir.asFile.absolutePath)
+            pyronautCommand("install", installExecutable, "--project-dir", fixtureAppDir.asFile.absolutePath)
         )
         installAppMarker.get().asFile.parentFile.mkdirs()
         installAppMarker.get().asFile.writeText("ready\n")
@@ -1447,10 +1687,13 @@ val validateConfig by tasks.registering {
         fixtureResolvedRuntimeDependencies,
         fixtureSchemasDir,
     )
-    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jit" })
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jvm" })
     inputs.file(providers.provider { pyronautValidateConfigExecutableFile() })
     outputs.files(fixtureConfigValidationCache)
     outputs.dir(fixtureConfigValidationReportDir)
+    outputs.upToDateWhen {
+        !collectPyronautDevPgoProfile.get()
+    }
     doLast {
         val validateConfigExecutable = pyronautValidateConfigExecutableFile()
         if (!validateConfigExecutable.isFile) {
@@ -1458,12 +1701,13 @@ val validateConfig by tasks.registering {
         }
         logger.lifecycle(
             "Using {} pyronaut-validate-config executable: {}",
-            if (useNativeExecutables.get()) "native" else "JIT",
+            if (useNativeExecutables.get()) "native" else "JVM",
             validateConfigExecutable.absolutePath
         )
         project.runFixtureCommand(
-            listOf(
-                validateConfigExecutable.absolutePath,
+            pyronautCommand(
+                "validate-config",
+                validateConfigExecutable,
                 "--project-dir",
                 fixtureAppDir.asFile.absolutePath,
                 "--scenario",
@@ -1473,15 +1717,112 @@ val validateConfig by tasks.registering {
     }
 }
 
+val validateInvalidConfig by tasks.registering {
+    group = "verification"
+    description = "Verifies that configuration validation rejects invalid fixture app configuration."
+    dependsOn(installApp)
+    mustRunAfter(validateConfig)
+    inputs.files(
+        fixtureAppDir.file("pyproject.toml"),
+        fixtureResolvedRuntimeDependencies,
+    )
+    inputs.property("invalidConfigProperty", "test.config.enabled")
+    inputs.property("invalidConfigValue", "not-a-bool")
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jvm" })
+    inputs.file(providers.provider {
+        if (useNativeExecutables.get()) {
+            pyronautDevNativeExecutable.get().asFile
+        } else {
+            pyronautValidateConfigExecutable.get().asFile
+        }
+    })
+    doLast {
+        val validateConfigExecutable = if (useNativeExecutables.get()) {
+            pyronautDevNativeExecutable.get().asFile
+        } else {
+            pyronautValidateConfigExecutable.get().asFile
+        }
+        if (!validateConfigExecutable.isFile) {
+            throw GradleException("Missing pyronaut-validate-config executable: ${validateConfigExecutable.absolutePath}")
+        }
+        val classesDir = fixtureAppDir.dir("__pyronaut__/classes").asFile
+        val invalidConfig = classesDir.resolve("application.properties")
+        val schemaFile = classesDir.resolve("META-INF/micronaut-configuration-schemas/functional-test.TestConfig.json")
+        val previousInvalidConfig = invalidConfig.takeIf { it.isFile }?.readText()
+        val previousSchema = schemaFile.takeIf { it.isFile }?.readText()
+        try {
+            invalidConfig.parentFile.mkdirs()
+            invalidConfig.writeText("test.config.enabled=not-a-bool\n")
+            schemaFile.parentFile.mkdirs()
+            schemaFile.writeText(
+                """
+                {
+                  "${'$'}schema": "https://json-schema.org/draft/2020-12/schema",
+                  "title": "FunctionalTestConfig",
+                  "type": "object",
+                  "x-micronaut": {
+                    "prefix": "test.config"
+                  },
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "x-micronaut-javaType": "java.lang.Boolean",
+                      "x-micronaut-path": "test.config.enabled"
+                    }
+                  }
+                }
+                """.trimIndent() + "\n"
+            )
+            val validateArgs = arrayOf(
+                "--project-dir",
+                fixtureAppDir.asFile.absolutePath,
+                "--scenario",
+                "production",
+                "--classpath",
+                classesDir.absolutePath,
+                "--no-cache",
+            )
+            val command = if (useNativeExecutables.get()) {
+                pyronautCommand(
+                    "validate-config",
+                    validateConfigExecutable,
+                    *validateArgs,
+                )
+            } else {
+                listOf(validateConfigExecutable.absolutePath, *validateArgs)
+            }
+            val output = project.runFixtureCommandExpectingFailure(command)
+            val report = fixtureAppDir.file("__pyronaut__/reports/config-validation/production/configuration-errors.json").asFile
+            val reportContent = report.takeIf { it.isFile }?.readText().orEmpty()
+            if (!output.contains("Configuration validation failed") || !reportContent.contains("test.config.enabled")) {
+                throw GradleException(
+                    "Expected invalid fixture configuration to fail schema validation for test.config.enabled."
+                )
+            }
+        } finally {
+            if (previousInvalidConfig == null) {
+                invalidConfig.delete()
+            } else {
+                invalidConfig.writeText(previousInvalidConfig)
+            }
+            if (previousSchema == null) {
+                schemaFile.delete()
+            } else {
+                schemaFile.writeText(previousSchema)
+            }
+        }
+    }
+}
+
 val process by tasks.registering {
     group = "verification"
     description = "Processes the functional-test app sources with the local processor."
-    dependsOn(validateConfig)
+    dependsOn(validateConfig, validateInvalidConfig)
     inputs.dir(fixtureAppDir.dir("src"))
     inputs.dir(fixtureAppDir.dir("tests"))
     inputs.property(
         "pyronautExecutableMode",
-        providers.provider { if (useNativeExecutables.get()) "native" else "jit" }
+        providers.provider { if (useNativeExecutables.get()) "native" else "jvm" }
     )
     inputs.files(
         fixtureResolvedBuildDependencies,
@@ -1493,6 +1834,9 @@ val process by tasks.registering {
         fixtureProcessedClassesDir,
         fixtureProcessedTestClassesDir,
     )
+    outputs.upToDateWhen {
+        !collectPyronautDevPgoProfile.get()
+    }
     doLast {
         val processorExecutable = pyronautProcessorExecutableFile()
         if (!processorExecutable.isFile) {
@@ -1500,11 +1844,11 @@ val process by tasks.registering {
         }
         logger.lifecycle(
             "Using {} pyronaut-processor executable: {}",
-            if (useNativeExecutables.get()) "native" else "JIT",
+            if (useNativeExecutables.get()) "native" else "JVM",
             processorExecutable.absolutePath
         )
         project.runFixtureCommand(
-            listOf(processorExecutable.absolutePath, "--project-dir", fixtureAppDir.asFile.absolutePath)
+            pyronautCommand("process", processorExecutable, "--project-dir", fixtureAppDir.asFile.absolutePath)
         )
     }
 }
@@ -1515,14 +1859,15 @@ tasks.register("test") {
     dependsOn(process, verifyEditorSupport)
     inputs.dir(fixtureAppDir)
     doLast {
-        val startCommand = listOf(
-            pyronautTestResourcesServerExecutable.get().asFile.absolutePath,
+        val testResourcesExecutable = pyronautTestResourcesServerExecutableFile()
+        val startCommand = testResourcesServerCommand(
+            testResourcesExecutable,
             "start",
             "--project-dir",
             fixtureAppDir.asFile.absolutePath,
         )
-        val stopCommand = listOf(
-            pyronautTestResourcesServerExecutable.get().asFile.absolutePath,
+        val stopCommand = testResourcesServerCommand(
+            testResourcesExecutable,
             "stop",
             "--project-dir",
             fixtureAppDir.asFile.absolutePath,
@@ -1530,7 +1875,7 @@ tasks.register("test") {
         runFixtureCommand(startCommand)
         try {
             val testResourcesEnv = readFixtureTestResourcesEnvironment(fixtureTestResourcesSettingsFile.asFile)
-            runFixtureCommand(buildPyronautTestCommand(), testResourcesEnv)
+            runFixtureCommand(buildPyronautTestCommand(testResourcesEnv), testResourcesEnv)
         } finally {
             try {
                 runFixtureCommand(stopCommand)

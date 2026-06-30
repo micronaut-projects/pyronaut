@@ -31,14 +31,16 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
 
     implementation(project(":micronaut-pyronaut-config-model"))
+    implementation(project(":micronaut-pyronaut-logback"))
     implementation(mn.micronaut.context.python)
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
     runtimeOnly(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
     runtimeOnly(mn.micronaut.http)
     runtimeOnly(project(":micronaut-pyronaut-pytest"))
-    runtimeOnly(project(":micronaut-pyronaut-logback"))
     runtimeOnly("io.micrometer:context-propagation")
+    runtimeOnly(libs.micronaut.toml)
+    runtimeOnly(libs.micronaut.test.resources.client)
     runtimeOnly("io.projectreactor:reactor-core")
     runtimeOnly(mnTest.junit.jupiter.engine)
     runtimeOnly(mnTest.micronaut.test.junit5)
@@ -48,8 +50,14 @@ dependencies {
     testImplementation(project(":micronaut-pyronaut-processor"))
     testRuntimeOnly(project(":micronaut-pyronaut-pytest"))
     testRuntimeOnly(project(":micronaut-pyronaut-logback"))
+    testRuntimeOnly(libs.micronaut.toml)
+    testRuntimeOnly(libs.micronaut.test.resources.client)
     testRuntimeOnly("io.projectreactor:reactor-core")
     testRuntimeOnly(mnTest.micronaut.test.junit5)
+}
+
+configurations.configureEach {
+    exclude(group = "org.slf4j", module = "slf4j-simple")
 }
 
 application {
@@ -94,6 +102,7 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValue",
     "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValueResolver",
     "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
+    "--initialize-at-build-time=io.micronaut.testresources.client.TestResourcesClientFactory",
     "-H:Preserve=package=java.lang.*",
     "-H:Preserve=package=java.lang.invoke.*",
     "-H:Preserve=package=java.text.*",
@@ -114,7 +123,10 @@ val nativeImageRuntimeClassLoadingArgs = listOf(
     "-H:Preserve=package=io.micronaut.core.io.service.*",
     "-H:Preserve=package=io.micronaut.inject.*",
     "-H:Preserve=package=io.micronaut.context.*",
+    "-H:Preserve=package=io.micronaut.toml.*",
+    "-H:Preserve=package=io.netty.resolver.*",
     "-H:Preserve=package=io.micronaut.test.*",
+    "-H:Preserve=package=io.micronaut.testresources.*",
     "-H:Preserve=package=io.micronaut.test.pytest.*",
     "-H:Preserve=package=io.micronaut.test.pytest.extension.*",
     "-H:Preserve=package=io.micronaut.pyronaut.logback.*",
