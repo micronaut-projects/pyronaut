@@ -75,6 +75,7 @@ final class MavenClasspathResolver {
     private static final String MICRONAUT_CONTEXT_PYTHON_MODULE = "io.micronaut:micronaut-context-python";
     private static final String MICRONAUT_INJECT_PYTHON_MODULE = "io.micronaut:micronaut-inject-python";
     private static final String MICRONAUT_MANAGEMENT_MODULE = "io.micronaut:micronaut-management";
+    private static final String MICRONAUT_CACHE_CAFFEINE_MODULE = "io.micronaut.cache:micronaut-cache-caffeine";
     private static final String CONTROL_PANEL_MANAGEMENT_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-management";
     private static final String CONTROL_PANEL_UI_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-ui";
     private static final String MICRONAUT_SECURITY_GROUP = "io.micronaut.security";
@@ -87,6 +88,13 @@ final class MavenClasspathResolver {
         "io.micronaut.testresources:micronaut-test-resources-build-tools",
         "io.micronaut.testresources:micronaut-test-resources-client",
         TEST_RESOURCES_SERVER_MODULE
+    );
+    private static final Set<String> MICRONAUT_CACHE_IMPLEMENTATION_MODULES = Set.of(
+        MICRONAUT_CACHE_CAFFEINE_MODULE,
+        "io.micronaut.cache:micronaut-cache-ehcache",
+        "io.micronaut.cache:micronaut-cache-hazelcast",
+        "io.micronaut.cache:micronaut-cache-infinispan",
+        "io.micronaut.cache:micronaut-cache-noop"
     );
 
     private final RepositorySystem repositorySystem;
@@ -293,6 +301,7 @@ final class MavenClasspathResolver {
             }
             if (controlPanelProductionEnabled(model)) {
                 addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+                addDefaultCacheImplementationIfMissing(runtime, managedVersions);
                 runtime.add(controlPanelManagementCoordinate());
                 runtime.add(controlPanelUiCoordinate());
             }
@@ -301,6 +310,7 @@ final class MavenClasspathResolver {
         if (scope == InstallScope.DEVELOPMENT_RUNTIME) {
             LinkedHashSet<String> runtime = new LinkedHashSet<>(coordinatesForScope(model, InstallScope.RUNTIME, managedVersions));
             addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+            addDefaultCacheImplementationIfMissing(runtime, managedVersions);
             if (controlPanelEnabled(model)) {
                 runtime.add(controlPanelManagementCoordinate());
                 runtime.add(controlPanelUiCoordinate());
@@ -597,9 +607,29 @@ final class MavenClasspathResolver {
         }
     }
 
+    private static void addDefaultCacheImplementationIfMissing(Set<String> coordinates, Map<String, String> managedVersions) {
+        if (!hasCacheImplementation(coordinates)) {
+            addDefaultCoordinate(coordinates, MICRONAUT_CACHE_CAFFEINE_MODULE, managedVersions);
+        }
+    }
+
+    private static boolean hasCacheImplementation(Set<String> coordinates) {
+        return coordinates.stream()
+            .map(MavenClasspathResolver::moduleKey)
+            .anyMatch(MICRONAUT_CACHE_IMPLEMENTATION_MODULES::contains);
+    }
+
     private static String defaultManagedCoordinate(String module, Map<String, String> managedVersions) {
         String version = normalizedVersion(managedVersions.get(module));
         return version == null ? null : module + ":" + version;
+    }
+
+    private static String moduleKey(String coordinate) {
+        String[] parts = coordinate.split(":");
+        if (parts.length < 2) {
+            return coordinate;
+        }
+        return parts[0] + ":" + parts[1];
     }
 
     private boolean isTestResourcesDisabledViaEnvironment() {

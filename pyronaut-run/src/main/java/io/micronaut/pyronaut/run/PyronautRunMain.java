@@ -17,6 +17,8 @@ package io.micronaut.pyronaut.run;
 
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
+import io.micronaut.context.env.Environment;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
@@ -51,6 +53,7 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
+    private static final String NATIVE_IMAGE_CODE = "org.graalvm.nativeimage.imagecode";
     private static final String PYTHON_APPLICATION_MAIN = "META-INF/GRAALPY-VFS/micronaut-application/src/main.py";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
@@ -200,10 +203,12 @@ public final class PyronautRunMain implements Callable<Integer> {
                                                      List<String> appArgs) {
         Micronaut micronaut = Micronaut.build(appArgs.toArray(String[]::new));
         micronaut.banner(!Boolean.FALSE.equals(bannerEnabled));
+        micronaut.environments(Environment.DEVELOPMENT);
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         if (contextClassLoader != null) {
             micronaut.classLoader(contextClassLoader);
             micronaut.beanDefinitionsProvider(new ContextClassLoaderBeanDefinitionsProvider());
+            ContextClassLoaderApplicationContextConfigurers.configure(micronaut, contextClassLoader);
         }
         List<Class<?>> applicationClasses = discoverApplicationClasses(resolvedClassesDir, contextClassLoader);
         if (!applicationClasses.isEmpty()) {
@@ -364,8 +369,6 @@ public final class PyronautRunMain implements Callable<Integer> {
     }
 
     record ResolvedProjectLayout(Path processedClassesRoot, List<URL> classpathUrls) implements AutoCloseable {
-        private static final String NATIVE_IMAGE_CODE = "org.graalvm.nativeimage.imagecode";
-
         ResolvedProjectLayout {
             classpathUrls = List.copyOf(classpathUrls);
         }

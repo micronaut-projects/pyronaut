@@ -17,10 +17,12 @@ package io.micronaut.pyronaut.dev;
 
 import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.BeanDefinitionsProvider;
+import io.micronaut.context.env.Environment;
 import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.install.PyronautInstallMain;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader;
@@ -391,8 +393,10 @@ public final class PyronautDevMain implements Callable<Integer> {
             PyronautDevLogging.initializeApplicationLogging();
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
+                .environments(Environment.DEVELOPMENT)
                 .beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation))
                 .mainClass(mainClass);
+            ContextClassLoaderApplicationContextConfigurers.configure(micronaut, applicationClassLoader);
             List<String> configLocations = toConfigLocations(invocation.configs());
             if (!configLocations.isEmpty()) {
                 micronaut.overrideConfigLocations(configLocations.toArray(String[]::new));

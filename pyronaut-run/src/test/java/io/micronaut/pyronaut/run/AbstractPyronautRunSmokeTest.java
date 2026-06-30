@@ -52,7 +52,7 @@ abstract class AbstractPyronautRunSmokeTest {
 
     protected static RunResult runJvm(Path project) throws Exception {
         List<String> classpathEntries = new ArrayList<>();
-        classpathEntries.addAll(readManifestEntries(project.resolve("__pyronaut__/resolved-runtime-dependencies")));
+        classpathEntries.addAll(readManifestEntries(resolveRunManifest(project)));
         classpathEntries.addAll(currentRuntimeClasspathEntries());
         return runCommand(
             project,
@@ -184,6 +184,14 @@ abstract class AbstractPyronautRunSmokeTest {
             }
         }
         return values;
+    }
+
+    private static Path resolveRunManifest(Path project) {
+        Path developmentManifest = project.resolve("__pyronaut__/resolved-development-runtime-dependencies");
+        if (Files.exists(developmentManifest)) {
+            return developmentManifest;
+        }
+        return project.resolve("__pyronaut__/resolved-runtime-dependencies");
     }
 
     private void prepareProject(Path project, int port) throws Exception {

@@ -239,13 +239,17 @@ class PyronautInstallMainTest {
         Path repository = tempDir.resolve("repo-management-default");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
         writeArtifact(repository, "io.micronaut", "micronaut-management", "1.2.3");
+        writeArtifact(repository, "io.micronaut.cache", "micronaut-cache-caffeine", "1.2.3");
         writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
         writeBom(
             repository,
             "io.micronaut.platform",
             "micronaut-platform",
             "1.0.0",
-            List.of(new ManagedDependency("io.micronaut", "micronaut-management", "1.2.3"))
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-management", "1.2.3"),
+                new ManagedDependency("io.micronaut.cache", "micronaut-cache-caffeine", "1.2.3")
+            )
         );
 
         Path project = tempDir.resolve("project-management-default");
@@ -283,12 +287,72 @@ class PyronautInstallMainTest {
         List<String> developmentEntries = Files.readAllLines(cacheDir.resolve("resolved-development-runtime-dependencies"), StandardCharsets.UTF_8);
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-management")));
+        assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-cache-caffeine")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-management")));
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-cache-caffeine")));
         assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-ui")));
         assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-management")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-ui")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-management")));
+    }
+
+    @Test
+    void doesNotInjectCaffeineWhenCacheImplementationIsAlreadyPresent() throws Exception {
+        Path repository = tempDir.resolve("repo-management-existing-cache");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "io.micronaut", "micronaut-management", "1.2.3");
+        writeArtifact(repository, "io.micronaut.cache", "micronaut-cache-ehcache", "1.2.3");
+        writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "1.0.0",
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-management", "1.2.3"),
+                new ManagedDependency("io.micronaut.cache", "micronaut-cache-caffeine", "1.2.3"),
+                new ManagedDependency("io.micronaut.cache", "micronaut-cache-ehcache", "1.2.3")
+            )
+        );
+
+        Path project = tempDir.resolve("project-management-existing-cache");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "1.0.0"
+
+            [tool.pyronaut.platform]
+            version = "1.0.0"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:runtime-dep:1.0.0", "io.micronaut.cache:micronaut-cache-ehcache"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        List<String> developmentEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-development-runtime-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-management")));
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-cache-ehcache")));
+        assertTrue(developmentEntries.stream().noneMatch(entry -> entry.contains("micronaut-cache-caffeine")));
     }
 
     @Test
@@ -354,20 +418,27 @@ class PyronautInstallMainTest {
         Path repository = tempDir.resolve("repo-control-panel-production-security");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
         writeArtifact(repository, "io.micronaut", "micronaut-management", "5.0.0");
+        writeArtifact(repository, "io.micronaut.cache", "micronaut-cache-caffeine", "5.0.0");
         writeArtifact(repository, "io.micronaut.security", "micronaut-security", "4.0.0");
         writeBom(
             repository,
             "io.micronaut",
             "micronaut-core-bom",
             "5.0.0",
-            List.of(new ManagedDependency("io.micronaut", "micronaut-management", "5.0.0"))
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-management", "5.0.0"),
+                new ManagedDependency("io.micronaut.cache", "micronaut-cache-caffeine", "5.0.0")
+            )
         );
         writeBom(
             repository,
             "io.micronaut.platform",
             "micronaut-platform",
             "5.0.0",
-            List.of(new ManagedDependency("io.micronaut", "micronaut-management", "5.0.0"))
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-management", "5.0.0"),
+                new ManagedDependency("io.micronaut.cache", "micronaut-cache-caffeine", "5.0.0")
+            )
         );
 
         Path project = tempDir.resolve("project-control-panel-production-security");
@@ -405,6 +476,7 @@ class PyronautInstallMainTest {
         );
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-security")));
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-management")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-cache-caffeine")));
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-ui")));
         assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-management")));
     }
