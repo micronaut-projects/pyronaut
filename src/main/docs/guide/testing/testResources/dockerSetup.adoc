@@ -1,6 +1,6 @@
 = Docker Requirements
 
-Micronaut Test Resources uses Testcontainers, so Docker or a compatible container runtime must be available before `pyronaut run` or `pyronaut test` can provision containers.
+Micronaut Test Resources uses Testcontainers, so Docker or a compatible container runtime must be available before `pyronaut dev`, `pyronaut run`, or `pyronaut test` can provision containers.
 
 Verify the runtime first:
 

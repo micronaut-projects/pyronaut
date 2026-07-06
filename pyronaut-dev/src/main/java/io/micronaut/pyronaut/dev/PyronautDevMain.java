@@ -82,6 +82,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final int INTERNAL_ERROR = 10;
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
+    private static final String LAUNCH_MODE_PROPERTY = "pyronaut.dev.launch.mode";
     private static final String BUILD_DEPENDENCIES_MANIFEST = "resolved-build-dependencies";
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
@@ -368,8 +369,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             return runInMemoryTests(invocation, stagingRoot);
         }
         Path pyronautDir = stagingRoot.resolve(DEFAULT_PYRONAUT_DIR);
+        boolean productionMode = isProductionMode();
         List<Path> buildDependencies = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
-        List<Path> runtimeDependencies = readManifest(resolveRunManifest(pyronautDir));
+        List<Path> runtimeDependencies = readManifest(resolveRunManifest(pyronautDir, productionMode));
         List<URL> runtimeUrls = toUrls(runtimeDependencies);
         Path configDir = stagingRoot.resolve("config");
         if (Files.isDirectory(configDir)) {
@@ -393,9 +395,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             PyronautDevLogging.initializeApplicationLogging();
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
-                .environments(Environment.DEVELOPMENT)
                 .beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation))
                 .mainClass(mainClass);
+            if (!productionMode) {
+                micronaut.environments(Environment.DEVELOPMENT);
+            }
             ContextClassLoaderApplicationContextConfigurers.configure(micronaut, applicationClassLoader);
             List<String> configLocations = toConfigLocations(invocation.configs());
             if (!configLocations.isEmpty()) {
@@ -415,14 +419,15 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static int runInMemoryTests(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
         Path pyronautDir = stagingRoot.resolve(DEFAULT_PYRONAUT_DIR);
+        boolean productionMode = isProductionMode();
         List<Path> buildDependencies = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
-        List<Path> runtimeDependencies = readManifest(resolveRunManifest(pyronautDir));
+        List<Path> runtimeDependencies = readManifest(resolveRunManifest(pyronautDir, productionMode));
         List<Path> testDependencies = readManifest(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST));
         List<Path> compilerClasspath = new ArrayList<>(runtimeDependencies);
         compilerClasspath.addAll(testDependencies);
         List<URL> runtimeUrls = toUrls(compilerClasspath);
         Path configDir = stagingRoot.resolve("config");
-        if (Files.isDirectory(configDir)) {
+        if (!productionMode && Files.isDirectory(configDir)) {
             runtimeUrls.add(configDir.toUri().toURL());
         }
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
@@ -439,7 +444,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
-            defaultTestServerPort();
+            if (!productionMode) {
+                defaultTestServerPort();
+            }
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             Path testsDir = stagingRoot.resolve(DEFAULT_TESTS_DIR);
             GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader, Map.of(), selectTestApplicationMain(testsDir));
@@ -502,12 +509,20 @@ public final class PyronautDevMain implements Callable<Integer> {
         return locations;
     }
 
-    private static Path resolveRunManifest(Path pyronautDir) {
+    private static Path resolveRunManifest(Path pyronautDir, boolean productionMode) {
+        if (productionMode) {
+            return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
+        }
         Path developmentManifest = pyronautDir.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST);
         if (Files.exists(developmentManifest)) {
             return developmentManifest;
         }
         return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
+    }
+
+    private static boolean isProductionMode() {
+        String launchMode = System.getProperty(LAUNCH_MODE_PROPERTY);
+        return launchMode != null && launchMode.equalsIgnoreCase("production");
     }
 
     private static ClassLoader directSourceLauncherClassLoader(DirectSourceInvocation invocation) {

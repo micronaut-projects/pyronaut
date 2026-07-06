@@ -128,19 +128,19 @@ name = "hello-pyronaut"
 port = 8080
 ```
 
-Run the application:
+Run the application in development mode:
 
 ```bash
 pyronaut install
 pyronaut process
-pyronaut run
+pyronaut dev
 ```
 
-`pyronaut run` performs install/process preflight automatically, so after the
+`pyronaut dev` performs install/process preflight automatically, so after the
 first successful install this is normally enough:
 
 ```bash
-pyronaut run
+pyronaut dev
 curl http://localhost:8080/
 ```
 
@@ -206,7 +206,7 @@ pyronaut process --no-cache --project-dir /path/to/app
 Run or test with lifecycle validation:
 
 ```bash
-pyronaut run --project-dir /path/to/app
+pyronaut dev --project-dir /path/to/app
 pyronaut test --project-dir /path/to/app
 pyronaut test --tests test_controller.py::test_index --project-dir /path/to/app
 ```
@@ -214,7 +214,7 @@ pyronaut test --tests test_controller.py::test_index --project-dir /path/to/app
 Skip lifecycle configuration validation explicitly:
 
 ```bash
-pyronaut run --no-validate
+pyronaut dev --no-validate
 pyronaut test --no-validate
 ```
 
@@ -253,7 +253,7 @@ pyronaut --tui --test --project-dir /path/to/app
 Trace delegated tool invocations while debugging:
 
 ```bash
-PYRONAUT_TRACE_DELEGATION=true pyronaut run --project-dir /path/to/app
+PYRONAUT_TRACE_DELEGATION=true pyronaut dev --project-dir /path/to/app
 ```
 
 Disable automatic Test Resources orchestration for `run` and `test`:

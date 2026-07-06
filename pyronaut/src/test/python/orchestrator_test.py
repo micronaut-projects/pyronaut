@@ -565,7 +565,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", "--test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=development", "--test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
             executed,
         )
 
@@ -592,7 +592,10 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual([[str(native_dev), "-Djava.home=/tmp/java-home", str(source)]], executed)
+        self.assertEqual(
+            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=production", str(source)]],
+            executed,
+        )
 
     def test_run_direct_python_directory_uses_pyronaut_dev_native_executable(self):
         executed = []
@@ -618,7 +621,84 @@ class OrchestratorTest(unittest.TestCase):
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual([[str(native_dev), "-Djava.home=/tmp/java-home", str(source_dir)]], executed)
+        self.assertEqual(
+            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=production", str(source_dir)]],
+            executed,
+        )
+
+    def test_dev_direct_python_script_restarts_when_source_changes(self):
+        started = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            source = Path(temp_dir) / "controller.py"
+            source.write_text("print('v1')\n", encoding="utf-8")
+
+            class FakeProcess:
+                def __init__(self, exit_after_polls=100):
+                    self.exit_after_polls = exit_after_polls
+                    self.polls = 0
+                    self.terminated = False
+
+                def poll(self):
+                    if self.terminated:
+                        return 0
+                    self.polls += 1
+                    if self.polls >= self.exit_after_polls:
+                        return 0
+                    return None
+
+                def terminate(self):
+                    self.terminated = True
+
+                def wait(self, timeout=None):
+                    return 0
+
+                def kill(self):
+                    self.terminated = True
+
+            first_process = FakeProcess()
+            processes = [first_process, FakeProcess(exit_after_polls=1)]
+
+            def process_runner(command_line, env=None):
+                started.append(command_line)
+                return processes.pop(0)
+
+            ticks = {"count": 0}
+            now = {"value": 0.0}
+
+            def monotonic():
+                return now["value"]
+
+            def sleep(seconds):
+                now["value"] += seconds
+                ticks["count"] += 1
+                if ticks["count"] == 1:
+                    source.write_text("print('v2')\n", encoding="utf-8")
+                if ticks["count"] > 50:
+                    raise TimeoutError("Test did not trigger direct-source restart within expected ticks")
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["dev", str(source)],
+                    process_runner=process_runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/java-home",
+                    watch_poll_interval=0.05,
+                    watch_debounce_seconds=0.05,
+                    monotonic=monotonic,
+                    sleep=sleep,
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(2, len(started))
+        self.assertEqual(
+            [str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=development", str(source)],
+            started[0],
+        )
+        self.assertTrue(first_process.terminated)
 
     def test_direct_source_native_compiler_classpath_excludes_inject_python_vfs_jar(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -755,6 +835,7 @@ additional-resources = ["views"]
             project_dir = Path(temp_dir) / "demo"
             cache_dir = project_dir / "__pyronaut__"
             (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
             (cache_dir / "resolved-development-runtime-dependencies").write_text(
                 "\n".join(
                     [
@@ -768,7 +849,7 @@ additional-resources = ["views"]
                 encoding="utf-8",
             )
 
-            classpath = cli._build_native_application_classpath("run", project_dir.resolve(), str(native_dev))  # noqa: SLF001
+            classpath = cli._build_native_application_classpath("dev", project_dir.resolve(), str(native_dev))  # noqa: SLF001
 
         entries = classpath.split(os.pathsep)
         self.assertNotIn("/tmp/micronaut-context-python-5.1.0.jar", entries)
@@ -1254,21 +1335,17 @@ mode = "jvm"
         self._assert_test_delegate(executed[3], str(project_dir))
         self._assert_test_resources_stop(executed[4], str(project_dir))
 
-    def test_stop_skipped_when_session_owner_mismatch(self):
+    def test_run_does_not_start_test_resources_when_enabled(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
-            project_dir = Path(temp_dir) / "mismatch"
+            project_dir = Path(temp_dir) / "runtime-only"
             session_dir = project_dir / "__pyronaut__"
             (session_dir / "classes").mkdir(parents=True, exist_ok=True)
             self._write_manifests(project_dir)
+            self._write_test_resources_enabled(project_dir, enabled=True)
 
             def runner(command_line):
                 executed.append(command_line)
-                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
-                    (session_dir / "test-resources-session.json").write_text(
-                        "{\"ownerToken\":\"other\",\"ownerPid\":999,\"ownerCommand\":\"other\",\"startedAt\":0}\n",
-                        encoding="utf-8",
-                    )
                 return 0
 
             exit_code = cli.run(
@@ -1279,8 +1356,8 @@ mode = "jvm"
             )
 
         self.assertEqual(0, exit_code)
-        self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
-        self.assertTrue(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
 
     def test_test_processes_test_pass_even_when_output_dirs_exist(self):
         executed = []
@@ -1937,11 +2014,11 @@ additional-test-resources = ["test-fixtures"]
             self.assertIn("test-resources/test.properties", watched_files)
             self.assertIn("test-fixtures/book.json", watched_files)
 
-    def test_run_delegate_classpath_prefers_development_runtime_manifest_before_delegate_jars(self):
+    def test_run_delegate_classpath_uses_runtime_manifest_before_delegate_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
-            self._write_manifests(project_dir, development_runtime=True)
+            self._write_manifests(project_dir, development_runtime=True, runtime=True)
             tools_dir = Path(temp_dir) / "tools" / "pyronaut-run"
             bin_dir = tools_dir / "bin"
             lib_dir = tools_dir / "lib"
@@ -1964,8 +2041,8 @@ additional-test-resources = ["test-fixtures"]
                     os.environ["PYRONAUT_RUN_JAR"] = previous
 
             entries = classpath.split(os.pathsep)
-            self.assertEqual("/tmp/runtime-dev.jar", entries[0])
-            self.assertNotIn("/tmp/runtime.jar", entries)
+            self.assertEqual("/tmp/runtime.jar", entries[0])
+            self.assertNotIn("/tmp/runtime-dev.jar", entries)
             self.assertEqual(str(pyronaut_run_jar.resolve()), entries[1])
 
     def test_run_delegation_preserves_server_port_env_without_java_home_provider(self):

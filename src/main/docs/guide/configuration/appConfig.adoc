@@ -33,8 +33,8 @@ config/application-test.toml
 config/application-dev.toml
 ----
 
-The configured `resources` directory and any `additional-resources` directories are included for run, test, and build flows.
-The configured `test-resources` directory and any `additional-test-resources` directories are included for test flows.
+The configured `resources` directory and any `additional-resources` directories are included for `dev`, `run`, `test`, and build flows.
+The configured `test-resources` directory and any `additional-test-resources` directories are included for `dev` and `test` flows.
 
 == Schema Support
 
@@ -54,9 +54,9 @@ Use:
 
 [source,bash]
 ----
-pyronaut validate-config --scenario run
+pyronaut validate-config --scenario dev
 pyronaut validate-config --scenario test
 pyronaut validate-config --scenario production
 ----
 
-`pyronaut run`, `pyronaut test`, and native build flows run scenario-specific validation by default.
+`pyronaut dev`, `pyronaut run`, `pyronaut test`, and native build flows run scenario-specific validation by default.

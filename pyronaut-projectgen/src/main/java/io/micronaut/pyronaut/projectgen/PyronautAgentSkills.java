@@ -157,7 +157,7 @@ class PyronautAgentSkills implements Feature {
             - `pyronaut process`: processes `src/` and `tests/` sources into `__pyronaut__/classes` and `__pyronaut__/test-classes`.
             - `pyronaut run`: validates config for the `run` scenario, processes main sources, starts the app, and manages test resources when enabled. Run `pyronaut install` explicitly after dependency or editor-support changes.
             - `pyronaut test`: validates config for the `test` scenario, processes test sources, runs pytest through Pyronaut, and writes reports under `__pyronaut__/reports/tests`. Run `pyronaut install` explicitly after dependency or editor-support changes.
-            - `pyronaut validate-config --scenario run|test|production`: validates lifecycle configuration for a specific scenario and writes reports under `__pyronaut__/reports/config-validation/<scenario>`.
+            - `pyronaut validate-config --scenario dev|run|test|production`: validates lifecycle configuration for a specific scenario and writes reports under `__pyronaut__/reports/config-validation/<scenario>`.
             - `pyronaut test-resources-server start|status|stop`: manages a reusable test-resources server. `run` and `test` can also start an owned server automatically when test resources are enabled.
 
             `pyronaut run` and `pyronaut test` validate by default. Use `--no-validate` only for short diagnostics where validation itself is the blocker.

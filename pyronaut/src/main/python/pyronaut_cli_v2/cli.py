@@ -28,11 +28,12 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"install", "process", "run", "test", "build", "create", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
     "process": "pyronaut-processor",
+    "dev": "pyronaut-dev",
     "run": "pyronaut-run",
     "test": "pyronaut-test",
     "create": "pyronaut-create",
@@ -45,10 +46,12 @@ TOOLCHAIN_TYPE_JVM = "jvm"
 TOOLCHAIN_TYPE_NATIVE = "native"
 
 JAVA_MAIN_BY_COMMAND = {
+    "dev": "io.micronaut.pyronaut.dev.PyronautDevMain",
     "run": "io.micronaut.pyronaut.run.PyronautRunMain",
     "test": "io.micronaut.pyronaut.test.PyronautTestMain",
 }
 JAVA_DELEGATE_JAR_ENV = {
+    "dev": "PYRONAUT_DEV_JAR",
     "run": "PYRONAUT_RUN_JAR",
     "test": "PYRONAUT_TEST_JAR",
 }
@@ -205,6 +208,7 @@ def run(
                 project_dir=Path.cwd(),
             )
             return _delegate_direct_source(
+                "dev",
                 argv,
                 execute,
                 locate,
@@ -214,22 +218,36 @@ def run(
         _print_usage(stream=sys.stderr)
         return USAGE_ERROR
 
-    if command == "run" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
-        _print_run_usage()
+    if command in {"dev", "run"} and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
+        _print_run_usage(command=command)
         return SUCCESS
 
     if command == "test" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
         _print_test_usage()
         return SUCCESS
 
-    if command == "run" and _looks_like_direct_source_invocation(forwarded_args):
+    if command in {"dev", "run"} and _looks_like_direct_source_invocation(forwarded_args):
         direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
             runner=runner,
             runner_with_env=runner_with_env,
             process_runner=process_runner,
             project_dir=Path.cwd(),
         )
+        if command == "dev":
+            return _run_direct_source(
+                command,
+                forwarded_args,
+                execute,
+                process_runner or _spawn_subprocess,
+                locate,
+                java_home_provider=direct_source_java_home_provider,
+                watch_poll_interval=watch_poll_interval,
+                watch_debounce_seconds=watch_debounce_seconds,
+                monotonic=monotonic,
+                sleep=sleep,
+            )
         return _delegate_direct_source(
+            command,
             forwarded_args,
             execute,
             locate,
@@ -244,9 +262,9 @@ def run(
 
     no_cache = _extract_no_cache(forwarded_args)
     local_repository = _extract_local_repository(forwarded_args)
-    delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"run", "test"} else forwarded_args
-    delegated_args = _strip_local_repository_args(delegated_args) if command in {"run", "test"} else delegated_args
-    auto_restart_mode = command == "run" and (process_runner is not None or (runner is None and runner_with_env is None))
+    delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
+    delegated_args = _strip_local_repository_args(delegated_args) if command in {"dev", "run", "test"} else delegated_args
+    auto_restart_mode = command == "dev" and (process_runner is not None or (runner is None and runner_with_env is None))
 
     effective_java_home_provider = java_home_provider or _default_java_home_provider(
         runner=runner,
@@ -286,7 +304,7 @@ def run(
     test_resources_env_overrides: dict[str, str] | None = None
     try:
         test_resources_enabled = _test_resources_enabled(Path(project_dir))
-        if command in {"run", "test"} and test_resources_enabled:
+        if command in {"dev", "test"} and test_resources_enabled:
             tr_session = _OwnedTestResourcesSession(
                 project_dir=Path(project_dir).resolve(),
                 owner_command=shlex.join(["pyronaut", command, *forwarded_args]),
@@ -340,7 +358,7 @@ def run(
                 process_pass="main",
             )
 
-        if command in {"run", "test"}:
+        if command in {"dev", "run", "test"}:
             if no_validate:
                 sys.stderr.write("[validation] skipped (--no-validate)\n")
             else:
@@ -362,7 +380,7 @@ def run(
                 execute,
                 locate,
                 install=False,
-                process_pass="main" if command == "run" else "test",
+                process_pass="main" if command in {"dev", "run"} else "test",
             )
             if preflight_code != SUCCESS:
                 return preflight_code
@@ -377,7 +395,7 @@ def run(
             execute,
             locate,
             debug_vm=debug_vm,
-            env_overrides=test_resources_env_overrides if command in {"run", "test"} else None,
+            env_overrides=test_resources_env_overrides if command in {"dev", "test"} else None,
             java_home_provider=effective_java_home_provider,
         )
     except RuntimeError as exc:
@@ -461,7 +479,7 @@ def _delegate(
             env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
             return runner(command_line, env)
 
-    if command in {"run", "test"}:
+    if command in {"dev", "run", "test"}:
         return _delegate_via_java(
             command,
             args,
@@ -495,6 +513,7 @@ def _delegate(
 
 
 def _delegate_direct_source(
+    command: str,
     args: Sequence[str],
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
@@ -506,22 +525,127 @@ def _delegate_direct_source(
         print("Missing native delegated executable: pyronaut-dev", file=sys.stderr)
         return PRECONDITION_FAILED
     try:
-        env = _build_java_home_env("run", java_home_provider)
+        env = _build_java_home_env(command, java_home_provider)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
-    jvm_args = _build_direct_source_native_jvm_args(executable_path, env)
+    jvm_args = _build_direct_source_native_jvm_args(executable_path, env, command=command)
     command_line = [executable_path, *jvm_args, *args]
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
     return runner(command_line, env)
 
 
-def _build_direct_source_native_jvm_args(executable_path: str, env: dict[str, str] | None) -> list[str]:
+def _run_direct_source(
+    command: str,
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    process_runner: ProcessRunner,
+    resolver: Callable[[str], str | None],
+    *,
+    java_home_provider: JavaHomeProvider | None = None,
+    watch_poll_interval: float,
+    watch_debounce_seconds: float,
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> int:
+    if command != "dev":
+        return _delegate_direct_source(
+            command,
+            args,
+            runner,
+            resolver,
+            java_home_provider=java_home_provider,
+        )
+    try:
+        executable_path = _resolve_pyronaut_dev_native_executable(resolver)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    if executable_path is None:
+        print("Missing native delegated executable: pyronaut-dev", file=sys.stderr)
+        return PRECONDITION_FAILED
+    try:
+        env = _build_java_home_env(command, java_home_provider)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    env = _apply_project_virtualenv(env, Path.cwd())
+    snapshot = _snapshot_direct_source_inputs(args)
+    return _run_direct_source_with_auto_restart(
+        executable_path,
+        args,
+        env,
+        process_runner,
+        snapshot,
+        monotonic=monotonic,
+        sleep=sleep,
+        watch_poll_interval=watch_poll_interval,
+        watch_debounce_seconds=watch_debounce_seconds,
+    )
+
+
+def _run_direct_source_with_auto_restart(
+    executable_path: str,
+    args: Sequence[str],
+    env: dict[str, str] | None,
+    process_runner: ProcessRunner,
+    snapshot: tuple[tuple[str, int, int], ...],
+    *,
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+    watch_poll_interval: float,
+    watch_debounce_seconds: float,
+) -> int:
+    if watch_poll_interval <= 0:
+        watch_poll_interval = 0.25
+    if watch_debounce_seconds < 0:
+        watch_debounce_seconds = 0.0
+
+    command_line = [executable_path, *_build_direct_source_native_jvm_args(executable_path, env, command="dev"), *args]
+
+    while True:
+        if _delegation_trace_enabled():
+            print(shlex.join(command_line), file=sys.stderr)
+        try:
+            process = process_runner(command_line, env)
+        except OSError as exception:
+            print(f"Failed executing delegated command: {exception}", file=sys.stderr)
+            return INTERNAL_ERROR
+
+        restart_requested_at: float | None = None
+        try:
+            while True:
+                code = process.poll()
+                if code is not None:
+                    return int(code)
+                sleep(watch_poll_interval)
+                next_snapshot = _snapshot_direct_source_inputs(args)
+                if next_snapshot == snapshot:
+                    restart_requested_at = None
+                    continue
+                now = monotonic()
+                if restart_requested_at is None:
+                    restart_requested_at = now
+                    continue
+                if now - restart_requested_at < watch_debounce_seconds:
+                    continue
+                if not _stop_managed_process(process):
+                    print("Failed to stop running process for restart.", file=sys.stderr)
+                    return INTERNAL_ERROR
+                snapshot = next_snapshot
+                break
+        except KeyboardInterrupt:
+            _stop_managed_process(process)
+            return 130
+
+
+def _build_direct_source_native_jvm_args(executable_path: str, env: dict[str, str] | None, *, command: str) -> list[str]:
     jvm_args: list[str] = []
     java_home = (env or os.environ).get("JAVA_HOME")
     if java_home:
         jvm_args.append(f"-Djava.home={java_home}")
+    jvm_args.append(f"-Dpyronaut.dev.launch.mode={'production' if command == 'run' else 'development'}")
     launcher_classpath = os.pathsep.join(_direct_source_native_compiler_classpath_entries(executable_path))
     if launcher_classpath:
         jvm_args.append(f"-Djava.class.path={launcher_classpath}")
@@ -632,11 +756,13 @@ def _delegate_lib_entries(executable_path: str) -> list[str]:
 
 def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
     cache_dir = project_dir / "__pyronaut__"
-    if command == "run":
+    if command == "dev":
+        entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
+    elif command == "run":
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
-        entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
+        entries = _read_manifest_entries(cache_dir / "resolved-runtime-dependencies")
     elif command == "test":
         entries = _read_test_delegate_dependency_entries(cache_dir)
     else:
@@ -697,11 +823,23 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
     cache_dir = project_dir / "__pyronaut__"
     layout = _read_pyproject_sources(project_dir)
     entries: list[str] = []
-    if command == "run":
+    if command == "dev":
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
         entries.extend(_read_manifest_entries(_resolve_run_manifest(cache_dir)))
+        entries.append(str(classes_dir.resolve()))
+        _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
+        for resource_dir in layout.additional_resources_dirs:
+            _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
+        _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.test_resources_dir))
+        for resource_dir in layout.additional_test_resources_dirs:
+            _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
+    elif command == "run":
+        classes_dir = cache_dir / "classes"
+        if not classes_dir.is_dir():
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+        entries.extend(_read_manifest_entries(cache_dir / "resolved-runtime-dependencies"))
         entries.append(str(classes_dir.resolve()))
         _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
         for resource_dir in layout.additional_resources_dirs:
@@ -2387,6 +2525,60 @@ def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ..
     return tuple(entries)
 
 
+def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int, int], ...]:
+    ignored_dirs = {"__pyronaut__", ".pytest_cache", "build", ".gradle", "__pycache__", ".git"}
+    entries: list[tuple[str, int, int]] = []
+    seen_files: set[Path] = set()
+
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            break
+        if token in {"--test", "--port", "--property", "--config", "--setup"}:
+            index += 2
+            continue
+        if token.startswith("-D") or token.startswith("--port=") or token.startswith("--property=") or token.startswith("--config=") or token.startswith("--setup="):
+            index += 1
+            continue
+        path = Path(token)
+        index += 1
+        if not path.exists():
+            continue
+        if path.is_dir():
+            for current_root, dirs, files in __import__("os").walk(path):
+                dirs[:] = [name for name in dirs if name not in ignored_dirs and not name.startswith(".")]
+                base = Path(current_root)
+                for file_name in sorted(files):
+                    if file_name.startswith("."):
+                        continue
+                    file_path = base / file_name
+                    if file_path in seen_files:
+                        continue
+                    seen_files.add(file_path)
+                    try:
+                        stat = file_path.stat()
+                    except OSError:
+                        continue
+                    try:
+                        relative = file_path.relative_to(path).as_posix()
+                    except ValueError:
+                        relative = file_path.as_posix()
+                    entries.append((f"{path.as_posix()}/{relative}", int(stat.st_mtime_ns), int(stat.st_size)))
+            continue
+        if path in seen_files:
+            continue
+        seen_files.add(path)
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        entries.append((path.as_posix(), int(stat.st_mtime_ns), int(stat.st_size)))
+
+    entries.sort(key=lambda item: item[0])
+    return tuple(entries)
+
+
 def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> ManagedProcess:
     return subprocess.Popen(command_line, env=env)
 
@@ -2402,7 +2594,7 @@ def _default_java_home_provider(
 
 
 def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
-    if command not in {"run", "test", "build", "tui", "validate-config", "install", "process"}:
+    if command not in {"dev", "run", "test", "build", "tui", "validate-config", "install", "process"}:
         return None
     env = dict(os.environ)
     if java_home_provider is None:
@@ -3312,7 +3504,7 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_build_usage(stream=None) -> None:
@@ -3323,23 +3515,27 @@ def _print_build_usage(stream=None) -> None:
     )
 
 
-def _print_run_usage(stream=None) -> None:
+def _print_run_usage(stream=None, command: str = "run") -> None:
     if stream is None:
         stream = sys.stdout
     _write_command_help(
         stream,
         usage_lines=[
-            "Usage: pyronaut run [-hV] [--debug-vm] [--no-cache] [--no-validate]",
+            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-validate]",
             "                    [--classes-dir=<classesDir>]",
             "                    [--config-dir=<configDir>]",
             "                    [--main-class=<mainClass>]",
             "                    [--project-dir=<projectDir>] [<appArgs>...]",
-            "       pyronaut run [--port=<port>] [--property=<name=value>]",
+            f"       pyronaut {command} [--port=<port>] [--property=<name=value>]",
             "                    [-D<name=value>] [--config=<file-or-dir>]",
             "                    [--setup=<pyproject.toml>]",
             "                    <source.py|source-dir>...",
         ],
-        description="Run a processed Pyronaut application or direct Python sources",
+        description=(
+            "Run a processed Pyronaut application or direct Python sources in development mode"
+            if command == "dev"
+            else "Run a processed Pyronaut application or direct Python sources"
+        ),
         options=[
             ("[<appArgs>...]", "Arguments passed to the processed application"),
             ("<source.py|source-dir>...", "Python source files or directories for direct source execution"),

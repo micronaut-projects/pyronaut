@@ -6,6 +6,7 @@ Current orchestrator command surface:
 
 - `pyronaut install`
 - `pyronaut process`
+- `pyronaut dev`
 - `pyronaut run`
 - `pyronaut test`
 - `pyronaut build`
@@ -17,6 +18,7 @@ Delegated executables:
 
 - `pyronaut-install`
 - `pyronaut-processor`
+- `pyronaut-dev`
 - `pyronaut-run`
 - `pyronaut-test`
 - `pyronaut-native-build` (native branch of `pyronaut build`)
@@ -73,7 +75,8 @@ Minimum capability expectations by command:
 
 - `install`: dependency resolution and scoped cache manifests
 - `process`: main/test processing and deterministic cache semantics
-- `run`: preflight-compatible runtime execution (`--debug-vm` pass-through aware)
+- `dev`: development execution with auto-restart, development environment defaults, and test-resources integration (`--debug-vm` pass-through aware)
+- `run`: runtime-only execution (`--debug-vm` pass-through aware)
 - `test`: selector-aware execution (`--tests` support)
 - `build`: mode-aware execution (`jvm`/`native`) and native delegate compatibility
 - `validate-config`: configuration validation reports and DI-validation toggle support

@@ -70,14 +70,14 @@ port = 8080
 ----
 pyronaut install
 pyronaut process
-pyronaut run
+pyronaut dev
 ----
 
-`pyronaut run` performs install and process preflight automatically, so after the first successful install this shorter form is normally enough:
+`pyronaut dev` performs install and process preflight automatically, so after the first successful install this shorter form is normally enough:
 
 [source,bash]
 ----
-pyronaut run
+pyronaut dev
 ----
 
 The application can then be called with:

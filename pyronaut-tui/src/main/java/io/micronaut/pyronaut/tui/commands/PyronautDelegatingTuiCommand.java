@@ -265,7 +265,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         if (restart) {
             controller.notify("Change detected, restarting run workflow", UiModel.Severity.INFO);
         }
-        controller.notify(reason + " (validate -> process -> run)", UiModel.Severity.INFO);
+        controller.notify(reason + " (validate -> process -> dev)", UiModel.Severity.INFO);
         controller.startCompiling();
 
         var validationCode = runForeground(
@@ -274,7 +274,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 project,
                 "validate-config",
                 validateExecutable,
-                List.of("--project-dir", project.toString(), "--scenario", "run")
+                List.of("--project-dir", project.toString(), "--scenario", "dev")
             ),
             false
         );

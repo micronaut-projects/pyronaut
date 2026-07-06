@@ -41,7 +41,7 @@ cd demo
 pyronaut install
 pyronaut process
 pyronaut test
-pyronaut run
+pyronaut dev
 ----
 
 Pyronaut reuses compatible Micronaut starter features when their dependency and configuration behavior applies to Python projects.

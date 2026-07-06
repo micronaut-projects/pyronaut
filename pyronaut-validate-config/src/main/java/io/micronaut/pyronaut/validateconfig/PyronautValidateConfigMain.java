@@ -53,7 +53,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
 
-    @CommandLine.Option(names = "--scenario", defaultValue = DEFAULT_SCENARIO, description = "Validation scenario: run|test|production")
+    @CommandLine.Option(names = "--scenario", defaultValue = DEFAULT_SCENARIO, description = "Validation scenario: dev|test|production")
     String scenario = DEFAULT_SCENARIO;
 
     @CommandLine.Option(names = "--classpath", split = "[,;]", description = "Classpath entries")
@@ -207,7 +207,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
                                                String normalizedScenario) throws IOException {
         PyprojectModel.Validation validation = model.pyronaut().validation();
         PyprojectModel.ValidationScenario scenarioConfig = switch (normalizedScenario) {
-            case "run" -> validation.run();
+            case "dev", "run" -> validation.run();
             case "test" -> validation.test();
             default -> validation.production();
         };
@@ -390,10 +390,10 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
 
     private static String normalizeScenario(String raw) {
         String normalized = raw == null ? DEFAULT_SCENARIO : raw.trim().toLowerCase(Locale.ROOT);
-        if (normalized.equals("run") || normalized.equals("test") || normalized.equals("production")) {
+        if (normalized.equals("dev") || normalized.equals("run") || normalized.equals("test") || normalized.equals("production")) {
             return normalized;
         }
-        throw new IllegalArgumentException("Invalid value for --scenario. Use run|test|production");
+        throw new IllegalArgumentException("Invalid value for --scenario. Use dev|run|test|production");
     }
 
     private static ReportFormat normalizeFormat(String raw) {

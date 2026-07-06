@@ -1,6 +1,6 @@
 = Test Resources & Docker
 
-Pyronaut can orchestrate Micronaut Test Resources for `pyronaut run` and `pyronaut test`.
+Pyronaut can orchestrate Micronaut Test Resources for `pyronaut dev`, `pyronaut run`, and `pyronaut test`.
 This is useful for tests and local runs that need services such as databases without hard-coding connection settings.
 
 Enable test resources in `pyproject.toml`:
@@ -11,14 +11,14 @@ Enable test resources in `pyproject.toml`:
 enabled = true
 ----
 
-When enabled, `pyronaut install` resolves a test-resources-server classpath and `pyronaut run` or `pyronaut test` starts a server when needed.
+When enabled, `pyronaut install` resolves a test-resources-server classpath and `pyronaut dev`, `pyronaut run`, or `pyronaut test` starts a server when needed.
 The CLI propagates test resources client settings to delegated JVM processes.
 
 == Lifecycle
 
 Default behavior:
 
-- `pyronaut run` and `pyronaut test` start an owned server on demand.
+- `pyronaut dev`, `pyronaut run`, and `pyronaut test` start an owned server on demand.
 - Owned servers stop when the owning run or test session exits.
 - If an external project-local server is already running, the CLI attaches to it instead of claiming ownership.
 - Shared servers stay running across command invocations.

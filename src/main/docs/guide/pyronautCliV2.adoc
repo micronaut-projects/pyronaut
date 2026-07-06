@@ -4,6 +4,7 @@ Pyronaut CLI v2 is a process-oriented toolchain. The `pyronaut` command is a Pyt
 
 - `pyronaut-install`
 - `pyronaut-processor`
+- `pyronaut-dev`
 - `pyronaut-run`
 - `pyronaut-test`
 - `pyronaut-create` (used by `pyronaut create`)
@@ -21,7 +22,7 @@ Phase 1 supports macOS and Linux.
 
 [source,bash]
 ----
-pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|test|build|create|validate-config|test-resources-server> [args...]
+pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ----
 
 == Quickstart workflow
@@ -30,7 +31,7 @@ pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|run|te
 ----
 pyronaut install --project-dir /path/to/app
 pyronaut process --project-dir /path/to/app
-pyronaut run --project-dir /path/to/app
+pyronaut dev --project-dir /path/to/app
 pyronaut test --project-dir /path/to/app
 pyronaut create demo
 ----
@@ -65,11 +66,11 @@ additional-resources = ["views", "assets"]
 additional-test-resources = ["tests-fixtures"]
 ----
 
-`additional-resources` is a list of extra application resource directories. These directories are included for `run` and `test` scopes, watched by auto-restart, included in lifecycle validation defaults, and staged into JVM wheels and Docker images.
+`additional-resources` is a list of extra application resource directories. These directories are included for `dev`, `run`, and `test` scopes, watched by auto-restart in `dev`, included in lifecycle validation defaults, and staged into JVM wheels and Docker images.
 
-`additional-test-resources` is a list of extra test-only resource directories. These directories are included for `test` scope, watched by auto-restart, and included in test lifecycle validation defaults.
+`additional-test-resources` is a list of extra test-only resource directories. These directories are included for `test` scope, watched by auto-restart in `dev` and `test`, and included in test lifecycle validation defaults.
 
-These settings are used by `pyronaut process`, `pyronaut run`, `pyronaut test`, lifecycle validation, auto-restart file watching, and build staging for wheels and Docker images.
+These settings are used by `pyronaut process`, `pyronaut dev`, `pyronaut run`, `pyronaut test`, lifecycle validation, auto-restart file watching, and build staging for wheels and Docker images.
 
 == Command reference
 
@@ -246,9 +247,29 @@ Default processing outputs:
 - configured `python` + configured `java` -> `__pyronaut__/classes`
 - merged source+test pass -> `__pyronaut__/test-classes`
 
+=== `pyronaut dev`
+
+Runs the processed application via `pyronaut-dev` in development mode.
+
+Common options:
+
+- `--project-dir <dir>`
+- `--debug-vm`: enables JDWP JVM debug flags (port 5005)
+- `--no-validate`: explicitly bypasses lifecycle config validation
+
+Behavior:
+
+- Runs `pyronaut-validate-config --scenario dev` before preflight by default.
+- Automatically performs install/process preflight before launching.
+- Starts an owned test-resources server when test resources are enabled and no reusable external server settings are present.
+- Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
+- Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
+- Uses the development runtime classpath manifest plus processed classes.
+- Includes the configured resources directory, any `additional-resources` directories, the configured test resources directory, and any `additional-test-resources` directories on the classpath when present.
+
 === `pyronaut run`
 
-Runs the processed application via `pyronaut-run`.
+Runs the processed application via `pyronaut-run` in runtime-only mode.
 
 Common options:
 
@@ -260,10 +281,9 @@ Behavior:
 
 - Runs `pyronaut-validate-config --scenario run` before preflight by default.
 - Automatically performs install/process preflight before launching.
-- Starts an owned test-resources server when test resources are enabled and no reusable external server settings are present.
-- Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
-- Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
-- Uses runtime classpath manifests plus processed classes.
+- Does not start test resources by default.
+- Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS` when an external project-local server is configured.
+- Uses the runtime classpath manifest plus processed classes.
 - Includes the configured resources directory and any `additional-resources` directories on the classpath when present.
 
 === `pyronaut test`
@@ -379,7 +399,7 @@ Validates Micronaut configuration and writes deterministic reports.
 Common options:
 
 - `--project-dir <dir>`
-- `--scenario <run|test|production>` (default `production`)
+- `--scenario <dev|run|test|production>` (default `production`)
 - `--env <name>`: repeatable environment entry
 - `--environments <a,b,...>`: comma-separated environments
 - `--validate-dependency-injection`
@@ -405,7 +425,7 @@ Report artifacts (default):
 
 Behavior:
 
-- `run`, `test`, and native `build` delegate to `validate-config` with scenario-specific defaults (`run`, `test`, or `production`).
+- `dev`, `run`, `test`, and native `build` delegate to `validate-config` with scenario-specific defaults (`dev`, `run`, `test`, or `production`).
 - Standalone `pyronaut validate-config` defaults to `production` unless `--scenario` is provided.
 - Non-run/test commands strip stale `micronaut.test.resources.*` entries from inherited `JAVA_TOOL_OPTIONS` before validation.
 - When configuration errors are present, the CLI prints a copy-pasteable `[tool.pyronaut.validation] suppressions = [...]` snippet below the rendered error table.
@@ -468,7 +488,7 @@ When omitted, the default is `.micronaut/test-resources/logs`.
 
 Lifecycle behavior:
 
-- `pyronaut run` and `pyronaut test` automatically orchestrate test resources when enabled.
+- `pyronaut dev`, `pyronaut run`, and `pyronaut test` automatically orchestrate test resources when enabled, but only `dev` enables auto-restart and development defaults.
 - Owned servers are started on demand and stopped when the owning run/test session exits.
 - Shared servers (`shared-server = true`) are intentionally left running across command invocations.
 - Externally started servers are attached to when project-local settings already exist, but are not claimed or stopped by `run`/`test`.

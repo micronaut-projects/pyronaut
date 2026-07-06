@@ -7,17 +7,19 @@ Run validation explicitly with:
 
 [source,bash]
 ----
+pyronaut validate-config --scenario dev
 pyronaut validate-config --scenario production
 ----
 
 Supported scenarios are:
 
+- `dev`
 - `run`
 - `test`
 - `production`
 
 The standalone command defaults to `production`.
-`pyronaut run`, `pyronaut test`, and native build flows call validation with their own scenario defaults unless `--no-validate` is supplied.
+`pyronaut dev`, `pyronaut run`, `pyronaut test`, and native build flows call validation with their own scenario defaults unless `--no-validate` is supplied.
 
 == Reports
 
