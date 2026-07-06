@@ -36,6 +36,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -70,6 +71,29 @@ public final class PyronautCreateAppMain implements Callable<Integer> {
         "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
         "with", "yield"
     );
+
+    /**
+     * Default VS Code launch configuration written into new scaffolded apps.
+     */
+    private static final String VSCODE_LAUNCH_JSON = """
+        {
+          "version": "0.2.0",
+          "configurations": [
+            {
+              "name": "Pyronaut: Run",
+              "type": "node-terminal",
+              "request": "launch",
+              "command": "pyronaut dev"
+            },
+            {
+              "name": "Pyronaut: Debug VM",
+              "type": "node-terminal",
+              "request": "launch",
+              "command": "pyronaut dev --debug-vm"
+            }
+          ]
+        }
+        """;
 
     /**
      * Project name to generate. When absent with {@code --inplace}, the output directory name is used.
@@ -171,6 +195,7 @@ public final class PyronautCreateAppMain implements Callable<Integer> {
                 settings,
                 () -> previewGenerator.generate(options)
             );
+            project = addDefaultEditorLaunchConfiguration(project);
             validateTarget(target, project, inplace);
             writeProject(target, project);
             commandSpec.commandLine().getOut().println("Created Pyronaut application at " + target);
@@ -287,6 +312,12 @@ public final class PyronautCreateAppMain implements Callable<Integer> {
         if (".".equals(value) || "..".equals(value) || value.contains("/") || value.contains("\\")) {
             throw new IllegalArgumentException("Invalid project NAME: " + value);
         }
+    }
+
+    private static Map<String, String> addDefaultEditorLaunchConfiguration(Map<String, String> project) {
+        Map<String, String> files = new LinkedHashMap<>(project);
+        files.put(".vscode/launch.json", VSCODE_LAUNCH_JSON);
+        return files;
     }
 
     private static void validateTarget(Path target, Map<String, String> project, boolean inplace) throws IOException {

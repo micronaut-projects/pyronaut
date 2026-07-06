@@ -28,6 +28,7 @@ Generated projects use the standard Pyronaut layout:
 * `.agents/skills/pyronaut-project/SKILL.md`
 * `.agents/skills/pyronaut-cli/SKILL.md`
 * `.agents/skills/pyronaut-coding/SKILL.md`
+* `.vscode/launch.json`
 * `.gitignore`
 
 The default application includes a simple HTTP controller, Logback-backed Python logging setup, pytest integration, and generated agent guidance for local Pyronaut workflows.

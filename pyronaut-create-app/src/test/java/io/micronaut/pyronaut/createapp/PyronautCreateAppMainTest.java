@@ -54,11 +54,13 @@ class PyronautCreateAppMainTest {
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-project/SKILL.md")));
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-cli/SKILL.md")));
         assertTrue(Files.exists(project.resolve(".agents/skills/pyronaut-coding/SKILL.md")));
+        assertTrue(Files.exists(project.resolve(".vscode/launch.json")));
         String pyproject = Files.readString(project.resolve("pyproject.toml"), StandardCharsets.UTF_8);
         String main = Files.readString(project.resolve("src/main.py"), StandardCharsets.UTF_8);
         String test = Files.readString(project.resolve("tests/test_demo.py"), StandardCharsets.UTF_8);
         String application = Files.readString(project.resolve("config/application.toml"), StandardCharsets.UTF_8);
         String testApplication = Files.readString(project.resolve("tests-config/application-test.toml"), StandardCharsets.UTF_8);
+        String launch = Files.readString(project.resolve(".vscode/launch.json"), StandardCharsets.UTF_8);
         assertTrue(pyproject.contains("[tool.pyronaut.test-resources]"));
         assertTrue(pyproject.contains("enabled = false"));
         assertTrue(pyproject.contains("runtime = [\n"));
@@ -73,6 +75,11 @@ class PyronautCreateAppMainTest {
         assertFalse(application.contains("micronaut.application.name = 'demo'"));
         assertTrue(testApplication.contains("[micronaut.server]\nport = -1"));
         assertFalse(testApplication.contains("micronaut.server.port = -1"));
+        assertTrue(launch.contains("\"name\": \"Pyronaut: Run\""));
+        assertTrue(launch.contains("\"name\": \"Pyronaut: Debug VM\""));
+        assertTrue(launch.contains("\"type\": \"node-terminal\""));
+        assertTrue(launch.contains("\"command\": \"pyronaut dev\""));
+        assertTrue(launch.contains("\"command\": \"pyronaut dev --debug-vm\""));
     }
 
     @Test
@@ -85,6 +92,13 @@ class PyronautCreateAppMainTest {
         assertEquals(0, execution.exitCode());
         assertTrue(Files.exists(project.resolve("pyproject.toml")));
         assertTrue(Files.exists(project.resolve("src/demo/controllers.py")));
+        assertTrue(Files.exists(project.resolve(".vscode/launch.json")));
+        String launch = Files.readString(project.resolve(".vscode/launch.json"), StandardCharsets.UTF_8);
+        assertTrue(launch.contains("\"name\": \"Pyronaut: Run\""));
+        assertTrue(launch.contains("\"name\": \"Pyronaut: Debug VM\""));
+        assertTrue(launch.contains("\"type\": \"node-terminal\""));
+        assertTrue(launch.contains("\"command\": \"pyronaut dev\""));
+        assertTrue(launch.contains("\"command\": \"pyronaut dev --debug-vm\""));
         assertFalse(Files.exists(project.resolve("demo")));
     }
 
