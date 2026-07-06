@@ -1293,7 +1293,7 @@ final class PythonIdeStubGenerator {
                     }
                     if (java.util.Optional.class.isAssignableFrom(rawClass)) {
                         MappedType firstType = firstTypeArgument(arguments, currentModule, symbolRegistry, genericContext, visiting);
-                        return new MappedType(firstType.rendered() + " | None", firstType.imports());
+                        return new MappedType("Optional[" + firstType.rendered() + "]", firstType.imports());
                     }
                     if (rawClass == Class.class) {
                         MappedType firstType = firstTypeArgument(arguments, currentModule, symbolRegistry, genericContext, visiting);
@@ -1479,7 +1479,7 @@ final class PythonIdeStubGenerator {
 
         StringBuilder builder = new StringBuilder();
         builder.append("from __future__ import annotations\n\n");
-        builder.append("from typing import Any, Callable, ClassVar, Generic, Protocol, TypeVar, overload\n");
+        builder.append("from typing import Any, Callable, ClassVar, Generic, Optional, Protocol, TypeVar, overload\n");
         if (hasEnums) {
             builder.append("from enum import Enum\n");
         }
