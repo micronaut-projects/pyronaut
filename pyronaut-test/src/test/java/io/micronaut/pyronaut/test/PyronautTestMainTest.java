@@ -389,27 +389,7 @@ class PyronautTestMainTest {
     }
 
     @Test
-    void publishReportLocationsDoesNotMirrorLegacyArtifactsIntoReportsDirectory() throws Exception {
-        Path project = tempDir.resolve("legacy-report-no-recovery-project");
-        Files.createDirectories(project);
-        Files.writeString(project.resolve("junit.xml"), "<testsuite name=\"legacy\"/>", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("index.html"), "<html><body>legacy</body></html>", StandardCharsets.UTF_8);
-        Files.writeString(project.resolve(".pyronaut-last-nodeid.txt"), "tests/test_a.py::test_ok\n", StandardCharsets.UTF_8);
-        Files.createDirectories(project.resolve("__pyronaut__/reports/tests"));
-
-        PyronautTestMain.publishReportLocations(project);
-
-        Path reportsDir = project.resolve("__pyronaut__/reports/tests");
-        assertFalse(Files.exists(reportsDir.resolve("junit.xml")));
-        assertFalse(Files.exists(reportsDir.resolve("index.html")));
-        assertFalse(Files.exists(reportsDir.resolve(".pyronaut-last-nodeid.txt")));
-        assertTrue(Files.exists(project.resolve("junit.xml")));
-        assertTrue(Files.exists(project.resolve("index.html")));
-        assertTrue(Files.exists(project.resolve(".pyronaut-last-nodeid.txt")));
-    }
-
-    @Test
-    void reportLocationsOutputOnlyMentionsReportsDirectoryAndHtml() throws Exception {
+    void reportLocationsOutputMentionsReportsDirectoryAndHtmlOnly() throws Exception {
         Path project = tempDir.resolve("report-links-project");
         Files.createDirectories(project.resolve("__pyronaut__/reports/tests"));
 
@@ -425,8 +405,7 @@ class PyronautTestMainTest {
         String output = out.toString(StandardCharsets.UTF_8);
         assertTrue(output.contains("Test reports directory:"));
         assertTrue(output.contains("HTML report:"));
-        assertFalse(output.contains("JUnit XML report:"));
-        assertFalse(output.contains("Last nodeid report:"));
+        assertFalse(output.contains("junit.xml"));
     }
 
     @Test

@@ -238,12 +238,10 @@ class OrchestratorTest(unittest.TestCase):
             )
 
             self.assertEqual(0, exit_code)
-            self.assertEqual(5, len(executed))
+            self.assertEqual(3, len(executed))
             self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"], executed[0])
             self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "main"], executed[1])
-            self._assert_test_resources_start(executed[2], str(project_dir))
-            self._assert_run_delegate(executed[3], str(project_dir), ["--main-class", "example.Main"])
-            self._assert_test_resources_stop(executed[4], str(project_dir))
+            self._assert_run_delegate(executed[2], str(project_dir), ["--main-class", "example.Main"])
 
     def test_run_help_prints_orchestrator_help_without_lifecycle_phases(self):
         executed = []
@@ -294,6 +292,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("Run tests for a processed Pyronaut application or direct Python sources", help_text)
         self.assertIn("--tests=<tests>", help_text)
         self.assertIn("--test-classes-dir=<testClassesDir>", help_text)
+        self.assertIn("--continuous", help_text)
         self.assertIn("pyronaut --test", help_text)
         self.assertNotIn("pyronaut-test", help_text)
 
@@ -336,12 +335,10 @@ class OrchestratorTest(unittest.TestCase):
             )
 
             self.assertEqual(0, exit_code)
-            self.assertEqual(5, len(executed))
+            self.assertEqual(3, len(executed))
             self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"], executed[0])
             self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "main"], executed[1])
-            self._assert_test_resources_start(executed[2], str(project_dir))
-            self._assert_run_delegate(executed[3], str(project_dir), ["--main-class", "example.Main"])
-            self._assert_test_resources_stop(executed[4], str(project_dir))
+            self._assert_run_delegate(executed[2], str(project_dir), ["--main-class", "example.Main"])
 
     def test_preflight_failure_stops_run(self):
         executed = []
@@ -1405,12 +1402,10 @@ mode = "jvm"
         )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(5, len(executed))
+        self.assertEqual(3, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run", "--no-cache"], executed[0])
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "main", "--no-cache"], executed[1])
-        self._assert_test_resources_start(executed[2], "/tmp/demo")
-        self._assert_run_delegate(executed[3], "/tmp/demo")
-        self._assert_test_resources_stop(executed[4], "/tmp/demo")
+        self._assert_run_delegate(executed[2], "/tmp/demo")
 
     def test_test_forwards_no_cache_to_processor(self):
         executed = []
@@ -1502,6 +1497,242 @@ mode = "jvm"
         self.assertEqual(5, len(executed))
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "test"], executed[1])
         self._assert_test_delegate(executed[3], str(project_dir))
+
+    def test_test_continuous_space_reruns_full_pipeline_and_reuses_test_resources(self):
+        executed: list[tuple[list[str], dict[str, str] | None]] = []
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "continuous-space"
+            resolved_project_dir = self._normalized_project_dir(str(project_dir.resolve()))
+            (project_dir / "src").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src" / "main.py").write_text("print('v1')\n", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            settings_dir = project_dir / ".micronaut" / "test-resources"
+            settings_file = settings_dir / "test-resources.properties"
+            session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                    owner_token = command_line[command_line.index("--owner-token") + 1]
+                    settings_dir.mkdir(parents=True, exist_ok=True)
+                    settings_file.write_text(
+                        "server.uri=http\\://localhost\\:61234\n"
+                        "server.access.token=fresh-token\n",
+                        encoding="utf-8",
+                    )
+                    session_file.write_text(
+                        cli._json_dumps(  # noqa: SLF001 - test fixture mirrors runtime session file
+                            {
+                                "ownerCommand": cli.shlex.join(["pyronaut", "test", "--project-dir", str(project_dir), "--continuous"]),
+                                "ownerPid": os.getpid(),
+                                "ownerToken": owner_token,
+                                "startedAt": time.time(),
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                return 0
+
+            calls = {"count": 0}
+
+            def input_reader(timeout):
+                calls["count"] += 1
+                return " " if calls["count"] == 1 else "q"
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir), "--continuous"],
+                    runner_with_env=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    input_reader=input_reader,
+                )
+
+        self.assertEqual(0, exit_code)
+        banner = "--------------------------------------\nContinuous Testing Active. Press SPACE to run again, \"w\" to watch for changes, or \"q\" to exit.\n"
+        self.assertEqual(2, stdout.getvalue().count(banner))
+        self.assertGreaterEqual(calls["count"], 2)
+        self.assertEqual(8, len(executed))
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[0][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "test"], executed[1][0])
+        self._assert_test_resources_start(executed[2][0], str(project_dir))
+        self._assert_test_delegate(executed[3][0], str(project_dir))
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[4][0])
+        self.assertEqual("http://localhost:61234", (executed[4][1] or {}).get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "test"], executed[5][0])
+        self._assert_test_delegate(executed[6][0], str(project_dir))
+        self._assert_test_resources_stop(executed[7][0], str(project_dir))
+        self.assertEqual(1, sum(1 for command_line, _ in executed if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]))
+        self.assertEqual(1, sum(1 for command_line, _ in executed if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "stop"]))
+
+    def test_test_continuous_watch_mode_reruns_on_pyproject_change(self):
+        executed: list[tuple[list[str], dict[str, str] | None]] = []
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "continuous-watch"
+            resolved_project_dir = self._normalized_project_dir(str(project_dir.resolve()))
+            (project_dir / "src").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src" / "main.py").write_text("print('v1')\n", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            pyproject = project_dir / "pyproject.toml"
+            pyproject.write_text(
+                """
+[project]
+name = "continuous-watch"
+
+[tool.pyronaut.test-resources]
+enabled = true
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            settings_dir = project_dir / ".micronaut" / "test-resources"
+            settings_file = settings_dir / "test-resources.properties"
+            session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+            now = {"value": 0.0}
+            calls = {"count": 0}
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                    owner_token = command_line[command_line.index("--owner-token") + 1]
+                    settings_dir.mkdir(parents=True, exist_ok=True)
+                    settings_file.write_text(
+                        "server.uri=http\\://localhost\\:61235\n"
+                        "server.access.token=fresh-token\n",
+                        encoding="utf-8",
+                    )
+                    session_file.write_text(
+                        cli._json_dumps(  # noqa: SLF001 - test fixture mirrors runtime session file
+                            {
+                                "ownerCommand": cli.shlex.join(["pyronaut", "test", "--project-dir", str(project_dir), "--continuous"]),
+                                "ownerPid": os.getpid(),
+                                "ownerToken": owner_token,
+                                "startedAt": time.time(),
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                return 0
+
+            def input_reader(timeout):
+                calls["count"] += 1
+                if timeout is not None:
+                    now["value"] += timeout
+                if calls["count"] == 1:
+                    return "w"
+                if calls["count"] == 2:
+                    pyproject.write_text(
+                        """
+[project]
+name = "continuous-watch"
+version = "2.0.0"
+
+[tool.pyronaut.test-resources]
+enabled = true
+""".strip()
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    return None
+                if calls["count"] == 3:
+                    return None
+                return "q"
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir), "--continuous"],
+                    runner_with_env=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    input_reader=input_reader,
+                    watch_poll_interval=0.05,
+                    watch_debounce_seconds=0.05,
+                    monotonic=lambda: now["value"],
+                )
+
+        self.assertEqual(0, exit_code)
+        banner = "--------------------------------------\nContinuous Testing Active. Press SPACE to run again, \"w\" to watch for changes, or \"q\" to exit.\n"
+        self.assertEqual(2, stdout.getvalue().count(banner))
+        self.assertGreaterEqual(calls["count"], 4)
+        self.assertEqual(8, len(executed))
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[0][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "test"], executed[1][0])
+        self._assert_test_resources_start(executed[2][0], str(project_dir))
+        self._assert_test_delegate(executed[3][0], str(project_dir))
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[4][0])
+        self.assertEqual("http://localhost:61235", (executed[4][1] or {}).get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "test"], executed[5][0])
+        self._assert_test_delegate(executed[6][0], str(project_dir))
+        self._assert_test_resources_stop(executed[7][0], str(project_dir))
+
+    def test_test_continuous_keyboard_interrupt_cleans_up_owned_test_resources(self):
+        executed: list[tuple[list[str], dict[str, str] | None]] = []
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "continuous-cancel"
+            resolved_project_dir = self._normalized_project_dir(str(project_dir.resolve()))
+            (project_dir / "src").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src" / "main.py").write_text("print('v1')\n", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            settings_dir = project_dir / ".micronaut" / "test-resources"
+            settings_file = settings_dir / "test-resources.properties"
+            session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]:
+                    owner_token = command_line[command_line.index("--owner-token") + 1]
+                    settings_dir.mkdir(parents=True, exist_ok=True)
+                    settings_file.write_text(
+                        "server.uri=http\\://localhost\\:61236\n"
+                        "server.access.token=fresh-token\n",
+                        encoding="utf-8",
+                    )
+                    session_file.write_text(
+                        cli._json_dumps(  # noqa: SLF001 - test fixture mirrors runtime session file
+                            {
+                                "ownerCommand": cli.shlex.join(["pyronaut", "test", "--project-dir", str(project_dir), "--continuous"]),
+                                "ownerPid": os.getpid(),
+                                "ownerToken": owner_token,
+                                "startedAt": time.time(),
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                return 0
+
+            calls = {"count": 0}
+
+            def input_reader(timeout):
+                calls["count"] += 1
+                raise KeyboardInterrupt
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir), "--continuous"],
+                    runner_with_env=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    input_reader=input_reader,
+                )
+
+        self.assertEqual(130, exit_code)
+        banner = "--------------------------------------\nContinuous Testing Active. Press SPACE to run again, \"w\" to watch for changes, or \"q\" to exit.\n"
+        self.assertEqual(1, stdout.getvalue().count(banner))
+        self.assertEqual(1, calls["count"])
+        self.assertEqual(5, len(executed))
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[0][0])
+        self._assert_test_resources_start(executed[2][0], str(project_dir))
+        self._assert_test_delegate(executed[3][0], str(project_dir))
+        self._assert_test_resources_stop(executed[4][0], str(project_dir))
 
     def test_test_starts_test_resources_before_validation_and_reuses_fresh_env(self):
         executed: list[tuple[list[str], dict[str, str] | None]] = []
@@ -2013,6 +2244,7 @@ additional-test-resources = ["test-fixtures"]
             self.assertIn("assets/logo.svg", watched_files)
             self.assertIn("test-resources/test.properties", watched_files)
             self.assertIn("test-fixtures/book.json", watched_files)
+            self.assertIn("pyproject.toml", watched_files)
 
     def test_run_delegate_classpath_uses_runtime_manifest_before_delegate_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2474,12 +2706,10 @@ additional-test-resources = ["test-fixtures"]
         )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(5, len(executed))
+        self.assertEqual(3, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test"], executed[0])
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "test"], executed[1])
-        self._assert_test_resources_start(executed[2], "/tmp/demo")
-        self._assert_test_delegate(executed[3], "/tmp/demo", ["--tests", "tests/test_math.py::test_add", "--tests", "*test_add*"])
-        self._assert_test_resources_stop(executed[4], "/tmp/demo")
+        self._assert_test_delegate(executed[2], "/tmp/demo", ["--tests", "tests/test_math.py::test_add", "--tests", "*test_add*"])
 
     def test_run_debug_vm_sets_jvm_arg_and_forwards_flag(self):
         executed = []
@@ -2504,10 +2734,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertIsInstance(executed[0][1], dict)
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "main"], executed[1][0])
         self.assertIsInstance(executed[1][1], dict)
-        self._assert_test_resources_start(executed[2][0], "/tmp/demo")
-        self.assertIsNone(executed[2][1])
-        self._assert_run_delegate(executed[3][0], "/tmp/demo", ["--debug-vm"])
-        self.assertEqual(self._JDWP_FLAG, executed[3][0][3])
+        self._assert_run_delegate(executed[2][0], "/tmp/demo", ["--debug-vm"])
+        self.assertEqual(self._JDWP_FLAG, executed[2][0][3])
 
     def test_test_debug_vm_sets_jvm_arg(self):
         executed = []
@@ -3079,11 +3307,9 @@ additional-test-resources = ["test-fixtures"]
         self.assertIsInstance(executed[0][1], dict)
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "main"], executed[1][0])
         self.assertIsInstance(executed[1][1], dict)
-        self._assert_test_resources_start(executed[2][0], "/tmp/demo")
-        self.assertIsNone(executed[2][1])
-        self._assert_run_delegate(executed[3][0], "/tmp/demo")
-        self.assertEqual("/tmp/graalvm-jdk-25", executed[3][1]["JAVA_HOME"])
-        self.assertTrue(executed[3][1]["PATH"].startswith("/tmp/graalvm-jdk-25/bin"))
+        self._assert_run_delegate(executed[2][0], "/tmp/demo")
+        self.assertEqual("/tmp/graalvm-jdk-25", executed[2][1]["JAVA_HOME"])
+        self.assertTrue(executed[2][1]["PATH"].startswith("/tmp/graalvm-jdk-25/bin"))
 
     def test_run_fails_when_java_home_provider_cannot_provision(self):
         executed = []
@@ -4761,15 +4987,13 @@ java-version = 25
         )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(5, len(executed))
+        self.assertEqual(3, len(executed))
         self.assertEqual(
             ["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "run"],
             executed[0],
         )
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "main"], executed[1])
-        self._assert_test_resources_start(executed[2], "/tmp/demo")
-        self._assert_run_delegate(executed[3], "/tmp/demo")
-        self._assert_test_resources_stop(executed[4], "/tmp/demo")
+        self._assert_run_delegate(executed[2], "/tmp/demo")
 
     def test_test_validates_test_scenario_before_preflight(self):
         executed = []

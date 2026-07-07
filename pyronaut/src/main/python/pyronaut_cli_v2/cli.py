@@ -159,6 +159,7 @@ def run(
     snapshotter: Callable[[Path], tuple[tuple[str, int, int], ...]] | None = None,
     monotonic: Callable[[], float] | None = None,
     sleep: Callable[[float], None] | None = None,
+    input_reader: Callable[[float | None], str | None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
     if monotonic is None:
@@ -196,6 +197,8 @@ def run(
     forwarded_args = _normalize_tests_selection_flag(forwarded_args)
     no_validate = _extract_no_validate(forwarded_args)
     forwarded_args = _remove_no_validate(forwarded_args)
+    continuous = _extract_continuous(forwarded_args)
+    forwarded_args = _remove_continuous(forwarded_args)
     debug_vm = _extract_debug_vm(forwarded_args)
     forwarded_args = _remove_debug_vm(forwarded_args)
 
@@ -358,7 +361,7 @@ def run(
                 process_pass="main",
             )
 
-        if command in {"dev", "run", "test"}:
+        if command in {"dev", "run"}:
             if no_validate:
                 sys.stderr.write("[validation] skipped (--no-validate)\n")
             else:
@@ -380,7 +383,7 @@ def run(
                 execute,
                 locate,
                 install=False,
-                process_pass="main" if command in {"dev", "run"} else "test",
+                process_pass="main",
             )
             if preflight_code != SUCCESS:
                 return preflight_code
@@ -389,15 +392,52 @@ def run(
                 tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
 
-        return _delegate(
-            command,
-            delegated_args,
-            execute,
-            locate,
-            debug_vm=debug_vm,
-            env_overrides=test_resources_env_overrides if command in {"dev", "test"} else None,
-            java_home_provider=effective_java_home_provider,
-        )
+            return _delegate(
+                command,
+                delegated_args,
+                execute,
+                locate,
+                debug_vm=debug_vm,
+                env_overrides=test_resources_env_overrides if command == "dev" else None,
+                java_home_provider=effective_java_home_provider,
+            )
+
+        if command == "test":
+            if continuous:
+                return _run_test_continuously(
+                    project_dir=Path(project_dir),
+                    delegated_args=delegated_args,
+                    no_cache=no_cache,
+                    execute=execute,
+                    resolver=locate,
+                    debug_vm=debug_vm,
+                    tr_session=tr_session,
+                    test_resources_env_overrides=test_resources_env_overrides,
+                    no_validate=no_validate,
+                    watch_poll_interval=watch_poll_interval,
+                    watch_debounce_seconds=watch_debounce_seconds,
+                    snapshotter=snapshotter or _snapshot_watched_files,
+                    monotonic=monotonic,
+                    sleep=sleep,
+                    input_reader=input_reader,
+                    java_home_provider=effective_java_home_provider,
+                    local_repository=local_repository,
+                )
+
+            test_exit_code, _ = _run_test_cycle(
+                project_dir=Path(project_dir),
+                delegated_args=delegated_args,
+                no_cache=no_cache,
+                execute=execute,
+                resolver=locate,
+                debug_vm=debug_vm,
+                tr_session=tr_session,
+                test_resources_env_overrides=test_resources_env_overrides,
+                no_validate=no_validate,
+                java_home_provider=effective_java_home_provider,
+                local_repository=local_repository,
+            )
+            return test_exit_code
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -2435,6 +2475,213 @@ def _run_with_auto_restart(
             return 130
 
 
+def _run_test_cycle(
+    *,
+    project_dir: Path,
+    delegated_args: Sequence[str],
+    no_cache: bool,
+    execute: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    debug_vm: bool,
+    tr_session: _OwnedTestResourcesSession | None,
+    test_resources_env_overrides: dict[str, str] | None,
+    no_validate: bool,
+    java_home_provider: JavaHomeProvider | None,
+    local_repository: str | None,
+) -> tuple[int, dict[str, str] | None]:
+    if no_validate:
+        sys.stderr.write("[validation] skipped (--no-validate)\n")
+    else:
+        validation_code = _run_lifecycle_validation(
+            project_dir=str(project_dir),
+            scenario="test",
+            runner=execute,
+            resolver=resolver,
+            no_cache=no_cache,
+            env_overrides=test_resources_env_overrides,
+        )
+        if validation_code != SUCCESS:
+            return validation_code, test_resources_env_overrides
+
+    preflight_code = _run_preflight(
+        str(project_dir),
+        no_cache,
+        local_repository,
+        execute,
+        resolver,
+        install=False,
+        process_pass="test",
+    )
+    if preflight_code != SUCCESS:
+        return preflight_code, test_resources_env_overrides
+
+    if tr_session is not None and test_resources_env_overrides is None:
+        tr_session.ensure_started(runner=execute, resolver=resolver, java_home_provider=java_home_provider)
+        test_resources_env_overrides = tr_session.client_env_overrides()
+
+    return (
+        _delegate(
+            "test",
+            delegated_args,
+            execute,
+            resolver,
+            debug_vm=debug_vm,
+            env_overrides=test_resources_env_overrides,
+            java_home_provider=java_home_provider,
+        ),
+        test_resources_env_overrides,
+    )
+
+
+def _run_test_continuously(
+    *,
+    project_dir: Path,
+    delegated_args: Sequence[str],
+    no_cache: bool,
+    execute: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    debug_vm: bool,
+    tr_session: _OwnedTestResourcesSession | None,
+    test_resources_env_overrides: dict[str, str] | None,
+    no_validate: bool,
+    watch_poll_interval: float,
+    watch_debounce_seconds: float,
+    snapshotter: Callable[[Path], tuple[tuple[str, int, int], ...]],
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+    input_reader: Callable[[float | None], str | None] | None,
+    java_home_provider: JavaHomeProvider | None,
+    local_repository: str | None,
+) -> int:
+    project_root = project_dir.resolve()
+    snapshot = snapshotter(project_root)
+    watch_mode = False
+
+    try:
+        input_context = _continuous_input_context() if input_reader is None else _inert_input_context(input_reader)
+        with input_context as (read_key, interactive):
+            def _wait_for_watch_trigger() -> bool:
+                nonlocal snapshot
+                changed_at: float | None = None
+                while True:
+                    key = read_key(watch_poll_interval)
+                    if key == "q":
+                        return False
+                    if key == "w":
+                        continue
+                    if key == " ":
+                        return True
+                    if key is not None:
+                        continue
+
+                    next_snapshot = snapshotter(project_root)
+                    if next_snapshot == snapshot:
+                        changed_at = None
+                        continue
+
+                    now = monotonic()
+                    if changed_at is None:
+                        changed_at = now
+                        continue
+                    if now - changed_at < watch_debounce_seconds:
+                        continue
+                    snapshot = next_snapshot
+                    return True
+
+            while True:
+                exit_code, test_resources_env_overrides = _run_test_cycle(
+                    project_dir=project_root,
+                    delegated_args=delegated_args,
+                    no_cache=no_cache,
+                    execute=execute,
+                    resolver=resolver,
+                    debug_vm=debug_vm,
+                    tr_session=tr_session,
+                    test_resources_env_overrides=test_resources_env_overrides,
+                    no_validate=no_validate,
+                    java_home_provider=java_home_provider,
+                    local_repository=local_repository,
+                )
+                snapshot = snapshotter(project_root)
+                _print_continuous_test_banner()
+                if not interactive:
+                    return exit_code
+
+                if watch_mode:
+                    if not _wait_for_watch_trigger():
+                        return SUCCESS
+                    continue
+
+                while True:
+                    key = read_key(None)
+                    if key == "q":
+                        return SUCCESS
+                    if key == "w":
+                        watch_mode = True
+                        if not _wait_for_watch_trigger():
+                            return SUCCESS
+                        break
+                    if key == " ":
+                        break
+                    if key is not None:
+                        continue
+    except KeyboardInterrupt:
+        return 130
+
+
+def _print_continuous_test_banner() -> None:
+    print("--------------------------------------")
+    print('Continuous Testing Active. Press SPACE to run again, "w" to watch for changes, or "q" to exit.')
+
+
+@contextlib.contextmanager
+def _inert_input_context(
+    input_reader: Callable[[float | None], str | None],
+) -> Iterable[tuple[Callable[[float | None], str | None], bool]]:
+    yield input_reader, True
+
+
+@contextlib.contextmanager
+def _continuous_input_context() -> Iterable[tuple[Callable[[float | None], str | None], bool]]:
+    stream = sys.stdin
+    if not hasattr(stream, "isatty") or not stream.isatty() or not hasattr(stream, "fileno"):
+        yield (lambda _timeout=None: None, False)
+        return
+
+    try:
+        import select
+        import termios
+        import tty
+    except ImportError:
+        yield (lambda _timeout=None: None, False)
+        return
+
+    fd = stream.fileno()
+    try:
+        original_settings = termios.tcgetattr(fd)
+    except Exception:
+        yield (lambda _timeout=None: None, False)
+        return
+
+    tty.setcbreak(fd)
+    try:
+        def read_key(timeout: float | None = None) -> str | None:
+            try:
+                if timeout is None:
+                    ready, _, _ = select.select([stream], [], [])
+                else:
+                    ready, _, _ = select.select([stream], [], [], timeout)
+                if not ready:
+                    return None
+                return stream.read(1) or None
+            except (OSError, ValueError):
+                return None
+
+        yield read_key, True
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, original_settings)
+
+
 def _build_run_delegate_invocation(
     args: Sequence[str],
     resolver: Callable[[str], str | None],
@@ -2492,6 +2739,7 @@ def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ..
         *layout.additional_resources_dirs,
         *layout.additional_test_resources_dirs,
     )
+    project_manifest = project_dir / "pyproject.toml"
     ignored_dirs = {"__pyronaut__", ".pytest_cache", "build", ".gradle", "__pycache__", ".git"}
     entries: list[tuple[str, int, int]] = []
     seen_roots: set[Path] = set()
@@ -2520,6 +2768,14 @@ def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ..
                 except ValueError:
                     relative = file_path.as_posix()
                 entries.append((relative, int(stat.st_mtime_ns), int(stat.st_size)))
+
+    if project_manifest.exists():
+        try:
+            stat = project_manifest.stat()
+        except OSError:
+            pass
+        else:
+            entries.append(("pyproject.toml", int(stat.st_mtime_ns), int(stat.st_size)))
 
     entries.sort(key=lambda item: item[0])
     return tuple(entries)
@@ -3210,6 +3466,14 @@ def _remove_no_validate(args: Sequence[str]) -> list[str]:
     return [token for token in args if token != "--no-validate"]
 
 
+def _extract_continuous(args: Sequence[str]) -> bool:
+    return any(token in {"-t", "--continuous"} for token in args)
+
+
+def _remove_continuous(args: Sequence[str]) -> list[str]:
+    return [token for token in args if token not in {"-t", "--continuous"}]
+
+
 def _extract_project_dir(args: Sequence[str]) -> str:
     for index, token in enumerate(args):
         if token == "--project-dir" and index + 1 < len(args):
@@ -3563,7 +3827,7 @@ def _print_test_usage(stream=None) -> None:
     _write_command_help(
         stream,
         usage_lines=[
-            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-validate]",
+            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-validate] [-t|--continuous]",
             "                     [--classes-dir=<classesDir>]",
             "                     [--config-dir=<configDir>]",
             "                     [--project-dir=<projectDir>]",
@@ -3586,6 +3850,7 @@ def _print_test_usage(stream=None) -> None:
             ("--config-dir=<configDir>", "Configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
             ("-h, --help", "Show this help message and exit."),
+            ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),
             ("--no-validate", "Skip test scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
@@ -4043,7 +4308,7 @@ def _run_tamboui_tui(
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
     try:
-        if initial_mode in {"run", "test"} and _test_resources_enabled(project_dir):
+        if initial_mode == "test" and _test_resources_enabled(project_dir):
             tr_session = _OwnedTestResourcesSession(
                 project_dir=project_dir.resolve(),
                 owner_command=shlex.join(["pyronaut", "--tui", f"--{initial_mode}", "--project-dir", str(project_dir)]),

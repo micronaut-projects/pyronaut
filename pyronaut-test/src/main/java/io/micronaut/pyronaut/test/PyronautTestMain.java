@@ -633,14 +633,6 @@ public final class PyronautTestMain implements Callable<Integer> {
         return projectRoot.resolve(selectorPath);
     }
 
-    static void publishReportLocations(Path projectRoot) {
-        Path reportsDir = projectRoot.resolve(DEFAULT_REPORTS_DIR).normalize();
-        Path html = reportsDir.resolve(DEFAULT_HTML_REPORT);
-
-        System.out.println("Test reports directory: " + reportsDir);
-        System.out.println("HTML report: " + html);
-    }
-
     static boolean isPytestPreconditionFailure(Throwable throwable) {
         return findPytestPreconditionFailure(throwable).isPresent();
     }
@@ -650,6 +642,14 @@ public final class PyronautTestMain implements Callable<Integer> {
             .map(Throwable::getMessage)
             .filter(message -> message != null && !message.isBlank())
             .orElseGet(() -> throwable.getMessage());
+    }
+
+    static void publishReportLocations(Path projectRoot) {
+        Path reportsDir = projectRoot.resolve(DEFAULT_REPORTS_DIR).normalize();
+        Path html = reportsDir.resolve(DEFAULT_HTML_REPORT);
+
+        System.out.println("Test reports directory: " + reportsDir);
+        System.out.println("HTML report: " + html);
     }
 
     private static Optional<Throwable> findPytestPreconditionFailure(Throwable throwable) {
