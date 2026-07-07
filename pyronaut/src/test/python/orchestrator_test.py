@@ -854,6 +854,99 @@ additional-resources = ["views"]
         self.assertIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
         self.assertIn("/tmp/micronaut-views-core-6.0.0.jar", entries)
 
+    def test_native_application_classpath_keeps_control_panel_jars(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            (native_dev.parent / "native-provided-classpath.txt").write_text(
+                "micronaut-context-python-5.1.0.jar\n",
+                encoding="utf-8",
+            )
+
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-development-runtime-dependencies").write_text(
+                "\n".join(
+                    [
+                        "/tmp/micronaut-control-panel-core-2.0.0.jar",
+                        "/tmp/micronaut-control-panel-ui-2.0.0.jar",
+                        "/tmp/micronaut-context-python-5.1.0.jar",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classpath = cli._build_native_application_classpath("dev", project_dir.resolve(), str(native_dev))  # noqa: SLF001
+
+        entries = classpath.split(os.pathsep)
+        self.assertIn("/tmp/micronaut-control-panel-core-2.0.0.jar", entries)
+        self.assertIn("/tmp/micronaut-control-panel-ui-2.0.0.jar", entries)
+        self.assertNotIn("/tmp/micronaut-context-python-5.1.0.jar", entries)
+
+    def test_run_native_application_classpath_still_filters_control_panel_jars(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            (native_dev.parent / "native-provided-classpath.txt").write_text(
+                "micronaut-context-python-5.1.0.jar\n",
+                encoding="utf-8",
+            )
+
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text(
+                "\n".join(
+                    [
+                        "/tmp/micronaut-control-panel-core-2.0.0.jar",
+                        "/tmp/micronaut-control-panel-ui-2.0.0.jar",
+                        "/tmp/micronaut-runtime-5.2.0.jar",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classpath = cli._build_native_application_classpath("run", project_dir.resolve(), str(native_dev))  # noqa: SLF001
+
+        entries = classpath.split(os.pathsep)
+        self.assertNotIn("/tmp/micronaut-control-panel-core-2.0.0.jar", entries)
+        self.assertNotIn("/tmp/micronaut-control-panel-ui-2.0.0.jar", entries)
+        self.assertIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
+
+    def test_dev_auto_restart_uses_dev_delegate_command(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-development-runtime-dependencies").write_text("/tmp/micronaut-control-panel-core-2.0.0.jar\n", encoding="utf-8")
+
+            with patch.object(cli, "_delegate_lib_entries", return_value=["/tmp/pyronaut-dev.jar"]):
+                with patch.object(cli, "_resolve_pyronaut_dev_native_executable", return_value="/tmp/pyronaut-dev"):
+                    executed = []
+
+                    def runner(command_line, env=None):
+                        executed.append((command_line, env))
+                        return 0
+
+                    exit_code = cli._delegate(  # noqa: SLF001 - exercising internal helper directly
+                        "dev",
+                        ["--project-dir", str(project_dir)],
+                        runner,
+                        lambda command_name: "/tmp/pyronaut-dev" if command_name == "pyronaut-dev" else None,
+                        java_home_provider=lambda: "/tmp/java-home",
+                    )
+
+        self.assertEqual(0, exit_code)
+        command_line, env = executed[0]
+        self.assertIn("io.micronaut.pyronaut.dev.PyronautDevMain", command_line)
+        self.assertIn("/tmp/micronaut-control-panel-core-2.0.0.jar", " ".join(command_line))
+        self.assertIsNone(env.get("PYRONAUT_TEST_RESOURCES_DISABLED") if env else None)
+
     def test_run_auto_restart_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):
         executed = []
         started = []

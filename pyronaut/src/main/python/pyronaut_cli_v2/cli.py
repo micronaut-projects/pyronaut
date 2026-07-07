@@ -475,6 +475,22 @@ def _delegate(
             print(shlex.join(command_line), file=sys.stderr)
         return runner(command_line, env)
 
+    if command == "dev":
+        try:
+            dev_command_line, env = _build_dev_delegate_invocation(
+                args,
+                resolver,
+                debug_vm=debug_vm,
+                env_overrides=env_overrides,
+                java_home_provider=java_home_provider,
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        if _delegation_trace_enabled():
+            print(shlex.join(dev_command_line), file=sys.stderr)
+        return runner(dev_command_line, env)
+
     try:
         dev_command_line = _pyronaut_dev_native_command_line(
             command,
@@ -854,6 +870,7 @@ def _build_native_application_classpath(command: str, project_dir: Path, launche
             _filter_native_launcher_provided_entries(
                 _build_native_application_classpath_entries(command, project_dir),
                 launcher_executable,
+                command,
             )
         )
     )
@@ -926,13 +943,17 @@ def _dedupe_classpath_entries(entries: Sequence[str]) -> list[str]:
     return deduped
 
 
-def _filter_native_launcher_provided_entries(entries: Sequence[str], launcher_executable: str | None) -> list[str]:
+def _filter_native_launcher_provided_entries(
+    entries: Sequence[str],
+    launcher_executable: str | None,
+    command: str,
+) -> list[str]:
     launcher_provided_names = _native_launcher_provided_file_names(launcher_executable)
     launcher_provided_artifact_ids = _native_launcher_provided_artifact_ids(launcher_executable, launcher_provided_names)
     return [
         entry
         for entry in entries
-        if not _is_native_launcher_provided_artifact(entry, launcher_provided_names, launcher_provided_artifact_ids)
+        if not _is_native_launcher_provided_artifact(entry, launcher_provided_names, launcher_provided_artifact_ids, command)
     ]
 
 
@@ -1002,8 +1023,11 @@ def _is_native_launcher_provided_artifact(
     entry: str,
     launcher_provided_names: set[str],
     launcher_provided_artifact_ids: set[str],
+    command: str,
 ) -> bool:
     file_name = Path(entry).name
+    if _is_control_panel_artifact(file_name):
+        return command != "dev"
     if _is_native_test_resources_client_artifact(file_name):
         return True
     if file_name in launcher_provided_names:
@@ -1018,6 +1042,10 @@ def _is_native_test_resources_client_artifact(file_name: str) -> bool:
         or file_name.startswith("micronaut-test-resources-core-")
         or file_name.startswith("micronaut-test-resources-codec-")
     )
+
+
+def _is_control_panel_artifact(file_name: str) -> bool:
+    return file_name.startswith("micronaut-control-panel-")
 
 
 def _is_test_launcher_provided_artifact(entry: str) -> bool:
@@ -2383,7 +2411,7 @@ def _run_with_auto_restart(
                 return preflight_code
 
         try:
-            command_line, env = _build_run_delegate_invocation(
+            command_line, env = _build_dev_delegate_invocation(
                 run_args,
                 resolver,
                 debug_vm=debug_vm,
@@ -2682,7 +2710,7 @@ def _continuous_input_context() -> Iterable[tuple[Callable[[float | None], str |
         termios.tcsetattr(fd, termios.TCSADRAIN, original_settings)
 
 
-def _build_run_delegate_invocation(
+def _build_dev_delegate_invocation(
     args: Sequence[str],
     resolver: Callable[[str], str | None],
     *,
@@ -2694,17 +2722,18 @@ def _build_run_delegate_invocation(
         "run",
         args,
         resolver,
+        classpath_command="dev",
         debug_vm=debug_vm,
         env_overrides=env_overrides,
         java_home_provider=java_home_provider,
     )
     if dev_command_line is not None:
-        env = _build_non_test_resources_env("run", java_home_provider)
+        env = _build_non_test_resources_env("dev", java_home_provider)
         env = _merge_env_overrides(env, env_overrides)
         env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
         return dev_command_line, env
     return _build_java_delegate_invocation(
-        "run",
+        "dev",
         args,
         resolver,
         debug_vm=debug_vm,
@@ -3596,6 +3625,7 @@ def _pyronaut_dev_native_command_line(
     args: Sequence[str],
     resolver: Callable[[str], str | None],
     *,
+    classpath_command: str | None = None,
     debug_vm: bool = False,
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
@@ -3612,14 +3642,14 @@ def _pyronaut_dev_native_command_line(
     if executable_path is None:
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider)
-    if command in {"run", "test"}:
-        classpath = _build_native_application_classpath(command, project_dir, executable_path)
+    effective_classpath_command = classpath_command or command
+    if effective_classpath_command in {"dev", "run", "test"}:
+        classpath = _build_native_application_classpath(effective_classpath_command, project_dir, executable_path)
         jvm_args = [*jvm_args, f"-Djava.class.path={classpath}"]
         test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
         if test_resources_client_classpath:
             jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
-        return [executable_path, *jvm_args, command, *args]
     return [executable_path, *jvm_args, command, *args]
 
 
