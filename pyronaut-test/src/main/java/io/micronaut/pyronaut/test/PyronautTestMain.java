@@ -649,7 +649,11 @@ public final class PyronautTestMain implements Callable<Integer> {
         Path html = reportsDir.resolve(DEFAULT_HTML_REPORT);
 
         System.out.println("Test reports directory: " + reportsDir);
-        System.out.println("HTML report: " + html);
+        System.out.println("HTML report: " + osc8Link(html, html.toUri().toString()));
+    }
+
+    private static String osc8Link(Path displayPath, String targetUri) {
+        return "\u001b]8;;" + targetUri + "\u001b\\" + displayPath + "\u001b]8;;\u001b\\";
     }
 
     private static Optional<Throwable> findPytestPreconditionFailure(Throwable throwable) {

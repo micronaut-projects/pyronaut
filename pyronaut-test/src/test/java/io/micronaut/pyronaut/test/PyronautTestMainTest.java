@@ -405,6 +405,8 @@ class PyronautTestMainTest {
         String output = out.toString(StandardCharsets.UTF_8);
         assertTrue(output.contains("Test reports directory:"));
         assertTrue(output.contains("HTML report:"));
+        assertTrue(output.contains("\u001b]8;;file:"));
+        assertTrue(output.contains("\u001b\\"));
         assertFalse(output.contains("junit.xml"));
     }
 
