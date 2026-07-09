@@ -62,6 +62,7 @@ import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -116,6 +117,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String MICRONAUT_METADATA_PREFIX = "META-INF/micronaut/";
     private static final String TEST_RESOURCES_PACKAGE = "io.micronaut.testresources.";
     private static final String PYRONAUT_TEST_RESOURCES_PACKAGE = "io.micronaut.pyronaut.testresources.";
+    private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
     private static final List<String> BUNDLED_TEST_RESOURCES_JARS = List.of(
         "micronaut-test-resources-",
         "micronaut-pyronaut-test-resources-server-"
@@ -247,12 +249,32 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     static int execute(String[] args, DelegateInvoker delegateInvoker, DirectSourceRunner directSourceRunner) {
+        if (isDirectRunCommand(args)) {
+            return new CommandLine(new PyronautDevMain(delegateInvoker, directSourceRunner))
+                .execute(Arrays.copyOfRange(args, 1, args.length));
+        }
         if (args.length > 0 && TOOL_COMMANDS.contains(args[0])) {
             ToolCommand command = ToolCommand.fromCliValue(args[0]);
             String[] forwarded = Arrays.copyOfRange(args, 1, args.length);
             return delegateInvoker.invoke(command, forwarded);
         }
         return new CommandLine(new PyronautDevMain(delegateInvoker, directSourceRunner)).execute(args);
+    }
+
+    private static boolean isDirectRunCommand(String[] args) {
+        if (args.length < 2 || !"run".equals(args[0])) {
+            return false;
+        }
+        for (int i = 1; i < args.length; i++) {
+            String argument = args[i];
+            if ("--project-dir".equals(argument)) {
+                return false;
+            }
+            if (argument.endsWith(".java") || argument.endsWith(".py")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -333,6 +355,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         Path stagingRoot = null;
         Map<String, String> previousProperties = new LinkedHashMap<>();
         try {
+            SourceType sourceType = sourceType(invocation.sources());
+            if (invocation.test() && sourceType != SourceType.PYTHON) {
+                throw new IllegalArgumentException("Direct tests currently support Python sources only");
+            }
             stagingRoot = Files.createTempDirectory("pyronaut-dev-source-");
             stageSetup(invocation, stagingRoot);
             stageSources(invocation.sources(), stagingRoot.resolve("src"));
@@ -341,6 +367,10 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             stageConfig(invocation.configs(), stagingRoot.resolve("config"));
             applyProperties(invocation.properties(), previousProperties);
+            if (sourceType == SourceType.JAVA && !invocation.properties().containsKey(MICRONAUT_PYTHON_ENABLED)) {
+                previousProperties.put(MICRONAUT_PYTHON_ENABLED, System.getProperty(MICRONAUT_PYTHON_ENABLED));
+                System.setProperty(MICRONAUT_PYTHON_ENABLED, "false");
+            }
             disableTestResourcesBridgeForSetupFreeDirectSource(invocation, previousProperties);
 
             if (invocation.setup() != null) {
@@ -491,14 +521,48 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static void configureDirectSource(PyronautCompiler.Builder builder, DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
+        SourceType sourceType = sourceType(invocation.sources());
         if (invocation.sources().size() == 1) {
             Path source = invocation.sources().get(0).toAbsolutePath().normalize();
             if (Files.isDirectory(source)) {
-                builder.pythonSrc(source.toString());
+                if (sourceType == SourceType.JAVA) {
+                    builder.javaSrc(source.toString());
+                } else {
+                    builder.pythonSrc(source.toString());
+                }
                 return;
             }
         }
-        builder.pythonSrc(stagingRoot.resolve("src").toString());
+        if (sourceType == SourceType.JAVA) {
+            builder.javaSrc(stagingRoot.resolve("src").toString());
+        } else {
+            builder.pythonSrc(stagingRoot.resolve("src").toString());
+        }
+    }
+
+    static SourceType sourceType(List<Path> sources) throws IOException {
+        boolean java = false;
+        boolean python = false;
+        for (Path source : sources) {
+            Path resolved = source.toAbsolutePath().normalize();
+            if (!Files.exists(resolved)) {
+                throw new IllegalArgumentException("Source does not exist: " + source);
+            }
+            try (var paths = Files.walk(resolved)) {
+                for (Path path : paths.filter(Files::isRegularFile).toList()) {
+                    String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                    java |= name.endsWith(".java");
+                    python |= name.endsWith(".py");
+                }
+            }
+        }
+        if (java && python) {
+            throw new IllegalArgumentException("Direct source execution cannot mix Java and Python sources");
+        }
+        if (!java && !python) {
+            throw new IllegalArgumentException("Direct source must contain .java or .py files");
+        }
+        return java ? SourceType.JAVA : SourceType.PYTHON;
     }
 
     private static List<String> toConfigLocations(List<Path> configs) {
@@ -755,6 +819,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             throw new IllegalArgumentException("Unsupported pyronaut-dev command: " + value);
         }
+    }
+
+    enum SourceType {
+        JAVA,
+        PYTHON
     }
 
     interface DelegateInvoker {

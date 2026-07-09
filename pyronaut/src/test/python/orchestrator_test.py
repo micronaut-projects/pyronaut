@@ -594,6 +594,34 @@ class OrchestratorTest(unittest.TestCase):
             executed,
         )
 
+    def test_run_direct_java_script_uses_pyronaut_dev_native_executable(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            source = Path(temp_dir) / "App.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["run", str(source)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/java-home",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=production", str(source)]],
+            executed,
+        )
+
     def test_run_direct_python_directory_uses_pyronaut_dev_native_executable(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:

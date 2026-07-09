@@ -652,3 +652,16 @@ The orchestrator uses stable high-level categories:
 - `10`: internal execution error
 
 Delegated tools may return command-specific non-zero codes for domain failures (for example, test failures), and those are propagated back to the caller.
+
+== Direct Source Execution
+
+Run a Java source file directly in a generated Micronaut application context:
+
+[source,bash]
+----
+pyronaut run Foo.java
+----
+
+Java-only direct execution disables Micronaut Python infrastructure for that run by setting
+`micronaut.python.enabled=false`. Python applications remain enabled by default. The property can
+also be configured explicitly as an application property or system property.

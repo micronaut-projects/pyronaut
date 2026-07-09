@@ -3691,7 +3691,7 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
             else:
                 index += 1
             continue
-        if arg.endswith(".py"):
+        if arg.endswith((".py", ".java")):
             return True
         try:
             if Path(arg).is_dir():

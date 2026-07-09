@@ -66,6 +66,25 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void routesRunSourceToDirectExecution(@TempDir Path tempDir) throws IOException {
+        Path source = tempDir.resolve("Foo.java");
+        Files.writeString(source, "class Foo {}\n");
+        List<PyronautDevMain.ToolCommand> calls = new ArrayList<>();
+
+        int exit = PyronautDevMain.execute(
+            new String[]{"run", source.toString()},
+            (command, args) -> {
+                calls.add(command);
+                return 0;
+            },
+            (invocation, stagingRoot) -> 0
+        );
+
+        assertEquals(0, exit);
+        assertEquals(List.of(), calls);
+    }
+
+    @Test
     void parsesDirectSourceInvocation() {
         PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectSourceArgs(List.of(
             "--test",
@@ -87,6 +106,40 @@ final class PyronautDevMainTest {
         assertEquals("8081", invocation.properties().get("micronaut.server.port"));
         assertEquals("c", invocation.properties().get("a.b"));
         assertEquals("dev", invocation.properties().get("micronaut.environments"));
+    }
+
+    @Test
+    void detectsDirectSourceLanguage(@TempDir Path tempDir) throws IOException {
+        Path javaSource = tempDir.resolve("Foo.java");
+        Path pythonSource = tempDir.resolve("foo.py");
+        Files.writeString(javaSource, "class Foo {}\n");
+        Files.writeString(pythonSource, "print('ok')\n");
+
+        assertEquals(PyronautDevMain.SourceType.JAVA, PyronautDevMain.sourceType(List.of(javaSource)));
+        assertEquals(PyronautDevMain.SourceType.PYTHON, PyronautDevMain.sourceType(List.of(pythonSource)));
+    }
+
+    @Test
+    void disablesPythonForDirectJavaSourcesAndRestoresProperty(@TempDir Path tempDir) throws IOException {
+        Path source = tempDir.resolve("Foo.java");
+        Files.writeString(source, "class Foo {}\n");
+        String previous = System.getProperty("micronaut.python.enabled");
+        try {
+            System.clearProperty("micronaut.python.enabled");
+            int exit = PyronautDevMain.execute(
+                new String[]{source.toString()},
+                (command, args) -> 0,
+                (invocation, stagingRoot) -> {
+                    assertEquals("false", System.getProperty("micronaut.python.enabled"));
+                    assertTrue(Files.exists(stagingRoot.resolve("src/Foo.java")));
+                    return 0;
+                }
+            );
+            assertEquals(0, exit);
+            assertEquals(previous, System.getProperty("micronaut.python.enabled"));
+        } finally {
+            restoreProperty("micronaut.python.enabled", previous);
+        }
     }
 
     @Test
