@@ -21,7 +21,7 @@ Run all tests:
 pyronaut test
 ----
 
-`pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts test resources when enabled, and delegates test discovery to pytest.
+`pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts test resources by default, and delegates test discovery to pytest. Use `--disable-test-resources` for direct source tests when test resources are not needed.
 
 == Direct JUnit 5 Tests
 

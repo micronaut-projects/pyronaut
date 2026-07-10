@@ -358,8 +358,9 @@ public final class PyronautDevMain implements Callable<Integer> {
                             ? Path.of(args.get(++i)) : Path.of("__pyronaut__", "test-reports");
                         continue;
                     }
-                    case "--enable-test-resources" -> {
-                        properties.put(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "true");
+                    case "--disable-test-resources" -> {
+                        properties.put(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "false");
+                        properties.put(MICRONAUT_TEST_RESOURCES_ENABLED, "false");
                         continue;
                     }
                     default -> {
@@ -445,7 +446,6 @@ public final class PyronautDevMain implements Callable<Integer> {
                 previousProperties.put(MICRONAUT_PYTHON_ENABLED, System.getProperty(MICRONAUT_PYTHON_ENABLED));
                 System.setProperty(MICRONAUT_PYTHON_ENABLED, "false");
             }
-            disableTestResourcesBridgeForSetupFreeDirectSource(invocation, previousProperties);
             if (!invocation.test()
                 && !isProductionMode()
                 && !invocation.properties().containsKey(MICRONAUT_ENVIRONMENTS)) {
@@ -479,12 +479,16 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
         Path pyronautDir = stagingRoot.resolve(DEFAULT_PYRONAUT_DIR);
         boolean productionMode = isProductionMode();
+        List<Path> processorDependencies;
+        List<Path> compileClasspath;
+        List<URL> runtimeClasspath = List.of();
         List<Path> buildDependencies = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
         List<Path> runtimeDependencies = readManifest(resolveRunManifest(pyronautDir, productionMode));
-        List<Path> compilerDependencies = new ArrayList<>(buildDependencies);
-        compilerDependencies.addAll(directCompilerClasspath(invocation));
-        List<Path> compilerClasspath = new ArrayList<>(runtimeDependencies);
-        compilerClasspath.addAll(directCompilerClasspath(invocation));
+        processorDependencies = new ArrayList<>(buildDependencies);
+        processorDependencies.addAll(directCompilerClasspath(invocation));
+        compileClasspath = new ArrayList<>(runtimeDependencies);
+        compileClasspath.addAll(directCompilerClasspath(invocation));
+
         List<URL> runtimeUrls = toUrls(runtimeDependencies);
         Path configDir = stagingRoot.resolve("config");
         if (Files.isDirectory(configDir)) {
@@ -494,10 +498,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
-        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
+        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeClasspath.toArray(URL[]::new), launcherClassLoader)) {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
-                .annotationProcessorPath(toFiles(compilerDependencies))
-                .classpath(toFiles(compilerClasspath))
+                .annotationProcessorPath(toFiles(processorDependencies))
+                .classpath(toFiles(compileClasspath))
                 .parentClassLoader(runtimeClassLoader);
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
@@ -541,7 +545,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         List<Path> testDependencies = readManifest(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST));
         List<Path> runtimeClasspath = new ArrayList<>(runtimeDependencies);
         runtimeClasspath.addAll(testDependencies);
-        if (invocation.setup() == null && !invocation.properties().containsKey(MICRONAUT_TEST_RESOURCES_ENABLED)) {
+        if (testResourcesDisabled(invocation)) {
             runtimeClasspath.removeIf(PyronautDevMain::isTestResourcesJar);
         }
         List<Path> compilerClasspath = new ArrayList<>(runtimeDependencies);
@@ -906,22 +910,6 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
-    private static void disableTestResourcesBridgeForSetupFreeDirectSource(DirectSourceInvocation invocation,
-                                                                           Map<String, String> previousProperties) {
-        if (invocation.setup() != null
-            || invocation.properties().containsKey(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY)
-            || System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY) != null) {
-            return;
-        }
-        previousProperties.put(
-            PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY,
-            System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY)
-        );
-        System.setProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "false");
-        previousProperties.put(MICRONAUT_TEST_RESOURCES_ENABLED, System.getProperty(MICRONAUT_TEST_RESOURCES_ENABLED));
-        System.setProperty(MICRONAUT_TEST_RESOURCES_ENABLED, "false");
-    }
-
     private static List<Path> buildDependenciesForTests(List<Path> buildDependencies, List<Path> testDependencies) {
         List<Path> dependencies = new ArrayList<>(buildDependencies);
         for (Path dependency : testDependencies) {
@@ -937,14 +925,21 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (classpath == null || classpath.isBlank()) {
             return List.of();
         }
-        boolean excludeTestResources = invocation.setup() == null
-            && !invocation.properties().containsKey(MICRONAUT_TEST_RESOURCES_ENABLED)
-            && System.getProperty(MICRONAUT_TEST_RESOURCES_ENABLED) == null;
+        boolean excludeTestResources = testResourcesDisabled(invocation);
         return Arrays.stream(classpath.split(Pattern.quote(File.pathSeparator)))
             .filter(value -> !value.isBlank())
             .map(Path::of)
             .filter(path -> !excludeTestResources || !isTestResourcesJar(path))
             .toList();
+    }
+
+    private static boolean testResourcesDisabled(DirectSourceInvocation invocation) {
+        return invocation.properties().entrySet().stream()
+            .filter(entry -> entry.getKey().equals(MICRONAUT_TEST_RESOURCES_ENABLED)
+                || entry.getKey().equals(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY))
+            .anyMatch(entry -> "false".equalsIgnoreCase(entry.getValue()))
+            || "false".equalsIgnoreCase(System.getProperty(MICRONAUT_TEST_RESOURCES_ENABLED))
+            || "false".equalsIgnoreCase(System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY));
     }
 
     private static void stageSetup(DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
