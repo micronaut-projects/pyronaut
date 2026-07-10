@@ -636,7 +636,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                     }
                 }
             });
-            launcher.registerTestExecutionListeners(new ConsoleTestExecutionListener());
+            launcher.registerTestExecutionListeners(new ConsoleTestExecutionListener(originalOut));
             launcher.execute(request);
             TestExecutionSummary summary = listener.getSummary();
             summary.printTo(new PrintWriter(System.out, true, StandardCharsets.UTF_8));
@@ -731,17 +731,23 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static final class ConsoleTestExecutionListener implements TestExecutionListener {
+        private final PrintStream output;
+
+        private ConsoleTestExecutionListener(PrintStream output) {
+            this.output = output;
+        }
+
         @Override
         public void executionSkipped(TestIdentifier testIdentifier, String reason) {
             if (testIdentifier.isTest()) {
-                System.out.println("  skipped: " + (reason == null ? "no reason supplied" : reason));
+                output.println("  skipped: " + (reason == null ? "no reason supplied" : reason));
             }
         }
 
         @Override
         public void executionStarted(TestIdentifier testIdentifier) {
             if (testIdentifier.isTest()) {
-                System.out.println("> " + testIdentifier.getDisplayName());
+                output.println("> " + testIdentifier.getDisplayName());
             }
         }
 
@@ -754,8 +760,8 @@ public final class PyronautDevMain implements Callable<Integer> {
                     case "FAILED" -> "\u001B[31mFAILED\u001B[0m";
                     default -> status;
                 };
-                System.out.println("  " + highlightedStatus);
-                testExecutionResult.getThrowable().ifPresent(throwable -> throwable.printStackTrace(System.out));
+                output.println("  " + highlightedStatus);
+                testExecutionResult.getThrowable().ifPresent(throwable -> throwable.printStackTrace(output));
             }
         }
     }
