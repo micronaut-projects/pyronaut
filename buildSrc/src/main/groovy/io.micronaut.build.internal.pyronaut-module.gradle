@@ -1,6 +1,5 @@
 import static io.micronaut.build.TestFramework.JUNIT6
 
-import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 
 plugins {
     id 'io.micronaut.build.internal.pyronaut-base'
@@ -17,12 +16,6 @@ micronautBuild {
 }
 
 repositories {
-    def graalPyBundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
-    if (graalPyBundleRepo != null && !graalPyBundleRepo.isBlank()) {
-        maven {
-            url = uri(graalPyBundleRepo)
-        }
-    }
     maven {
         url = uri("https://central.sonatype.com/repository/maven-snapshots/")
         mavenContent {
@@ -48,21 +41,10 @@ pluginManager.withPlugin("org.graalvm.buildtools.native") {
     def ciNativeImageArgs = providers.gradleProperty("pyronautNativeImageCiArgs").map { value ->
         value.trim().split(/\s+/).findAll { arg -> !arg.isBlank() }
     }.orElse([])
-    def graalVmDevTag = providers.gradleProperty("pyronautGraalVmDevTag")
-    if (graalVmDevTag.present) {
-        def graalVmProvisionTask = PyronautGraalVmDevBuilds.registerProvisionTask(rootProject, graalVmDevTag)
-        def graalVmLauncher = PyronautGraalVmDevBuilds.javaLauncherProvider(project, graalVmDevTag)
-
-        tasks.matching { it.class.name.startsWith("org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask") }.configureEach {
-            dependsOn(graalVmProvisionTask)
-        }
-
-        graalvmNative {
-            toolchainDetection = true
-            binaries.configureEach {
-                javaLauncher = graalVmLauncher
-                buildArgs.addAll(ciNativeImageArgs)
-            }
+    graalvmNative {
+        toolchainDetection = true
+        binaries.configureEach {
+            buildArgs.addAll(ciNativeImageArgs)
         }
     }
 }

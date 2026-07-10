@@ -26,9 +26,14 @@ dependencies {
 application {
     mainClass = "io.micronaut.pyronaut.starter.Application"
 }
+
+tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
+    isZip64 = true
+}
+
 java {
-    sourceCompatibility = JavaVersion.toVersion("21")
-    targetCompatibility = JavaVersion.toVersion("21")
+    sourceCompatibility = JavaVersion.toVersion("25")
+    targetCompatibility = JavaVersion.toVersion("25")
 }
 micronaut {
     version(libs.versions.micronaut.platform.get())

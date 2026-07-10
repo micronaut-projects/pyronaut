@@ -570,8 +570,8 @@ val micronautPlatformVersion = requiredGradleProperty("pyronaut.micronaut.platfo
 val graalpyVersion = versionFromCatalog("gradle/libs.versions.toml", "graalpy")
 val useSnapshotSourceDependencies = micronautVersion.isSnapshotVersion() && graalpyVersion.isSnapshotVersion()
 
-val includeMicronautCore = booleanGradleProperty("pyronaut.include.micronaut.core") ?: useSnapshotSourceDependencies
-val includeGraalPyExtensions = booleanGradleProperty("pyronaut.include.graalpy.extensions") ?: useSnapshotSourceDependencies
+val includeMicronautCore = booleanGradleProperty("pyronaut.include.micronaut.core") ?: micronautVersion.isSnapshotVersion()
+val includeGraalPyExtensions = booleanGradleProperty("pyronaut.include.graalpy.extensions") ?: false
 val privateGitToken = configuredValue("pyronaut.git.token", "PYRONAUT_GIT_TOKEN", "GH_TOKEN")
 val gitHubApiToken = configuredValue(
     "pyronaut.github.api.token",
@@ -582,17 +582,6 @@ val gitHubApiToken = configuredValue(
 )
 val gitHubUsername = configuredValue("pyronaut.git.username", "PYRONAUT_GIT_USERNAME", "GH_USERNAME") ?: "x-access-token"
 
-val graalPyBundleRepo = if (includeGraalPyExtensions) {
-    ensureGraalPyBundleRepo(ensureGraalPyExtensionsCheckout(), graalpyVersion).also {
-        System.setProperty("pyronaut.graalpy.bundle.repo", it.absolutePath)
-        System.setProperty("micronaut.graalpy.bundle.repo", it.absolutePath)
-        System.setProperty("org.gradle.project.pyronaut.graalpy.bundle.repo", it.absolutePath)
-        System.setProperty("org.gradle.project.micronaut.graalpy.bundle.repo", it.absolutePath)
-        System.setProperty("maven.repo.local", it.absolutePath)
-    }
-} else {
-    null
-}
 
 if (includeMicronautCore) {
     val localOverride = providers.gradleProperty("local.git.micronaut-core").orNull
@@ -697,11 +686,6 @@ dependencyResolutionManagement {
         }
     }
     repositories {
-        graalPyBundleRepo?.let {
-            maven(it.toURI()) {
-                name = "graalPyBundle"
-            }
-        }
         mavenCentral()
         maven("https://central.sonatype.com/repository/maven-snapshots/") {
             mavenContent {

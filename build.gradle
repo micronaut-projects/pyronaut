@@ -20,6 +20,18 @@ disabledSonatypePublishingTasks.each { taskName ->
 }
 
 allprojects {
+    pluginManager.withPlugin("java") {
+        java {
+            toolchain {
+                languageVersion = JavaLanguageVersion.of(25)
+            }
+        }
+    }
+    pluginManager.withPlugin("org.jetbrains.kotlin.jvm") {
+        kotlin {
+            jvmToolchain(25)
+        }
+    }
     tasks.configureEach { task ->
         def lowerCaseTaskName = task.name.toLowerCase(Locale.ROOT)
         if (task.name in disabledSonatypePublishingTasks || (lowerCaseTaskName.startsWith("publish") && lowerCaseTaskName.contains("sonatype"))) {
@@ -28,12 +40,10 @@ allprojects {
     }
 }
 
-repositories {
-    def graalPyBundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
-    if (graalPyBundleRepo != null && !graalPyBundleRepo.isBlank()) {
-        maven {
-            name = "graalPyBundle"
-            url = uri(graalPyBundleRepo)
+gradle.projectsEvaluated {
+    allprojects {
+        pluginManager.withPlugin("java") {
+            java.toolchain.languageVersion = JavaLanguageVersion.of(25)
         }
     }
 }
