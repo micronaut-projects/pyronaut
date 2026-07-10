@@ -3830,7 +3830,7 @@ def _normalize_report_argument(args: Sequence[str]) -> list[str]:
                 normalized.extend(("--report-dir", args[index + 1]))
                 index += 2
             else:
-                normalized.extend(("--report-dir", "__pyronaut__/test-reports"))
+                normalized.extend(("--report-dir", "__pyronaut__/reports/tests"))
                 index += 1
             continue
         if token.startswith("--report="):
@@ -4028,7 +4028,7 @@ def _print_test_usage(stream=None) -> None:
             ("--property=<name=value>", "Set a Micronaut/system property for direct source execution"),
             ("--select-class=<selectClasses>", "Select class to execute"),
             ("--setup=<pyproject.toml>", "pyproject.toml to stage for direct source execution"),
-            ("--report[=<directory>]", "Write JUnit XML and HTML reports (default: __pyronaut__/test-reports)"),
+            ("--report[=<directory>]", "Write JUnit XML and HTML reports (default: __pyronaut__/reports/tests)"),
             ("--test-classes-dir=<testClassesDir>", "Processed test classes directory"),
             ("--tests=<tests>", "Select tests (Gradle-like). Repeatable."),
             ("--tests-dir=<testsDir>", "Python tests directory"),

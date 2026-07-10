@@ -334,7 +334,7 @@ pyronaut test -t Foo.java -- FooTest.java
 Direct test output includes per-test progress and a final execution summary on the console. Direct mode does not write the project pytest reports.
 
 Pass `--report` to write JUnit XML and HTML reports. The default location is
-`__pyronaut__/test-reports`; an alternate directory may follow the option. The
+`__pyronaut__/reports/tests`; an alternate directory may follow the option. The
 option is also accepted by project-based `pyronaut test` and controls its report
 directory.
 

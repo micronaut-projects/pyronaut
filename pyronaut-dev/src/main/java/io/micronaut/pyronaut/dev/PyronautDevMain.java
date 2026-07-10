@@ -53,6 +53,8 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
+import java.io.PrintStream;
+import java.io.ByteArrayOutputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.FileVisitResult;
@@ -90,6 +92,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final int USAGE_ERROR = 2;
     private static final int PRECONDITION_FAILED = 8;
     private static final int INTERNAL_ERROR = 10;
+    private static final int TESTS_FAILED = 1;
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
     private static final String LAUNCH_MODE_PROPERTY = "pyronaut.dev.launch.mode";
@@ -353,8 +356,10 @@ public final class PyronautDevMain implements Callable<Integer> {
                         continue;
                     }
                     case "--report" -> {
-                        report = i + 1 < args.size() && !args.get(i + 1).startsWith("-")
-                            ? Path.of(args.get(++i)) : Path.of("__pyronaut__", "test-reports");
+                        report = i + 1 < args.size()
+                                && !args.get(i + 1).startsWith("-")
+                                && !isSourceSelector(args.get(i + 1))
+                            ? Path.of(args.get(++i)) : Path.of("__pyronaut__", "reports", "tests");
                         continue;
                     }
                     case "--disable-test-resources" -> {
@@ -376,6 +381,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             properties.put("micronaut.server.port", port);
         }
         return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties));
+    }
+
+    private static boolean isSourceSelector(String value) {
+        String lowerCase = value.toLowerCase(Locale.ROOT);
+        return lowerCase.endsWith(".java") || lowerCase.endsWith(".py") || lowerCase.contains("*");
     }
 
     private static boolean isDirectTestCommand(String[] args) {
@@ -590,13 +600,51 @@ public final class PyronautDevMain implements Callable<Integer> {
             LauncherDiscoveryRequest request = requestBuilder.build();
             Launcher launcher = LauncherFactory.create();
             SummaryGeneratingListener listener = new SummaryGeneratingListener();
+            List<JUnitReportWriter.TestResult> reportResults = new ArrayList<>();
+            PrintStream originalOut = System.out;
+            PrintStream originalErr = System.err;
             launcher.registerTestExecutionListeners(listener);
+            launcher.registerTestExecutionListeners(new TestExecutionListener() {
+                private ByteArrayOutputStream out;
+                private ByteArrayOutputStream err;
+
+                @Override
+                public void executionStarted(TestIdentifier identifier) {
+                    if (identifier.isTest()) {
+                        out = new ByteArrayOutputStream();
+                        err = new ByteArrayOutputStream();
+                        System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
+                        System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
+                    }
+                }
+
+                @Override
+                public void executionFinished(TestIdentifier identifier, TestExecutionResult result) {
+                    if (identifier.isTest()) {
+                        System.setOut(originalOut);
+                        System.setErr(originalErr);
+                        JUnitReportWriter.Status status = switch (result.getStatus()) {
+                            case SUCCESSFUL -> JUnitReportWriter.Status.PASSED;
+                            case FAILED -> JUnitReportWriter.Status.FAILED;
+                            case ABORTED -> JUnitReportWriter.Status.SKIPPED;
+                        };
+                        reportResults.add(new JUnitReportWriter.TestResult(
+                            identifier.getDisplayName(), status,
+                            result.getThrowable().map(Throwable::toString).orElse(""),
+                            out == null ? "" : out.toString(StandardCharsets.UTF_8),
+                            err == null ? "" : err.toString(StandardCharsets.UTF_8)));
+                    }
+                }
+            });
             launcher.registerTestExecutionListeners(new ConsoleTestExecutionListener());
             launcher.execute(request);
             TestExecutionSummary summary = listener.getSummary();
             summary.printTo(new PrintWriter(System.out, true, StandardCharsets.UTF_8));
-            writeReports(invocation.report(), summary);
-            return summary.getTotalFailureCount() == 0 ? SUCCESS : 7;
+            Path reportDirectory = writeReports(invocation.report(), summary, reportResults);
+            if (reportDirectory != null) {
+                System.out.println("Test report: " + terminalLink(reportDirectory.resolve("index.html")));
+            }
+            return summary.getTotalFailureCount() == 0 ? SUCCESS : TESTS_FAILED;
         } finally {
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
             if (previousBeanIntrospectionsProvider != null) {
@@ -608,11 +656,18 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
-    private static void writeReports(Path report, TestExecutionSummary summary) throws IOException {
+    private static Path writeReports(Path report, TestExecutionSummary summary, List<JUnitReportWriter.TestResult> results) throws IOException {
         if (report == null) {
-            return;
+            return null;
         }
-        JUnitReportWriter.write(report.toAbsolutePath().normalize(), summary);
+        Path directory = report.toAbsolutePath().normalize();
+        JUnitReportWriter.write(directory, summary, results);
+        return directory;
+    }
+
+    private static String terminalLink(Path path) {
+        String uri = path.toUri().toString();
+        return "\033]8;;" + uri + "\033\\Open test report\033]8;;\033\\ (" + path + ")";
     }
 
     private static List<String> testClassNames(List<Path> selectors) throws IOException {

@@ -279,6 +279,17 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void reportFlagUsesDefaultDirectoryWhenFollowedByApplicationSource() {
+        PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectTestSourceArgs(List.of(
+            "--report", "App.java", "--", "AppTest.java"
+        ));
+
+        assertEquals(Path.of("__pyronaut__", "reports", "tests"), invocation.report());
+        assertEquals(List.of(Path.of("App.java")), invocation.sources());
+        assertEquals(List.of(Path.of("AppTest.java")), invocation.testSources());
+    }
+
+    @Test
     void executesDirectPythonJUnitTestsInMemory(@TempDir Path tempDir) throws IOException {
         Path source = tempDir.resolve("app.py");
         Path test = tempDir.resolve("AppTest.py");

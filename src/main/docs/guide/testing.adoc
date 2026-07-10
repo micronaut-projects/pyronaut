@@ -39,7 +39,7 @@ Direct tests are compiled and executed in-memory through the JUnit Platform. Pyt
 Use `--continuous` or `-t` to rerun direct tests when application or test sources change. The console prints execution progress and a final test summary.
 
 Use `--report` to write JUnit XML and HTML reports. The default location is
-`__pyronaut__/test-reports`; pass a directory after the option to choose another
+`__pyronaut__/reports/tests`; pass a directory after the option to choose another
 location:
 
 [source,bash]
