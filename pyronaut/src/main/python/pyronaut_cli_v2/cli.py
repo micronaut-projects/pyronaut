@@ -684,7 +684,11 @@ def _run_direct_source(
         sleep=sleep,
         watch_poll_interval=watch_poll_interval,
         watch_debounce_seconds=watch_debounce_seconds,
+        # Direct development must also keep the watcher alive when the
+        # compiler exits with an error. This allows a subsequent source
+        # change to start a fresh compilation and resume the application.
         keep_watching_after_exit=command == "test",
+        keep_watching_after_failure=command == "dev",
     )
 
 
@@ -700,6 +704,7 @@ def _run_direct_source_with_auto_restart(
     watch_poll_interval: float,
     watch_debounce_seconds: float,
     keep_watching_after_exit: bool = False,
+    keep_watching_after_failure: bool = False,
 ) -> int:
     if watch_poll_interval <= 0:
         watch_poll_interval = 0.25
@@ -730,7 +735,7 @@ def _run_direct_source_with_auto_restart(
             while True:
                 code = process.poll()
                 if code is not None:
-                    if keep_watching_after_exit:
+                    if keep_watching_after_exit or (keep_watching_after_failure and code != 0):
                         print("Continuous Testing Active. Waiting for source changes (Ctrl-C to exit).")
                         changed_at: float | None = None
                         while True:

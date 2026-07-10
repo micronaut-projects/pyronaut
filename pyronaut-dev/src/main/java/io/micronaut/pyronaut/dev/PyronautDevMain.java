@@ -68,7 +68,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -508,12 +507,10 @@ public final class PyronautDevMain implements Callable<Integer> {
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
-            Class<?> mainClass = applicationClassLoader.loadClass(DEFAULT_MAIN_CLASS);
             PyronautDevLogging.initializeApplicationLogging();
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
                 .beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation))
-                .mainClass(mainClass)
                 .deducePackage(false)
                 .deduceCloudEnvironment(false)
                 .deduceEnvironment(false);
