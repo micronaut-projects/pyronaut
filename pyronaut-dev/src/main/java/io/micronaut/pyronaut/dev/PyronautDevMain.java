@@ -95,6 +95,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final int TESTS_FAILED = 1;
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
+    private static final String PROJECT_DIR_PROPERTY = "pyronaut.dev.project.dir";
     private static final String LAUNCH_MODE_PROPERTY = "pyronaut.dev.launch.mode";
     private static final String BUILD_DEPENDENCIES_MANIFEST = "resolved-build-dependencies";
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
@@ -462,7 +463,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 System.setProperty(MICRONAUT_ENVIRONMENTS, Environment.DEVELOPMENT);
             }
             if (invocation.setup() != null) {
-                int install = delegateInvoker.invoke(ToolCommand.INSTALL, "--project-dir", stagingRoot.toString());
+                int install = delegateInvoker.invoke(ToolCommand.INSTALL, "--project-dir", projectDirectory(stagingRoot).toString());
                 if (install != SUCCESS) {
                     return install;
                 }
@@ -486,7 +487,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (invocation.test()) {
             return runInMemoryTests(invocation, stagingRoot);
         }
-        Path pyronautDir = stagingRoot.resolve(DEFAULT_PYRONAUT_DIR);
+        Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
         boolean productionMode = isProductionMode();
         List<Path> processorDependencies;
         List<Path> compileClasspath;
@@ -545,7 +546,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static int runInMemoryTests(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
-        Path pyronautDir = stagingRoot.resolve(DEFAULT_PYRONAUT_DIR);
+        Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
         boolean productionMode = isProductionMode();
         List<Path> buildDependencies = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
         List<Path> runtimeDependencies = readManifest(resolveRunManifest(pyronautDir, productionMode));
@@ -1005,6 +1006,17 @@ public final class PyronautDevMain implements Callable<Integer> {
             Path pyproject = stagingRoot.resolve("pyproject.toml");
             Files.copy(invocation.setup(), pyproject, StandardCopyOption.REPLACE_EXISTING);
         }
+    }
+
+    private static Path projectDirectory(Path stagingRoot) {
+        String configured = System.getProperty(PROJECT_DIR_PROPERTY);
+        return configured == null || configured.isBlank()
+            ? stagingRoot
+            : Path.of(configured).toAbsolutePath().normalize();
+    }
+
+    private static Path projectCacheDirectory(DirectSourceInvocation invocation, Path stagingRoot) {
+        return (invocation.setup() == null ? stagingRoot : projectDirectory(stagingRoot)).resolve(DEFAULT_PYRONAUT_DIR);
     }
 
     private static void stageSources(List<Path> sources, Path targetDir) throws IOException {

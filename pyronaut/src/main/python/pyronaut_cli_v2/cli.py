@@ -787,6 +787,7 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Djava.home={java_home}")
     if command is not None:
         jvm_args.append(f"-Dpyronaut.dev.launch.mode={'production' if command == 'run' else 'development'}")
+        jvm_args.append(f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}")
     launcher_classpath = os.pathsep.join(_native_launcher_provided_jar_entries(executable_path))
     if launcher_classpath:
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={launcher_classpath}")
