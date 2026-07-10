@@ -263,10 +263,10 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual([], executed)
         help_text = stdout.getvalue()
         self.assertIn("Usage: pyronaut run", help_text)
-        self.assertIn("Run a processed Pyronaut application or direct Python sources", help_text)
+        self.assertIn("Run a processed Pyronaut application or direct Java/Python sources", help_text)
         self.assertIn("--port=<port>", help_text)
         self.assertIn("--no-validate", help_text)
-        self.assertIn("<source.py|source-dir>...", help_text)
+        self.assertIn("<source.java|source.py|source-dir>...", help_text)
         self.assertNotIn("pyronaut-run", help_text)
 
     def test_test_help_prints_orchestrator_help_without_lifecycle_phases(self):
@@ -289,11 +289,11 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual([], executed)
         help_text = stdout.getvalue()
         self.assertIn("Usage: pyronaut test", help_text)
-        self.assertIn("Run tests for a processed Pyronaut application or direct Python sources", help_text)
+        self.assertIn("Run tests for a processed Pyronaut application or direct Java/Python JUnit 5 sources", help_text)
         self.assertIn("--tests=<tests>", help_text)
         self.assertIn("--test-classes-dir=<testClassesDir>", help_text)
         self.assertIn("--continuous", help_text)
-        self.assertIn("pyronaut --test", help_text)
+        self.assertIn("pyronaut test <source> -- <test-source>", help_text)
         self.assertNotIn("pyronaut-test", help_text)
 
     def test_run_help_colors_options_on_tty(self):
@@ -553,7 +553,7 @@ class OrchestratorTest(unittest.TestCase):
 
             with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
                 exit_code = cli.run(
-                    ["--test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)],
+                    ["test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)],
                     runner=runner,
                     resolver=self._resolver(),
                     platform_name="linux",
@@ -562,7 +562,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=development", "--test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=development", "test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
             executed,
         )
 
@@ -619,6 +619,53 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(
             [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=production", str(source)]],
+            executed,
+        )
+
+    def test_test_direct_java_sources_use_pyronaut_dev_native_executable(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            source = Path(temp_dir) / "App.java"
+            test = Path(temp_dir) / "AppTest.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+            test.write_text("class AppTest {}\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                return 0
+
+            class CompletedProcess:
+                def poll(self):
+                    return 0
+
+                def terminate(self):
+                    return None
+
+                def wait(self, timeout=None):
+                    return 0
+
+                def kill(self):
+                    return None
+
+            def stop_after_initial_run(_seconds):
+                raise KeyboardInterrupt
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["test", "-t", str(source), "--", str(test)],
+                    runner=runner,
+                    process_runner=lambda command_line, env=None: (executed.append(command_line) or CompletedProcess()),
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/java-home",
+                    sleep=stop_after_initial_run,
+                )
+
+        self.assertEqual(130, exit_code)
+        self.assertEqual(
+            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=development", "test", str(source), "--", str(test)]],
             executed,
         )
 
@@ -725,7 +772,7 @@ class OrchestratorTest(unittest.TestCase):
         )
         self.assertTrue(first_process.terminated)
 
-    def test_direct_source_native_compiler_classpath_excludes_inject_python_vfs_jar(self):
+    def test_direct_source_native_compiler_classpath_does_not_duplicate_native_image_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             install_root = Path(temp_dir) / "pyronaut-dev"
             bin_dir = install_root / "bin"
@@ -741,13 +788,13 @@ class OrchestratorTest(unittest.TestCase):
             ):
                 (lib_dir / jar_name).write_text("", encoding="utf-8")
 
-            classpath = cli._build_direct_source_native_jvm_args(str(native_dev), {"JAVA_HOME": "/tmp/java-home"})[1]
+            jvm_args = cli._build_direct_source_native_jvm_args(str(native_dev), {"JAVA_HOME": "/tmp/java-home"})
 
-        self.assertTrue(classpath.startswith("-Djava.class.path="))
-        entries = classpath.removeprefix("-Djava.class.path=").split(os.pathsep)
-        self.assertIn(str((lib_dir / "micronaut-context-python-5.1.0.jar").resolve()), entries)
-        self.assertIn(str((lib_dir / "micronaut-runtime-5.1.0.jar").resolve()), entries)
-        self.assertNotIn(str((lib_dir / "micronaut-inject-python-5.1.0.jar").resolve()), entries)
+        self.assertEqual(2, len(jvm_args))
+        self.assertEqual("-Djava.home=/tmp/java-home", jvm_args[0])
+        self.assertTrue(jvm_args[1].startswith("-Dpyronaut.dev.compiler.class.path="))
+        self.assertIn("micronaut-context-python-5.1.0.jar", jvm_args[1])
+        self.assertIn("micronaut-inject-python-5.1.0.jar", jvm_args[1])
 
     def test_run_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):
         executed = []

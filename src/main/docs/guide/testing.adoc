@@ -23,7 +23,32 @@ pyronaut test
 
 `pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts test resources when enabled, and delegates test discovery to pytest.
 
-== Test Discovery
+== Direct JUnit 5 Tests
+
+For a small application, Java or Python sources can be tested without a project manifest. The application sources come before `--`; JUnit 5 test sources come after it:
+
+[source,bash]
+----
+pyronaut test Foo.java -- FooTest.java
+pyronaut test Foo.py -- FooTest.py
+pyronaut test -t Foo.java -- *Test.java
+----
+
+Direct tests are compiled and executed in-memory through the JUnit Platform. Python tests can use `@MicronautTest` and `org.junit.jupiter.api.Test` in the same style as the Python test suite. Direct Java runs disable Python runtime infrastructure automatically; Python remains enabled by default for Python tests.
+
+Use `--continuous` or `-t` to rerun direct tests when application or test sources change. The console prints execution progress and a final test summary.
+
+Use `--report` to write JUnit XML and HTML reports. The default location is
+`__pyronaut__/test-reports`; pass a directory after the option to choose another
+location:
+
+[source,bash]
+----
+pyronaut test --report Foo.java -- FooTest.java
+pyronaut test --report build/test-reports Foo.java -- FooTest.java
+----
+
+== Project Test Discovery
 
 Python tests are discovered from the configured `python-test` source directory.
 The default directory is `tests`.

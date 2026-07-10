@@ -50,12 +50,13 @@ public class PytestTestExecutor {
         Pytest is not installed in the Python environment used by Pyronaut.
 
         Pyronaut discovered tests, but it could not import the Python 'pytest' module.
-        This usually means the project virtual environment has not been created or pytest
-        has not been installed into the active environment.
+        This usually means the project GraalPy virtual environment has not been created or pytest
+        has not been installed into the GraalPy environment used by Pyronaut. A CPython virtual
+        environment cannot provide packages to the embedded GraalPy runtime.
 
         From the project directory, run:
 
-          python3 -m venv .venv
+          graalpy -m venv .venv
           source .venv/bin/activate
           python -m pip install --upgrade pip pytest
 

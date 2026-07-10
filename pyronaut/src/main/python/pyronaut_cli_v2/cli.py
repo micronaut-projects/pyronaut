@@ -257,6 +257,38 @@ def run(
             java_home_provider=direct_source_java_home_provider,
         )
 
+    if command == "test" and _looks_like_direct_source_invocation(forwarded_args):
+        direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
+            runner=runner,
+            runner_with_env=runner_with_env,
+            process_runner=process_runner,
+            project_dir=Path.cwd(),
+        )
+        direct_args = ["test", *forwarded_args]
+        if continuous:
+            return _run_direct_source(
+                command,
+                direct_args,
+                execute,
+                process_runner or _spawn_subprocess,
+                locate,
+                java_home_provider=direct_source_java_home_provider,
+                watch_poll_interval=watch_poll_interval,
+                watch_debounce_seconds=watch_debounce_seconds,
+                monotonic=monotonic,
+                sleep=sleep,
+            )
+        return _delegate_direct_source(
+            command,
+            direct_args,
+            execute,
+            locate,
+            java_home_provider=direct_source_java_home_provider,
+        )
+
+    if command == "test":
+        forwarded_args = _normalize_report_argument(forwarded_args)
+
     if not _is_supported_platform(current_platform):
         print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
         return PLATFORM_UNSUPPORTED
@@ -438,6 +470,15 @@ def run(
                 local_repository=local_repository,
             )
             return test_exit_code
+
+        if command in {"install", "process", "create", "validate-config"}:
+            return _delegate(
+                command,
+                forwarded_args,
+                execute,
+                locate,
+                java_home_provider=effective_java_home_provider,
+            )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -585,7 +626,11 @@ def _delegate_direct_source(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
-    jvm_args = _build_direct_source_native_jvm_args(executable_path, env, command=command)
+    jvm_args = _build_direct_source_native_jvm_args(
+        executable_path,
+        env,
+        command=command,
+    )
     command_line = [executable_path, *jvm_args, *args]
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
@@ -605,7 +650,7 @@ def _run_direct_source(
     monotonic: Callable[[], float],
     sleep: Callable[[float], None],
 ) -> int:
-    if command != "dev":
+    if command not in {"dev", "test"}:
         return _delegate_direct_source(
             command,
             args,
@@ -626,7 +671,8 @@ def _run_direct_source(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
-    env = _apply_project_virtualenv(env, Path.cwd())
+    if command == "dev":
+        env = _apply_project_virtualenv(env, Path.cwd())
     snapshot = _snapshot_direct_source_inputs(args)
     return _run_direct_source_with_auto_restart(
         executable_path,
@@ -638,6 +684,7 @@ def _run_direct_source(
         sleep=sleep,
         watch_poll_interval=watch_poll_interval,
         watch_debounce_seconds=watch_debounce_seconds,
+        keep_watching_after_exit=command == "test",
     )
 
 
@@ -652,13 +699,22 @@ def _run_direct_source_with_auto_restart(
     sleep: Callable[[float], None],
     watch_poll_interval: float,
     watch_debounce_seconds: float,
+    keep_watching_after_exit: bool = False,
 ) -> int:
     if watch_poll_interval <= 0:
         watch_poll_interval = 0.25
     if watch_debounce_seconds < 0:
         watch_debounce_seconds = 0.0
 
-    command_line = [executable_path, *_build_direct_source_native_jvm_args(executable_path, env, command="dev"), *args]
+    command_line = [
+        executable_path,
+        *_build_direct_source_native_jvm_args(
+            executable_path,
+            env,
+            command="dev",
+        ),
+        *args,
+    ]
 
     while True:
         if _delegation_trace_enabled():
@@ -674,6 +730,24 @@ def _run_direct_source_with_auto_restart(
             while True:
                 code = process.poll()
                 if code is not None:
+                    if keep_watching_after_exit:
+                        print("Continuous Testing Active. Waiting for source changes (Ctrl-C to exit).")
+                        changed_at: float | None = None
+                        while True:
+                            sleep(watch_poll_interval)
+                            next_snapshot = _snapshot_direct_source_inputs(args)
+                            if next_snapshot == snapshot:
+                                changed_at = None
+                                continue
+                            now = monotonic()
+                            if changed_at is None:
+                                changed_at = now
+                                continue
+                            if now - changed_at < watch_debounce_seconds:
+                                continue
+                            snapshot = next_snapshot
+                            break
+                        break
                     return int(code)
                 sleep(watch_poll_interval)
                 next_snapshot = _snapshot_direct_source_inputs(args)
@@ -696,24 +770,35 @@ def _run_direct_source_with_auto_restart(
             return 130
 
 
-def _build_direct_source_native_jvm_args(executable_path: str, env: dict[str, str] | None, *, command: str) -> list[str]:
+def _build_direct_source_native_jvm_args(
+    executable_path: str,
+    env: dict[str, str] | None,
+    *,
+    command: str | None = None,
+) -> list[str]:
     jvm_args: list[str] = []
     java_home = (env or os.environ).get("JAVA_HOME")
     if java_home:
         jvm_args.append(f"-Djava.home={java_home}")
-    jvm_args.append(f"-Dpyronaut.dev.launch.mode={'production' if command == 'run' else 'development'}")
-    launcher_classpath = os.pathsep.join(_direct_source_native_compiler_classpath_entries(executable_path))
+    if command is not None:
+        jvm_args.append(f"-Dpyronaut.dev.launch.mode={'production' if command == 'run' else 'development'}")
+    launcher_classpath = os.pathsep.join(_native_launcher_provided_jar_entries(executable_path))
     if launcher_classpath:
-        jvm_args.append(f"-Djava.class.path={launcher_classpath}")
+        jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={launcher_classpath}")
     return jvm_args
 
 
 def _direct_source_native_compiler_classpath_entries(executable_path: str) -> list[str]:
-    return [
-        entry
-        for entry in _native_launcher_provided_jar_entries(executable_path)
-        if not Path(entry).name.startswith("micronaut-inject-python-")
-    ]
+    entries = _native_launcher_provided_jar_entries(executable_path)
+    if not entries:
+        return []
+    provided_names = _native_launcher_provided_manifest_file_names(executable_path)
+    if not provided_names:
+        # The native image owns the launcher lib directory. Do not add the
+        # same jars to the runtime class path when older wheels lack the
+        # native-provided-classpath manifest.
+        return []
+    return [entry for entry in entries if Path(entry).name not in provided_names]
 
 
 def _delegate_via_java(
@@ -2246,15 +2331,22 @@ def _apply_project_virtualenv(env: dict[str, str] | None, project_dir: Path) -> 
     if not venv_dir.is_dir():
         return env
 
-    activated = dict(os.environ if env is None else env)
     venv_bin = venv_dir / "bin"
+    venv_python = _resolve_virtualenv_python(venv_bin) if venv_bin.is_dir() else None
+    if venv_python is None or not _is_compatible_virtualenv(venv_python):
+        # Do not poison the delegated process with a stale/broken virtualenv.
+        # This commonly occurs when the pyenv installation used to create the
+        # venv has since been replaced.
+        fallback = dict(os.environ if env is None else env)
+        fallback.pop("PYRONAUT_PYTHON_EXECUTABLE", None)
+        fallback.pop("PYTHONHOME", None)
+        return fallback
+
+    activated = dict(os.environ if env is None else env)
     activated["VIRTUAL_ENV"] = str(venv_dir)
     activated.pop("PYTHONHOME", None)
-    if venv_bin.is_dir():
-        activated["PATH"] = _prepend_path_entry(activated.get("PATH", ""), str(venv_bin))
-        venv_python = _resolve_virtualenv_python(venv_bin)
-        if venv_python is not None:
-            activated["PYRONAUT_PYTHON_EXECUTABLE"] = str(venv_python)
+    activated["PATH"] = _prepend_path_entry(activated.get("PATH", ""), str(venv_bin))
+    activated["PYRONAUT_PYTHON_EXECUTABLE"] = str(venv_python)
     return activated
 
 
@@ -2267,9 +2359,20 @@ def _prepend_path_entry(path_value: str, entry: str) -> str:
 def _resolve_virtualenv_python(venv_bin: Path) -> Path | None:
     for name in ("python", "python3"):
         candidate = venv_bin / name
-        if candidate.exists():
+        if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+def _is_compatible_virtualenv(venv_python: Path) -> bool:
+    """Whether a project venv can provide packages to the embedded Python runtime."""
+    if getattr(sys.implementation, "name", "") != "graalpy":
+        return True
+    try:
+        resolved = venv_python.resolve(strict=True)
+    except OSError:
+        return False
+    return "graalpy" in str(resolved).lower()
 
 
 def _strip_test_resources_java_tool_options(env: dict[str, str] | None) -> dict[str, str] | None:
@@ -2819,46 +2922,52 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
     while index < len(args):
         token = args[index]
         if token == "--":
-            break
-        if token in {"--test", "--port", "--property", "--config", "--setup"}:
+            index += 1
+            continue
+        if token in {"test", "--port", "--property", "--config", "--setup", "--report"}:
             index += 2
             continue
-        if token.startswith("-D") or token.startswith("--port=") or token.startswith("--property=") or token.startswith("--config=") or token.startswith("--setup="):
+        if token == "--enable-test-resources":
+            index += 1
+            continue
+        if token.startswith("-D") or token.startswith("--port=") or token.startswith("--property=") or token.startswith("--config=") or token.startswith("--setup=") or token.startswith("--report="):
             index += 1
             continue
         path = Path(token)
         index += 1
-        if not path.exists():
+        paths = sorted(Path.cwd().glob(token)) if any(marker in token for marker in ("*", "?", "[")) else [path]
+        if not paths:
             continue
-        if path.is_dir():
-            for current_root, dirs, files in __import__("os").walk(path):
-                dirs[:] = [name for name in dirs if name not in ignored_dirs and not name.startswith(".")]
-                base = Path(current_root)
-                for file_name in sorted(files):
-                    if file_name.startswith("."):
-                        continue
-                    file_path = base / file_name
-                    if file_path in seen_files:
-                        continue
-                    seen_files.add(file_path)
-                    try:
-                        stat = file_path.stat()
-                    except OSError:
-                        continue
-                    try:
-                        relative = file_path.relative_to(path).as_posix()
-                    except ValueError:
-                        relative = file_path.as_posix()
-                    entries.append((f"{path.as_posix()}/{relative}", int(stat.st_mtime_ns), int(stat.st_size)))
-            continue
-        if path in seen_files:
-            continue
-        seen_files.add(path)
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        entries.append((path.as_posix(), int(stat.st_mtime_ns), int(stat.st_size)))
+        for path in paths:
+            if path.is_dir():
+                for current_root, dirs, files in __import__("os").walk(path):
+                    dirs[:] = [name for name in dirs if name not in ignored_dirs and not name.startswith(".")]
+                    base = Path(current_root)
+                    for file_name in sorted(files):
+                        if file_name.startswith("."):
+                            continue
+                        file_path = base / file_name
+                        if file_path in seen_files:
+                            continue
+                        seen_files.add(file_path)
+                        try:
+                            stat = file_path.stat()
+                        except OSError:
+                            continue
+                        try:
+                            relative = file_path.relative_to(path).as_posix()
+                        except ValueError:
+                            relative = file_path.as_posix()
+                        entries.append((f"{path.as_posix()}/{relative}", int(stat.st_mtime_ns), int(stat.st_size)))
+                continue
+            if path in seen_files:
+                continue
+            seen_files.add(path)
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            entries.append((path.as_posix(), int(stat.st_mtime_ns), int(stat.st_size)))
 
     entries.sort(key=lambda item: item[0])
     return tuple(entries)
@@ -3678,7 +3787,7 @@ def _use_pyronaut_dev_native_toolchain(command: str, project_dir: Path, *, debug
 def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     if not argv:
         return False
-    direct_options = {"--test", "--port", "--property", "-D", "--config", "--setup"}
+    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--enable-test-resources"}
     value_options = {"--port", "--property", "-D", "--config", "--setup"}
     index = 0
     while index < len(argv):
@@ -3687,6 +3796,8 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
             return len(argv) > index + 1
         if arg in direct_options or arg.startswith("-D"):
             if arg in value_options:
+                index += 2
+            elif arg == "--report" and index + 1 < len(argv) and not argv[index + 1].startswith("-"):
                 index += 2
             else:
                 index += 1
@@ -3702,6 +3813,27 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     if argv[0] in direct_options or argv[0].startswith("-D"):
         return True
     return False
+
+
+def _normalize_report_argument(args: Sequence[str]) -> list[str]:
+    normalized: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--report":
+            if index + 1 < len(args) and not args[index + 1].startswith("-"):
+                normalized.extend(("--report-dir", args[index + 1]))
+                index += 2
+            else:
+                normalized.extend(("--report-dir", "__pyronaut__/test-reports"))
+                index += 1
+            continue
+        if token.startswith("--report="):
+            normalized.extend(("--report-dir", token.split("=", 1)[1]))
+        else:
+            normalized.append(token)
+        index += 1
+    return normalized
 
 
 def _resolve_delegate_executable_path(
@@ -3826,13 +3958,13 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             "                    <source.py|source-dir>...",
         ],
         description=(
-            "Run a processed Pyronaut application or direct Python sources in development mode"
+            "Run a processed Pyronaut application or direct Java/Python sources in development mode"
             if command == "dev"
-            else "Run a processed Pyronaut application or direct Python sources"
+            else "Run a processed Pyronaut application or direct Java/Python sources"
         ),
         options=[
             ("[<appArgs>...]", "Arguments passed to the processed application"),
-            ("<source.py|source-dir>...", "Python source files or directories for direct source execution"),
+            ("<source.java|source.py|source-dir>...", "Java or Python source files/directories for direct source execution"),
             ("-D<name=value>", "Set a Micronaut/system property for direct source execution"),
             ("--classes-dir=<classesDir>", "Processed classes directory"),
             ("--config=<file-or-dir>", "Configuration file or directory for direct source execution"),
@@ -3864,16 +3996,17 @@ def _print_test_usage(stream=None) -> None:
             "                     [--select-class=<selectClasses>]",
             "                     [--test-classes-dir=<testClassesDir>]",
             "                     [--tests=<tests>] [--tests-dir=<testsDir>]",
-            "       pyronaut --test [--port=<port>] [--property=<name=value>]",
+            "       pyronaut test <source> -- <test-source>",
             "                       [-D<name=value>] [--config=<file-or-dir>]",
             "                       [--setup=<pyproject.toml>]",
+            "                       [--report[=<directory>]]",
             "                       <source.py|source-dir>...",
             "                       [-- <test-source.py|test-dir>...]",
         ],
-        description="Run tests for a processed Pyronaut application or direct Python sources",
+        description="Run tests for a processed Pyronaut application or direct Java/Python JUnit 5 sources",
         options=[
-            ("<source.py|source-dir>...", "Python application sources for direct source test execution"),
-            ("<test-source.py|test-dir>...", "Python test sources for direct source test execution"),
+            ("<source.java|source.py|source-dir>...", "Java or Python application sources for direct source test execution"),
+            ("<test-source.java|test-source.py|test-dir>...", "Java or Python JUnit 5 test sources after --"),
             ("-D<name=value>", "Set a Micronaut/system property for direct source execution"),
             ("--classes-dir=<classesDir>", "Processed classes directory"),
             ("--config=<file-or-dir>", "Configuration file or directory for direct source execution"),
@@ -3888,6 +4021,7 @@ def _print_test_usage(stream=None) -> None:
             ("--property=<name=value>", "Set a Micronaut/system property for direct source execution"),
             ("--select-class=<selectClasses>", "Select class to execute"),
             ("--setup=<pyproject.toml>", "pyproject.toml to stage for direct source execution"),
+            ("--report[=<directory>]", "Write JUnit XML and HTML reports (default: __pyronaut__/test-reports)"),
             ("--test-classes-dir=<testClassesDir>", "Processed test classes directory"),
             ("--tests=<tests>", "Select tests (Gradle-like). Repeatable."),
             ("--tests-dir=<testsDir>", "Python tests directory"),

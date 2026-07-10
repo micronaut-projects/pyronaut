@@ -288,7 +288,7 @@ Behavior:
 
 === `pyronaut test`
 
-Runs tests via `pyronaut-test` and the pytest-backed JUnit engine.
+Runs project tests via `pyronaut-test` and the pytest-backed JUnit engine, or runs direct Java/Python JUnit 5 sources in-memory.
 
 Common options:
 
@@ -308,6 +308,39 @@ Behavior:
 - Uses the configured Python test directory for pytest discovery unless `--tests-dir` overrides it.
 - Includes the configured resources directory, any `additional-resources` directories, the configured test resources directory, and any `additional-test-resources` directories on the classpath when present.
 - Writes reports under `__pyronaut__/reports/tests`.
+
+Direct source tests:
+
+Direct mode separates application sources from test sources with `--`:
+
+[source,bash]
+----
+pyronaut test Foo.java -- FooTest.java
+pyronaut test Foo.py -- FooTest.py
+pyronaut test src/*.java -- test/*.java
+----
+
+Direct tests are compiled in-memory and executed through JUnit 5. Python direct tests use the Python compiler's JUnit 5 integration; they do not invoke pytest or require a Python virtual environment. Java-only direct tests disable Python runtime beans unless `micronaut.python.enabled` is supplied explicitly.
+
+Use `-t` or `--continuous` to rerun direct tests after source changes:
+
+[source,bash]
+----
+pyronaut test -t Foo.java -- FooTest.java
+----
+
+Direct test output includes per-test progress and a final execution summary on the console. Direct mode does not write the project pytest reports.
+
+Pass `--report` to write JUnit XML and HTML reports. The default location is
+`__pyronaut__/test-reports`; an alternate directory may follow the option. The
+option is also accepted by project-based `pyronaut test` and controls its report
+directory.
+
+[source,bash]
+----
+pyronaut test --report Foo.java -- FooTest.java
+pyronaut test --report build/test-reports Foo.java -- FooTest.java
+----
 
 Report artifacts:
 

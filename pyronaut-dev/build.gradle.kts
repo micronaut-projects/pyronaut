@@ -25,14 +25,16 @@ dependencies {
 //    implementation(project(":micronaut-pyronaut-create-app"))
     implementation(project(":micronaut-pyronaut-run"))
     implementation(project(":micronaut-pyronaut-test"))
+    implementation(project(":micronaut-pyronaut-test-resources-server"))
+    implementation(project(":micronaut-pyronaut-pytest"))
     implementation(project(":micronaut-pyronaut-native-build"))
     implementation(project(":micronaut-pyronaut-validate-config"))
-    implementation(project(":micronaut-pyronaut-test-resources-server"))
     implementation(project(":micronaut-pyronaut-logback"))
 
     implementation(mn.micronaut.context.python)
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
+    implementation(mnTest.micronaut.test.junit5)
 
     // runtime build in modules
     runtimeOnly(mnSerde.micronaut.serde.jackson)
@@ -74,6 +76,11 @@ configurations.named("nativeImageClasspath") {
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-control-panel")
     exclude(group = "io.micronaut.controlpanel", module = "micronaut-control-panel-core")
     exclude(group = "io.micronaut.controlpanel", module = "micronaut-control-panel-ui")
+}
+
+configurations.named("runtimeClasspath") {
+    exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-server")
+    exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-control-panel")
 }
 
 application {

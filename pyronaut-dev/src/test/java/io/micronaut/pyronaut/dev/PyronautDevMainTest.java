@@ -24,6 +24,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
@@ -86,8 +88,7 @@ final class PyronautDevMainTest {
 
     @Test
     void parsesDirectSourceInvocation() {
-        PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectSourceArgs(List.of(
-            "--test",
+        PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectTestSourceArgs(List.of(
             "--port", "8081",
             "--property", "a.b=c",
             "-Dmicronaut.environments=dev",
@@ -233,7 +234,9 @@ final class PyronautDevMainTest {
     @Test
     void directSourceTestRunsInMemoryRunnerWithoutInstall(@TempDir Path tempDir) throws IOException {
         Path source = tempDir.resolve("hello.py");
-        Files.writeString(source, "print('ok')\n");
+        Path test = tempDir.resolve("HelloTest.py");
+        Files.writeString(source, "class Hello: pass\n");
+        Files.writeString(test, "from org.junit.jupiter.api import Test\nclass HelloTest:\n    @Test\n    def test_ok(self):\n        pass\n");
         List<PyronautDevMain.ToolCommand> calls = new ArrayList<>();
         PyronautDevMain.DelegateInvoker invoker = (command, args) -> {
             calls.add(command);
@@ -241,17 +244,50 @@ final class PyronautDevMainTest {
         };
 
         int exit = PyronautDevMain.execute(
-            new String[]{"--test", "--port", "9090", source.toString()},
+            new String[]{"test", "--port", "9090", source.toString(), "--", test.toString()},
             invoker,
             (invocation, stagingRoot) -> {
                 assertTrue(invocation.test());
                 assertTrue(Files.exists(stagingRoot.resolve("src").resolve("hello.py")));
+                assertTrue(Files.exists(stagingRoot.resolve("src").resolve("HelloTest.py")));
                 return 0;
             }
         );
 
         assertEquals(0, exit);
         assertEquals(List.of(), calls);
+    }
+
+    @Test
+    void executesDirectJavaJUnitTestsInMemory(@TempDir Path tempDir) throws IOException {
+        Path source = tempDir.resolve("App.java");
+        Path test = tempDir.resolve("AppTest.java");
+        Files.writeString(source, "package demo;\nimport io.micronaut.http.annotation.Controller;\nimport io.micronaut.http.annotation.Get;\n@Controller class Routes { @Get(\"/hello\") String hello() { return \"Hello World\"; } }\n");
+        Files.writeString(test, "package demo;\nimport io.micronaut.http.client.HttpClient;\nimport io.micronaut.http.client.annotation.Client;\nimport io.micronaut.test.extensions.junit5.annotation.MicronautTest;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\n@MicronautTest class AppTest { @Test void passes(@Client(\"/\") HttpClient client) { assertEquals(\"Hello World\", client.toBlocking().retrieve(\"/hello\")); } }\n");
+        PrintStream previousOut = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+            int exit = PyronautDevMain.execute(
+                new String[]{"test", source.toString(), "--", test.toString()}
+            );
+            assertEquals(0, exit);
+            assertTrue(output.toString(StandardCharsets.UTF_8).contains("Test run finished"), output.toString(StandardCharsets.UTF_8));
+        } finally {
+            System.setOut(previousOut);
+        }
+    }
+
+    @Test
+    void executesDirectPythonJUnitTestsInMemory(@TempDir Path tempDir) throws IOException {
+        Path source = tempDir.resolve("app.py");
+        Path test = tempDir.resolve("AppTest.py");
+        Files.writeString(source, "class App:\n    pass\n");
+        Files.writeString(test, "from micronaut.test.extensions.junit5.annotation import MicronautTest\nfrom org.junit.jupiter.api import Test\n@MicronautTest\nclass AppTest:\n    @Test\n    def passes(self):\n        assert True\n");
+        int exit = PyronautDevMain.execute(
+            new String[]{"test", source.toString(), "--", test.toString()}
+        );
+        assertEquals(0, exit);
     }
 
     @Test
