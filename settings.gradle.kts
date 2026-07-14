@@ -518,6 +518,7 @@ fun ConfigurableIncludedBuild.substituteMicronautCore() {
             "context",
             "context-propagation",
             "context-python",
+            "context-python-netty",
             "core",
             "core-bom" to "micronaut-core-bom",
             "core-processor",

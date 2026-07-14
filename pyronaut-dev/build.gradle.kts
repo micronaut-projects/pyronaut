@@ -31,29 +31,31 @@ dependencies {
     implementation(project(":micronaut-pyronaut-validate-config"))
     implementation(project(":micronaut-pyronaut-logback"))
 
-    implementation(mn.micronaut.context.python)
+
     implementation(mnPicocli.picocli)
-    implementation(mnTest.junit.platform.launcher)
-    implementation(mnTest.micronaut.test.junit5)
+
 
     // runtime build in modules
-    runtimeOnly(mnSerde.micronaut.serde.jackson)
-//    runtimeOnly(mn.micronaut.context.python.netty)
-    runtimeOnly(mn.micronaut.runtime)
-    runtimeOnly(mn.micronaut.retry)
-    runtimeOnly(libs.micronaut.toml)
-    runtimeOnly(mn.micronaut.http.client)
-    runtimeOnly(mn.micronaut.http.server)
-    runtimeOnly(mn.micronaut.http.server.netty)
-    runtimeOnly(mn.micronaut.messaging)
-    runtimeOnly(mn.micronaut.websocket)
+    api(mnSerde.micronaut.serde.jackson)
+    api(mn.micronaut.context.python.netty)
+    api(mn.micronaut.context.python)
+    api(mn.micronaut.runtime)
+    api(mn.micronaut.retry)
+    api(libs.micronaut.toml)
+    api(mn.micronaut.http.client)
+    api(mn.micronaut.http.server)
+    api(mn.micronaut.http.server.netty)
+    api(mn.micronaut.messaging)
+    api(mn.micronaut.websocket)
 
-    runtimeOnly(mnValidation.micronaut.validation)
+    api(mnValidation.micronaut.validation)
 
+    // testing API
+    api(mnTest.micronaut.test.junit5)
+    api(mnTest.junit.jupiter.api)
 
-
-    testImplementation(mnTest.junit.jupiter.api)
-    testImplementation(mnTest.junit.jupiter.engine)
+    implementation(mnTest.junit.jupiter.engine)
+    implementation(mnTest.junit.platform.launcher)
 
     constraints {
         runtimeOnly("org.antlr:antlr4-runtime") {
@@ -81,6 +83,49 @@ configurations.named("nativeImageClasspath") {
 configurations.named("runtimeClasspath") {
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-server")
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-control-panel")
+}
+
+// The native parent image already contains these modules.  Keep their Maven
+// identities alongside the distribution so runtime launchers can remove a
+// project dependency even when it resolved to a different version.
+val nativeCompileClasspath by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    extendsFrom(configurations.api.get())
+}
+
+val writeNativeClasspathManifests by tasks.registering {
+    val outputDirectory = layout.buildDirectory.dir("generated/native-classpaths")
+    outputs.dir(outputDirectory)
+    doLast {
+        val directory = outputDirectory.get().asFile
+        directory.mkdirs()
+        val nativeArtifacts = configurations.nativeImageClasspath.get().resolvedConfiguration.resolvedArtifacts
+        directory.resolve("native-provided-classpath.txt").writeText(
+            nativeArtifacts
+                .map { "${it.moduleVersion.id.group}:${it.name}" }
+                .distinct()
+                .sorted()
+                .joinToString("\n", postfix = "\n")
+        )
+        directory.resolve("native-compile-classpath.txt").writeText(
+            nativeCompileClasspath.resolvedConfiguration.resolvedArtifacts
+                .map { it.file.toPath().toAbsolutePath().normalize().toString() }
+                .distinct()
+                .sorted()
+                .joinToString("\n", postfix = "\n")
+        )
+    }
+}
+
+distributions {
+    named("main") {
+        contents {
+            into("bin") {
+                from(writeNativeClasspathManifests)
+            }
+        }
+    }
 }
 
 application {
@@ -299,6 +344,10 @@ val nativeImagePgoArgs = providers.provider {
 tasks {
     startScripts {
         applicationName = "pyronaut-dev"
+    }
+
+    named("installDist") {
+        dependsOn(writeNativeClasspathManifests)
     }
 
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")

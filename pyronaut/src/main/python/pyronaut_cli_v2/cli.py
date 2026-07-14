@@ -788,23 +788,31 @@ def _build_direct_source_native_jvm_args(
     if command is not None:
         jvm_args.append(f"-Dpyronaut.dev.launch.mode={'production' if command == 'run' else 'development'}")
         jvm_args.append(f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}")
-    launcher_classpath = os.pathsep.join(_native_launcher_provided_jar_entries(executable_path))
-    if launcher_classpath:
-        jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={launcher_classpath}")
+    compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
+    if compiler_classpath:
+        jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
+    provided_artifacts = os.pathsep.join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
+    if provided_artifacts:
+        jvm_args.append(f"-Dpyronaut.dev.native.provided.artifacts={provided_artifacts}")
+    # A direct source launch may be run from a project which has already been
+    # installed. Preserve that project's command-specific class path, but keep
+    # standalone source execution compatible with older wheels/projects.
+    if command in {"dev", "run", "test"}:
+        project_dir = Path.cwd().resolve()
+        cache_dir = project_dir / "__pyronaut__"
+        if cache_dir.is_dir():
+            try:
+                classpath = _build_native_application_classpath(command, project_dir, executable_path)
+            except RuntimeError:
+                pass
+            else:
+                jvm_args.append(f"-Djava.class.path={classpath}")
+                jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
     return jvm_args
 
 
 def _direct_source_native_compiler_classpath_entries(executable_path: str) -> list[str]:
-    entries = _native_launcher_provided_jar_entries(executable_path)
-    if not entries:
-        return []
-    provided_names = _native_launcher_provided_manifest_file_names(executable_path)
-    if not provided_names:
-        # The native image owns the launcher lib directory. Do not add the
-        # same jars to the runtime class path when older wheels lack the
-        # native-provided-classpath manifest.
-        return []
-    return [entry for entry in entries if Path(entry).name not in provided_names]
+    return _native_launcher_compile_classpath_entries(executable_path)
 
 
 def _delegate_via_java(
@@ -1039,39 +1047,84 @@ def _filter_native_launcher_provided_entries(
     launcher_executable: str | None,
     command: str,
 ) -> list[str]:
+    launcher_provided_coordinates = _native_launcher_provided_artifact_coordinates(launcher_executable)
     launcher_provided_names = _native_launcher_provided_file_names(launcher_executable)
     launcher_provided_artifact_ids = _native_launcher_provided_artifact_ids(launcher_executable, launcher_provided_names)
     return [
         entry
         for entry in entries
-        if not _is_native_launcher_provided_artifact(entry, launcher_provided_names, launcher_provided_artifact_ids, command)
+        if not _is_native_launcher_provided_artifact(entry, launcher_provided_names, launcher_provided_artifact_ids, launcher_provided_coordinates, command)
     ]
 
 
 def _native_launcher_provided_file_names(launcher_executable: str | None) -> set[str]:
-    manifest_names = _native_launcher_provided_manifest_file_names(launcher_executable)
+    manifest_names = {
+        entry
+        for entry in _native_launcher_manifest_entries(launcher_executable, "native-provided-classpath.txt")
+        if ":" not in entry
+    }
     if manifest_names:
         return manifest_names
     return {Path(entry).name for entry in _native_launcher_provided_jar_entries(launcher_executable)}
 
 
 def _native_launcher_provided_artifact_ids(launcher_executable: str | None, file_names: set[str]) -> set[str]:
-    if _native_launcher_provided_manifest_file_names(launcher_executable):
+    if _native_launcher_provided_artifact_coordinates(launcher_executable):
         return set()
     return _versioned_jar_artifact_ids(file_names)
 
 
-def _native_launcher_provided_manifest_file_names(launcher_executable: str | None) -> set[str]:
+def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_name: str) -> list[str]:
     if not launcher_executable:
-        return set()
-    manifest = Path(launcher_executable).parent / "native-provided-classpath.txt"
-    if not manifest.is_file():
-        return set()
-    return {
+        return []
+    executable_parent = Path(launcher_executable).parent
+    candidates = (
+        executable_parent / manifest_name,
+        executable_parent.parent / "bin" / manifest_name,
+        executable_parent.parent / manifest_name,
+    )
+    manifest = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if manifest is None:
+        return []
+    return [
         line.strip()
         for line in manifest.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _native_launcher_provided_artifact_coordinates(launcher_executable: str | None) -> set[str]:
+    return {
+        entry
+        for entry in _native_launcher_manifest_entries(launcher_executable, "native-provided-classpath.txt")
+        if ":" in entry
     }
+
+
+def _native_launcher_provided_manifest_file_names(launcher_executable: str | None) -> set[str]:
+    # Compatibility helper for callers/tests written before the manifest was
+    # changed from filenames to Maven coordinates.
+    return _native_launcher_provided_artifact_coordinates(launcher_executable)
+
+
+def _native_launcher_compile_classpath_entries(launcher_executable: str | None) -> list[str]:
+    entries = _native_launcher_manifest_entries(launcher_executable, "native-compile-classpath.txt")
+    if entries:
+        launcher_parent = Path(launcher_executable).parent if launcher_executable else None
+        lib_dir = launcher_parent.parent / "lib" if launcher_parent else None
+        resolved: list[str] = []
+        for entry in entries:
+            candidate = Path(entry)
+            if candidate.is_file():
+                resolved.append(str(candidate))
+            elif lib_dir is not None:
+                bundled = lib_dir / candidate.name
+                if bundled.is_file():
+                    resolved.append(str(bundled))
+        return resolved
+    # Older distributions do not have a reduced compiler manifest. Their
+    # native parent remains sufficient, so do not re-add the whole lib dir.
+    return []
 
 
 def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> list[str]:
@@ -1114,6 +1167,7 @@ def _is_native_launcher_provided_artifact(
     entry: str,
     launcher_provided_names: set[str],
     launcher_provided_artifact_ids: set[str],
+    launcher_provided_coordinates: set[str],
     command: str,
 ) -> bool:
     file_name = Path(entry).name
@@ -1121,10 +1175,33 @@ def _is_native_launcher_provided_artifact(
         return command != "dev"
     if _is_native_test_resources_client_artifact(file_name):
         return True
+    coordinate = _artifact_coordinate(entry)
+    if coordinate is not None and coordinate in launcher_provided_coordinates:
+        return True
+    artifact = coordinate.rsplit(":", 1)[-1] if coordinate is not None else _versioned_jar_artifact_id(file_name)
+    if any(provided.rsplit(":", 1)[-1] == artifact for provided in launcher_provided_coordinates):
+        return True
     if file_name in launcher_provided_names:
         return True
     artifact_id = _versioned_jar_artifact_id(file_name)
     return artifact_id in launcher_provided_artifact_ids
+
+
+def _artifact_coordinate(entry: str) -> str | None:
+    path = Path(entry)
+    name = _versioned_jar_artifact_id(path.name)
+    if name is None:
+        return None
+    parts = path.parts
+    try:
+        artifact_index = len(parts) - 3
+        if parts[artifact_index] != name:
+            return None
+        repository_index = parts.index("repository")
+        group = ".".join(parts[repository_index + 1:artifact_index])
+        return f"{group}:{name}" if group else None
+    except (ValueError, IndexError):
+        return None
 
 
 def _is_native_test_resources_client_artifact(file_name: str) -> bool:
@@ -2930,7 +3007,7 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
         if token == "--":
             index += 1
             continue
-        if token in {"test", "--port", "--property", "--config", "--setup", "--report"}:
+        if token in {"test", "--port", "--property", "--config", "--setup", "--report", "--log-classpaths"}:
             index += 2
             continue
         if token == "--disable-test-resources":
@@ -3793,7 +3870,7 @@ def _use_pyronaut_dev_native_toolchain(command: str, project_dir: Path, *, debug
 def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     if not argv:
         return False
-    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources"}
+    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources", "--log-classpaths"}
     value_options = {"--port", "--property", "-D", "--config", "--setup"}
     index = 0
     while index < len(argv):
@@ -3977,6 +4054,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("--config-dir=<configDir>", "Processed application configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
             ("--disable-test-resources", "Disable test resources for direct source execution (enabled by default)"),
+            ("--log-classpaths", "Log filtered annotation-processor, compile, and runtime classpaths"),
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
             ("--no-cache", "Bypass run preflight cache reads where applicable"),
@@ -4020,6 +4098,7 @@ def _print_test_usage(stream=None) -> None:
             ("--config-dir=<configDir>", "Configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
             ("--disable-test-resources", "Disable test resources for direct source execution (enabled by default)"),
+            ("--log-classpaths", "Log filtered annotation-processor, compile, and runtime classpaths"),
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),

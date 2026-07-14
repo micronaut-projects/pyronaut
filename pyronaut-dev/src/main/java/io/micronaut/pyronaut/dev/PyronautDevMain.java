@@ -106,6 +106,8 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
     private static final String MICRONAUT_TEST_RESOURCES_ENABLED = "micronaut.test.resources.enabled";
     private static final String DIRECT_COMPILER_CLASSPATH = "pyronaut.dev.compiler.class.path";
+    private static final String DIRECT_APPLICATION_CLASSPATH = "pyronaut.dev.application.class.path";
+    private static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
     private static final String DEFAULT_TEST_SERVER_PORT = "0";
     private static final String NETTY_NO_UNSAFE = "io.netty.noUnsafe";
     private static final String SUN_MISC_UNSAFE_MEMORY_ACCESS = "sun.misc.unsafe.memory.access";
@@ -326,6 +328,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         List<Path> sources = new ArrayList<>();
         List<Path> testSources = new ArrayList<>();
         Map<String, String> properties = new LinkedHashMap<>();
+        boolean logClasspaths = false;
         boolean afterSeparator = false;
 
         for (int i = 0; i < args.size(); i++) {
@@ -368,6 +371,10 @@ public final class PyronautDevMain implements Callable<Integer> {
                         properties.put(MICRONAUT_TEST_RESOURCES_ENABLED, "false");
                         continue;
                     }
+                    case "--log-classpaths" -> {
+                        logClasspaths = true;
+                        continue;
+                    }
                     default -> {
                         if (token.startsWith("-D") && token.length() > 2) {
                             putProperty(properties, token.substring(2));
@@ -381,7 +388,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (port != null) {
             properties.put("micronaut.server.port", port);
         }
-        return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties));
+        return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties), logClasspaths);
     }
 
     private static boolean isSourceSelector(String value) {
@@ -452,6 +459,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             stageConfig(invocation.configs(), stagingRoot.resolve("config"));
             applyProperties(invocation.properties(), previousProperties);
+            if (invocation.setup() == null) {
+                previousProperties.put(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY,
+                    System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY));
+                System.setProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "false");
+            }
             if (sourceType == SourceType.JAVA && !invocation.properties().containsKey(MICRONAUT_PYTHON_ENABLED)) {
                 previousProperties.put(MICRONAUT_PYTHON_ENABLED, System.getProperty(MICRONAUT_PYTHON_ENABLED));
                 System.setProperty(MICRONAUT_PYTHON_ENABLED, "false");
@@ -489,17 +501,9 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
         Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
         boolean productionMode = isProductionMode();
-        List<Path> processorDependencies;
-        List<Path> compileClasspath;
-        List<URL> runtimeClasspath = List.of();
-        List<Path> buildDependencies = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
-        List<Path> runtimeDependencies = readManifest(resolveRunManifest(pyronautDir, productionMode));
-        processorDependencies = new ArrayList<>(buildDependencies);
-        processorDependencies.addAll(directCompilerClasspath(invocation));
-        compileClasspath = new ArrayList<>(runtimeDependencies);
-        compileClasspath.addAll(directCompilerClasspath(invocation));
-
-        List<URL> runtimeUrls = toUrls(runtimeDependencies);
+        DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir, productionMode);
+        logClasspaths(invocation, classpaths);
+        List<URL> runtimeUrls = toUrls(classpaths.runtime());
         Path configDir = stagingRoot.resolve("config");
         if (Files.isDirectory(configDir)) {
             runtimeUrls.add(configDir.toUri().toURL());
@@ -508,10 +512,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
-        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeClasspath.toArray(URL[]::new), launcherClassLoader)) {
+        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
-                .annotationProcessorPath(toFiles(processorDependencies))
-                .classpath(toFiles(compileClasspath))
+                .annotationProcessorPath(toFiles(classpaths.processor()))
+                .classpath(toFiles(classpaths.compile()))
                 .parentClassLoader(runtimeClassLoader);
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
@@ -548,20 +552,9 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static int runInMemoryTests(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
         Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
         boolean productionMode = isProductionMode();
-        List<Path> buildDependencies = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
-        List<Path> runtimeDependencies = readManifest(resolveRunManifest(pyronautDir, productionMode));
-        List<Path> testDependencies = readManifest(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST));
-        List<Path> runtimeClasspath = new ArrayList<>(runtimeDependencies);
-        runtimeClasspath.addAll(testDependencies);
-        if (testResourcesDisabled(invocation)) {
-            runtimeClasspath.removeIf(PyronautDevMain::isTestResourcesJar);
-        }
-        List<Path> compilerClasspath = new ArrayList<>(runtimeDependencies);
-        compilerClasspath.addAll(testDependencies);
-        List<Path> compilerDependencies = new ArrayList<>(buildDependenciesForTests(buildDependencies, testDependencies));
-        compilerDependencies.addAll(directCompilerClasspath(invocation));
-        compilerClasspath.addAll(directCompilerClasspath(invocation));
-        List<URL> runtimeUrls = toUrls(runtimeClasspath);
+        DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir, productionMode);
+        logClasspaths(invocation, classpaths);
+        List<URL> runtimeUrls = toUrls(classpaths.runtime());
         Path configDir = stagingRoot.resolve("config");
         if (!productionMode && Files.isDirectory(configDir)) {
             runtimeUrls.add(configDir.toUri().toURL());
@@ -573,8 +566,8 @@ public final class PyronautDevMain implements Callable<Integer> {
         ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
         try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
-                .annotationProcessorPath(toFiles(compilerDependencies))
-                .classpath(toFiles(compilerClasspath))
+                .annotationProcessorPath(toFiles(classpaths.processor()))
+                .classpath(toFiles(classpaths.compile()))
                 .parentClassLoader(runtimeClassLoader);
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
@@ -979,6 +972,93 @@ public final class PyronautDevMain implements Callable<Integer> {
         return dependencies;
     }
 
+    private static DirectSourceClasspaths resolveDirectSourceClasspaths(DirectSourceInvocation invocation,
+                                                                         Path pyronautDir,
+                                                                         boolean productionMode) throws IOException {
+        List<Path> build = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
+        List<Path> runtime = readManifest(resolveRunManifest(pyronautDir, productionMode));
+        List<Path> test = invocation.test() ? readManifest(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)) : List.of();
+        List<Path> compilerBase = directCompilerClasspath(invocation);
+        List<Path> application = directApplicationClasspath();
+        List<Path> processor = new ArrayList<>(compilerBase);
+        processor.addAll(buildDependenciesForTests(build, test));
+        List<Path> compile = new ArrayList<>(compilerBase);
+        compile.addAll(runtime);
+        compile.addAll(test);
+        compile.addAll(application);
+        List<Path> runtimeClasspath = new ArrayList<>(runtime);
+        runtimeClasspath.addAll(test);
+        runtimeClasspath.addAll(application);
+        return new DirectSourceClasspaths(
+            filterDirectSourcePaths(processor, invocation, productionMode),
+            filterDirectSourcePaths(compile, invocation, productionMode),
+            filterDirectSourcePaths(runtimeClasspath, invocation, productionMode)
+        );
+    }
+
+    private static List<Path> filterDirectSourcePaths(List<Path> paths,
+                                                       DirectSourceInvocation invocation,
+                                                       boolean productionMode) {
+        Set<String> nativeArtifacts = nativeProvidedArtifacts();
+        boolean excludeTestResources = productionMode || testResourcesDisabled(invocation);
+        List<Path> filtered = new ArrayList<>();
+        for (Path path : paths) {
+            if ((excludeTestResources && isTestResourcesJar(path))
+                || (productionMode && isControlPanelJar(path))
+                || isNativeProvidedArtifact(path, nativeArtifacts)) {
+                continue;
+            }
+            if (!filtered.contains(path)) {
+                filtered.add(path);
+            }
+        }
+        return filtered;
+    }
+
+    private static Set<String> nativeProvidedArtifacts() {
+        String configured = System.getProperty(NATIVE_PROVIDED_ARTIFACTS, "");
+        return Arrays.stream(configured.split(Pattern.quote(File.pathSeparator)))
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static boolean isNativeProvidedArtifact(Path path, Set<String> nativeArtifacts) {
+        String artifact = versionedJarArtifact(path.getFileName().toString());
+        return artifact != null && nativeArtifacts.stream().anyMatch(coordinate -> coordinate.endsWith(":" + artifact));
+    }
+
+    private static String versionedJarArtifact(String fileName) {
+        if (!fileName.endsWith(".jar")) {
+            return null;
+        }
+        String baseName = fileName.substring(0, fileName.length() - 4);
+        for (int i = 0; i < baseName.length() - 1; i++) {
+            if (baseName.charAt(i) == '-' && Character.isDigit(baseName.charAt(i + 1))) {
+                return baseName.substring(0, i);
+            }
+        }
+        return null;
+    }
+
+    private static boolean isControlPanelJar(Path path) {
+        return path.getFileName().toString().startsWith("micronaut-control-panel-");
+    }
+
+    private static void logClasspaths(DirectSourceInvocation invocation, DirectSourceClasspaths classpaths) {
+        if (!invocation.logClasspaths()) {
+            return;
+        }
+        logClasspath("annotation processor", classpaths.processor());
+        logClasspath("compile", classpaths.compile());
+        logClasspath("runtime", classpaths.runtime());
+    }
+
+    private static void logClasspath(String name, List<Path> paths) {
+        System.err.println("pyronaut " + name + " classpath:");
+        paths.forEach(path -> System.err.println("  " + path));
+    }
+
     private static List<Path> directCompilerClasspath(DirectSourceInvocation invocation) {
         String classpath = System.getProperty(DIRECT_COMPILER_CLASSPATH);
         if (classpath == null || classpath.isBlank()) {
@@ -989,6 +1069,18 @@ public final class PyronautDevMain implements Callable<Integer> {
             .filter(value -> !value.isBlank())
             .map(Path::of)
             .filter(path -> !excludeTestResources || !isTestResourcesJar(path))
+            .toList();
+    }
+
+    private static List<Path> directApplicationClasspath() {
+        String classpath = System.getProperty(DIRECT_APPLICATION_CLASSPATH);
+        if (classpath == null || classpath.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(classpath.split(Pattern.quote(File.pathSeparator)))
+            .filter(value -> !value.isBlank())
+            .map(Path::of)
+            .map(path -> path.toAbsolutePath().normalize())
             .toList();
     }
 
@@ -1207,13 +1299,17 @@ public final class PyronautDevMain implements Callable<Integer> {
                                   List<Path> configs,
                                   List<Path> sources,
                                   List<Path> testSources,
-                                  Map<String, String> properties) {
+                                  Map<String, String> properties,
+                                  boolean logClasspaths) {
         DirectSourceInvocation {
             configs = List.copyOf(configs);
             sources = List.copyOf(sources);
             testSources = List.copyOf(testSources);
             properties = Map.copyOf(properties);
         }
+    }
+
+    private record DirectSourceClasspaths(List<Path> processor, List<Path> compile, List<Path> runtime) {
     }
 
 }

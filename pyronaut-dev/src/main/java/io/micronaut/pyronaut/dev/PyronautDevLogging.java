@@ -29,6 +29,9 @@ final class PyronautDevLogging {
     }
 
     static void initializeApplicationLogging() {
+        // Direct native-source launches bypass PyronautRunMain, so they must
+        // establish the same default configuration before resetting Logback.
+        PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
         PyronautLauncherLogging.initializeApplicationDefaults();
     }
 }
