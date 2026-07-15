@@ -78,9 +78,11 @@ public final class PyronautRunMain implements Callable<Integer> {
 
     @CommandLine.Option(
             names = "--verbose",
-            description = "Enable verbose output"
+            arity = "0..1",
+            fallbackValue = "",
+            description = "Enable verbose output, optionally scoped to a logger name"
     )
-    boolean verbose;
+    String verboseLogger;
 
     @CommandLine.Spec
     CommandLine.Model.CommandSpec commandSpec;
@@ -98,7 +100,7 @@ public final class PyronautRunMain implements Callable<Integer> {
             new PyprojectModelReader(),
             classLoader -> { },
             PyronautRunMain::startMicronautApplication,
-                () -> PyronautLauncherLogging.initializeApplicationDefaults(false)
+                () -> PyronautLauncherLogging.initializeApplicationDefaults((String) null)
         );
     }
 
@@ -109,7 +111,7 @@ public final class PyronautRunMain implements Callable<Integer> {
             modelReader,
             contextBootstrapper,
             applicationStarter,
-                () -> PyronautLauncherLogging.initializeApplicationDefaults(false)
+                () -> PyronautLauncherLogging.initializeApplicationDefaults((String) null)
         );
     }
 
@@ -153,12 +155,15 @@ public final class PyronautRunMain implements Callable<Integer> {
             if (!hasPythonApplicationMain && defaultLoggingConfigurationApplied) {
                 loggingInitializer.initializeApplicationDefaults();
             }
+            if (verboseLogger != null) {
+                PyronautLauncherLogging.initializeApplicationDefaults(verboseLogger);
+            }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             contextBootstrapper.bootstrap(applicationClassLoader);
             ApplicationArgs applicationArgs = new ApplicationArgs(
-                    model.pyronaut().run().bannerEnabled(), appArgs, verbose
+                    model.pyronaut().run().bannerEnabled(), appArgs, verboseLogger != null
             );
             if (applicationStarter.start(layout.processedClassesRoot(), applicationArgs)) {
                 blockUntilInterrupted();

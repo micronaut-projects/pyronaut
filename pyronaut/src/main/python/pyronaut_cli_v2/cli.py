@@ -3010,6 +3010,9 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
         if token in {"test", "--port", "--property", "--config", "--setup", "--report", "--verbose"}:
             index += 2
             continue
+        if token.startswith("--verbose="):
+            index += 1
+            continue
         if token == "--disable-test-resources":
             index += 1
             continue
@@ -3877,7 +3880,7 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
         arg = argv[index]
         if arg == "--":
             return len(argv) > index + 1
-        if arg in direct_options or arg.startswith("-D"):
+        if arg in direct_options or arg.startswith("-D") or arg.startswith("--verbose="):
             if arg in value_options:
                 index += 2
             elif arg == "--report" and index + 1 < len(argv) and not argv[index + 1].startswith("-"):
@@ -3893,7 +3896,9 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
         except OSError:
             return False
         return False
-    if argv[0] in direct_options or argv[0].startswith("-D"):
+    # A standalone verbosity flag is a normal delegated command option; it
+    # does not imply direct-source execution until a source path is present.
+    if (argv[0] in direct_options and argv[0] != "--verbose") or argv[0].startswith("-D"):
         return True
     return False
 
@@ -4054,7 +4059,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("--config-dir=<configDir>", "Processed application configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
             ("--disable-test-resources", "Disable test resources for direct source execution (enabled by default)"),
-            ("--verbose", "Enable verbose logging of execution."),
+            ("--verbose[=LOGGER]", "Enable verbose logging, optionally scoped to a logger name."),
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
             ("--no-cache", "Bypass run preflight cache reads where applicable"),
@@ -4098,7 +4103,7 @@ def _print_test_usage(stream=None) -> None:
             ("--config-dir=<configDir>", "Configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
             ("--disable-test-resources", "Disable test resources for direct source execution (enabled by default)"),
-            ("--verbose", "Enable verbose logging of execution."),
+            ("--verbose[=LOGGER]", "Enable verbose logging, optionally scoped to a logger name."),
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),

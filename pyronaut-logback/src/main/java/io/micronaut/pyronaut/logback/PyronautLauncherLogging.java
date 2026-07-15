@@ -62,14 +62,26 @@ public final class PyronautLauncherLogging {
      * Initialize default application logging for direct source execution.
      */
     public static void initializeApplicationDefaults(boolean verbose) {
+        initializeApplicationDefaults(verbose ? "" : null);
+    }
+
+    /**
+     * Initialize application logging, optionally enabling trace for one logger.
+     * An empty logger name means the root logger; {@code null} leaves the
+     * normal INFO root level in place.
+     */
+    public static void initializeApplicationDefaults(String verboseLogger) {
         setDefaultProperty(LOGBACK_STATUS_LISTENER, LOGBACK_NOP_STATUS_LISTENER);
 
         ILoggerFactory loggerFactory = LoggerFactory.getILoggerFactory();
         if (loggerFactory instanceof LoggerContext loggerContext) {
             loggerContext.reset();
             Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
-            rootLogger.setLevel(verbose ? Level.TRACE : Level.INFO);
+            rootLogger.setLevel(verboseLogger != null && verboseLogger.isEmpty() ? Level.TRACE : Level.INFO);
             rootLogger.addAppender(createConsoleAppender(loggerContext, APPLICATION_CONSOLE_PATTERN));
+            if (verboseLogger != null && !verboseLogger.isEmpty()) {
+                loggerContext.getLogger(verboseLogger).setLevel(Level.TRACE);
+            }
         }
     }
 

@@ -137,6 +137,14 @@ public final class PyronautTestMain implements Callable<Integer> {
     )
     boolean debugVm;
 
+    @CommandLine.Option(
+        names = "--verbose",
+        arity = "0..1",
+        fallbackValue = "",
+        description = "Enable verbose output, optionally scoped to a logger name"
+    )
+    String verboseLogger;
+
     @CommandLine.Spec
     CommandLine.Model.CommandSpec commandSpec;
 
@@ -193,6 +201,9 @@ public final class PyronautTestMain implements Callable<Integer> {
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
             PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
+            if (verboseLogger != null) {
+                PyronautLauncherLogging.initializeApplicationDefaults(verboseLogger);
+            }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             defaultTestServerPort();

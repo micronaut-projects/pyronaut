@@ -110,6 +110,16 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void scopesVerboseLoggingToLoggerWhenValueIsSpecified() {
+        PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectSourceArgs(List.of(
+            "--verbose=io.micronaut.context", "App.java"
+        ));
+
+        assertTrue(invocation.verbose());
+        assertEquals("io.micronaut.context", invocation.verboseLogger());
+    }
+
+    @Test
     void detectsDirectSourceLanguage(@TempDir Path tempDir) throws IOException {
         Path javaSource = tempDir.resolve("Foo.java");
         Path pythonSource = tempDir.resolve("foo.py");

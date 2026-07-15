@@ -28,10 +28,14 @@ final class PyronautDevLogging {
         PyronautLauncherLogging.initialize();
     }
 
-    static void initializeApplicationLogging(boolean verbose) {
+    static void initializeApplicationLogging(String verboseLogger) {
         // Direct native-source launches bypass PyronautRunMain, so they must
         // establish the same default configuration before resetting Logback.
         PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
-        PyronautLauncherLogging.initializeApplicationDefaults(verbose);
+        PyronautLauncherLogging.initializeApplicationDefaults(verboseLogger);
+    }
+
+    static void initializeApplicationLogging(boolean verbose) {
+        initializeApplicationLogging(verbose ? "" : null);
     }
 }

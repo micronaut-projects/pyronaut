@@ -308,6 +308,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         return parseDirectSourceArgs(args, true);
     }
 
+    static DirectSourceInvocation parseDirectSourceArgs(List<String> args) {
+        return parseDirectSourceArgs(args, false);
+    }
+
     private static DirectSourceInvocation parseDirectSourceArgs(List<String> args, boolean test) {
         String port = null;
         Path setup = null;
@@ -316,7 +320,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         List<Path> sources = new ArrayList<>();
         List<Path> testSources = new ArrayList<>();
         Map<String, String> properties = new LinkedHashMap<>();
-        boolean verbose = false;
+        String verboseLogger = null;
         boolean afterSeparator = false;
 
         for (int i = 0; i < args.size(); i++) {
@@ -360,10 +364,17 @@ public final class PyronautDevMain implements Callable<Integer> {
                         continue;
                     }
                     case "--verbose" -> {
-                        verbose = true;
+                        verboseLogger = "";
+                        if (token.startsWith("--verbose=")) {
+                            verboseLogger = token.substring("--verbose=".length());
+                        }
                         continue;
                     }
                     default -> {
+                        if (token.startsWith("--verbose=")) {
+                            verboseLogger = token.substring("--verbose=".length());
+                            continue;
+                        }
                         if (token.startsWith("-D") && token.length() > 2) {
                             putProperty(properties, token.substring(2));
                             continue;
@@ -376,7 +387,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (port != null) {
             properties.put("micronaut.server.port", port);
         }
-        return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties), verbose);
+        return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties), verboseLogger);
     }
 
     private static boolean isSourceSelector(String value) {
@@ -508,17 +519,17 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .parentClassLoader(runtimeClassLoader);
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
-            if (invocation.verbose) {
+            if (invocation.verbose()) {
                 System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");
             }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
-            PyronautDevLogging.initializeApplicationLogging(invocation.verbose);
+            PyronautDevLogging.initializeApplicationLogging(invocation.verboseLogger());
             now = System.currentTimeMillis();
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
-                .beanResolutionTrace(invocation.verbose ? BeanResolutionTraceMode.STANDARD_OUT : BeanResolutionTraceMode.NONE)
+                .beanResolutionTrace(invocation.verbose() ? BeanResolutionTraceMode.STANDARD_OUT : BeanResolutionTraceMode.NONE)
                 .beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation))
                 .deducePackage(false)
                 .deduceCloudEnvironment(false)
@@ -532,7 +543,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 micronaut.overrideConfigLocations(configLocations.toArray(String[]::new));
             }
             micronaut.start();
-            if (invocation.verbose) {
+            if (invocation.verbose()) {
                 System.out.println("Context Startup Time: " + (System.currentTimeMillis() - now) + "ms");
             }
             blockUntilInterrupted();
@@ -570,7 +581,7 @@ public final class PyronautDevMain implements Callable<Integer> {
 
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
-            if (invocation.verbose) {
+            if (invocation.verbose()) {
                 System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");
             }
             enableContextClassLoaderIntrospections();
@@ -641,7 +652,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             if (reportDirectory != null) {
                 System.out.println("Test report: " + terminalLink(reportDirectory.resolve("index.html")));
             }
-            if (invocation.verbose) {
+            if (invocation.verbose()) {
                 System.out.println("Test Execution Time: " + (System.currentTimeMillis() - now) + "ms");
             }
             return summary.getTotalFailureCount() == 0 ? SUCCESS : TESTS_FAILED;
@@ -1310,12 +1321,16 @@ public final class PyronautDevMain implements Callable<Integer> {
                                   List<Path> sources,
                                   List<Path> testSources,
                                   Map<String, String> properties,
-                                  boolean verbose) {
+                                  String verboseLogger) {
         DirectSourceInvocation {
             configs = List.copyOf(configs);
             sources = List.copyOf(sources);
             testSources = List.copyOf(testSources);
             properties = Map.copyOf(properties);
+        }
+
+        boolean verbose() {
+            return verboseLogger != null;
         }
     }
 
