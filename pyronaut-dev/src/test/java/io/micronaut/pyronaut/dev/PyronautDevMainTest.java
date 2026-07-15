@@ -220,7 +220,7 @@ final class PyronautDevMainTest {
         try {
             System.clearProperty("logback.statusListenerClass");
 
-            PyronautDevLogging.initializeApplicationLogging();
+            PyronautDevLogging.initializeApplicationLogging(false);
 
             assertEquals("ch.qos.logback.core.status.NopStatusListener", System.getProperty("logback.statusListenerClass"));
             Logger rootLogger = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);

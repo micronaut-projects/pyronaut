@@ -61,14 +61,14 @@ public final class PyronautLauncherLogging {
     /**
      * Initialize default application logging for direct source execution.
      */
-    public static void initializeApplicationDefaults() {
+    public static void initializeApplicationDefaults(boolean verbose) {
         setDefaultProperty(LOGBACK_STATUS_LISTENER, LOGBACK_NOP_STATUS_LISTENER);
 
         ILoggerFactory loggerFactory = LoggerFactory.getILoggerFactory();
         if (loggerFactory instanceof LoggerContext loggerContext) {
             loggerContext.reset();
             Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
-            rootLogger.setLevel(Level.INFO);
+            rootLogger.setLevel(verbose ? Level.TRACE : Level.INFO);
             rootLogger.addAppender(createConsoleAppender(loggerContext, APPLICATION_CONSOLE_PATTERN));
         }
     }

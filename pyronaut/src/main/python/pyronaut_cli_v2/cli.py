@@ -3007,7 +3007,7 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
         if token == "--":
             index += 1
             continue
-        if token in {"test", "--port", "--property", "--config", "--setup", "--report", "--log-classpaths"}:
+        if token in {"test", "--port", "--property", "--config", "--setup", "--report", "--verbose"}:
             index += 2
             continue
         if token == "--disable-test-resources":
@@ -3870,7 +3870,7 @@ def _use_pyronaut_dev_native_toolchain(command: str, project_dir: Path, *, debug
 def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     if not argv:
         return False
-    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources", "--log-classpaths"}
+    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources", "--verbose"}
     value_options = {"--port", "--property", "-D", "--config", "--setup"}
     index = 0
     while index < len(argv):
@@ -4054,7 +4054,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("--config-dir=<configDir>", "Processed application configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
             ("--disable-test-resources", "Disable test resources for direct source execution (enabled by default)"),
-            ("--log-classpaths", "Log filtered annotation-processor, compile, and runtime classpaths"),
+            ("--verbose", "Enable verbose logging of execution."),
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
             ("--no-cache", "Bypass run preflight cache reads where applicable"),
@@ -4098,7 +4098,7 @@ def _print_test_usage(stream=None) -> None:
             ("--config-dir=<configDir>", "Configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
             ("--disable-test-resources", "Disable test resources for direct source execution (enabled by default)"),
-            ("--log-classpaths", "Log filtered annotation-processor, compile, and runtime classpaths"),
+            ("--verbose", "Enable verbose logging of execution."),
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),

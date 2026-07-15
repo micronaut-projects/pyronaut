@@ -17,6 +17,7 @@ package io.micronaut.pyronaut.dev;
 
 import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.BeanDefinitionsProvider;
+import io.micronaut.context.BeanResolutionTraceMode;
 import io.micronaut.context.env.Environment;
 import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
@@ -94,7 +95,6 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final int INTERNAL_ERROR = 10;
     private static final int TESTS_FAILED = 1;
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
-    private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
     private static final String PROJECT_DIR_PROPERTY = "pyronaut.dev.project.dir";
     private static final String LAUNCH_MODE_PROPERTY = "pyronaut.dev.launch.mode";
     private static final String BUILD_DEPENDENCIES_MANIFEST = "resolved-build-dependencies";
@@ -149,14 +149,6 @@ public final class PyronautDevMain implements Callable<Integer> {
     @CommandLine.Unmatched
     List<String> directArgs = new ArrayList<>();
 
-    public PyronautDevMain() {
-        this(new DefaultDelegateInvoker(), new DefaultDirectSourceRunner(), false);
-    }
-
-    PyronautDevMain(DelegateInvoker delegateInvoker) {
-        this(delegateInvoker, new DefaultDirectSourceRunner(), false);
-    }
-
     PyronautDevMain(DelegateInvoker delegateInvoker, DirectSourceRunner directSourceRunner) {
         this(delegateInvoker, directSourceRunner, false);
     }
@@ -167,7 +159,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         this.directTest = directTest;
     }
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         configureNativeRuntimeDefaults();
         initializeLauncherLogging();
         Integer verificationExit = verifySystemResourceIfRequested();
@@ -312,10 +304,6 @@ public final class PyronautDevMain implements Callable<Integer> {
         return runDirectSources(invocation);
     }
 
-    static DirectSourceInvocation parseDirectSourceArgs(List<String> args) {
-        return parseDirectSourceArgs(args, false);
-    }
-
     static DirectSourceInvocation parseDirectTestSourceArgs(List<String> args) {
         return parseDirectSourceArgs(args, true);
     }
@@ -328,7 +316,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         List<Path> sources = new ArrayList<>();
         List<Path> testSources = new ArrayList<>();
         Map<String, String> properties = new LinkedHashMap<>();
-        boolean logClasspaths = false;
+        boolean verbose = false;
         boolean afterSeparator = false;
 
         for (int i = 0; i < args.size(); i++) {
@@ -371,8 +359,8 @@ public final class PyronautDevMain implements Callable<Integer> {
                         properties.put(MICRONAUT_TEST_RESOURCES_ENABLED, "false");
                         continue;
                     }
-                    case "--log-classpaths" -> {
-                        logClasspaths = true;
+                    case "--verbose" -> {
+                        verbose = true;
                         continue;
                     }
                     default -> {
@@ -388,7 +376,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (port != null) {
             properties.put("micronaut.server.port", port);
         }
-        return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties), logClasspaths);
+        return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties), verbose);
     }
 
     private static boolean isSourceSelector(String value) {
@@ -513,18 +501,24 @@ public final class PyronautDevMain implements Callable<Integer> {
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
         try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
+            long now = System.currentTimeMillis();
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(classpaths.processor()))
                 .classpath(toFiles(classpaths.compile()))
                 .parentClassLoader(runtimeClassLoader);
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
+            if (invocation.verbose) {
+                System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");
+            }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
-            PyronautDevLogging.initializeApplicationLogging();
+            PyronautDevLogging.initializeApplicationLogging(invocation.verbose);
+            now = System.currentTimeMillis();
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
+                .beanResolutionTrace(invocation.verbose ? BeanResolutionTraceMode.STANDARD_OUT : BeanResolutionTraceMode.NONE)
                 .beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation))
                 .deducePackage(false)
                 .deduceCloudEnvironment(false)
@@ -538,6 +532,9 @@ public final class PyronautDevMain implements Callable<Integer> {
                 micronaut.overrideConfigLocations(configLocations.toArray(String[]::new));
             }
             micronaut.start();
+            if (invocation.verbose) {
+                System.out.println("Context Startup Time: " + (System.currentTimeMillis() - now) + "ms");
+            }
             blockUntilInterrupted();
             return SUCCESS;
         } finally {
@@ -565,12 +562,17 @@ public final class PyronautDevMain implements Callable<Integer> {
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
         try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
+            long now = System.currentTimeMillis();
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(classpaths.processor()))
                 .classpath(toFiles(classpaths.compile()))
                 .parentClassLoader(runtimeClassLoader);
+
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
+            if (invocation.verbose) {
+                System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");
+            }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             DirectSourceApplicationContextConfigurer.set(directSourceBeanDefinitionsProvider(invocation));
@@ -582,6 +584,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader, Map.of(), GraalPyContextFactory.APPLICATION_MAIN);
             }
 
+            now = System.currentTimeMillis();
             LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
             List<String> testClassNames = testClassNames(invocation.testSources());
             if (testClassNames.isEmpty()) {
@@ -637,6 +640,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             Path reportDirectory = writeReports(invocation.report(), summary, reportResults);
             if (reportDirectory != null) {
                 System.out.println("Test report: " + terminalLink(reportDirectory.resolve("index.html")));
+            }
+            if (invocation.verbose) {
+                System.out.println("Test Execution Time: " + (System.currentTimeMillis() - now) + "ms");
             }
             return summary.getTotalFailureCount() == 0 ? SUCCESS : TESTS_FAILED;
         } finally {
@@ -763,7 +769,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static void configureDirectSource(PyronautCompiler.Builder builder, DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
         SourceType sourceType = sourceType(invocation.sources());
         if (invocation.sources().size() == 1) {
-            Path source = invocation.sources().get(0).toAbsolutePath().normalize();
+            Path source = invocation.sources().getFirst().toAbsolutePath().normalize();
             if (Files.isDirectory(source)) {
                 if (sourceType == SourceType.JAVA) {
                     builder.javaSrc(source.toString());
@@ -1046,7 +1052,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static void logClasspaths(DirectSourceInvocation invocation, DirectSourceClasspaths classpaths) {
-        if (!invocation.logClasspaths()) {
+        if (!invocation.verbose()) {
             return;
         }
         logClasspath("annotation processor", classpaths.processor());
@@ -1055,8 +1061,12 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static void logClasspath(String name, List<Path> paths) {
-        System.err.println("pyronaut " + name + " classpath:");
-        paths.forEach(path -> System.err.println("  " + path));
+        System.err.println("pyronaut [" + name + "] classpath:");
+        if (paths.isEmpty()) {
+            System.err.println(" (empty)");
+        } else {
+            paths.forEach(path -> System.err.println("  " + path));
+        }
     }
 
     private static List<Path> directCompilerClasspath(DirectSourceInvocation invocation) {
@@ -1231,11 +1241,11 @@ public final class PyronautDevMain implements Callable<Integer> {
                 case INSTALL -> new CommandLine(new PyronautInstallMain()).execute(args);
                 case PROCESS -> new CommandLine(new PyronautProcessorMain()).execute(args);
                 case RUN -> {
-                    PyronautLauncherLogging.initializeApplicationDefaults();
+                    PyronautLauncherLogging.initializeApplicationDefaults(false);
                     yield new CommandLine(new PyronautRunMain()).execute(args);
                 }
                 case TEST -> {
-                    PyronautLauncherLogging.initializeApplicationDefaults();
+                    PyronautLauncherLogging.initializeApplicationDefaults(false);
                     yield new CommandLine(new PyronautTestMain()).execute(args);
                 }
                 case VALIDATE_CONFIG -> new CommandLine(new PyronautValidateConfigMain()).execute(args);
@@ -1300,7 +1310,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                                   List<Path> sources,
                                   List<Path> testSources,
                                   Map<String, String> properties,
-                                  boolean logClasspaths) {
+                                  boolean verbose) {
         DirectSourceInvocation {
             configs = List.copyOf(configs);
             sources = List.copyOf(sources);

@@ -26,35 +26,6 @@ class PyronautRunMainTest {
     Path tempDir;
 
     @Test
-    void startsApplicationWithConfiguredMainClass() throws Exception {
-        Path project = tempDir.resolve("project");
-        Path classes = project.resolve("__pyronaut__/classes");
-        Files.createDirectories(classes);
-        writeMinimalPyproject(project);
-
-        AtomicReference<Class<?>> resolvedMainClass = new AtomicReference<>();
-        PyronautRunMain runMain = new PyronautRunMain(
-            new PyprojectModelReader(),
-            (className, classLoader) -> {
-                if (SampleApp.class.getName().equals(className)) {
-                    return SampleApp.class;
-                }
-                return Class.forName(className, true, classLoader);
-            },
-            classLoader -> { },
-            (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
-                resolvedMainClass.set(loadedClass);
-                return false;
-            }
-        );
-        runMain.projectDir = project;
-        runMain.mainClass = SampleApp.class.getName();
-
-        assertEquals(0, runMain.call());
-        assertEquals(SampleApp.class, resolvedMainClass.get());
-    }
-
-    @Test
     void enablesContextClassLoaderIntrospectionsWhileApplicationRuns() throws Exception {
         String property = "micronaut.introspections.use.context.classloader";
         String previous = System.getProperty(property);
@@ -67,9 +38,8 @@ class PyronautRunMainTest {
             AtomicReference<String> propertyDuringStart = new AtomicReference<>();
             PyronautRunMain runMain = new PyronautRunMain(
                 new PyprojectModelReader(),
-                (className, classLoader) -> null,
                 classLoader -> { },
-                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
+                (loadedClass, appArgs) -> {
                     propertyDuringStart.set(System.getProperty(property));
                     return false;
                 }
@@ -93,7 +63,6 @@ class PyronautRunMainTest {
 
         PyronautRunMain runMain = new PyronautRunMain();
         runMain.projectDir = project;
-        runMain.mainClass = SampleApp.class.getName();
 
         assertEquals(8, runMain.call());
     }
@@ -101,42 +70,6 @@ class PyronautRunMainTest {
     @Test
     void acceptsDebugVmFlag() {
         assertDoesNotThrow(() -> new picocli.CommandLine(new PyronautRunMain()).execute("--debug-vm", "--help"));
-    }
-
-    @Test
-    void missingDefaultMainClassStartsApplicationWithoutStacktraceNoise() throws Exception {
-        Path project = tempDir.resolve("project-missing-default-main");
-        Path classes = project.resolve("__pyronaut__/classes");
-        Files.createDirectories(classes);
-        writeMinimalPyproject(project);
-
-        AtomicReference<Path> startedClassesDir = new AtomicReference<>();
-        PyronautRunMain runMain = new PyronautRunMain(
-            new PyprojectModelReader(),
-            (className, classLoader) -> {
-                throw new ClassNotFoundException(className);
-            },
-            classLoader -> { },
-            (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
-                startedClassesDir.set(resolvedClassesDir);
-                return false;
-            }
-        );
-        runMain.projectDir = project;
-        runMain.mainClass = "pyronaut_application.PyronautMain";
-
-        PrintStream originalErr = System.err;
-        ByteArrayOutputStream errBuffer = new ByteArrayOutputStream();
-        try (PrintStream errStream = new PrintStream(errBuffer, true, StandardCharsets.UTF_8)) {
-            System.setErr(errStream);
-            assertEquals(0, runMain.call());
-        } finally {
-            System.setErr(originalErr);
-        }
-
-        String stderr = errBuffer.toString();
-        assertEquals(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize(), startedClassesDir.get());
-        assertFalse(stderr.contains("ClassNotFoundException"));
     }
 
     @Test
@@ -154,9 +87,8 @@ class PyronautRunMainTest {
         try {
             PyronautRunMain runMain = new PyronautRunMain(
                 new PyprojectModelReader(),
-                (className, classLoader) -> null,
                 classLoader -> { },
-                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
+                (loadedClass, appArgs) -> {
                     loggerConfigDuringStart.set(System.getProperty("logger.config"));
                     return false;
                 },
@@ -195,9 +127,8 @@ class PyronautRunMainTest {
         try {
             PyronautRunMain runMain = new PyronautRunMain(
                 new PyprojectModelReader(),
-                (className, classLoader) -> null,
                 classLoader -> { },
-                (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
+                (loadedClass, appArgs) -> {
                     loggerConfigDuringStart.set(System.getProperty("logger.config"));
                     return false;
                 },
@@ -331,21 +262,15 @@ class PyronautRunMainTest {
             StandardCharsets.UTF_8
         );
 
-        AtomicReference<Path> startedClassesDir = new AtomicReference<>();
         AtomicReference<java.net.URLClassLoader> applicationClassLoader = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
             new PyprojectModelReader(),
-            (className, classLoader) -> null,
             classLoader -> applicationClassLoader.set((java.net.URLClassLoader) classLoader),
-            (loadedClass, resolvedClassesDir, bannerEnabled, appArgs) -> {
-                startedClassesDir.set(resolvedClassesDir);
-                return false;
-            }
+            (loadedClass, appArgs) -> false
         );
         runMain.projectDir = project;
 
         assertEquals(0, runMain.call());
-        assertEquals(classes.toAbsolutePath().normalize(), startedClassesDir.get());
         assertTrue(
             java.util.Arrays.stream(applicationClassLoader.get().getURLs())
                 .anyMatch(url -> url.toString().contains("app-config"))
@@ -388,10 +313,9 @@ class PyronautRunMainTest {
         AtomicReference<Boolean> bannerEnabled = new AtomicReference<>();
         PyronautRunMain runMain = new PyronautRunMain(
             new PyprojectModelReader(),
-            (className, classLoader) -> null,
             classLoader -> { },
-            (loadedClass, resolvedClassesDir, configuredBannerEnabled, appArgs) -> {
-                bannerEnabled.set(configuredBannerEnabled);
+            (loadedClass, applicationArgs) -> {
+                bannerEnabled.set(applicationArgs.bannerEnabled());
                 return false;
             }
         );

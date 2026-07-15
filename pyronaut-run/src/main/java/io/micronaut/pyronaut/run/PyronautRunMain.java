@@ -51,7 +51,6 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
-    private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String NATIVE_IMAGE_CODE = "org.graalvm.nativeimage.imagecode";
     private static final String PYTHON_APPLICATION_MAIN = "META-INF/GRAALPY-VFS/micronaut-application/src/main.py";
@@ -71,14 +70,17 @@ public final class PyronautRunMain implements Callable<Integer> {
     @CommandLine.Option(names = "--config-dir", defaultValue = DEFAULT_CONFIG_DIR, description = "Configuration directory")
     Path configDir = Path.of(DEFAULT_CONFIG_DIR);
 
-    @CommandLine.Option(names = "--main-class", defaultValue = DEFAULT_MAIN_CLASS, description = "Main class to invoke")
-    String mainClass = DEFAULT_MAIN_CLASS;
-
     @CommandLine.Option(
         names = "--debug-vm",
         description = "Enable JVM JDWP debugging on port 5005 (flag is accepted for orchestrator forwarding)"
     )
     boolean debugVm;
+
+    @CommandLine.Option(
+            names = "--verbose",
+            description = "Enable verbose output"
+    )
+    boolean verbose;
 
     @CommandLine.Spec
     CommandLine.Model.CommandSpec commandSpec;
@@ -86,7 +88,6 @@ public final class PyronautRunMain implements Callable<Integer> {
     @CommandLine.Parameters
     List<String> appArgs = List.of();
 
-    private final ClassResolver classResolver;
     private final ContextBootstrapper contextBootstrapper;
     private final ApplicationStarter applicationStarter;
     private final PyprojectModelReader modelReader;
@@ -95,33 +96,28 @@ public final class PyronautRunMain implements Callable<Integer> {
     public PyronautRunMain() {
         this(
             new PyprojectModelReader(),
-            (className, classLoader) -> Class.forName(className, true, classLoader),
             classLoader -> { },
             PyronautRunMain::startMicronautApplication,
-            PyronautLauncherLogging::initializeApplicationDefaults
+                () -> PyronautLauncherLogging.initializeApplicationDefaults(false)
         );
     }
 
     PyronautRunMain(PyprojectModelReader modelReader,
-                    ClassResolver classResolver,
                     ContextBootstrapper contextBootstrapper,
                     ApplicationStarter applicationStarter) {
         this(
             modelReader,
-            classResolver,
             contextBootstrapper,
             applicationStarter,
-            PyronautLauncherLogging::initializeApplicationDefaults
+                () -> PyronautLauncherLogging.initializeApplicationDefaults(false)
         );
     }
 
     PyronautRunMain(PyprojectModelReader modelReader,
-                    ClassResolver classResolver,
                     ContextBootstrapper contextBootstrapper,
                     ApplicationStarter applicationStarter,
                     LoggingInitializer loggingInitializer) {
         this.modelReader = modelReader;
-        this.classResolver = classResolver;
         this.contextBootstrapper = contextBootstrapper;
         this.applicationStarter = applicationStarter;
         this.loggingInitializer = loggingInitializer;
@@ -160,9 +156,11 @@ public final class PyronautRunMain implements Callable<Integer> {
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
-            Class<?> loadedClass = loadConfiguredMainClass(applicationClassLoader);
             contextBootstrapper.bootstrap(applicationClassLoader);
-            if (applicationStarter.start(loadedClass, layout.processedClassesRoot(), model.pyronaut().run().bannerEnabled(), appArgs)) {
+            ApplicationArgs applicationArgs = new ApplicationArgs(
+                    model.pyronaut().run().bannerEnabled(), appArgs, verbose
+            );
+            if (applicationStarter.start(layout.processedClassesRoot(), applicationArgs)) {
                 blockUntilInterrupted();
             }
             return 0;
@@ -197,12 +195,10 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    private static boolean startMicronautApplication(Class<?> loadedClass,
-                                                     Path resolvedClassesDir,
-                                                     Boolean bannerEnabled,
-                                                     List<String> appArgs) {
-        Micronaut micronaut = Micronaut.build(appArgs.toArray(String[]::new));
-        micronaut.banner(!Boolean.FALSE.equals(bannerEnabled));
+    private static boolean startMicronautApplication(Path resolvedClassesDir,
+                                                     ApplicationArgs applicationArgs) throws Exception {
+        Micronaut micronaut = Micronaut.build(applicationArgs.appArgs.toArray(String[]::new));
+        micronaut.banner(!Boolean.FALSE.equals(applicationArgs.bannerEnabled));
         micronaut.environments(Environment.DEVELOPMENT);
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         if (contextClassLoader != null) {
@@ -213,9 +209,6 @@ public final class PyronautRunMain implements Callable<Integer> {
         List<Class<?>> applicationClasses = discoverApplicationClasses(resolvedClassesDir, contextClassLoader);
         if (!applicationClasses.isEmpty()) {
             micronaut.classes(applicationClasses.toArray(Class[]::new));
-        }
-        if (loadedClass != null) {
-            micronaut.mainClass(loadedClass);
         }
         List<String> packages = discoverApplicationPackages(resolvedClassesDir);
         if (!packages.isEmpty()) {
@@ -233,17 +226,6 @@ public final class PyronautRunMain implements Callable<Integer> {
         String javaHome = javaHomeSupplier.get();
         if (javaHome != null && !javaHome.isBlank()) {
             System.setProperty("java.home", javaHome);
-        }
-    }
-
-    private Class<?> loadConfiguredMainClass(ClassLoader classLoader) throws Exception {
-        if (!DEFAULT_MAIN_CLASS.equals(mainClass)) {
-            return classResolver.load(mainClass, classLoader);
-        }
-        try {
-            return classResolver.load(mainClass, classLoader);
-        } catch (ClassNotFoundException ignored) {
-            return null;
         }
     }
 
@@ -360,8 +342,10 @@ public final class PyronautRunMain implements Callable<Integer> {
 
     @FunctionalInterface
     interface ApplicationStarter {
-        boolean start(Class<?> loadedClass, Path resolvedClassesDir, Boolean bannerEnabled, List<String> appArgs) throws Exception;
+        boolean start(Path resolvedClassesDir, ApplicationArgs args) throws Exception;
     }
+
+    record ApplicationArgs(Boolean bannerEnabled, List<String> appArgs, boolean verbose) {}
 
     @FunctionalInterface
     interface LoggingInitializer {
@@ -448,7 +432,7 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautRunMain()).execute(args);
         System.exit(exitCode);
