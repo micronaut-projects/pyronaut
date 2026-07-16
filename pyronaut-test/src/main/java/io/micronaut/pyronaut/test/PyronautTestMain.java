@@ -21,10 +21,14 @@ import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
+import io.micronaut.test.pytest.execution.JUnitReportWriter;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.TestExecutionListener;
+import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
 import org.junit.platform.launcher.core.LauncherFactory;
 import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
@@ -41,6 +45,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 
@@ -171,19 +176,20 @@ public final class PyronautTestMain implements Callable<Integer> {
         Path resolvedTestsDir;
         try {
             applyTestResourcesProperties(System.getenv());
-            model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
-            Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
-            Path resolvedTestResourcesDir = root.resolve(model.pyronaut().sources().testResources()).normalize();
-            resolvedTestsDir = resolveConfiguredPath(root, testsDir, DEFAULT_TESTS_DIR, model.pyronaut().sources().pythonTest(), "--tests-dir");
-            layout = resolveProjectLayout(
-                root,
-                classesDir,
-                testClassesDir,
-                resolvedConfigDir,
-                resolvedTestResourcesDir,
-                resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()),
-                resolveConfiguredPaths(root, model.pyronaut().sources().additionalTestResources())
-            );
+            if (ExternalProjectLayout.isExternal(root)) {
+                ExternalProjectLayout external = ExternalProjectLayout.read(root);
+                layout = resolveExternalProjectLayout(root, classesDir, testClassesDir, external);
+                model = null;
+                resolvedTestsDir = root.resolve(testsDir).normalize();
+            } else {
+                model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
+                Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
+                Path resolvedTestResourcesDir = root.resolve(model.pyronaut().sources().testResources()).normalize();
+                resolvedTestsDir = resolveConfiguredPath(root, testsDir, DEFAULT_TESTS_DIR, model.pyronaut().sources().pythonTest(), "--tests-dir");
+                layout = resolveProjectLayout(root, classesDir, testClassesDir, resolvedConfigDir, resolvedTestResourcesDir,
+                    resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()),
+                    resolveConfiguredPaths(root, model.pyronaut().sources().additionalTestResources()));
+            }
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -210,10 +216,39 @@ public final class PyronautTestMain implements Callable<Integer> {
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             try {
                 contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedPytestSourceDir));
+                // Bootstrapping the reusable Python context may change the
+                // thread context classloader. Restore the application loader
+                // before JUnit/Micronaut discovers test bean definitions;
+                // external Java tests keep their generated definitions in
+                // __pyronaut__/test-classes.
+                Thread.currentThread().setContextClassLoader(applicationClassLoader);
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
-                boolean publishReports = false;
+                Path reportsDir = root.resolve(DEFAULT_REPORTS_DIR).normalize();
+                Path junitReport = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
+                Path htmlReport = reportsDir.resolve(DEFAULT_HTML_REPORT);
+                Path nodeIdReport = reportsDir.resolve(DEFAULT_NODEID_REPORT);
+                Path eventsReport = reportsDir.resolve(DEFAULT_EVENTS_REPORT);
+                Files.createDirectories(reportsDir);
+                clearLegacyReportAliases(root);
+                requestBuilder.configurationParameter(PYTEST_REPORT_DIR, reportsDir.toString());
+                requestBuilder.configurationParameter(PYTEST_JUNIT_XML_REPORT, junitReport.toString());
+                requestBuilder.configurationParameter(PYTEST_HTML_REPORT, htmlReport.toString());
+                requestBuilder.configurationParameter(PYTEST_LAST_NODEID_REPORT, nodeIdReport.toString());
+                requestBuilder.configurationParameter(PYTEST_EVENTS_REPORT, eventsReport.toString());
+                boolean publishReports = true;
                 if (selectClasses == null || selectClasses.isEmpty()) {
-                    requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(java.util.Set.of(layout.processedClassesRoot())));
+                    java.util.LinkedHashSet<Path> classpathRoots = new java.util.LinkedHashSet<>();
+                    classpathRoots.add(layout.processedClassesRoot());
+                    if (ExternalProjectLayout.isExternal(root)) {
+                        Path mainClasses = root.resolve(classesDir).normalize();
+                        if (Files.isDirectory(mainClasses)) {
+                            classpathRoots.add(mainClasses);
+                        }
+                        for (Class<?> testClass : externalTestClasses(root.resolve(testClassesDir).normalize(), applicationClassLoader)) {
+                            requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
+                        }
+                    }
+                    requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(classpathRoots));
                     Optional<String> pytestTests = buildPytestTestsParameter(tests);
                     if (Files.isDirectory(resolvedPytestSourceDir)) {
                         List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
@@ -228,38 +263,90 @@ public final class PyronautTestMain implements Callable<Integer> {
                             }
                         }
                     }
-                    Path reportsDir = root.resolve(DEFAULT_REPORTS_DIR).normalize();
-                    Path junitReport = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
-                    Path htmlReport = reportsDir.resolve(DEFAULT_HTML_REPORT);
-                    Path nodeIdReport = reportsDir.resolve(DEFAULT_NODEID_REPORT);
-                    Path eventsReport = reportsDir.resolve(DEFAULT_EVENTS_REPORT);
-                    Files.createDirectories(reportsDir);
-                    clearLegacyReportAliases(root);
-                    requestBuilder.configurationParameter(PYTEST_REPORT_DIR, reportsDir.toString());
-                    requestBuilder.configurationParameter(PYTEST_JUNIT_XML_REPORT, junitReport.toString());
-                    requestBuilder.configurationParameter(PYTEST_HTML_REPORT, htmlReport.toString());
-                    requestBuilder.configurationParameter(PYTEST_LAST_NODEID_REPORT, nodeIdReport.toString());
-                    requestBuilder.configurationParameter(PYTEST_EVENTS_REPORT, eventsReport.toString());
-                    publishReports = true;
-
                     pytestTests.ifPresent(value -> requestBuilder.configurationParameter(PYTEST_TESTS, value));
                 } else {
                     for (String className : selectClasses) {
-                        requestBuilder.selectors(DiscoverySelectors.selectClass(className));
+                        try {
+                            Class<?> testClass = Class.forName(className, false, applicationClassLoader);
+                            requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
+                        } catch (ClassNotFoundException e) {
+                            System.err.println("Unable to load selected test class: " + className);
+                            return 7;
+                        }
                     }
                 }
                 LauncherDiscoveryRequest request = requestBuilder.build();
                 Launcher launcher = LauncherFactory.create();
                 SummaryGeneratingListener listener = new SummaryGeneratingListener();
                 launcher.registerTestExecutionListeners(listener);
+                List<JUnitReportWriter.TestResult> javaTestResults = new CopyOnWriteArrayList<>();
+                if (ExternalProjectLayout.isExternal(root)) {
+                    launcher.registerTestExecutionListeners(new TestExecutionListener() {
+                        @Override
+                        public void executionStarted(TestIdentifier identifier) {
+                            if (identifier.isTest()) {
+                                System.out.println("> " + identifier.getDisplayName());
+                            }
+                        }
+
+                        @Override
+                        public void executionSkipped(TestIdentifier identifier, String reason) {
+                            if (identifier.isTest()) {
+                                System.out.println("  skipped: " + (reason == null ? "no reason supplied" : reason));
+                            }
+                        }
+
+                        @Override
+                        public void executionFinished(TestIdentifier identifier,
+                                                       org.junit.platform.engine.TestExecutionResult result) {
+                            if (!identifier.isTest()) {
+                                return;
+                            }
+                            String outputStatus = result.getStatus().name();
+                            String highlightedStatus = switch (outputStatus) {
+                                case "SUCCESSFUL" -> "\u001B[32mSUCCESSFUL\u001B[0m";
+                                case "FAILED" -> "\u001B[31mFAILED\u001B[0m";
+                                default -> outputStatus;
+                            };
+                            System.out.println("  " + highlightedStatus);
+                            result.getThrowable().ifPresent(Throwable::printStackTrace);
+                            JUnitReportWriter.Status reportStatus = switch (result.getStatus()) {
+                                case SUCCESSFUL -> JUnitReportWriter.Status.PASSED;
+                                case FAILED -> JUnitReportWriter.Status.FAILED;
+                                case ABORTED -> JUnitReportWriter.Status.SKIPPED;
+                            };
+                            javaTestResults.add(new JUnitReportWriter.TestResult(
+                                identifier.getDisplayName(), reportStatus,
+                                result.getThrowable().map(Throwable::toString).orElse(""), "", ""));
+                        }
+                    });
+                }
+                if (verboseLogger != null) {
+                    launcher.registerTestExecutionListeners(new org.junit.platform.launcher.TestExecutionListener() {
+                        @Override
+                        public void executionSkipped(org.junit.platform.launcher.TestIdentifier testIdentifier, String reason) {
+                            System.err.println("Skipped JUnit test " + testIdentifier.getDisplayName() + ": " + reason);
+                        }
+                    });
+                }
                 try {
                     launcher.execute(request);
                 } finally {
+                    if (ExternalProjectLayout.isExternal(root)) {
+                        try {
+                            JUnitReportWriter.write(reportsDir, listener.getSummary(), javaTestResults);
+                        } catch (IOException e) {
+                            System.err.println("Unable to write test report: " + e.getMessage());
+                        }
+                    }
                     if (publishReports) {
                         publishReportLocations(root);
                     }
                 }
                 TestExecutionSummary summary = listener.getSummary();
+                if (ExternalProjectLayout.isExternal(root) || verboseLogger != null) {
+                    summary.printTo(new java.io.PrintWriter(System.err, true));
+                }
                 Optional<Throwable> pytestPreconditionFailure = findPytestPreconditionFailure(summary);
                 if (pytestPreconditionFailure.isPresent()) {
                     System.err.println(pytestPreconditionMessage(pytestPreconditionFailure.get()));
@@ -347,6 +434,49 @@ public final class PyronautTestMain implements Callable<Integer> {
     static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path testClassesDir, Path configDir, Path testResourcesDir) throws IOException {
         return resolveProjectLayout(root, classesDir, testClassesDir, configDir, testResourcesDir, List.of(), List.of());
     }
+
+    static ResolvedProjectLayout resolveExternalProjectLayout(Path root, Path classesDir, Path testClassesDir, ExternalProjectLayout external) throws IOException {
+        Path resolvedTestClassesDir = root.resolve(testClassesDir).normalize();
+        Path resolvedClassesDir = root.resolve(classesDir).normalize();
+        Path processed = Files.isDirectory(resolvedTestClassesDir) ? resolvedTestClassesDir : resolvedClassesDir;
+        if (!Files.isDirectory(processed)) {
+            throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
+        }
+        LinkedHashSet<URL> urls = new LinkedHashSet<>();
+        for (Path entry : external.testClasspath()) if (Files.exists(entry)) urls.add(entry.toUri().toURL());
+        if (Files.isDirectory(resolvedClassesDir)) urls.add(resolvedClassesDir.toUri().toURL());
+        if (Files.isDirectory(resolvedTestClassesDir)) urls.add(resolvedTestClassesDir.toUri().toURL());
+        for (Path resource : external.mainResources()) if (Files.isDirectory(resource)) urls.add(resource.toUri().toURL());
+        for (Path resource : external.testResources()) if (Files.isDirectory(resource)) urls.add(resource.toUri().toURL());
+        return new ResolvedProjectLayout(processed, List.copyOf(urls));
+    }
+
+    private static List<Class<?>> externalTestClasses(Path testClassesRoot, ClassLoader classLoader) {
+        if (!Files.isDirectory(testClassesRoot)) {
+            return List.of();
+        }
+        List<Class<?>> classes = new ArrayList<>();
+        try (var files = Files.walk(testClassesRoot)) {
+            files.filter(path -> path.toString().endsWith(".class"))
+                .filter(path -> !path.getFileName().toString().contains("$"))
+                .filter(path -> !path.getFileName().toString().equals("module-info.class"))
+                .forEach(path -> {
+                    String className = testClassesRoot.relativize(path).toString()
+                        .replace(java.io.File.separatorChar, '.')
+                        .replaceAll("\\.class$", "");
+                    try {
+                        classes.add(Class.forName(className, false, classLoader));
+                    } catch (ClassNotFoundException ignored) {
+                        // The processor may have left a non-loadable generated class.
+                    }
+                });
+        } catch (IOException ignored) {
+            // Keep classpath-root discovery for incomplete output trees.
+        }
+        return classes;
+    }
+
+
 
     static ResolvedProjectLayout resolveProjectLayout(Path root,
                                                       Path classesDir,

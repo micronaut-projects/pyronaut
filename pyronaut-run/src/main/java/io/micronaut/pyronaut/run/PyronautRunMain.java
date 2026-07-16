@@ -23,6 +23,7 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinition
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
@@ -133,9 +134,15 @@ public final class PyronautRunMain implements Callable<Integer> {
         PyprojectModel model;
         try {
             applyTestResourcesProperties(System.getenv());
-            model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
-            Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
-            layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
+            if (ExternalProjectLayout.isExternal(root)) {
+                ExternalProjectLayout external = ExternalProjectLayout.read(root);
+                layout = resolveExternalProjectLayout(root, classesDir, external);
+                model = null;
+            } else {
+                model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
+                Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
+                layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
+            }
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -163,7 +170,7 @@ public final class PyronautRunMain implements Callable<Integer> {
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             contextBootstrapper.bootstrap(applicationClassLoader);
             ApplicationArgs applicationArgs = new ApplicationArgs(
-                    model.pyronaut().run().bannerEnabled(), appArgs, verboseLogger != null
+                    model == null ? Boolean.TRUE : model.pyronaut().run().bannerEnabled(), appArgs, verboseLogger != null
             );
             if (applicationStarter.start(layout.processedClassesRoot(), applicationArgs)) {
                 blockUntilInterrupted();
@@ -237,6 +244,21 @@ public final class PyronautRunMain implements Callable<Integer> {
     static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir) throws IOException {
         return resolveProjectLayout(root, classesDir, configDir, List.of());
     }
+
+    static ResolvedProjectLayout resolveExternalProjectLayout(Path root, Path classesDir, ExternalProjectLayout external) throws IOException {
+        Path resolvedClassesDir = root.resolve(classesDir).normalize();
+        if (!Files.isDirectory(resolvedClassesDir)) {
+            throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
+        }
+        LinkedHashSet<URL> urls = new LinkedHashSet<>();
+        for (Path entry : external.developmentRuntimeClasspath().isEmpty() ? external.runtimeClasspath() : external.developmentRuntimeClasspath()) {
+            if (Files.exists(entry)) urls.add(entry.toUri().toURL());
+        }
+        urls.add(resolvedClassesDir.toUri().toURL());
+        for (Path resource : external.mainResources()) if (Files.isDirectory(resource)) urls.add(resource.toUri().toURL());
+        return new ResolvedProjectLayout(resolvedClassesDir, List.copyOf(urls));
+    }
+
 
     static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir, List<Path> additionalResourceDirs) throws IOException {
         Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();

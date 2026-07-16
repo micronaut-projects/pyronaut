@@ -961,6 +961,46 @@ additional-resources = ["views"]
         self.assertIn("/tmp/micronaut-control-panel-ui-2.0.0.jar", entries)
         self.assertNotIn("/tmp/micronaut-context-python-5.1.0.jar", entries)
 
+    def test_external_layout_native_classpath_uses_persisted_resources_and_filters_provided_artifacts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dev = root / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            (root / "native-provided-classpath.txt").write_text(
+                "io.micronaut:micronaut-context\n", encoding="utf-8"
+            )
+            project_dir = root / "external"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            main_resources = project_dir / "src/main/resources"
+            test_resources = project_dir / "src/test/resources"
+            classes_dir.mkdir(parents=True)
+            main_resources.mkdir(parents=True)
+            test_resources.mkdir(parents=True)
+            retained = project_dir / "lib" / "example-1.0.jar"
+            provided = project_dir / "repository" / "io" / "micronaut" / "micronaut-context" / "4.0" / "micronaut-context-4.0.jar"
+            retained.parent.mkdir(parents=True)
+            provided.parent.mkdir(parents=True)
+            retained.write_text("", encoding="utf-8")
+            provided.write_text("", encoding="utf-8")
+            (project_dir / "build.gradle").write_text("plugins { id 'java' }\n", encoding="utf-8")
+            (cache_dir / "project-layout.properties").write_text(
+                "kind=GRADLE\n"
+                f"testClasspath={provided}{os.pathsep}{retained}\n"
+                f"mainResources={main_resources}\n"
+                f"testResources={test_resources}\n",
+                encoding="utf-8",
+            )
+
+            entries = cli._build_native_application_classpath("test", project_dir, str(native_dev)).split(os.pathsep)
+
+        self.assertNotIn(str(provided.resolve()), entries)
+        self.assertIn(str(retained.resolve()), entries)
+        self.assertIn(str(classes_dir.resolve()), entries)
+        self.assertIn(str(main_resources.resolve()), entries)
+        self.assertIn(str(test_resources.resolve()), entries)
+
     def test_run_native_application_classpath_still_filters_control_panel_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"

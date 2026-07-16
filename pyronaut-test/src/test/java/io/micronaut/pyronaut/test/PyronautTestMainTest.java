@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.test;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -501,6 +502,29 @@ class PyronautTestMainTest {
         assertTrue(urls.stream().noneMatch(url -> url.contains("micronaut-http-netty")));
         assertTrue(urls.stream().anyMatch(url -> url.contains("netty-transport")));
         assertTrue(urls.stream().anyMatch(url -> url.contains("micronaut-http-client")));
+    }
+
+    @Test
+    void externalLayoutAddsMainAndTestResources() throws Exception {
+        Path project = tempDir.resolve("external-test-layout");
+        Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Files.createDirectories(project.resolve("__pyronaut__/test-classes"));
+        Path mainResources = Files.createDirectories(project.resolve("src/main/resources"));
+        Path testResources = Files.createDirectories(project.resolve("src/test/resources"));
+        Files.writeString(project.resolve("build.gradle"), "plugins { id 'java' }");
+        ExternalProjectLayout external = new ExternalProjectLayout(
+            ExternalProjectLayout.ProjectKind.GRADLE,
+            List.of(), List.of(), List.of(mainResources), List.of(testResources),
+            List.of(), List.of(), List.of(), List.of(), List.of()
+        );
+        external.write(project);
+        List<String> urls = PyronautTestMain.resolveExternalProjectLayout(
+            project, Path.of("__pyronaut__/classes"), Path.of("__pyronaut__/test-classes"), external
+        ).classpathUrls().stream().map(Object::toString).toList();
+        assertTrue(urls.stream().anyMatch(url -> url.contains("__pyronaut__/classes")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("__pyronaut__/test-classes")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("main/resources")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("test/resources")));
     }
 
     @Test

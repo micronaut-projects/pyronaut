@@ -18,11 +18,13 @@ package io.micronaut.pyronaut.install;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import picocli.CommandLine;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
@@ -78,27 +80,37 @@ public final class PyronautInstallMain implements Callable<Integer> {
     private final MavenClasspathResolver resolver;
     private final PyprojectEditorSupport editorSupport;
     private final PythonEditorSupport pythonEditorSupport;
+    private final ExternalBuildResolver externalBuildResolver;
 
     public PyronautInstallMain() {
-        this(new PyprojectModelReader(), new MavenClasspathResolver(), new PyprojectEditorSupport(), new PythonEditorSupport());
+        this(new PyprojectModelReader(), new MavenClasspathResolver(), new PyprojectEditorSupport(), new PythonEditorSupport(), new ExternalBuildResolver());
     }
 
     PyronautInstallMain(PyprojectModelReader modelReader, MavenClasspathResolver resolver) {
-        this(modelReader, resolver, new PyprojectEditorSupport(), new PythonEditorSupport());
+        this(modelReader, resolver, new PyprojectEditorSupport(), new PythonEditorSupport(), new ExternalBuildResolver());
     }
 
     PyronautInstallMain(PyprojectModelReader modelReader, MavenClasspathResolver resolver, PyprojectEditorSupport editorSupport) {
-        this(modelReader, resolver, editorSupport, new PythonEditorSupport());
+        this(modelReader, resolver, editorSupport, new PythonEditorSupport(), new ExternalBuildResolver());
     }
 
     PyronautInstallMain(PyprojectModelReader modelReader,
                         MavenClasspathResolver resolver,
                         PyprojectEditorSupport editorSupport,
                         PythonEditorSupport pythonEditorSupport) {
+        this(modelReader, resolver, editorSupport, pythonEditorSupport, new ExternalBuildResolver());
+    }
+
+    PyronautInstallMain(PyprojectModelReader modelReader,
+                        MavenClasspathResolver resolver,
+                        PyprojectEditorSupport editorSupport,
+                        PythonEditorSupport pythonEditorSupport,
+                        ExternalBuildResolver externalBuildResolver) {
         this.modelReader = modelReader;
         this.resolver = resolver;
         this.editorSupport = editorSupport;
         this.pythonEditorSupport = pythonEditorSupport;
+        this.externalBuildResolver = externalBuildResolver;
     }
 
     @Override
@@ -107,6 +119,32 @@ public final class PyronautInstallMain implements Callable<Integer> {
             initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
             Path root = projectDir.toAbsolutePath().normalize();
             Path pyproject = root.resolve(PyprojectModelReader.FILE_NAME);
+            if (ExternalProjectLayout.isExternal(root)) {
+                Path cacheDir = root.resolve(DEFAULT_PYRONAUT_DIR);
+                Path localRepo = resolveLocalRepository(root);
+                String hash = ResolutionCache.externalInstallHash(root, localRepo);
+                Path hashFile = cacheDir.resolve("external-build.sha256");
+                String buildName = ExternalProjectLayout.detect(root).name();
+                boolean showProgress = !"off".equalsIgnoreCase(progress);
+                if (!refresh && !noCache && Files.exists(hashFile) && Files.exists(ExternalProjectLayout.file(root))
+                    && hash.equals(Files.readString(hashFile).trim())) {
+                    if (showProgress) {
+                        System.err.println(buildName + " dependencies already configured (cache hit). Use --refresh to resolve again.");
+                    }
+                    return InstallExitCode.SUCCESS.code();
+                }
+                if (showProgress) {
+                    System.err.println("Resolving dependencies for " + buildName + " project...");
+                }
+                ExternalProjectLayout layout = externalBuildResolver.resolve(root, offline, localRepo);
+                layout.write(root);
+                Files.createDirectories(cacheDir);
+                Files.writeString(hashFile, hash);
+                if (showProgress) {
+                    System.err.println(buildName + " Dependencies Configured.");
+                }
+                return InstallExitCode.SUCCESS.code();
+            }
             InstallProgressReporter.ProgressMode.fromCliValue(progress);
             DependencyTreeRenderer.ColorMode.fromCliValue(color);
             List<InstallScope> scopes = selectedScopes();

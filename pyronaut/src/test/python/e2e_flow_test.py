@@ -25,8 +25,72 @@ def _e2e_full_enabled() -> bool:
     return os.environ.get("PYRONAUT_E2E_FULL", "false").lower() == "true"
 
 
-@unittest.skipUnless(_e2e_enabled(), "Set PYRONAUT_E2E=true to run e2e tests")
+def _external_e2e_enabled() -> bool:
+    return (
+        os.environ.get("PYRONAUT_E2E", "false").lower() == "true"
+        and os.environ.get("PYRONAUT_E2E_EXTERNAL", "false").lower() == "true"
+    )
+
+
+@unittest.skipUnless(_e2e_enabled() or _external_e2e_enabled(), "Set PYRONAUT_E2E=true to run e2e tests")
 class E2EFlowTest(unittest.TestCase):
+    @unittest.skipUnless(_external_e2e_enabled(), "Set PYRONAUT_E2E_EXTERNAL=true to run external-build e2e tests")
+    def test_external_maven_and_gradle_fixtures(self):
+        fixture_root = Path(__file__).resolve().parents[1] / "resources" / "e2e-external"
+        for fixture_name in ("gradle-kotlin", "maven"):
+            with self.subTest(fixture=fixture_name), tempfile.TemporaryDirectory() as temp_dir:
+                build_tool = "gradle" if fixture_name == "gradle-kotlin" else "mvn"
+                if not self._external_build_tool_available(build_tool):
+                    continue
+                project_dir = Path(temp_dir) / fixture_name
+                shutil.copytree(fixture_root / fixture_name, project_dir)
+                port = self._allocate_port()
+                resources = project_dir / "src/main/resources"
+                resources.mkdir(parents=True, exist_ok=True)
+                (resources / "application.properties").write_text(
+                    f"micronaut.server.port={port}\n", encoding="utf-8"
+                )
+
+                install_result = self._run_cli("install", "--project-dir", str(project_dir), timeout_seconds=1800)
+                self.assertEqual(0, install_result.returncode, install_result.stdout + install_result.stderr)
+                cache_dir = project_dir / "__pyronaut__"
+                self.assertTrue((cache_dir / "project-layout.properties").is_file())
+                layout_text = (cache_dir / "project-layout.properties").read_text(encoding="utf-8")
+                self.assertIn("annotationProcessorClasspath=", layout_text)
+                self.assertTrue(
+                    any(line.startswith("annotationProcessorClasspath=") and line.partition("=")[2].strip()
+                        for line in layout_text.splitlines())
+                )
+                if fixture_name == "maven":
+                    self.assertIn("micronaut-core-processor", layout_text)
+
+                process_result = self._run_cli("process", "--project-dir", str(project_dir), timeout_seconds=1800)
+                self.assertEqual(0, process_result.returncode, process_result.stdout + process_result.stderr)
+                self.assertTrue((cache_dir / "classes").is_dir())
+                self.assertTrue((cache_dir / "test-classes").is_dir())
+
+                run_process = self._start_cli(
+                    "run", "--project-dir", str(project_dir),
+                    extra_env={"MICRONAUT_SERVER_PORT": str(port)},
+                    capture_output=True,
+                )
+                try:
+                    self.assertEqual(
+                        "external-main-resource",
+                        self._wait_for_http(f"http://localhost:{port}/", timeout_seconds=60),
+                    )
+                except AssertionError as error:
+                    output, _ = run_process.communicate(timeout=5)
+                    raise AssertionError(f"{error}\n{output or ''}") from error
+                finally:
+                    self._stop_process(run_process)
+
+                test_result = self._run_cli(
+                    "test", "--project-dir", str(project_dir), "--select-class", "example.ExternalBuildTest",
+                    timeout_seconds=1800,
+                )
+                self.assertEqual(0, test_result.returncode, test_result.stdout + test_result.stderr)
+
     @unittest.skipUnless(_e2e_full_enabled(), "Set PYRONAUT_E2E_FULL=true to run full e2e flow tests")
     def test_orchestrated_install_process_run_test_flow(self):
         fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
@@ -215,6 +279,7 @@ class E2EFlowTest(unittest.TestCase):
                     if text:
                         self.assertTrue(Path(text).is_absolute(), text)
 
+    @unittest.skipUnless(_e2e_enabled(), "Set PYRONAUT_E2E_FIXTURE_DIR for test-resources e2e tests")
     def test_test_resources_insights_api_auth_matrix(self):
         fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -260,6 +325,7 @@ class E2EFlowTest(unittest.TestCase):
                 stop_result = self._run_cli_without_capture("test-resources-server", "stop", "--project-dir", str(project_dir))
                 self.assertEqual(0, stop_result.returncode, stop_result.stdout + stop_result.stderr)
 
+    @unittest.skipUnless(_e2e_enabled(), "Set PYRONAUT_E2E_FIXTURE_DIR for test-resources e2e tests")
     def test_test_resources_stale_state_recovery_and_cleanup(self):
         fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -513,6 +579,19 @@ class E2EFlowTest(unittest.TestCase):
             self.skipTest(f"Docker daemon unavailable: {reason}")
 
     @staticmethod
+    def _external_build_tool_available(command: str) -> bool:
+        executable = shutil.which(command)
+        if executable is None:
+            return False
+        try:
+            return subprocess.run(
+                [executable, "--version"], check=False, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=15,
+            ).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    @staticmethod
     def _write_mysql_test_resources_config(project_dir: Path) -> None:
         config_dir = project_dir / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -616,8 +695,8 @@ class E2EFlowTest(unittest.TestCase):
             "    assert True\n",
             encoding="utf-8",
         )
-    def _wait_for_http(self, url: str) -> str:
-        deadline = time.time() + 720
+    def _wait_for_http(self, url: str, timeout_seconds: int = 720) -> str:
+        deadline = time.time() + timeout_seconds
         last_error: Exception | None = None
         while time.time() < deadline:
             try:

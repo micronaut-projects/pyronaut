@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.run;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -65,6 +66,24 @@ class PyronautRunMainTest {
         runMain.projectDir = project;
 
         assertEquals(8, runMain.call());
+    }
+
+    @Test
+    void externalLayoutAddsResolvedRuntimeAndMainResources() throws Exception {
+        Path project = tempDir.resolve("external-layout");
+        Path classes = Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Path resources = Files.createDirectories(project.resolve("src/main/resources"));
+        Files.writeString(project.resolve("pom.xml"), "<project/>");
+        ExternalProjectLayout layout = new ExternalProjectLayout(
+            ExternalProjectLayout.ProjectKind.MAVEN,
+            List.of(), List.of(), List.of(resources), List.of(),
+            List.of(), List.of(), List.of(), List.of(), List.of()
+        );
+        layout.write(project);
+        List<String> urls = PyronautRunMain.resolveExternalProjectLayout(project, Path.of("__pyronaut__/classes"), layout)
+            .classpathUrls().stream().map(Object::toString).toList();
+        assertTrue(urls.stream().anyMatch(url -> url.contains("main/resources")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains(classes.getFileName().toString())));
     }
 
     @Test

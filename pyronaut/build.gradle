@@ -258,6 +258,10 @@ tasks.register("prepareWheelSources", Sync) {
             from(nativeCompileTask.map { it.outputFile.get().asFile }) {
                 into("src/pyronaut_cli_v2/tools/${cliProject.command}/native")
             }
+            def installDirName = cliProject.containsKey("installDir") ? cliProject.installDir : project(cliProject.path).name
+            from(project(cliProject.path).layout.buildDirectory.file("install/${installDirName}/bin/native-compile-classpath.txt")) {
+                into("src/pyronaut_cli_v2/tools/${cliProject.command}/native")
+            }
         }
     }
 
@@ -295,6 +299,11 @@ tasks.register("prepareWheelSources", Sync) {
                 def nativeProvidedFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-provided-classpath.txt").asFile
                 nativeProvidedFile.parentFile.mkdirs()
                 nativeProvidedFile.text = nativeProvidedClasspath + System.lineSeparator()
+                def compileClasspathSource = project(cliProject.path).layout.buildDirectory.file("generated/native-classpaths/native-compile-classpath.txt").get().asFile
+                def compileClasspathTarget = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-compile-classpath.txt").asFile
+                if (compileClasspathSource.isFile()) {
+                    compileClasspathTarget.text = compileClasspathSource.text
+                }
             }
         }
 
@@ -504,6 +513,50 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     )
     doFirst {
         environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
+        if (graalVmHomeProvider.present) {
+            def graalVmHome = graalVmHomeProvider.get()
+            PyronautGraalVmDevBuilds.ensureNativeImageLauncherIsUsable(file(graalVmHome))
+            PyronautGraalVmDevBuilds.ensureMacOsGatekeeperDoesNotBlock(file(graalVmHome))
+            environment("JAVA_HOME", graalVmHome)
+            environment("PATH", graalVmHome + "/bin" + File.pathSeparator + System.getenv("PATH"))
+        }
+    }
+}
+
+tasks.register("testPythonOrchestratorExternalE2E", Exec) {
+    group = "verification"
+    description = "Runs opt-in Maven and Gradle external-build orchestrator e2e checks"
+
+    if (graalVmProvisionTask != null) {
+        dependsOn(graalVmProvisionTask)
+    }
+    dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
+
+    commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "e2e_flow_test.py")
+    environment("PYTHONPATH", file("src/main/python").absolutePath)
+    environment("PYRONAUT_E2E", "true")
+    environment("PYRONAUT_E2E_EXTERNAL", "true")
+    environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment(
+        "PYRONAUT_INSTALL_EXECUTABLE",
+        project(":micronaut-pyronaut-install").layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_PROCESSOR_EXECUTABLE",
+        project(":micronaut-pyronaut-processor").layout.buildDirectory.file("install/micronaut-pyronaut-processor/bin/pyronaut-processor").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_RUN_EXECUTABLE",
+        project(":micronaut-pyronaut-run").layout.buildDirectory.file("install/micronaut-pyronaut-run/bin/pyronaut-run").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_TEST_EXECUTABLE",
+        project(":micronaut-pyronaut-test").layout.buildDirectory.file("install/micronaut-pyronaut-test/bin/pyronaut-test").get().asFile.absolutePath
+    )
+    doFirst {
         if (graalVmHomeProvider.present) {
             def graalVmHome = graalVmHomeProvider.get()
             PyronautGraalVmDevBuilds.ensureNativeImageLauncherIsUsable(file(graalVmHome))

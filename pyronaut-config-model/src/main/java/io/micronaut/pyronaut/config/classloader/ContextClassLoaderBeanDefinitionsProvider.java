@@ -43,12 +43,16 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
 
     @Override
     public List<BeanDefinitionReference<?>> provide(ClassLoader classLoader) {
+        ClassLoader runtimeClassLoader = Thread.currentThread().getContextClassLoader();
+        if (runtimeClassLoader == null) {
+            runtimeClassLoader = classLoader;
+        }
         Map<String, BeanDefinitionReference<?>> references = new LinkedHashMap<>();
         ClassLoader launcherClassLoader = ContextClassLoaderBeanDefinitionsProvider.class.getClassLoader();
         for (BeanDefinitionReference<?> reference : discoverLauncherReferences(launcherClassLoader)) {
             references.put(reference.getBeanDefinitionName(), reference);
         }
-        for (BeanDefinitionReference<?> reference : discoverRuntimeReferences(classLoader)) {
+        for (BeanDefinitionReference<?> reference : discoverRuntimeReferences(runtimeClassLoader)) {
             references.put(reference.getBeanDefinitionName(), reference);
         }
         return List.copyOf(references.values());

@@ -1,0 +1,408 @@
+/*
+ * Copyright 2017-2026 original authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.micronaut.pyronaut.install;
+
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout.ProjectKind;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.NodeList;
+
+/** Resolves the root Java source layout exposed by Maven or Gradle. */
+final class ExternalBuildResolver {
+    ExternalProjectLayout resolve(Path root, boolean offline) throws IOException {
+        return resolve(root, offline, null);
+    }
+
+    ExternalProjectLayout resolve(Path root, boolean offline, Path localRepository) throws IOException {
+        ProjectKind kind = ExternalProjectLayout.detect(root);
+        if (kind == ProjectKind.PYPROJECT) {
+            return new ExternalProjectLayout(kind, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        }
+        Path effectivePom = kind == ProjectKind.MAVEN ? writeEffectiveMavenPom(root, offline, localRepository) : null;
+        try {
+            System.err.println("Resolving " + kind.name() + " source sets and resources...");
+            List<List<Path>> sourceSets = kind == ProjectKind.GRADLE ? resolveGradleSourceSets(root, offline) : List.of(
+                mavenSourceDirectory(root, "project.build.sourceDirectory", "sourceDirectory", "src/main/java", offline, localRepository),
+                mavenSourceDirectory(root, "project.build.testSourceDirectory", "testSourceDirectory", "src/test/java", offline, localRepository),
+                directories(root, "src/main/resources"), directories(root, "src/test/resources")
+            );
+            List<Path> mainSources = sourceSets.get(0).isEmpty() ? directories(root, "src/main/java") : sourceSets.get(0);
+            List<Path> testSources = sourceSets.get(1).isEmpty() ? directories(root, "src/test/java") : sourceSets.get(1);
+            List<Path> mainResources = kind == ProjectKind.MAVEN ? mavenResources(effectivePom == null ? root.resolve("pom.xml") : effectivePom, root, "main", "src/main/resources") : (sourceSets.get(2).isEmpty() ? resourceDirectory(root, "src/main/resources") : sourceSets.get(2));
+            List<Path> testResources = kind == ProjectKind.MAVEN ? mavenResources(effectivePom == null ? root.resolve("pom.xml") : effectivePom, root, "test", "src/test/resources") : (sourceSets.get(3).isEmpty() ? resourceDirectory(root, "src/test/resources") : sourceSets.get(3));
+            System.err.println("Resolving " + kind.name() + " compile dependencies...");
+            List<Path> build = resolveClasspath(root, kind, "build", offline, localRepository);
+            System.err.println("Resolving " + kind.name() + " runtime dependencies...");
+            List<Path> runtime = resolveClasspath(root, kind, "runtime", offline, localRepository);
+            System.err.println("Resolving " + kind.name() + " test dependencies...");
+            List<Path> test = resolveClasspath(root, kind, "test", offline, localRepository);
+            System.err.println("Resolving " + kind.name() + " annotation processors...");
+            List<Path> annotationProcessors = kind == ProjectKind.GRADLE
+                ? resolveClasspath(root, kind, "annotationProcessor", offline, localRepository)
+                : resolveMavenAnnotationProcessors(root, effectivePom, build, offline, localRepository);
+            return new ExternalProjectLayout(kind, mainSources, testSources, mainResources, testResources,
+                build, runtime, runtime, test, annotationProcessors);
+        } finally {
+            if (effectivePom != null) {
+                Files.deleteIfExists(effectivePom);
+            }
+        }
+    }
+
+    private static List<Path> directories(Path root, String relative) {
+        Path directory = root.resolve(relative);
+        return Files.isDirectory(directory) ? List.of(directory) : List.of();
+    }
+
+    static List<Path> mavenSources(Path root, String elementName, String fallback) {
+        Path pom = root.resolve("pom.xml");
+        if (!Files.isRegularFile(pom)) return directories(root, fallback);
+        try {
+            var document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(pom.toFile());
+            NodeList elements = document.getElementsByTagName(elementName);
+            if (elements.getLength() > 0) {
+                Path path = resolveMavenPath(root, elements.item(0).getTextContent().trim());
+                return Files.isDirectory(path) ? List.of(path) : List.of();
+            }
+        } catch (Exception ignored) {
+            // Fall back to Maven's standard source layout when the POM is not parseable.
+        }
+        return directories(root, fallback);
+    }
+
+    private static List<Path> mavenSourceDirectory(Path root,
+                                                   String expression,
+                                                   String elementName,
+                                                   String fallback,
+                                                   boolean offline,
+                                                   Path localRepository) {
+        String resolved = evaluateMavenExpression(root, expression, offline, localRepository);
+        if (resolved != null && !resolved.isBlank()) {
+            Path path = resolveMavenPath(root, resolved.trim());
+            return Files.isDirectory(path) ? List.of(path) : List.of();
+        }
+        return mavenSources(root, elementName, fallback);
+    }
+
+    private static String evaluateMavenExpression(Path root, String expression, boolean offline, Path localRepository) {
+        try {
+            Path wrapper = root.resolve("mvnw");
+            List<String> command = new ArrayList<>(List.of(
+                Files.isRegularFile(wrapper) ? wrapper.toString() : "mvn",
+                "help:evaluate", "-q", "-DforceStdout", "-Dexpression=" + expression
+            ));
+            if (offline) command.add("-o");
+            if (localRepository != null) command.add("-Dmaven.repo.local=" + localRepository.toAbsolutePath().normalize());
+            Process process = new ProcessBuilder(command).directory(root.toFile()).redirectError(ProcessBuilder.Redirect.INHERIT).start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            if (process.waitFor() == 0 && !output.isBlank() && !output.startsWith("[")) return output;
+        } catch (Exception ignored) {
+            // Fall back to the POM source directory when help:evaluate is unavailable.
+        }
+        return null;
+    }
+
+    private static List<List<Path>> resolveGradleSourceSets(Path root, boolean offline) {
+        Path cache = root.resolve("__pyronaut__");
+        try {
+            Files.createDirectories(cache);
+            Path output = cache.resolve("external-gradle-sources.txt");
+            Path script = cache.resolve("external-gradle-sources.gradle");
+            Files.deleteIfExists(output);
+            Files.deleteIfExists(script);
+            String target = output.toString().replace("\\", "\\\\");
+            String scriptText = """
+                gradle.beforeProject { p ->
+                    if (p.parent == null) {
+                        p.tasks.register('__pyronautWriteSourceLayout') {
+                            doLast {
+                                def sets = p.extensions.findByName('sourceSets')
+                                if (sets != null) {
+                                    def o = p.file('__PYRONAUT_TARGET__')
+                                    ['main', 'test'].each { n ->
+                                        def s = sets.findByName(n)
+                                        if (s != null) {
+                                            o << n + '.java=' + s.java.srcDirs.collect { it.absolutePath }.join(File.pathSeparator) + '\\n'
+                                            o << n + '.resources=' + s.resources.srcDirs.collect { it.absolutePath }.join(File.pathSeparator) + '\\n'
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                """.replace("__PYRONAUT_TARGET__", target);
+            Files.writeString(script, scriptText, StandardCharsets.UTF_8);
+            Path wrapper = root.resolve("gradlew");
+            List<String> command = new ArrayList<>(List.of(Files.isRegularFile(wrapper) ? wrapper.toString() : "gradle", "--no-daemon", "--init-script", script.toString(), "__pyronautWriteSourceLayout"));
+            if (offline) command.add("--offline");
+            Process process = new ProcessBuilder(command).directory(root.toFile()).inheritIO().start();
+            if (process.waitFor() != 0) {
+                Files.deleteIfExists(output);
+                Files.deleteIfExists(script);
+                return List.of(List.of(), List.of(), List.of(), List.of());
+            }
+            List<Path> mainJava = List.of(), testJava = List.of(), mainResources = List.of(), testResources = List.of();
+            for (String line : Files.readAllLines(output, StandardCharsets.UTF_8)) {
+                int equals = line.indexOf('=');
+                if (equals < 0) continue;
+                List<Path> paths = java.util.Arrays.stream(line.substring(equals + 1).split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+                    .filter(s -> !s.isBlank()).map(Path::of).toList();
+                switch (line.substring(0, equals)) {
+                    case "main.java" -> mainJava = paths;
+                    case "test.java" -> testJava = paths;
+                    case "main.resources" -> mainResources = paths;
+                    case "test.resources" -> testResources = paths;
+                    default -> { }
+                }
+            }
+            Files.deleteIfExists(output);
+            Files.deleteIfExists(script);
+            return List.of(mainJava, testJava, mainResources, testResources);
+        } catch (Exception ignored) {
+            deleteQuietly(cache.resolve("external-gradle-sources.txt"));
+            deleteQuietly(cache.resolve("external-gradle-sources.gradle"));
+            return List.of(List.of(), List.of(), List.of(), List.of());
+        }
+    }
+
+    private static void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+            // Best effort cleanup of generated external-build inputs.
+        }
+    }
+
+    static List<Path> mavenResources(Path root, String scope, String fallback) {
+        return mavenResources(root.resolve("pom.xml"), root, scope, fallback);
+    }
+
+    private static List<Path> mavenResources(Path pom, Path root, String scope, String fallback) {
+        if (!Files.isRegularFile(pom)) return resourceDirectory(root, fallback);
+        List<Path> result = new ArrayList<>();
+        try {
+            var document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(pom.toFile());
+            NodeList resources = document.getElementsByTagName("test".equals(scope) ? "testResource" : "resource");
+            for (int i = 0; i < resources.getLength(); i++) {
+                var resource = resources.item(i);
+                var parent = resource.getParentNode();
+                if (parent == null || (!"resources".equals(parent.getNodeName()) && !"testResources".equals(parent.getNodeName()))) continue;
+                var directory = resource.getChildNodes();
+                for (int j = 0; j < directory.getLength(); j++) {
+                    var child = directory.item(j);
+                    if ("directory".equals(child.getNodeName()) && child.getTextContent() != null) {
+                        Path path = resolveMavenPath(root, child.getTextContent().trim());
+                        result.add(path);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Fall back to Maven's standard source layout when the POM is not parseable.
+        }
+        return result.isEmpty() ? resourceDirectory(root, fallback) : result;
+    }
+
+    private static List<Path> resourceDirectory(Path root, String relative) {
+        return List.of(root.resolve(relative).toAbsolutePath().normalize());
+    }
+
+    private static Path writeEffectiveMavenPom(Path root, boolean offline, Path localRepository) throws IOException {
+        Path cache = root.resolve("__pyronaut__");
+        Files.createDirectories(cache);
+        Path output = cache.resolve("external-effective-pom.xml");
+        try {
+            List<String> command = new ArrayList<>(List.of(mavenCommand(root), "help:effective-pom", "-Doutput=" + output));
+            if (offline) command.add("-o");
+            if (localRepository != null) command.add("-Dmaven.repo.local=" + localRepository.toAbsolutePath().normalize());
+            Process process = new ProcessBuilder(command).directory(root.toFile()).inheritIO().start();
+            if (process.waitFor() != 0 || !Files.isRegularFile(output)) {
+                Files.deleteIfExists(output);
+                return null;
+            }
+            return output;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted resolving Maven effective model", e);
+        }
+    }
+
+    private static List<Path> resolveMavenAnnotationProcessors(Path root,
+                                                                Path effectivePom,
+                                                                List<Path> buildClasspath,
+                                                                boolean offline,
+                                                                Path localRepository) throws IOException {
+        if (effectivePom == null || !Files.isRegularFile(effectivePom)) {
+            return buildClasspath;
+        }
+        List<String[]> coordinates = new ArrayList<>();
+        org.w3c.dom.Document effectiveDocument;
+        try {
+            effectiveDocument = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(effectivePom.toFile());
+            NodeList plugins = effectiveDocument.getElementsByTagName("plugin");
+            for (int i = 0; i < plugins.getLength(); i++) {
+                var plugin = plugins.item(i);
+                if (!"maven-compiler-plugin".equals(childText(plugin, "artifactId"))) continue;
+                NodeList paths = ((org.w3c.dom.Element) plugin).getElementsByTagName("path");
+                for (int j = 0; j < paths.getLength(); j++) {
+                    var path = paths.item(j);
+                    var parent = path.getParentNode();
+                    if (parent == null || !"annotationProcessorPaths".equals(parent.getNodeName())) continue;
+                    String group = childText(path, "groupId");
+                    String artifact = childText(path, "artifactId");
+                    String version = childText(path, "version");
+                    if (group != null && artifact != null && version != null && !version.contains("${")) {
+                        coordinates.add(new String[] {group, artifact, version});
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            return buildClasspath;
+        }
+        if (coordinates.isEmpty()) return buildClasspath;
+
+        Path processorPom = root.resolve("__pyronaut__").resolve("external-annotation-processors.pom");
+        Path output = root.resolve("__pyronaut__").resolve("external-annotation-processors.classpath");
+        StringBuilder pom = new StringBuilder("<project xmlns=\"http://maven.apache.org/POM/4.0.0\"><modelVersion>4.0.0</modelVersion><groupId>io.micronaut.pyronaut</groupId><artifactId>external-annotation-processors</artifactId><version>1</version><dependencies>");
+        for (String[] coordinate : coordinates) {
+            pom.append("<dependency><groupId>").append(coordinate[0]).append("</groupId><artifactId>").append(coordinate[1]).append("</artifactId><version>").append(coordinate[2]).append("</version></dependency>");
+        }
+        pom.append("</dependencies>");
+        appendMavenRepositories(pom, effectiveDocument);
+        pom.append("</project>");
+        Files.writeString(processorPom, pom, StandardCharsets.UTF_8);
+        try {
+            List<String> command = new ArrayList<>(List.of(mavenCommand(root), "-f", processorPom.toString(), "dependency:build-classpath", "-Dmdep.outputFile=" + output, "-Dmdep.includeScope=compile"));
+            if (offline) command.add("-o");
+            if (localRepository != null) command.add("-Dmaven.repo.local=" + localRepository.toAbsolutePath().normalize());
+            Process process = new ProcessBuilder(command).directory(root.toFile()).inheritIO().start();
+            if (process.waitFor() != 0 || !Files.isRegularFile(output)) return buildClasspath;
+            List<Path> processors = java.util.Arrays.stream(Files.readString(output, StandardCharsets.UTF_8).split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+                .filter(value -> !value.isBlank()).map(Path::of).filter(Files::isRegularFile).toList();
+            return processors.isEmpty() ? buildClasspath : processors;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted resolving Maven annotation processors", e);
+        } finally {
+            Files.deleteIfExists(processorPom);
+            Files.deleteIfExists(output);
+        }
+    }
+
+    private static String mavenCommand(Path root) {
+        Path wrapper = root.resolve("mvnw");
+        return Files.isRegularFile(wrapper) ? wrapper.toString() : "mvn";
+    }
+
+    private static String childText(org.w3c.dom.Node parent, String name) {
+        var children = parent.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            var child = children.item(i);
+            if (name.equals(child.getNodeName()) && child.getTextContent() != null) return child.getTextContent().trim();
+        }
+        return null;
+    }
+
+    private static void appendMavenRepositories(StringBuilder pom, org.w3c.dom.Document document) {
+        NodeList repositories = document.getElementsByTagName("repository");
+        java.util.Set<String> urls = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < repositories.getLength(); i++) {
+            String url = childText(repositories.item(i), "url");
+            if (url != null && !url.isBlank()) urls.add(url.trim());
+        }
+        if (urls.isEmpty()) return;
+        pom.append("<repositories>");
+        int index = 0;
+        for (String url : urls) {
+            pom.append("<repository><id>external-").append(index++).append("</id><url>")
+                .append(xmlEscape(url)).append("</url></repository>");
+        }
+        pom.append("</repositories>");
+    }
+
+    private static String xmlEscape(String value) {
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\"", "&quot;").replace("'", "&apos;");
+    }
+
+    private static Path resolveMavenPath(Path root, String value) {
+        String projectBasedir = "${project.basedir}";
+        if (value.startsWith(projectBasedir)) {
+            String suffix = value.substring(projectBasedir.length());
+            return root.resolve(suffix.startsWith("/") || suffix.startsWith("\\") ? suffix.substring(1) : suffix);
+        }
+        Path path = Path.of(value);
+        return path.isAbsolute() ? path : root.resolve(path);
+    }
+
+    private static List<Path> resolveClasspath(Path root, ProjectKind kind, String scope, boolean offline, Path localRepository) throws IOException {
+        Path cache = root.resolve("__pyronaut__");
+        Files.createDirectories(cache);
+        Path output = cache.resolve("external-" + scope + ".classpath");
+        Files.deleteIfExists(output);
+        Path initScript = null;
+        try {
+            List<String> command = new ArrayList<>();
+            if (kind == ProjectKind.MAVEN) {
+                Path wrapper = root.resolve("mvnw");
+                command.add(Files.isRegularFile(wrapper) ? wrapper.toString() : "mvn");
+                command.add("dependency:build-classpath");
+                command.add("-Dmdep.outputFile=" + output);
+                command.add("-Dmdep.includeScope=" + ("test".equals(scope) ? "test" : ("build".equals(scope) ? "compile" : "runtime")));
+            } else {
+                Path wrapper = root.resolve("gradlew");
+                command.add(Files.isRegularFile(wrapper) ? wrapper.toString() : "gradle");
+                command.add("--no-daemon");
+                initScript = cache.resolve("external-" + scope + ".gradle");
+                Files.deleteIfExists(initScript);
+                String configuration = "test".equals(scope) ? "testRuntimeClasspath" : "build".equals(scope) ? "compileClasspath" : "annotationProcessor".equals(scope) ? "annotationProcessor" : "runtimeClasspath";
+                String outputPath = output.toString().replace("\\", "\\\\");
+                Files.writeString(initScript, "gradle.beforeProject { p -> if (p.parent == null) { p.tasks.register('__pyronautWriteClasspath') { doLast { def c = p.configurations.findByName('" + configuration + "'); if (c == null) { c = p.configurations.findByName('compileClasspath') }; if (c != null) { p.file('" + outputPath + "').text = c.resolve().collect { it.absolutePath }.join(File.pathSeparator) } } } } }", StandardCharsets.UTF_8);
+                command.add("--init-script");
+                command.add(initScript.toString());
+                command.add("__pyronautWriteClasspath");
+            }
+            if (offline) {
+                command.add(kind == ProjectKind.MAVEN ? "-o" : "--offline");
+            }
+            if (localRepository != null) {
+                command.add("-Dmaven.repo.local=" + localRepository.toAbsolutePath().normalize());
+            }
+            Process process = new ProcessBuilder(command).directory(root.toFile()).inheritIO().start();
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                throw new IOException("External " + kind.name().toLowerCase(java.util.Locale.ROOT)
+                    + " dependency resolution failed (exit code " + exitCode + ")");
+            }
+            String value = Files.readString(output, StandardCharsets.UTF_8);
+            return java.util.Arrays.stream(value.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+                .filter(s -> !s.isBlank()).map(Path::of).filter(Files::exists).toList();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted resolving external build classpath", e);
+        } finally {
+            Files.deleteIfExists(output);
+            if (initScript != null) Files.deleteIfExists(initScript);
+        }
+    }
+}

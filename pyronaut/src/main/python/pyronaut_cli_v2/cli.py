@@ -556,6 +556,28 @@ def _delegate(
         env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
         return runner(dev_command_line, env)
 
+    # JVM external delegates keep their own launcher/runtime classpath
+    # isolated from resolved application dependencies. Native external
+    # projects have already taken the pyronaut-dev path above.
+    if command in {"run", "test"} and not debug_vm:
+        project_dir = Path(_extract_project_dir(args)).resolve()
+        if _read_external_layout(project_dir) is not None:
+            executable_path = _resolve_delegate_executable_path(command, args, resolver)
+            if executable_path is None:
+                print(f"Missing delegated executable: {COMMAND_TO_EXECUTABLE[command]}", file=sys.stderr)
+                return PRECONDITION_FAILED
+            try:
+                env = _build_non_test_resources_env(command, java_home_provider)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return PRECONDITION_FAILED
+            env = _merge_env_overrides(env, env_overrides)
+            env = _apply_project_virtualenv(env, project_dir)
+            command_line = [executable_path, *args]
+            if _delegation_trace_enabled():
+                print(shlex.join(command_line), file=sys.stderr)
+            return runner(command_line, env)
+
     if command == "test" and not debug_vm:
         try:
             executable_path = _resolve_delegate_executable_path(command, args, resolver)
@@ -791,6 +813,11 @@ def _build_direct_source_native_jvm_args(
     compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
     if compiler_classpath:
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
+        if command == "process":
+            # The process command has no application runtime classpath yet;
+            # expose the compiler support jars as the native JVM classpath so
+            # generated Python annotations are visible during compilation.
+            jvm_args.append(f"-Djava.class.path={compiler_classpath}")
     provided_artifacts = os.pathsep.join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
     if provided_artifacts:
         jvm_args.append(f"-Dpyronaut.dev.native.provided.artifacts={provided_artifacts}")
@@ -911,7 +938,11 @@ def _delegate_lib_entries(executable_path: str) -> list[str]:
 
 def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
     cache_dir = project_dir / "__pyronaut__"
-    if command == "dev":
+    external = _read_external_layout(project_dir)
+    if external is not None:
+        key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
+        entries = list(external.get(key, []))
+    elif command == "dev":
         entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
     elif command == "run":
         classes_dir = cache_dir / "classes"
@@ -923,14 +954,17 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
     else:
         entries = _read_test_delegate_dependency_entries(cache_dir)
 
+    application_entries = entries
+    delegate_entries: list[str] = []
     override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
     if override_jar:
-        entries.extend([value for value in override_jar.split(os.pathsep) if value])
+        delegate_entries.extend([value for value in override_jar.split(os.pathsep) if value])
     else:
         delegate_executable = resolver(COMMAND_TO_EXECUTABLE[command])
         if delegate_executable is None:
             raise RuntimeError(f"Missing delegated executable: {COMMAND_TO_EXECUTABLE[command]}")
-        entries.extend(_delegate_lib_entries(delegate_executable))
+        delegate_entries.extend(_delegate_lib_entries(delegate_executable))
+    entries = [*delegate_entries, *application_entries] if external is not None else [*application_entries, *delegate_entries]
 
     deduped: list[str] = []
     seen_paths: set[str] = set()
@@ -977,8 +1011,32 @@ def _build_native_application_classpath(command: str, project_dir: Path, launche
 
 def _build_native_application_classpath_entries(command: str, project_dir: Path) -> list[str]:
     cache_dir = project_dir / "__pyronaut__"
+    external = _read_external_layout(project_dir)
     layout = _read_pyproject_sources(project_dir)
     entries: list[str] = []
+    if external is not None:
+        key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
+        entries.extend(external.get(key, []))
+        classes_dir = cache_dir / "classes"
+        test_classes_dir = cache_dir / "test-classes"
+        if command == "test":
+            if not classes_dir.is_dir() and not test_classes_dir.is_dir():
+                raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+            # Test classes contain generated test metadata, while production
+            # classes contain the application beans and main entry point. Both
+            # are required for MicronautTest discovery and startup.
+            if classes_dir.is_dir():
+                entries.append(str(classes_dir.resolve()))
+            if test_classes_dir.is_dir():
+                entries.append(str(test_classes_dir.resolve()))
+        else:
+            if not classes_dir.is_dir():
+                raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+            entries.append(str(classes_dir.resolve()))
+        entries.extend(external.get("mainResources", []))
+        if command in {"dev", "test"}:
+            entries.extend(external.get("testResources", []))
+        return [entry for entry in entries if Path(entry).exists()]
     if command == "dev":
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
@@ -1025,6 +1083,21 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
     else:
         raise RuntimeError(f"Native application classpath is not supported for command: {command}")
     return entries
+
+
+def _read_external_layout(project_dir: Path) -> dict[str, list[str]] | None:
+    layout_file = project_dir / "__pyronaut__" / "project-layout.properties"
+    if not layout_file.exists():
+        return None
+    result: dict[str, list[str]] = {}
+    for line in layout_file.read_text(encoding="utf-8").splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key == "kind":
+            continue
+        result[key] = [str(Path(entry).expanduser().resolve()) for entry in value.split(os.pathsep) if entry]
+    return result
 
 
 def _add_classpath_dir(entries: list[str], directory: Path) -> None:
@@ -1118,9 +1191,14 @@ def _native_launcher_compile_classpath_entries(launcher_executable: str | None) 
             if candidate.is_file():
                 resolved.append(str(candidate))
             elif lib_dir is not None:
-                bundled = lib_dir / candidate.name
-                if bundled.is_file():
-                    resolved.append(str(bundled))
+                if ":" in entry and "/" not in entry:
+                    artifact_id = entry.split(":", 1)[1]
+                    matches = sorted(lib_dir.glob(artifact_id + "-*.jar"))
+                    resolved.extend(str(path) for path in matches)
+                else:
+                    bundled = lib_dir / candidate.name
+                    if bundled.is_file():
+                        resolved.append(str(bundled))
         return resolved
     # Older distributions do not have a reduced compiler manifest. Their
     # native parent remains sufficient, so do not re-add the whole lib dir.
@@ -1188,6 +1266,10 @@ def _is_native_launcher_provided_artifact(
 
 
 def _artifact_coordinate(entry: str) -> str | None:
+    if ":" in entry and "/" not in entry and "\\" not in entry:
+        parts = entry.split(":")
+        if len(parts) >= 2 and all(parts[:2]):
+            return f"{parts[0]}:{parts[1]}"
     path = Path(entry)
     name = _versioned_jar_artifact_id(path.name)
     if name is None:
@@ -1250,6 +1332,8 @@ def _run_preflight(
     install: bool = True,
     process_pass: str | None = None,
 ) -> int:
+    if _is_external_build_project(Path(project_dir)):
+        install = True
     if install:
         install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
         if no_cache:
@@ -2022,6 +2106,8 @@ def _run_lifecycle_validation(
     no_cache: bool = False,
     env_overrides: dict[str, str] | None = None,
 ) -> int:
+    if _is_external_build_project(Path(project_dir)):
+        return SUCCESS
     args = ["--project-dir", project_dir, "--scenario", scenario]
     if no_cache:
         args.append("--no-cache")
@@ -2037,6 +2123,13 @@ def _run_lifecycle_validation(
         runner,
         resolver,
         env_overrides=effective_env_overrides,
+    )
+
+
+def _is_external_build_project(project_dir: Path) -> bool:
+    return (project_dir / "pom.xml").is_file() or any(
+        (project_dir / name).is_file()
+        for name in ("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
     )
 
 
@@ -2121,6 +2214,13 @@ def _read_pyproject_string_list(table: dict[str, object], *keys: str) -> tuple[s
 
 
 def _read_pyproject_sources(project_dir: Path) -> _ProjectLayout:
+    if _is_external_build_project(project_dir):
+        return _ProjectLayout(
+            java_source_dir="src/main/java",
+            java_test_dir="src/test/java",
+            resources_dir="src/main/resources",
+            test_resources_dir="src/test/resources",
+        )
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
         return _ProjectLayout()
@@ -2243,7 +2343,10 @@ def _packaged_toolchain_spec() -> _ToolchainSpec | None:
 
 
 def _read_pyproject_toolchain_type(project_dir: Path) -> str:
-    pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    return _toolchain_type_from_pyronaut_table(_read_pyproject_pyronaut_table(project_dir))
+
+
+def _toolchain_type_from_pyronaut_table(pyronaut: dict[str, object] | None) -> str:
     if not isinstance(pyronaut, dict):
         return TOOLCHAIN_TYPE_JVM
     toolchain = pyronaut.get("toolchain")
@@ -3709,6 +3812,8 @@ def _extract_project_dir(args: Sequence[str]) -> str:
 
 def _install_required(project_dir: Path) -> bool:
     cache_dir = project_dir / "__pyronaut__"
+    if _is_external_build_project(project_dir):
+        return not (cache_dir / "project-layout.properties").exists()
     required_manifests = (
         cache_dir / "resolved-build-dependencies",
         cache_dir / "resolved-runtime-dependencies",
@@ -3837,6 +3942,12 @@ def _pyronaut_dev_native_command_line(
     if executable_path is None:
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider)
+    compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
+    if compiler_classpath:
+        # External Java sources need Pyronaut's Python annotation types and
+        # processor support to compile, but those jars must not become part
+        # of the application's runtime classpath.
+        jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
     effective_classpath_command = classpath_command or command
     if effective_classpath_command in {"dev", "run", "test"}:
         classpath = _build_native_application_classpath(effective_classpath_command, project_dir, executable_path)
@@ -3845,7 +3956,35 @@ def _pyronaut_dev_native_command_line(
         if test_resources_client_classpath:
             jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
-    return [executable_path, *jvm_args, command, *args]
+    command_args = list(args)
+    if command == "test" and _is_external_build_project(project_dir) and not any(
+        value == "--select-class" or value.startswith("--select-class=") for value in command_args
+    ):
+        test_classes_root = project_dir / "__pyronaut__" / "test-classes"
+        if test_classes_root.is_dir():
+            for class_file in sorted(test_classes_root.rglob("*.class")):
+                if "$" in class_file.name or class_file.name in {"module-info.class", "package-info.class"}:
+                    continue
+                class_name = ".".join(class_file.relative_to(test_classes_root).with_suffix("").parts)
+                command_args.extend(["--select-class", class_name])
+    if command == "process" and _is_external_build_project(project_dir) and compiler_classpath:
+        # Pass the compiler support jars through the processor's explicit
+        # compile classpath as well as the JVM property. Native images do not
+        # expose their launcher classpath to javac automatically.
+        selected_pass = "all"
+        for index, value in enumerate(command_args):
+            if value == "--pass" and index + 1 < len(command_args):
+                selected_pass = command_args[index + 1]
+            elif value.startswith("--pass="):
+                selected_pass = value.split("=", 1)[1]
+        compiler_entries = compiler_classpath.split(os.pathsep)
+        if selected_pass in {"all", "main"}:
+            main_entries = _build_native_application_classpath_entries("run", project_dir)
+            command_args.extend(["--classpath", os.pathsep.join(dict.fromkeys([*main_entries, *compiler_entries]))])
+        if selected_pass in {"all", "test"}:
+            test_entries = _build_native_application_classpath_entries("test", project_dir)
+            command_args.extend(["--test-classpath", os.pathsep.join(dict.fromkeys([*test_entries, *compiler_entries]))])
+    return [executable_path, *jvm_args, command, *command_args]
 
 
 def _native_dev_java_home_jvm_args(java_home_provider: JavaHomeProvider | None) -> list[str]:
@@ -3857,8 +3996,28 @@ def _native_dev_java_home_jvm_args(java_home_provider: JavaHomeProvider | None) 
     return [f"-Djava.home={java_home}"]
 
 
-def _use_pyronaut_dev_native_toolchain(command: str, project_dir: Path, *, debug_vm: bool = False) -> bool:
-    if _read_pyproject_toolchain_type(project_dir) != TOOLCHAIN_TYPE_NATIVE:
+_UNSET_PYPROJECT_TABLE = object()
+
+
+def _use_pyronaut_dev_native_toolchain(
+    command: str,
+    project_dir: Path,
+    *,
+    debug_vm: bool = False,
+    pyronaut_table: dict[str, object] | None | object = _UNSET_PYPROJECT_TABLE,
+) -> bool:
+    # Callers that make several decisions for the same project can provide the
+    # already-loaded table. This avoids reparsing pyproject.toml repeatedly.
+    pyronaut = (
+        _read_pyproject_pyronaut_table(project_dir)
+        if pyronaut_table is _UNSET_PYPROJECT_TABLE
+        else pyronaut_table
+    )
+    if _is_external_build_project(project_dir) and pyronaut is None:
+        toolchain_type = TOOLCHAIN_TYPE_NATIVE
+    else:
+        toolchain_type = _toolchain_type_from_pyronaut_table(pyronaut)
+    if toolchain_type != TOOLCHAIN_TYPE_NATIVE:
         return False
     if command == "process" and _read_pyproject_processor_mode_override(project_dir) is not None:
         return False
@@ -4587,11 +4746,16 @@ def _run_tamboui_tui(
     if missing:
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
         return PRECONDITION_FAILED
+    pyronaut_table = _read_pyproject_pyronaut_table(project_dir)
     try:
         native_commands = [
             command
             for command in ("validate-config", "install", "process", "run", "test")
-            if _use_pyronaut_dev_native_toolchain(command, project_dir)
+            if _use_pyronaut_dev_native_toolchain(
+                command,
+                project_dir,
+                pyronaut_table=pyronaut_table,
+            )
         ]
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

@@ -48,10 +48,10 @@ public final class PyronautDevServiceLoaderFeature extends ServiceLoaderFeature 
     );
 
     @Override
-    protected ServiceScanner.StaticServiceDefinitions buildStaticServiceDefinitions(Feature.BeforeAnalysisAccess access) {
-        ServiceScanner.StaticServiceDefinitions definitions = super.buildStaticServiceDefinitions(access);
+    protected ServiceScanner.ExclusiveStaticServiceDefinitions buildStaticServiceDefinitions(Feature.BeforeAnalysisAccess access) {
+        ServiceScanner.ExclusiveStaticServiceDefinitions definitions = super.buildStaticServiceDefinitions(access);
         Map<String, Set<String>> filtered = new LinkedHashMap<>(definitions.serviceTypeMap());
         DYNAMIC_SERVICES.forEach(filtered::remove);
-        return new ServiceScanner.StaticServiceDefinitions(filtered);
+        return new ServiceScanner.ExclusiveStaticServiceDefinitions(filtered);
     }
 }

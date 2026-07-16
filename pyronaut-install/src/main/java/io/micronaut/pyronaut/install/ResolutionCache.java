@@ -63,6 +63,35 @@ final class ResolutionCache {
         }
     }
 
+    static String externalInstallHash(Path projectRoot, Path localRepositoryPath) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update("external-install-v1".getBytes(StandardCharsets.UTF_8));
+            for (String name : List.of("pom.xml", "mvnw", "settings.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradle.properties")) {
+                Path file = projectRoot.resolve(name);
+                if (Files.isRegularFile(file)) {
+                    digest.update(name.getBytes(StandardCharsets.UTF_8));
+                    digest.update(Files.readAllBytes(file));
+                }
+            }
+            for (String directory : List.of(".mvn", "gradle/wrapper", "buildSrc", "gradle")) {
+                Path dir = projectRoot.resolve(directory);
+                if (Files.isDirectory(dir)) {
+                    try (var files = Files.walk(dir)) {
+                        for (Path file : files.filter(Files::isRegularFile).sorted().toList()) {
+                            digest.update(projectRoot.relativize(file).toString().getBytes(StandardCharsets.UTF_8));
+                            digest.update(Files.readAllBytes(file));
+                        }
+                    }
+                }
+            }
+            digest.update(localRepositoryPath.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
+        }
+    }
+
     static boolean cacheHit(Path cacheDir, String hash, List<InstallScope> scopes) throws IOException {
         Path hashFile = cacheDir.resolve(HASH_FILE);
         if (!Files.exists(hashFile)) {
