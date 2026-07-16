@@ -1001,6 +1001,26 @@ additional-resources = ["views"]
         self.assertIn(str(main_resources.resolve()), entries)
         self.assertIn(str(test_resources.resolve()), entries)
 
+    def test_external_process_classpath_does_not_require_processed_classes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = root / "external"
+            cache_dir = project_dir / "__pyronaut__"
+            build_jar = project_dir / "lib" / "compile.jar"
+            build_jar.parent.mkdir(parents=True)
+            build_jar.write_text("", encoding="utf-8")
+            (project_dir / "pom.xml").write_text("<project/>", encoding="utf-8")
+            (cache_dir).mkdir(parents=True)
+            (cache_dir / "project-layout.properties").write_text(
+                "kind=MAVEN\n"
+                f"buildClasspath={build_jar}\n",
+                encoding="utf-8",
+            )
+
+            entries = cli._build_native_application_classpath_entries("process", project_dir)
+
+        self.assertEqual([str(build_jar.resolve())], entries)
+
     def test_run_native_application_classpath_still_filters_control_panel_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"

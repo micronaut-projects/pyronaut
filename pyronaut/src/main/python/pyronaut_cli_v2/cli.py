@@ -1015,6 +1015,12 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
     layout = _read_pyproject_sources(project_dir)
     entries: list[str] = []
     if external is not None:
+        if command == "process":
+            # Processing happens before __pyronaut__/classes exists. Use the
+            # resolver's compile/build classpath directly rather than asking
+            # the application runtime classpath builder to add output dirs.
+            entries.extend(external.get("buildClasspath", []))
+            return [entry for entry in entries if Path(entry).exists()]
         key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
         entries.extend(external.get(key, []))
         classes_dir = cache_dir / "classes"
@@ -3979,7 +3985,7 @@ def _pyronaut_dev_native_command_line(
                 selected_pass = value.split("=", 1)[1]
         compiler_entries = compiler_classpath.split(os.pathsep)
         if selected_pass in {"all", "main"}:
-            main_entries = _build_native_application_classpath_entries("run", project_dir)
+            main_entries = _build_native_application_classpath_entries("process", project_dir)
             command_args.extend(["--classpath", os.pathsep.join(dict.fromkeys([*main_entries, *compiler_entries]))])
         if selected_pass in {"all", "test"}:
             test_entries = _build_native_application_classpath_entries("test", project_dir)
