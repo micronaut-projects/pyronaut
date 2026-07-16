@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,6 +45,29 @@ class PyronautTestMainTest {
         assertDoesNotThrow(() ->
             Class.forName("reactor.util.context.ReactorContextAccessor", false, PyronautTestMain.class.getClassLoader())
         );
+    }
+
+    @Test
+    void onlyBootstrapsExternalPythonContextWhenMarkerOrExplicitSettingExists() throws Exception {
+        Path classes = Files.createDirectories(tempDir.resolve("python-context-marker"));
+        try (URLClassLoader classLoader = new URLClassLoader(new java.net.URL[] {classes.toUri().toURL()}, null)) {
+            assertFalse(PyronautTestMain.shouldBootstrapPythonContext(classLoader));
+            String previous = System.getProperty("micronaut.python.enabled");
+            try {
+                System.setProperty("micronaut.python.enabled", "true");
+                assertTrue(PyronautTestMain.shouldBootstrapPythonContext(classLoader));
+            } finally {
+                if (previous == null) {
+                    System.clearProperty("micronaut.python.enabled");
+                } else {
+                    System.setProperty("micronaut.python.enabled", previous);
+                }
+            }
+            Path marker = classes.resolve("META-INF/pyronaut/python-enabled");
+            Files.createDirectories(marker.getParent());
+            Files.writeString(marker, "");
+            assertTrue(PyronautTestMain.shouldBootstrapPythonContext(classLoader));
+        }
     }
 
     @Test

@@ -65,6 +65,8 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_TEST_CLASSES_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_TEST_SOURCES_DIR = "__pyronaut__/test-sources";
+    private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
+    private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String DEFAULT_TESTS_DIR = "tests";
     private static final String TEST_APPLICATION_MAIN = "tests.py";
@@ -215,7 +217,9 @@ public final class PyronautTestMain implements Callable<Integer> {
             defaultTestServerPort();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             try {
-                contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedPytestSourceDir));
+                if (!ExternalProjectLayout.isExternal(root) || shouldBootstrapPythonContext(applicationClassLoader)) {
+                    contextBootstrapper.bootstrap(applicationClassLoader, selectApplicationMain(resolvedPytestSourceDir));
+                }
                 // Bootstrapping the reusable Python context may change the
                 // thread context classloader. Restore the application loader
                 // before JUnit/Micronaut discovers test bean definitions;
@@ -429,6 +433,17 @@ public final class PyronautTestMain implements Callable<Integer> {
         if (javaHome != null && !javaHome.isBlank()) {
             System.setProperty("java.home", javaHome);
         }
+    }
+
+    static boolean shouldBootstrapPythonContext(ClassLoader classLoader) {
+        if (classLoader.getResource(PYTHON_ENABLED_MARKER) != null) {
+            return true;
+        }
+        String enabled = System.getProperty(MICRONAUT_PYTHON_ENABLED);
+        if (enabled == null) {
+            enabled = System.getenv("MICRONAUT_PYTHON_ENABLED");
+        }
+        return Boolean.parseBoolean(enabled);
     }
 
     static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path testClassesDir, Path configDir, Path testResourcesDir) throws IOException {

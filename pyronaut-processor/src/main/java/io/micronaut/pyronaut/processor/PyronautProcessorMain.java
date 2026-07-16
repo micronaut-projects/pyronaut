@@ -48,6 +48,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_TEST_TARGET_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_TEST_SOURCES_DIR = "__pyronaut__/test-sources";
     private static final String APPLICATION_VFS_SRC = "META-INF/GRAALPY-VFS/micronaut-application/src";
+    private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
+    private static final String APPLICATION_CONTEXT_CONFIGURER_SERVICE = "META-INF/services/io.micronaut.context.ApplicationContextConfigurer";
+    private static final String EXTERNAL_CONTEXT_CONFIGURER_CLASS = "io.micronaut.pyronaut.generated.PyronautPythonContextConfigurer";
     private static final String DEFAULT_JAVA_SRC = "src-java";
     private static final String DEFAULT_TEST_PYTHON_SRC = "tests";
     private static final String DEFAULT_TEST_JAVA_SRC = "test-java";
@@ -148,25 +151,32 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             Path resolvedMainPythonSrc = externalLayout == null
                 ? resolveConfiguredPath(root, pythonSrc, DEFAULT_PYTHON_SRC, model.pyronaut().sources().python(), "--python-src")
                 : root.resolve("__pyronaut__/external-python");
-            if (externalLayout != null) Files.createDirectories(resolvedMainPythonSrc);
+            if (externalLayout != null) {
+                prepareExternalMergedSourceRoot(root, "external-python");
+                mergePythonSourceTrees(List.of(root.resolve("src/main/python")), externalLayout.mainJavaSources(), resolvedMainPythonSrc);
+            }
             Path resolvedMainJavaSrc = externalLayout == null
                 ? resolveConfiguredPath(root, javaSrc, DEFAULT_JAVA_SRC, model.pyronaut().sources().java(), "--java-src")
                 : firstOrEmpty(root, externalLayout.mainJavaSources());
-            if (externalLayout != null && externalLayout.mainJavaSources().size() > 1) {
+            if (externalLayout != null) {
                 mergedExternalMainRoot = prepareExternalMergedSourceRoot(root, "external-main-sources");
                 resolvedMainJavaSrc = mergedExternalMainRoot;
                 for (Path source : externalLayout.mainJavaSources()) mergeSourceTrees(source, mergedExternalMainRoot);
+                writeExternalContextConfigurer(resolvedMainJavaSrc);
             }
             Path resolvedMainTargetDir = root.resolve(targetDir).normalize();
 
             Path resolvedTestPythonSrc = externalLayout == null
                 ? resolveConfiguredPath(root, testPythonSrc, DEFAULT_TEST_PYTHON_SRC, model.pyronaut().sources().pythonTest(), "--test-python-src")
                 : root.resolve("__pyronaut__/external-test-python");
-            if (externalLayout != null) Files.createDirectories(resolvedTestPythonSrc);
+            if (externalLayout != null) {
+                prepareExternalMergedSourceRoot(root, "external-test-python");
+                mergePythonSourceTrees(List.of(root.resolve("src/test/python")), externalLayout.testJavaSources(), resolvedTestPythonSrc);
+            }
             Path resolvedTestJavaSrc = externalLayout == null
                 ? resolveConfiguredPath(root, testJavaSrc, DEFAULT_TEST_JAVA_SRC, model.pyronaut().sources().javaTest(), "--test-java-src")
                 : firstOrEmpty(root, externalLayout.testJavaSources());
-            if (externalLayout != null && externalLayout.testJavaSources().size() > 1) {
+            if (externalLayout != null) {
                 mergedExternalTestRoot = prepareExternalMergedSourceRoot(root, "external-test-sources");
                 resolvedTestJavaSrc = mergedExternalTestRoot;
                 for (Path source : externalLayout.testJavaSources()) mergeSourceTrees(source, mergedExternalTestRoot);
@@ -223,6 +233,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         progressReporter.finishPass("main", mainSourceCount);
                         mainStatus = "processed";
                     }
+                    if (externalLayout != null) {
+                        writeExternalRuntimeMetadata(resolvedMainTargetDir, ProcessorSourceCache.countSources(resolvedMainPythonSrc, ".py") > 0);
+                    }
                 } else {
                     mainStatus = "skipped";
                 }
@@ -253,6 +266,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         mergeSourceTrees(resolvedMainJavaSrc, resolvedTestJavaSrc, mergedTestJavaSrc);
                     } else {
                         mergeSourceTrees(resolvedTestJavaSrc, mergedTestJavaSrc);
+                        writeExternalContextConfigurer(mergedTestJavaSrc);
                     }
 
                     long testSourceCount = ProcessorSourceCache.countSources(mergedTestPythonSrc, ".py")
@@ -296,6 +310,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             progressReporter.finishPass("test", testSourceCount);
                             testStatus = "processed";
                         }
+                    }
+                    if (externalLayout != null) {
+                        writeExternalRuntimeMetadata(resolvedTestTargetDir, ProcessorSourceCache.countSources(mergedTestPythonSrc, ".py") > 0);
                     }
                 } else {
                     testStatus = "skipped";
@@ -419,6 +436,72 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         copyTree(source, targetDirectory);
     }
 
+    private static void mergePythonSourceTrees(List<Path> conventionalSources, List<Path> externalSources, Path targetDirectory) {
+        for (Path source : conventionalSources) {
+            copyPythonFiles(source, targetDirectory);
+        }
+        for (Path source : externalSources) {
+            copyPythonFiles(source, targetDirectory);
+        }
+    }
+
+    private static void writeExternalContextConfigurer(Path javaSourceRoot) {
+        Path sourceFile = javaSourceRoot.resolve("io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java");
+        try {
+            Files.createDirectories(sourceFile.getParent());
+            Files.writeString(sourceFile, """
+                package io.micronaut.pyronaut.generated;
+
+                import io.micronaut.context.ApplicationContextBuilder;
+                import io.micronaut.context.ApplicationContextConfigurer;
+                import io.micronaut.context.annotation.ContextConfigurer;
+                import io.micronaut.context.env.PropertySource;
+                import io.micronaut.core.order.Ordered;
+                import java.util.Map;
+
+                @ContextConfigurer
+                public final class PyronautPythonContextConfigurer implements ApplicationContextConfigurer {
+                    private static final String PYTHON_ENABLED = \"micronaut.python.enabled\";
+                    private static final String PYTHON_MARKER = \"META-INF/pyronaut/python-enabled\";
+
+                    public PyronautPythonContextConfigurer() {
+                    }
+
+                    @Override
+                    public void configure(ApplicationContextBuilder builder) {
+                        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+                        if (classLoader != null && classLoader.getResource(PYTHON_MARKER) != null) {
+                            return;
+                        }
+                        if (System.getProperty(PYTHON_ENABLED) != null || System.getenv(\"MICRONAUT_PYTHON_ENABLED\") != null) {
+                            return;
+                        }
+                        builder.propertySources(PropertySource.of(\"pyronaut-python-default\", Map.of(PYTHON_ENABLED, false), Ordered.HIGHEST_PRECEDENCE));
+                    }
+                }
+                """);
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed to generate external Python context configurer", e);
+        }
+    }
+
+    private static void writeExternalRuntimeMetadata(Path targetDirectory, boolean pythonEnabled) {
+        try {
+            Path service = targetDirectory.resolve(APPLICATION_CONTEXT_CONFIGURER_SERVICE);
+            Files.createDirectories(service.getParent());
+            Files.writeString(service, EXTERNAL_CONTEXT_CONFIGURER_CLASS + System.lineSeparator());
+            Path marker = targetDirectory.resolve(PYTHON_ENABLED_MARKER);
+            if (pythonEnabled) {
+                Files.createDirectories(marker.getParent());
+                Files.writeString(marker, "");
+            } else {
+                Files.deleteIfExists(marker);
+            }
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed to write external Python runtime metadata", e);
+        }
+    }
+
     private static void prepareGeneratedOutputDirectory(Path targetDirectory) {
         deleteTree(targetDirectory);
         try {
@@ -478,6 +561,22 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             });
         } catch (Exception e) {
             throw new PyronautProcessorException("Failed walking source tree: " + sourceDirectory, e);
+        }
+    }
+
+    private static void copyPythonFiles(Path sourceDirectory, Path targetDirectory) {
+        if (!Files.isDirectory(sourceDirectory)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(sourceDirectory)) {
+            paths.filter(Files::isRegularFile)
+                .filter(path -> path.toString().endsWith(".py"))
+                .forEach(path -> {
+                    Path relative = sourceDirectory.relativize(path);
+                    copyFile(path, targetDirectory.resolve(relative));
+                });
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed to merge Python source tree from: " + sourceDirectory, e);
         }
     }
 

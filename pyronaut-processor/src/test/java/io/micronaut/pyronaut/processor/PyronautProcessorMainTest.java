@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.processor;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -494,6 +495,52 @@ class PyronautProcessorMainTest {
     }
 
     @Test
+    void externalJavaProjectGeneratesContextConfigurerWithoutPythonMarker() throws Exception {
+        Path project = externalProject("external-java-only");
+        CapturingExecutor executor = new CapturingExecutor();
+
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        Path classes = project.resolve("__pyronaut__/classes");
+        assertTrue(Files.isRegularFile(project.resolve("__pyronaut__/external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java")));
+        assertTrue(Files.isRegularFile(classes.resolve("META-INF/services/io.micronaut.context.ApplicationContextConfigurer")));
+        assertFalse(Files.exists(classes.resolve("META-INF/pyronaut/python-enabled")));
+        assertTrue(Files.readString(project.resolve("__pyronaut__/external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java"))
+            .contains("@ContextConfigurer"));
+    }
+
+    @Test
+    void externalProjectWithMainPythonWritesMarker() throws Exception {
+        Path project = externalProject("external-main-python");
+        Path python = project.resolve("src/main/python/example/app.py");
+        Files.createDirectories(python.getParent());
+        Files.writeString(python, "VALUE = 1\n", StandardCharsets.UTF_8);
+
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), new CapturingExecutor());
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertTrue(Files.isRegularFile(project.resolve("__pyronaut__/classes/META-INF/pyronaut/python-enabled")));
+    }
+
+    @Test
+    void externalProjectWithTestOnlyPythonWritesTestMarker() throws Exception {
+        Path project = externalProject("external-test-python");
+        Path python = project.resolve("src/test/python/example/test_app.py");
+        Files.createDirectories(python.getParent());
+        Files.writeString(python, "def test_app():\n    pass\n", StandardCharsets.UTF_8);
+
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), new CapturingExecutor());
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertFalse(Files.exists(project.resolve("__pyronaut__/classes/META-INF/pyronaut/python-enabled")));
+        assertTrue(Files.isRegularFile(project.resolve("__pyronaut__/test-classes/META-INF/pyronaut/python-enabled")));
+    }
+
+    @Test
     void invalidProgressModeReturnsUsageError() throws Exception {
         Path project = tempDir.resolve("project-invalid-progress");
         Files.createDirectories(project);
@@ -516,6 +563,19 @@ class PyronautProcessorMainTest {
         Files.write(project.resolve("__pyronaut__").resolve("resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
         Files.write(project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"), List.of("/tmp/runtime-a.jar"), StandardCharsets.UTF_8);
         Files.write(project.resolve("__pyronaut__").resolve("resolved-test-dependencies"), List.of("/tmp/test-a.jar"), StandardCharsets.UTF_8);
+    }
+
+    private Path externalProject(String name) throws Exception {
+        Path project = tempDir.resolve(name);
+        Files.createDirectories(project.resolve("src/main/java"));
+        Files.createDirectories(project.resolve("src/test/java"));
+        Files.writeString(project.resolve("pom.xml"), "<project/>\n", StandardCharsets.UTF_8);
+        new ExternalProjectLayout(
+            ExternalProjectLayout.ProjectKind.MAVEN,
+            List.of(project.resolve("src/main/java")), List.of(project.resolve("src/test/java")),
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
+        ).write(project);
+        return project;
     }
 
     private static String minimalPyproject() {
