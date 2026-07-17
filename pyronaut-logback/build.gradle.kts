@@ -10,7 +10,7 @@ dependencies {
     api(mnLogging.logback.classic)
 
     // Bridge java.util.logging (JUL) to SLF4J/logback
-    runtimeOnly("org.slf4j:jul-to-slf4j:2.0.17")
+    runtimeOnly("org.slf4j:jul-to-slf4j:2.0.18")
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation("org.awaitility:awaitility:4.2.0")
