@@ -652,6 +652,8 @@ def _delegate_direct_source(
         executable_path,
         env,
         command=command,
+        environment=_default_environment(command, args),
+        args=args,
     )
     command_line = [executable_path, *jvm_args, *args]
     if _delegation_trace_enabled():
@@ -698,6 +700,7 @@ def _run_direct_source(
     snapshot = _snapshot_direct_source_inputs(args)
     return _run_direct_source_with_auto_restart(
         executable_path,
+        command,
         args,
         env,
         process_runner,
@@ -716,6 +719,7 @@ def _run_direct_source(
 
 def _run_direct_source_with_auto_restart(
     executable_path: str,
+    command: str,
     args: Sequence[str],
     env: dict[str, str] | None,
     process_runner: ProcessRunner,
@@ -738,7 +742,9 @@ def _run_direct_source_with_auto_restart(
         *_build_direct_source_native_jvm_args(
             executable_path,
             env,
-            command="dev",
+            command=command,
+            environment=_default_environment(command, args),
+            args=args,
         ),
         *args,
     ]
@@ -802,14 +808,17 @@ def _build_direct_source_native_jvm_args(
     env: dict[str, str] | None,
     *,
     command: str | None = None,
+    environment: str | None = None,
+    args: Sequence[str] = (),
 ) -> list[str]:
     jvm_args: list[str] = []
     java_home = (env or os.environ).get("JAVA_HOME")
     if java_home:
         jvm_args.append(f"-Djava.home={java_home}")
     if command is not None:
-        jvm_args.append(f"-Dpyronaut.dev.launch.mode={'production' if command == 'run' else 'development'}")
         jvm_args.append(f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}")
+    if environment is not None and not _has_micronaut_environments_property(args):
+        jvm_args.append(f"-Dmicronaut.environments={environment}")
     compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
     if compiler_classpath:
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
@@ -885,6 +894,8 @@ def _build_java_delegate_invocation(
     java_exec = _resolve_java_executable(env)
     classpath = _build_delegate_classpath(command, project_dir, resolver)
     jvm_args = _build_delegate_jvm_args(debug_vm)
+    if (environment := _default_environment(command, args)) is not None:
+        jvm_args.append(f"-Dmicronaut.environments={environment}")
     jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
 
     command_line = [java_exec, *jvm_args, "-cp", classpath, JAVA_MAIN_BY_COMMAND[command], *args]
@@ -3018,6 +3029,7 @@ def _build_dev_delegate_invocation(
         args,
         resolver,
         classpath_command="dev",
+        environment="dev",
         debug_vm=debug_vm,
         env_overrides=env_overrides,
         java_home_provider=java_home_provider,
@@ -3228,6 +3240,27 @@ def _build_test_resources_jvm_args(env_overrides: dict[str, str] | None) -> list
             continue
         jvm_args.append(f"-D{property_name}={stripped}")
     return jvm_args
+
+
+def _has_micronaut_environments_property(args: Sequence[str]) -> bool:
+    for index, value in enumerate(args):
+        if value.startswith("-Dmicronaut.environments="):
+            return True
+        if value.startswith("--property=micronaut.environments="):
+            return True
+        if value == "--property" and index + 1 < len(args) and args[index + 1].startswith("micronaut.environments="):
+            return True
+    return False
+
+
+def _default_environment(command: str, args: Sequence[str]) -> str | None:
+    if _has_micronaut_environments_property(args):
+        return None
+    if command == "dev":
+        return "dev"
+    if command == "test":
+        return "test"
+    return None
 
 
 def _ensure_graalvm_java_home(project_dir: Path | None = None) -> str | None:
@@ -3932,6 +3965,7 @@ def _pyronaut_dev_native_command_line(
     resolver: Callable[[str], str | None],
     *,
     classpath_command: str | None = None,
+    environment: str | None = None,
     debug_vm: bool = False,
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
@@ -3948,6 +3982,12 @@ def _pyronaut_dev_native_command_line(
     if executable_path is None:
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider)
+    selected_environment = (
+        environment if environment is not None and not _has_micronaut_environments_property(args)
+        else _default_environment(command, args)
+    )
+    if selected_environment is not None:
+        jvm_args.append(f"-Dmicronaut.environments={selected_environment}")
     compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
     if compiler_classpath:
         # External Java sources need Pyronaut's Python annotation types and

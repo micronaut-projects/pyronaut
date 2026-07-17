@@ -17,7 +17,6 @@ package io.micronaut.pyronaut.run;
 
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
-import io.micronaut.context.env.Environment;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
@@ -211,7 +210,6 @@ public final class PyronautRunMain implements Callable<Integer> {
                                                      ApplicationArgs applicationArgs) throws Exception {
         Micronaut micronaut = Micronaut.build(applicationArgs.appArgs.toArray(String[]::new));
         micronaut.banner(!Boolean.FALSE.equals(applicationArgs.bannerEnabled));
-        micronaut.environments(Environment.DEVELOPMENT);
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         if (contextClassLoader != null) {
             micronaut.classLoader(contextClassLoader);

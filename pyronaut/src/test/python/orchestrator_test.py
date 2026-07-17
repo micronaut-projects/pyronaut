@@ -562,7 +562,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=development", "test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=test", "test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
             executed,
         )
 
@@ -590,7 +590,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=production", str(source)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", str(source)]],
             executed,
         )
 
@@ -618,7 +618,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=production", str(source)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", str(source)]],
             executed,
         )
 
@@ -665,7 +665,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(130, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=development", "test", str(source), "--", str(test)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=test", "test", str(source), "--", str(test)]],
             executed,
         )
 
@@ -694,7 +694,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=production", str(source_dir)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", str(source_dir)]],
             executed,
         )
 
@@ -767,7 +767,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(2, len(started))
         self.assertEqual(
-            [str(native_dev), "-Djava.home=/tmp/java-home", "-Dpyronaut.dev.launch.mode=development", str(source)],
+            [str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=dev", str(source)],
             started[0],
         )
         self.assertTrue(first_process.terminated)
@@ -1079,8 +1079,27 @@ additional-resources = ["views"]
         self.assertEqual(0, exit_code)
         command_line, env = executed[0]
         self.assertIn("io.micronaut.pyronaut.dev.PyronautDevMain", command_line)
+        self.assertIn("-Dmicronaut.environments=dev", command_line)
         self.assertIn("/tmp/micronaut-control-panel-core-2.0.0.jar", " ".join(command_line))
         self.assertIsNone(env.get("PYRONAUT_TEST_RESOURCES_DISABLED") if env else None)
+
+    def test_direct_source_dev_preserves_user_environment_property(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            source = Path(temp_dir) / "App.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+
+            jvm_args = cli._build_direct_source_native_jvm_args(  # noqa: SLF001 - command construction coverage
+                str(native_dev),
+                {"JAVA_HOME": "/tmp/java-home"},
+                command="dev",
+                environment=cli._default_environment("dev", ["-Dmicronaut.environments=custom", str(source)]),  # noqa: SLF001
+                args=["-Dmicronaut.environments=custom", str(source)],
+            )
+
+        self.assertNotIn("-Dmicronaut.environments=dev", jvm_args)
+        self.assertTrue(cli._has_micronaut_environments_property(["-Dmicronaut.environments=custom", str(source)]))  # noqa: SLF001
 
     def test_run_auto_restart_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):
         executed = []

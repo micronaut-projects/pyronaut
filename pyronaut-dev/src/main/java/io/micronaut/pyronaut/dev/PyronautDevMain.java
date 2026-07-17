@@ -18,7 +18,6 @@ package io.micronaut.pyronaut.dev;
 import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.BeanDefinitionsProvider;
 import io.micronaut.context.BeanResolutionTraceMode;
-import io.micronaut.context.env.Environment;
 import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
@@ -96,7 +95,6 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final int TESTS_FAILED = 1;
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String PROJECT_DIR_PROPERTY = "pyronaut.dev.project.dir";
-    private static final String LAUNCH_MODE_PROPERTY = "pyronaut.dev.launch.mode";
     private static final String BUILD_DEPENDENCIES_MANIFEST = "resolved-build-dependencies";
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
@@ -467,12 +465,6 @@ public final class PyronautDevMain implements Callable<Integer> {
                 previousProperties.put(MICRONAUT_PYTHON_ENABLED, System.getProperty(MICRONAUT_PYTHON_ENABLED));
                 System.setProperty(MICRONAUT_PYTHON_ENABLED, "false");
             }
-            if (!invocation.test()
-                && !isProductionMode()
-                && !invocation.properties().containsKey(MICRONAUT_ENVIRONMENTS)) {
-                previousProperties.put(MICRONAUT_ENVIRONMENTS, System.getProperty(MICRONAUT_ENVIRONMENTS));
-                System.setProperty(MICRONAUT_ENVIRONMENTS, Environment.DEVELOPMENT);
-            }
             if (invocation.setup() != null) {
                 int install = delegateInvoker.invoke(ToolCommand.INSTALL, "--project-dir", projectDirectory(stagingRoot).toString());
                 if (install != SUCCESS) {
@@ -499,8 +491,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             return runInMemoryTests(invocation, stagingRoot);
         }
         Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
-        boolean productionMode = isProductionMode();
-        DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir, productionMode);
+        DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir);
         logClasspaths(invocation, classpaths);
         List<URL> runtimeUrls = toUrls(classpaths.runtime());
         Path configDir = stagingRoot.resolve("config");
@@ -534,9 +525,6 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .deducePackage(false)
                 .deduceCloudEnvironment(false)
                 .deduceEnvironment(false);
-            if (!productionMode) {
-                micronaut.environments(Environment.DEVELOPMENT);
-            }
             ContextClassLoaderApplicationContextConfigurers.configure(micronaut, applicationClassLoader);
             List<String> configLocations = toConfigLocations(invocation.configs());
             if (!configLocations.isEmpty()) {
@@ -559,12 +547,11 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static int runInMemoryTests(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
         Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
-        boolean productionMode = isProductionMode();
-        DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir, productionMode);
+        DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir);
         logClasspaths(invocation, classpaths);
         List<URL> runtimeUrls = toUrls(classpaths.runtime());
         Path configDir = stagingRoot.resolve("config");
-        if (!productionMode && Files.isDirectory(configDir)) {
+        if (Files.isDirectory(configDir)) {
             runtimeUrls.add(configDir.toUri().toURL());
         }
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
@@ -587,9 +574,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             DirectSourceApplicationContextConfigurer.set(directSourceBeanDefinitionsProvider(invocation));
-            if (!productionMode) {
-                defaultTestServerPort();
-            }
+            defaultTestServerPort();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             if (sourceType(invocation.sources()) == SourceType.PYTHON) {
                 GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader, Map.of(), GraalPyContextFactory.APPLICATION_MAIN);
@@ -830,20 +815,21 @@ public final class PyronautDevMain implements Callable<Integer> {
         return locations;
     }
 
-    private static Path resolveRunManifest(Path pyronautDir, boolean productionMode) {
-        if (productionMode) {
-            return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
-        }
-        Path developmentManifest = pyronautDir.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST);
-        if (Files.exists(developmentManifest)) {
-            return developmentManifest;
+    private static Path resolveRunManifest(Path pyronautDir, boolean developmentMode) {
+        if (developmentMode) {
+            Path developmentManifest = pyronautDir.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST);
+            if (Files.exists(developmentManifest)) {
+                return developmentManifest;
+            }
         }
         return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
     }
 
-    private static boolean isProductionMode() {
-        String launchMode = System.getProperty(LAUNCH_MODE_PROPERTY);
-        return launchMode != null && launchMode.equalsIgnoreCase("production");
+    private static boolean isDevelopmentMode() {
+        String environments = System.getProperty(MICRONAUT_ENVIRONMENTS, "");
+        return Arrays.stream(environments.split(","))
+            .map(String::trim)
+            .anyMatch("dev"::equalsIgnoreCase);
     }
 
     private static ClassLoader directSourceLauncherClassLoader(DirectSourceInvocation invocation) {
@@ -990,10 +976,10 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static DirectSourceClasspaths resolveDirectSourceClasspaths(DirectSourceInvocation invocation,
-                                                                         Path pyronautDir,
-                                                                         boolean productionMode) throws IOException {
+                                                                         Path pyronautDir) throws IOException {
         List<Path> build = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
-        List<Path> runtime = readManifest(resolveRunManifest(pyronautDir, productionMode));
+        boolean developmentMode = isDevelopmentMode();
+        List<Path> runtime = readManifest(resolveRunManifest(pyronautDir, developmentMode));
         List<Path> test = invocation.test() ? readManifest(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)) : List.of();
         List<Path> compilerBase = directCompilerClasspath(invocation);
         List<Path> application = directApplicationClasspath();
@@ -1007,21 +993,20 @@ public final class PyronautDevMain implements Callable<Integer> {
         runtimeClasspath.addAll(test);
         runtimeClasspath.addAll(application);
         return new DirectSourceClasspaths(
-            filterDirectSourcePaths(processor, invocation, productionMode),
-            filterDirectSourcePaths(compile, invocation, productionMode),
-            filterDirectSourcePaths(runtimeClasspath, invocation, productionMode)
+            filterDirectSourcePaths(processor, invocation, developmentMode),
+            filterDirectSourcePaths(compile, invocation, developmentMode),
+            filterDirectSourcePaths(runtimeClasspath, invocation, developmentMode)
         );
     }
 
     private static List<Path> filterDirectSourcePaths(List<Path> paths,
                                                        DirectSourceInvocation invocation,
-                                                       boolean productionMode) {
+                                                       boolean developmentMode) {
         Set<String> nativeArtifacts = nativeProvidedArtifacts();
-        boolean excludeTestResources = productionMode || testResourcesDisabled(invocation);
+        boolean excludeTestResources = !testResourcesEnabled(invocation, developmentMode);
         List<Path> filtered = new ArrayList<>();
         for (Path path : paths) {
             if ((excludeTestResources && isTestResourcesJar(path))
-                || (productionMode && isControlPanelJar(path))
                 || isNativeProvidedArtifact(path, nativeArtifacts)) {
                 continue;
             }
@@ -1058,10 +1043,6 @@ public final class PyronautDevMain implements Callable<Integer> {
         return null;
     }
 
-    private static boolean isControlPanelJar(Path path) {
-        return path.getFileName().toString().startsWith("micronaut-control-panel-");
-    }
-
     private static void logClasspaths(DirectSourceInvocation invocation, DirectSourceClasspaths classpaths) {
         if (!invocation.verbose()) {
             return;
@@ -1085,7 +1066,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (classpath == null || classpath.isBlank()) {
             return List.of();
         }
-        boolean excludeTestResources = testResourcesDisabled(invocation);
+        boolean excludeTestResources = !testResourcesEnabled(invocation, isDevelopmentMode());
         return Arrays.stream(classpath.split(Pattern.quote(File.pathSeparator)))
             .filter(value -> !value.isBlank())
             .map(Path::of)
@@ -1112,6 +1093,10 @@ public final class PyronautDevMain implements Callable<Integer> {
             .anyMatch(entry -> "false".equalsIgnoreCase(entry.getValue()))
             || "false".equalsIgnoreCase(System.getProperty(MICRONAUT_TEST_RESOURCES_ENABLED))
             || "false".equalsIgnoreCase(System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY));
+    }
+
+    private static boolean testResourcesEnabled(DirectSourceInvocation invocation, boolean developmentMode) {
+        return (invocation.test() || developmentMode) && !testResourcesDisabled(invocation);
     }
 
     private static void stageSetup(DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
