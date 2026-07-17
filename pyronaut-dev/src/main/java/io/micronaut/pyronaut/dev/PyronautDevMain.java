@@ -522,11 +522,13 @@ public final class PyronautDevMain implements Callable<Integer> {
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
                 .beanResolutionTrace(invocation.verbose() ? BeanResolutionTraceMode.STANDARD_OUT : BeanResolutionTraceMode.NONE)
-                .beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation))
                 .deducePackage(false)
                 .deduceCloudEnvironment(false)
                 .deduceEnvironment(false);
             ContextClassLoaderApplicationContextConfigurers.configure(micronaut, applicationClassLoader);
+            // Apply this last so runtime-discovered configurers cannot replace
+            // the generated direct-source bean definitions provider.
+            micronaut.beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation));
             List<String> configLocations = toConfigLocations(invocation.configs());
             if (!configLocations.isEmpty()) {
                 micronaut.overrideConfigLocations(configLocations.toArray(String[]::new));
@@ -985,12 +987,12 @@ public final class PyronautDevMain implements Callable<Integer> {
         List<Path> test = invocation.test() ? readManifest(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)) : List.of();
         List<Path> compilerBase = directCompilerClasspath(invocation);
         List<Path> application = directApplicationClasspath();
-        List<Path> processor = new ArrayList<>(compilerBase);
-        processor.addAll(buildDependenciesForTests(build, test));
         List<Path> compile = new ArrayList<>(compilerBase);
         compile.addAll(runtime);
         compile.addAll(test);
         compile.addAll(application);
+        List<Path> processor = new ArrayList<>(compilerBase);
+        processor.addAll(buildDependenciesForTests(build, test));
         List<Path> runtimeClasspath = new ArrayList<>(runtime);
         runtimeClasspath.addAll(test);
         runtimeClasspath.addAll(application);
