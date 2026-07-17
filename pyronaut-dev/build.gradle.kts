@@ -8,15 +8,24 @@ plugins {
     id("org.graalvm.buildtools.native")
 }
 
+val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.platform.version")
+
 dependencies {
+    api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)
 
-    // processors
+    // platform processors
     implementation(mn.micronaut.inject.python)
     implementation(project(":micronaut-pyronaut-processor"))
     implementation(mnSerde.micronaut.serde.processor)
     implementation(mnValidation.micronaut.validation.processor)
+    implementation("io.micronaut.data:micronaut-data-processor")
+    implementation("io.micronaut.security:micronaut-security-processor")
+    implementation("io.micronaut.micrometer:micronaut-micrometer-annotation")
+    implementation("io.micronaut.jaxrs:micronaut-jaxrs-processor")
+    implementation("io.micronaut.sourcegen:micronaut-sourcegen-generator-java")
+    implementation("io.micronaut.sourcegen:micronaut-sourcegen-model")
 
     // CLI modules
     implementation(project(":micronaut-pyronaut-install"))
@@ -36,6 +45,13 @@ dependencies {
 
 
     // runtime build in modules
+    api("io.micronaut.data:micronaut-data-model")
+    api("io.micronaut.data:micronaut-data-runtime")
+    api("io.micronaut.data:micronaut-data-connection")
+    api("io.micronaut.sql:micronaut-jdbc")
+    api("io.micronaut.cache:micronaut-cache-core")
+    api("io.micronaut.sourcegen:micronaut-sourcegen-annotations")
+    api("io.micronaut.views:micronaut-views-core")
     api(mnSerde.micronaut.serde.jackson)
     api(mn.micronaut.context.python.netty)
     api(mn.micronaut.context.python)
