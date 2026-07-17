@@ -507,6 +507,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(classpaths.processor()))
                 .classpath(toFiles(classpaths.compile()))
+                .runtimeClasspath(toFiles(classpaths.runtime()))
                 .parentClassLoader(runtimeClassLoader);
             configureDirectSource(builder, invocation, stagingRoot);
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
@@ -564,6 +565,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(classpaths.processor()))
                 .classpath(toFiles(classpaths.compile()))
+                .runtimeClasspath(toFiles(classpaths.runtime()))
                 .parentClassLoader(runtimeClassLoader);
 
             configureDirectSource(builder, invocation, stagingRoot);

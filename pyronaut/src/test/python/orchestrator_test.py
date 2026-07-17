@@ -781,6 +781,21 @@ class OrchestratorTest(unittest.TestCase):
             lib_dir.mkdir()
             native_dev = bin_dir / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
+            (bin_dir / "native-provided-classpath.txt").write_text(
+                "io.micronaut:micronaut-context-python\n",
+                encoding="utf-8",
+            )
+            (bin_dir / "native-compile-classpath.txt").write_text(
+                "\n".join(
+                    [
+                        str(lib_dir / "micronaut-context-python-5.1.0.jar"),
+                        str(lib_dir / "micronaut-inject-python-5.1.0.jar"),
+                        str(lib_dir / "micronaut-runtime-5.1.0.jar"),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             for jar_name in (
                 "micronaut-context-python-5.1.0.jar",
                 "micronaut-inject-python-5.1.0.jar",
@@ -790,11 +805,11 @@ class OrchestratorTest(unittest.TestCase):
 
             jvm_args = cli._build_direct_source_native_jvm_args(str(native_dev), {"JAVA_HOME": "/tmp/java-home"})
 
-        self.assertEqual(2, len(jvm_args))
+        self.assertEqual(3, len(jvm_args))
         self.assertEqual("-Djava.home=/tmp/java-home", jvm_args[0])
-        self.assertTrue(jvm_args[1].startswith("-Dpyronaut.dev.compiler.class.path="))
-        self.assertIn("micronaut-context-python-5.1.0.jar", jvm_args[1])
-        self.assertIn("micronaut-inject-python-5.1.0.jar", jvm_args[1])
+        compiler_arg = next(arg for arg in jvm_args if arg.startswith("-Dpyronaut.dev.compiler.class.path="))
+        self.assertIn("micronaut-context-python-5.1.0.jar", compiler_arg)
+        self.assertIn("micronaut-inject-python-5.1.0.jar", compiler_arg)
 
     def test_run_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):
         executed = []

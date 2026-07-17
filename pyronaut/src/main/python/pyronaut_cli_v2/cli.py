@@ -1148,18 +1148,18 @@ def _filter_native_launcher_provided_entries(
 
 
 def _native_launcher_provided_file_names(launcher_executable: str | None) -> set[str]:
-    manifest_names = {
-        entry
-        for entry in _native_launcher_manifest_entries(launcher_executable, "native-provided-classpath.txt")
-        if ":" not in entry
-    }
-    if manifest_names:
+    manifest_entries = _native_launcher_manifest_entries(launcher_executable, "native-provided-classpath.txt")
+    manifest_names = {entry for entry in manifest_entries if ":" not in entry}
+    if manifest_entries:
+        # A coordinate-based manifest is authoritative, even though it has no
+        # file names to return. Falling back to every JAR in lib would mark
+        # unrelated compiler dependencies as native-provided.
         return manifest_names
     return {Path(entry).name for entry in _native_launcher_provided_jar_entries(launcher_executable)}
 
 
 def _native_launcher_provided_artifact_ids(launcher_executable: str | None, file_names: set[str]) -> set[str]:
-    if _native_launcher_provided_artifact_coordinates(launcher_executable):
+    if _native_launcher_manifest_entries(launcher_executable, "native-provided-classpath.txt"):
         return set()
     return _versioned_jar_artifact_ids(file_names)
 
