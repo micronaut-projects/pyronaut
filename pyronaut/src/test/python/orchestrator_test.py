@@ -941,7 +941,7 @@ additional-resources = ["views"]
         entries = classpath.split(os.pathsep)
         self.assertNotIn("/tmp/micronaut-context-python-5.1.0.jar", entries)
         self.assertNotIn("/tmp/micronaut-runtime-5.1.0.jar", entries)
-        self.assertIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
+        self.assertNotIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
         self.assertIn("/tmp/micronaut-views-core-6.0.0.jar", entries)
 
     def test_native_application_classpath_keeps_control_panel_jars(self):

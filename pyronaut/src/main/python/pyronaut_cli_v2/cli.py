@@ -1159,7 +1159,7 @@ def _native_launcher_provided_file_names(launcher_executable: str | None) -> set
 
 
 def _native_launcher_provided_artifact_ids(launcher_executable: str | None, file_names: set[str]) -> set[str]:
-    if _native_launcher_manifest_entries(launcher_executable, "native-provided-classpath.txt"):
+    if _native_launcher_provided_artifact_coordinates(launcher_executable):
         return set()
     return _versioned_jar_artifact_ids(file_names)
 
