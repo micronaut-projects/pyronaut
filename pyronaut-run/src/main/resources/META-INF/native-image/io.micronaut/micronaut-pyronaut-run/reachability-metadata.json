@@ -1,6 +1,15 @@
 {
   "reflection": [
     {
+      "type": "ch.qos.logback.core.status.NopStatusListener",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "io.micronaut.runtime.Micronaut",
       "methods": [
         {

@@ -20,6 +20,7 @@ docker-java = "3.4.1"
 micronaut-test = "5.0.1"
 micronaut-data = "5.1.0"
 javaparser = "3.28.2"
+graalvm-reachability-metadata = "1.1.5"
 
 [libraries]
 micronaut-serde = { module = "io.micronaut.serde:micronaut-serde-bom", version.ref = "micronaut-serde" }
@@ -65,6 +66,7 @@ micronaut-test-core = { module = "io.micronaut.test:micronaut-test-core", versio
 micronaut-data-jdbc = { module = "io.micronaut.data:micronaut-data-jdbc", version.ref = "micronaut-data" }
 micronaut-data-processor = { module = "io.micronaut.data:micronaut-data-processor", version.ref = "micronaut-data" }
 javaparser-core = { module = "com.github.javaparser:javaparser-core", version.ref = "javaparser" }
+graalvm-reachability-metadata = { module = "org.graalvm.buildtools:graalvm-reachability-metadata", version.ref = "graalvm-reachability-metadata" }
 
 [bundles]
 

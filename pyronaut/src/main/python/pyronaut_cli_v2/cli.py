@@ -1402,6 +1402,10 @@ def _run_build(
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
 
+    if mode == "native" and _has_main_class_option(args):
+        print("--main-class is not supported for native builds; PyronautRunMain is always used", file=sys.stderr)
+        return USAGE_ERROR
+
     if static_native and (mode != "native" or not docker_build):
         print("--static is only supported with pyronaut build --native --docker", file=sys.stderr)
         return USAGE_ERROR
@@ -1465,8 +1469,6 @@ def _run_build(
             delegate_executable,
             "--project-dir",
             str(project_dir),
-            "--main-class",
-            main_class,
             "--output",
             str(output_binary),
         ]
@@ -1898,8 +1900,6 @@ def _write_native_dockerfile(
         "/workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build",
         "--project-dir",
         "/workspace/app",
-        "--main-class",
-        main_class,
         "--output",
         output_binary,
     ]
@@ -2619,6 +2619,10 @@ def _extract_main_class(args: Sequence[str]) -> str:
                 raise ValueError("Invalid value for --main-class. Value cannot be empty")
             return value
     return default_main
+
+
+def _has_main_class_option(args: Sequence[str]) -> bool:
+    return any(token == "--main-class" or token.startswith("--main-class=") for token in args)
 
 
 def _extract_build_verbose(args: Sequence[str]) -> bool:

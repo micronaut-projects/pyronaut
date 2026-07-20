@@ -18,10 +18,12 @@ package io.micronaut.pyronaut.nativebuild;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.run.PyronautRunMain;
 import org.graalvm.reachability.GraalVMReachabilityMetadataRepository;
 import org.graalvm.reachability.internal.FileSystemRepository;
 import picocli.CommandLine;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -34,10 +36,15 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -51,22 +58,30 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private static final int PRECONDITION_FAILED = 8;
     private static final int INTERNAL_ERROR = 10;
 
-    private static final String DEFAULT_MAIN_CLASS = "pyronaut_application.PyronautMain";
+    private static final String APPLICATION_MAIN_CLASS = PyronautRunMain.class.getName();
     private static final String DEFAULT_OUTPUT = "__pyronaut__/native/application";
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_RUNTIME_MANIFEST = "__pyronaut__/resolved-runtime-dependencies";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String GENERATED_NATIVE_IMAGE_CONFIG_DIR = "__pyronaut__/native-image-config";
-    private static final String DEFAULT_METADATA_VERSION = "0.11.5";
+    private static final String DEFAULT_METADATA_VERSION = loadDefaultMetadataVersion();
     private static final String DEFAULT_METADATA_URL = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/" + DEFAULT_METADATA_VERSION + "/graalvm-reachability-metadata-" + DEFAULT_METADATA_VERSION + "-repository.zip";
     private static final String VERSIONED_METADATA_URL_TEMPLATE = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/%s/graalvm-reachability-metadata-%s-repository.zip";
 
+    private static String loadDefaultMetadataVersion() {
+        try (InputStream input = PyronautNativeBuildMain.class.getResourceAsStream("metadata-version.txt")) {
+            if (input == null) {
+                throw new IllegalStateException("Missing reachability metadata version resource");
+            }
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8).trim();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed reading reachability metadata version", e);
+        }
+    }
+
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
-
-    @CommandLine.Option(names = "--main-class", defaultValue = DEFAULT_MAIN_CLASS, description = "Main class")
-    String mainClass = DEFAULT_MAIN_CLASS;
 
     @CommandLine.Option(names = "--output", defaultValue = DEFAULT_OUTPUT, description = "Native image output path")
     Path output = Path.of(DEFAULT_OUTPUT);
@@ -102,6 +117,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
+            rejectMainClassOverride();
             Path classesDir = root.resolve(DEFAULT_CLASSES_DIR).normalize();
             if (!Files.isDirectory(classesDir)) {
                 System.err.println("Missing processed classes directory: " + classesDir + ". Run pyronaut process first.");
@@ -115,6 +131,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
             List<Path> runtimeClasspath = readManifest(root, runtimeManifest);
             List<Path> nativeClasspath = new ArrayList<>(runtimeClasspath);
+            nativeClasspath.addAll(pyronautRunClasspathEntries());
+            removeDuplicateVirtualFileSystemEntries(nativeClasspath, runtimeClasspath.size());
             nativeClasspath.add(classesDir);
             Path configDir = root.resolve(DEFAULT_CONFIG_DIR).normalize();
             if (Files.isDirectory(configDir)) {
@@ -139,10 +157,13 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
             List<String> command = new ArrayList<>();
             command.add(nativeImageExecutable);
-            addBundledConfigurationExclusions(command, runtimeClasspath, metadataSelection.modules());
+            addBundledConfigurationExclusions(command, nativeClasspath, metadataSelection.modules(), verbose);
             command.add("-cp");
             command.add(joinClasspath(nativeClasspath));
             command.add("--no-fallback");
+            command.add("--initialize-at-run-time=io.netty");
+            command.add("-H:Preserve=package=io.micronaut.http.*");
+            addUserPackagePreservation(command, classesDir);
             if (!configurationDirs.isEmpty()) {
                 command.add("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
             }
@@ -150,7 +171,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 command.add("--verbose");
             }
             command.addAll(passthroughNativeImageArgs);
-            command.add(mainClass);
+            command.add(APPLICATION_MAIN_CLASS);
             command.add(outputPath.toString());
 
             int exitCode = nativeImageInvoker.run(command, root);
@@ -159,16 +180,65 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 System.out.println("Run it with: " + outputPath);
             }
             return exitCode;
-        } catch (PyprojectModelException e) {
-            System.err.println(e.getMessage());
-            return PRECONDITION_FAILED;
-        } catch (IllegalStateException e) {
+        } catch (PyprojectModelException | IllegalStateException e) {
             System.err.println(e.getMessage());
             return PRECONDITION_FAILED;
         } catch (Exception e) {
             System.err.println("Native build failed: " + e.getMessage());
             return INTERNAL_ERROR;
         }
+    }
+
+    private void rejectMainClassOverride() {
+        if (passthroughNativeImageArgs.stream().anyMatch(arg -> arg.equals("--main-class") || arg.startsWith("--main-class="))) {
+            throw new IllegalStateException("--main-class is not supported for native builds; PyronautRunMain is always used");
+        }
+    }
+
+    private static List<Path> pyronautRunClasspathEntries() {
+        String classpath = System.getProperty("java.class.path", "");
+        if (classpath.isBlank()) {
+            throw new IllegalStateException("Unable to locate the bundled Pyronaut runner classpath");
+        }
+        return java.util.Arrays.stream(classpath.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+            .map(Path::of)
+            .map(path -> path.toAbsolutePath().normalize())
+            .filter(Files::exists)
+            .distinct()
+            .toList();
+    }
+
+    private static void removeDuplicateVirtualFileSystemEntries(List<Path> classpath, int runtimeEntries) {
+        Set<String> runtimeResources = new HashSet<>();
+        for (int i = 0; i < runtimeEntries && i < classpath.size(); i++) {
+            runtimeResources.addAll(virtualFileSystemEntries(classpath.get(i)));
+        }
+        Iterator<Path> entries = classpath.listIterator(runtimeEntries);
+        while (entries.hasNext()) {
+            Path entry = entries.next();
+            Set<String> resources = virtualFileSystemEntries(entry);
+            if (!resources.isEmpty() && resources.stream().anyMatch(runtimeResources::contains)) {
+                entries.remove();
+            }
+        }
+    }
+
+    private static Set<String> virtualFileSystemEntries(Path entry) {
+        if (entry == null || !Files.isRegularFile(entry) || !entry.getFileName().toString().endsWith(".jar")) {
+            return Set.of();
+        }
+        Set<String> resources = new HashSet<>();
+        try (var zip = new ZipInputStream(Files.newInputStream(entry))) {
+            ZipEntry zipEntry;
+            while ((zipEntry = zip.getNextEntry()) != null) {
+                if (!zipEntry.isDirectory() && zipEntry.getName().startsWith("META-INF/GRAALPY-VFS/")) {
+                    resources.add(zipEntry.getName());
+                }
+            }
+        } catch (IOException ignored) {
+            return Set.of();
+        }
+        return resources;
     }
 
     private MetadataSelection resolveMetadataDirectories(Path root,
@@ -221,7 +291,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
     private static void addBundledConfigurationExclusions(List<String> command,
                                                           List<Path> runtimeClasspath,
-                                                          Set<String> selectedModules) {
+                                                          Set<String> selectedModules,
+                                                          boolean verbose) {
+        int exclusions = 0;
         for (Path entry : runtimeClasspath) {
             String gav = gavFromClasspathEntry(entry);
             if (gav == null) {
@@ -234,10 +306,14 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             if (!hasBundledNativeImageConfiguration(entry)) {
                 continue;
             }
-            String normalized = entry.toAbsolutePath().normalize().toString();
+            Path normalized = entry.toAbsolutePath().normalize();
             command.add("--exclude-config");
-            command.add("\\Q" + normalized + "\\E");
+            command.add(".*\\Q" + normalized.getFileName() + "\\E.*");
             command.add("^/META-INF/native-image/.*");
+            exclusions++;
+        }
+        if (verbose) {
+            System.err.println("Bundled native-image configurations excluded: " + exclusions + ", metadata modules: " + selectedModules);
         }
     }
 
@@ -285,7 +361,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Set<String> resources = new LinkedHashSet<>();
         collectClasspathResources(resources, classesDir, true);
         collectClasspathResources(resources, configDir, false);
-        collectJarResources(resources, runtimeClasspath, "META-INF/GRAALPY-VFS/");
+        collectJarResources(resources, runtimeClasspath);
         if (resources.isEmpty()) {
             return null;
         }
@@ -293,6 +369,23 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Files.createDirectories(generatedDir);
         Files.writeString(generatedDir.resolve("resource-config.json"), buildResourceConfig(List.copyOf(resources)), StandardCharsets.UTF_8);
         return generatedDir;
+    }
+
+    private static void addUserPackagePreservation(List<String> command, Path classesDir) throws IOException {
+        Set<String> packages = new TreeSet<>();
+        try (var stream = Files.walk(classesDir)) {
+            stream.filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".class"))
+                .map(classesDir::relativize)
+                .map(Path::getParent)
+                .filter(Objects::nonNull)
+                .map(path -> path.toString().replace(File.separatorChar, '.'))
+                .filter(name -> !name.isBlank())
+                .forEach(packages::add);
+        }
+        for (String packageName : packages) {
+            command.add("-H:Preserve=package=" + packageName + ".*");
+        }
     }
 
     private static void collectClasspathResources(Set<String> resources, Path root, boolean excludeCompiledArtifacts) throws IOException {
@@ -310,7 +403,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
     }
 
-    private static void collectJarResources(Set<String> resources, List<Path> classpath, String prefix) {
+    private static void collectJarResources(Set<String> resources, List<Path> classpath) {
         for (Path entry : classpath) {
             if (entry == null) {
                 continue;
@@ -326,7 +419,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                         continue;
                     }
                     String name = zipEntry.getName();
-                    if (name.startsWith(prefix)) {
+                    if (name.startsWith("META-INF/GRAALPY-VFS/")) {
                         resources.add(name);
                     }
                 }
@@ -424,7 +517,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             List<Path> candidates = stream
                 .filter(Files::isDirectory)
                 .filter(path -> Files.isDirectory(path.resolve("schemas")))
-                .sorted((a, b) -> Integer.compare(a.getNameCount(), b.getNameCount()))
+                .sorted(Comparator.comparingInt(Path::getNameCount))
                 .toList();
             Path candidate = candidates.isEmpty() ? null : candidates.getFirst();
             if (candidate != null) {
@@ -548,7 +641,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
     }
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         int exitCode = new CommandLine(new PyronautNativeBuildMain()).execute(args);
         System.exit(exitCode);
     }

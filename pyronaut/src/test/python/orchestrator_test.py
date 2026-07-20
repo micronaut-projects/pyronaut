@@ -3812,8 +3812,6 @@ additional-test-resources = ["test-fixtures"]
                         "--static",
                         "--project-dir",
                         str(project_dir),
-                        "--main-class",
-                        "example.Main",
                         "--verbose",
                         "--",
                         "--initialize-at-run-time=example.Foo",
@@ -3920,7 +3918,7 @@ additional-test-resources = ["test-fixtures"]
             captured.clear()
             executed.clear()
             exit_code_native = cli.run(
-                ["build", "--native", "--docker", "--project-dir", str(project_dir), "--main-class", "example.Main"],
+                ["build", "--native", "--docker", "--project-dir", str(project_dir)],
                 runner_with_env=runner_with_env,
                 resolver=resolver,
                 platform_name="linux",
@@ -4089,7 +4087,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir], executed[2][0])
         self.assertIsInstance(executed[2][1], dict)
         self.assertEqual("/tmp/pyronaut-native-build", executed[3][0][0])
-        self.assertIn("--main-class", executed[3][0])
+        self.assertNotIn("--main-class", executed[3][0])
         self.assertIn("--output", executed[3][0])
         self.assertIn(str(project_dir.resolve() / "__pyronaut__" / "native" / "native-demo"), executed[3][0])
         self.assertEqual("/tmp/graalvm-jdk-25", executed[3][1]["JAVA_HOME"])
@@ -4097,6 +4095,20 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual("pip", executed[4][0][2])
         self.assertEqual("wheel", executed[4][0][3])
         self.assertIn("Native wheel build complete", stdout.getvalue())
+
+    def test_build_native_rejects_main_class_override(self):
+        stderr = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as temp_dir, redirect_stderr(stderr):
+            exit_code = cli.run(
+                ["build", "--native", "--project-dir", temp_dir, "--main-class", "example.Main"],
+                runner_with_env=lambda _command, _env: 0,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertIn("PyronautRunMain is always used", stderr.getvalue())
 
     def test_build_native_no_cache_not_forwarded_to_native_build_delegate(self):
         executed = []

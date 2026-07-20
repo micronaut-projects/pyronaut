@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.nativebuild;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.run.PyronautRunMain;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
@@ -68,6 +69,57 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void buildsNativeImageWithFixedPyronautRunMainEntryPoint() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        int exit = new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image");
+
+        assertEquals(0, exit);
+        List<String> nativeCommand = executed.getFirst();
+        assertEquals(PyronautRunMain.class.getName(), nativeCommand.get(nativeCommand.size() - 2));
+        int classpathIndex = nativeCommand.indexOf("-cp");
+        assertTrue(classpathIndex >= 0);
+        assertTrue(nativeCommand.get(classpathIndex + 1).contains(PyronautRunMain.class.getProtectionDomain().getCodeSource().getLocation().getPath()));
+    }
+
+    @Test
+    void rejectsMainClassOverride() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> 0;
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        int exit = new CommandLine(command).execute("--project-dir", project.toString(), "--main-class=example.Main");
+
+        assertEquals(8, exit);
+    }
+
+    @Test
     void excludesBundledNativeImageConfigWhenExternalMetadataApplies() throws Exception {
         Path project = prepareProject("""
             [project]
@@ -105,7 +157,7 @@ class PyronautNativeBuildMainTest {
         List<String> nativeCommand = executed.getFirst();
         int excludeIndex = nativeCommand.indexOf("--exclude-config");
         assertTrue(excludeIndex >= 0);
-        assertEquals("\\Q" + nettyJar.toAbsolutePath().normalize() + "\\E", nativeCommand.get(excludeIndex + 1));
+        assertEquals(".*\\Q" + nettyJar.getFileName() + "\\E.*", nativeCommand.get(excludeIndex + 1));
         assertEquals("^/META-INF/native-image/.*", nativeCommand.get(excludeIndex + 2));
     }
 
@@ -356,8 +408,7 @@ class PyronautNativeBuildMainTest {
         Path schemasDir = repositoryRoot.resolve("schemas");
         Files.createDirectories(schemasDir);
         Files.writeString(schemasDir.resolve("library-and-framework-list-schema-v1.0.0.json"), "{}\n");
-        Files.writeString(schemasDir.resolve("metadata-library-index-schema-v1.0.0.json"), "{}\n");
-        Files.writeString(schemasDir.resolve("metadata-root-index-schema-v1.0.0.json"), "{}\n");
+        Files.writeString(schemasDir.resolve("metadata-library-index-schema-v2.0.0.json"), "{}\n");
         Files.writeString(repositoryRoot.resolve("index.json"), "[]\n");
     }
 
@@ -368,7 +419,7 @@ class PyronautNativeBuildMainTest {
                                              Set<String> testedVersions,
                                              boolean latest) throws IOException {
         String module = group + ":" + artifact;
-        String relativeModuleDir = "metadata/" + group + "/" + artifact;
+        String relativeModuleDir = group + "/" + artifact;
 
         Path rootIndex = repositoryRoot.resolve("index.json");
         String rootEntry = """

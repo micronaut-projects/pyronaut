@@ -367,7 +367,6 @@ Common options:
 - `--project-dir <dir>`
 - `--docker`: build a container image instead of a wheel/native binary on the host
 - `--static`: static native container build; only valid with `--native --docker`
-- `--main-class <fqcn>` (native mode)
 - `--verbose` (native mode, forwarded to `native-image`)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 
@@ -376,6 +375,8 @@ JVM mode:
 - Runs `pyronaut-validate-config --scenario production` by default.
 - Builds a wheel using `pip wheel`.
 - Outputs artifacts to `dist/`.
+
+Native mode always uses `io.micronaut.pyronaut.run.PyronautRunMain`; `--main-class` is not supported.
 
 JVM Docker mode (`pyronaut build --docker`):
 
@@ -606,6 +607,7 @@ sudo xattr -r -d com.apple.quarantine /path/to/graalvm
 === Native-image argument passthrough
 
 `pyronaut build --native` forwards native-image arguments that are not consumed by `pyronaut build` itself.
+Native builds always use `io.micronaut.pyronaut.run.PyronautRunMain` as their entry point; the application main class is not configurable.
 
 Examples:
 

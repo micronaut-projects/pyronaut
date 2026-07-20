@@ -8,8 +8,9 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
 
     implementation(project(":micronaut-pyronaut-config-model"))
+    implementation(project(":micronaut-pyronaut-run"))
     implementation(mnPicocli.picocli)
-    implementation("org.graalvm.buildtools:graalvm-reachability-metadata:0.11.5")
+    implementation(libs.graalvm.reachability.metadata)
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
@@ -22,5 +23,11 @@ application {
 tasks {
     startScripts {
         applicationName = "pyronaut-native-build"
+    }
+
+    processResources {
+        filesMatching("io/micronaut/pyronaut/nativebuild/metadata-version.txt") {
+            expand("metadataVersion" to libs.versions.graalvm.reachability.metadata.get())
+        }
     }
 }
