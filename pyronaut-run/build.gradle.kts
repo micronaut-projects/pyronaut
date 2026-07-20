@@ -24,22 +24,27 @@ val micronautCoreNativeImageExclusion = providers.provider {
     )
 }
 
+val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.platform.version")
+
 dependencies {
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)
+    api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
 
-    implementation(mn.micronaut.context)
-    implementation(mn.micronaut.context.python)
+    api(mn.micronaut.context)
+    api(mn.micronaut.context.python)
+    api(mn.micronaut.context.python.netty)
+    api(mnPicocli.picocli)
+    api(mn.micronaut.http.server)
+    api("io.micronaut:micronaut-discovery-core")
+    api(mn.micronaut.json.core)
+    api(mnSerde.micronaut.serde.jackson)
+    api("io.micronaut.serde:micronaut-serde-api")
+
     implementation(project(":micronaut-pyronaut-config-model"))
-    implementation(mnPicocli.picocli)
-    runtimeOnly(mn.micronaut.http.server)
-    runtimeOnly(mn.micronaut.http.server.netty)
-    runtimeOnly("io.micronaut:micronaut-discovery-core")
-    runtimeOnly(mn.micronaut.json.core)
-    runtimeOnly(mnSerde.micronaut.serde.jackson)
-    runtimeOnly("io.micronaut.serde:micronaut-serde-api")
-    runtimeOnly(mnLogging.logback.classic)
     implementation(project(":micronaut-pyronaut-logback"))
+    runtimeOnly(mn.micronaut.http.server.netty)
+    runtimeOnly(mnLogging.logback.classic)
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

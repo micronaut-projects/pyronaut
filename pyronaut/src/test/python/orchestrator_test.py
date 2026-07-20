@@ -3927,7 +3927,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code_native)
         self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
         self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
-        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25", captured["docker_command"])
+        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i1", captured["docker_command"])
 
     def test_prepare_jvm_build_wheel_staging_rewrites_manifest_and_generates_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:

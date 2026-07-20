@@ -329,7 +329,6 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm",
     "--initialize-at-build-time=com.github.javaparser",
     "--initialize-at-run-time=io.netty",
-    "-H:IncludeResources=com/mysql/cj/.*\\.properties",
     "--initialize-at-run-time=ch.qos.logback",
     "--initialize-at-run-time=com.mysql",
     "--initialize-at-run-time=io.micronaut.testresources.client",

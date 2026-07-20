@@ -57,7 +57,7 @@ JAVA_DELEGATE_JAR_ENV = {
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
 _DEFAULT_DOCKER_JVM_BASE_IMAGE = "container-registry.oracle.com/graalvm/jdk:25"
-_DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25"
+_DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25i1"
 _DEFAULT_DOCKER_NATIVE_BASE_IMAGE = "gcr.io/distroless/base"
 _DEFAULT_DOCKER_STATIC_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25-muslib"
 _DEFAULT_DOCKER_STATIC_NATIVE_BASE_IMAGE = "scratch"
@@ -1811,6 +1811,7 @@ def _prepare_common_docker_app_context(project_dir: Path, context_dir: Path) -> 
     app_dir = context_dir / "app"
     pyronaut_dir = app_dir / "__pyronaut__"
     pyronaut_dir.mkdir(parents=True, exist_ok=True)
+    (app_dir / "config").mkdir(parents=True, exist_ok=True)
     layout = _read_pyproject_sources(project_dir)
     _copy_layout_dir_if_exists(project_dir, layout.resources_dir, app_dir)
     for resource_dir in layout.additional_resources_dirs:
@@ -1862,6 +1863,8 @@ def _prepare_native_docker_context(
     if not runtime_manifest.exists():
         raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
+    (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
     _stage_manifest_artifacts(
         source=runtime_manifest,
         target=pyronaut_dir / "resolved-runtime-dependencies",
@@ -1918,6 +1921,10 @@ RUN {shlex.join(build_command)}
 FROM {runtime_image}
 WORKDIR /app
 COPY --from=builder {output_binary} /app/{project_name}
+COPY app/pyproject.toml /app/pyproject.toml
+COPY app/config /app/config
+COPY app/__pyronaut__/classes /app/__pyronaut__/classes
+COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT ["/app/{project_name}"]
 """
     target.write_text(dockerfile, encoding="utf-8")

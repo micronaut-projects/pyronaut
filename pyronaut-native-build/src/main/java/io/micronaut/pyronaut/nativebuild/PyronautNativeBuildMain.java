@@ -174,6 +174,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             command.add(APPLICATION_MAIN_CLASS);
             command.add(outputPath.toString());
 
+            if (verbose) {
+                System.out.println("Native-image command: " + String.join(" ", command));
+            }
             int exitCode = nativeImageInvoker.run(command, root);
             if (exitCode == SUCCESS) {
                 System.out.println("Native build complete: " + outputPath);
