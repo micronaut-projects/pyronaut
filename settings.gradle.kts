@@ -18,7 +18,7 @@ pluginManagement {
 plugins {
     id("me.champeau.includegit") version "0.3.2"
     id("io.micronaut.build.graalvm-dev-toolchain")
-    id("io.micronaut.build.shared.settings") version "8.0.0"
+    id("io.micronaut.build.shared.settings") version "8.0.1"
 }
 
 fun versionFromCatalog(path: String, key: String): String {
