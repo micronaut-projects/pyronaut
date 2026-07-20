@@ -608,7 +608,7 @@ if (includeMicronautCore) {
             }
             include("micronaut-core-python") {
                 uri.set("https://github.com/graemerocher/micronaut-core.git")
-                branch.set("python-bytecode")
+                branch.set("python-support")
                 includeBuild {
                     name = "micronaut-core"
                     substituteMicronautCore()
