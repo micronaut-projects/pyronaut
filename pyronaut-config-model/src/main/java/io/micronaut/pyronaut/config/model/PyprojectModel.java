@@ -208,12 +208,17 @@ public record PyprojectModel(Project project,
      * tool.pyronaut.build table.
      *
      * @param mode default build mode (for example jvm or native)
+     * @param pythonBytecodeEnabled whether generated Python resources include bytecode caches
      * @param metadata native image metadata settings
      * @param docker container image build settings
      */
     public record Build(String mode,
+                        Boolean pythonBytecodeEnabled,
                         Metadata metadata,
                         Docker docker) {
+        public Build(String mode, Metadata metadata, Docker docker) {
+            this(mode, false, metadata, docker);
+        }
     }
 
     /**

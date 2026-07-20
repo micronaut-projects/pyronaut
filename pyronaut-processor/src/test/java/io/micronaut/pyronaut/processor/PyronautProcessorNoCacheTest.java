@@ -30,6 +30,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 final class PyronautProcessorNoCacheTest {
 
     @Test
+    void bytecodeSettingParticipatesInCacheFingerprint(@TempDir Path tempDir) throws Exception {
+        Path python = tempDir.resolve("src");
+        Path java = tempDir.resolve("src-java");
+        Files.createDirectories(python);
+        Files.createDirectories(java);
+        Files.writeString(python.resolve("controller.py"), "print('hello')\n", StandardCharsets.UTF_8);
+
+        String sourceOnly = ProcessorSourceCache.fingerprint(python, java, List.of(), List.of(), false, List.of());
+        String bytecode = ProcessorSourceCache.fingerprint(python, java, List.of(), List.of(), true, List.of());
+
+        assertFalse(sourceOnly.equals(bytecode));
+    }
+
+    @Test
     void noCacheSkipsCacheWrite(@TempDir Path tempDir) throws Exception {
         Path projectDir = tempDir.resolve("app");
         Files.createDirectories(projectDir);

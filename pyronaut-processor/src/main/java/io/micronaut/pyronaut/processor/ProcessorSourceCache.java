@@ -59,6 +59,7 @@ final class ProcessorSourceCache {
                               Path javaSources,
                               List<Path> annotationProcessorPath,
                               List<Path> classpath,
+                              boolean compilePythonBytecode,
                               List<String> options) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -68,11 +69,20 @@ final class ProcessorSourceCache {
             updateDirectory(digest, javaSources, ".java");
             updatePathList(digest, "processor-path", annotationProcessorPath);
             updatePathList(digest, "classpath", classpath);
+            updateString(digest, "compile-python-bytecode=" + compilePythonBytecode + "\n");
             updateStringList(digest, "options", options);
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
         }
+    }
+
+    static String fingerprint(Path pythonSources,
+                              Path javaSources,
+                              List<Path> annotationProcessorPath,
+                              List<Path> classpath,
+                              List<String> options) {
+        return fingerprint(pythonSources, javaSources, annotationProcessorPath, classpath, false, options);
     }
 
     static long countSources(Path sourceDirectory, String extension) {

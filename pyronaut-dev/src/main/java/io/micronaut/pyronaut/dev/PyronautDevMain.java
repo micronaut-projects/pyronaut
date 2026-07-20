@@ -105,6 +105,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String MICRONAUT_TEST_RESOURCES_ENABLED = "micronaut.test.resources.enabled";
     private static final String DIRECT_COMPILER_CLASSPATH = "pyronaut.dev.compiler.class.path";
     private static final String DIRECT_APPLICATION_CLASSPATH = "pyronaut.dev.application.class.path";
+    private static final String DIRECT_COMPILE_PYTHON_BYTECODE = "pyronaut.dev.compile-python-bytecode";
     private static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
     private static final String DEFAULT_TEST_SERVER_PORT = "0";
     private static final String NETTY_NO_UNSAFE = "io.netty.noUnsafe";
@@ -361,6 +362,10 @@ public final class PyronautDevMain implements Callable<Integer> {
                         properties.put(MICRONAUT_TEST_RESOURCES_ENABLED, "false");
                         continue;
                     }
+                    case "--compile-python-bytecode" -> {
+                        properties.put(DIRECT_COMPILE_PYTHON_BYTECODE, "true");
+                        continue;
+                    }
                     case "--verbose" -> {
                         verboseLogger = "";
                         if (token.startsWith("--verbose=")) {
@@ -510,6 +515,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .runtimeClasspath(toFiles(classpaths.runtime()))
                 .parentClassLoader(runtimeClassLoader);
             configureDirectSource(builder, invocation, stagingRoot);
+            builder.compilePythonBytecode("true".equals(invocation.properties().get(DIRECT_COMPILE_PYTHON_BYTECODE)));
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
             if (invocation.verbose()) {
                 System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");
@@ -571,6 +577,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .parentClassLoader(runtimeClassLoader);
 
             configureDirectSource(builder, invocation, stagingRoot);
+            builder.compilePythonBytecode("true".equals(invocation.properties().get(DIRECT_COMPILE_PYTHON_BYTECODE)));
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
             if (invocation.verbose()) {
                 System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");

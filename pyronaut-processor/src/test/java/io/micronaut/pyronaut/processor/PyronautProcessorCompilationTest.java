@@ -73,6 +73,32 @@ class PyronautProcessorCompilationTest {
     }
 
     @Test
+    void emitsPythonBytecodeWhenConfigured() throws Exception {
+        Path project = tempDir.resolve("project-bytecode");
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(project.resolve("tests"));
+        Files.createDirectories(project.resolve("src-java"));
+        Files.createDirectories(project.resolve("test-java"));
+        Path cacheDir = project.resolve("__pyronaut__");
+        Files.createDirectories(cacheDir);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject() + "\n[tool.pyronaut.build.python-bytecode]\nenabled = true\n");
+        Files.writeString(project.resolve("src/main.py"), "answer = 42\n");
+        List<String> classpathEntries = Arrays.stream(System.getProperty("java.class.path", "").split(System.getProperty("path.separator")))
+            .filter(entry -> !entry.isBlank())
+            .toList();
+        Files.write(cacheDir.resolve("resolved-build-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+        Files.write(cacheDir.resolve("resolved-runtime-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+        Files.write(cacheDir.resolve("resolved-test-dependencies"), classpathEntries, StandardCharsets.UTF_8);
+
+        PyronautProcessorMain command = new PyronautProcessorMain();
+        command.projectDir = project;
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        Path filesList = project.resolve("__pyronaut__/classes/META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt");
+        assertTrue(Files.readString(filesList).contains("__pycache__"));
+        assertTrue(Files.readString(filesList).contains(".pyc"));
+    }
+
+    @Test
     void compilesMainSourcesIntoTestClassesWhenNoTestSourcesPresent() throws Exception {
         Path project = tempDir.resolve("project-no-test-sources");
         Path srcDir = project.resolve("src");

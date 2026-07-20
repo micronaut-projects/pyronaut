@@ -148,6 +148,11 @@ public final class PyprojectConfigSpec {
         "jvm",
         List.of("jvm", "native")
     );
+    public static final FieldSpec PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED = bool(
+        "tool.pyronaut.build.python-bytecode.enabled",
+        "Whether generated Python resources should include GraalPy bytecode caches.",
+        false
+    );
     public static final FieldSpec PYRONAUT_PROCESSOR_MODE = enumString(
         "tool.pyronaut.processor.mode",
         "Processor execution mode.",
@@ -739,6 +744,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_DEPENDENCIES_BUILD,
         PYRONAUT_DEPENDENCIES_TEST,
         PYRONAUT_BUILD_MODE,
+        PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED,
         PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_TEST_MODE,
         PYRONAUT_RUN_BANNER_ENABLED,
@@ -841,6 +847,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_SOURCES_SECTION,
         section("tool.pyronaut.toolchain", true),
         section("tool.pyronaut.build.metadata", true),
+        section("tool.pyronaut.build.python-bytecode", true),
         section("tool.pyronaut.build.docker", true),
         PYRONAUT_IDE_STUBS_SECTION,
         section("tool.pyronaut.validation", true),

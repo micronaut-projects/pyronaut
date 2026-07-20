@@ -98,7 +98,12 @@ public final class PyprojectModelReader {
             ),
             new PyprojectModel.Run(readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_RUN_BANNER_ENABLED)),
             resolveControlPanel(parsed),
-            new PyprojectModel.Build(resolveBuildMode(parsed), resolveBuildMetadata(parsed), resolveBuildDocker(parsed)),
+            new PyprojectModel.Build(
+                resolveBuildMode(parsed),
+                readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED),
+                resolveBuildMetadata(parsed),
+                resolveBuildDocker(parsed)
+            ),
             new PyprojectModel.Processor(resolveProcessorMode(parsed)),
             new PyprojectModel.Test(resolveTestMode(parsed)),
             sources,

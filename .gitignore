@@ -52,3 +52,6 @@ functional-test/app/.vscode/
 # Python bytecode caches
 **/__pycache__/
 *.py[cod]
+/__pyronaut__/reports/tests/.pyronaut-last-nodeid.txt
+/__pyronaut__/reports/tests/events.ndjson
+/__pyronaut__/reports/tests/index.html

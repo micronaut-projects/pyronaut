@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @EnabledIfSystemProperty(named = "pyronaut.processor.native.binary", matches = ".+")
 class PyronautProcessorNativeSmokeTest extends AbstractPyronautProcessorSmokeTest {
@@ -39,6 +40,22 @@ class PyronautProcessorNativeSmokeTest extends AbstractPyronautProcessorSmokeTes
         Path testClassesDir = result.project().resolve("__pyronaut__/test-classes");
         assertMicronautDataArtifacts(testClassesDir, result.output());
         assertExists(testClassesDir, "META-INF/GRAALPY-VFS/micronaut-application/src/test_repository.py", result.output());
+    }
+
+    @Test
+    void nativeBinaryEmitsPythonBytecodeWhenConfigured() throws Exception {
+        String binaryPath = System.getProperty("pyronaut.processor.native.binary");
+        ProcessResult result = runNativeProcessor(
+            binaryPath,
+            tempDir.resolve("bytecode-project"),
+            helloWorldProjectFiles(),
+            bytecodeEnabledPyproject("processor-native-bytecode")
+        );
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), result.exitCode(), result.output());
+        Path filesList = result.project().resolve("__pyronaut__/classes/META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt");
+        String content = java.nio.file.Files.readString(filesList);
+        assertTrue(content.contains("__pycache__"), content);
+        assertTrue(content.contains(".pyc"), content);
     }
 
     @Test

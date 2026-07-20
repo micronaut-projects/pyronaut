@@ -94,6 +94,7 @@ final class PyronautDevMainTest {
             "-Dmicronaut.environments=dev",
             "--config", "config/application.toml",
             "--setup", "pyproject.toml",
+            "--compile-python-bytecode",
             "src/HelloController.py",
             "--",
             "tests/test_hello.py"
@@ -107,6 +108,7 @@ final class PyronautDevMainTest {
         assertEquals("8081", invocation.properties().get("micronaut.server.port"));
         assertEquals("c", invocation.properties().get("a.b"));
         assertEquals("dev", invocation.properties().get("micronaut.environments"));
+        assertEquals("true", invocation.properties().get("pyronaut.dev.compile-python-bytecode"));
     }
 
     @Test

@@ -38,6 +38,7 @@ interface PyronautCompilerExecutor {
                           Path targetDir,
                           List<Path> annotationProcessorPath,
                           List<Path> classpath,
+                          boolean compilePythonBytecode,
                           List<String> options) {
     }
 
@@ -57,6 +58,7 @@ interface PyronautCompilerExecutor {
                     .targetDir(request.targetDir().toFile())
                     .annotationProcessorPath(toFiles(request.annotationProcessorPath()))
                     .classpath(toFiles(request.classpath()))
+                    .compilePythonBytecode(request.compilePythonBytecode())
                     .options(request.options())
                     .build()
                     .compile();

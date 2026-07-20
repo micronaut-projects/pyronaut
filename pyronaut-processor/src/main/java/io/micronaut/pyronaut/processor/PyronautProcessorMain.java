@@ -184,6 +184,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             Path resolvedTestTargetDir = root.resolve(testTargetDir).normalize();
             Path resolvedTestSourcesDir = root.resolve(DEFAULT_TEST_SOURCES_DIR).normalize();
             Path resolvedCacheDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
+            boolean compilePythonBytecode = model != null
+                && Boolean.TRUE.equals(model.pyronaut().build().pythonBytecodeEnabled());
 
             String mainStatus;
             String testStatus;
@@ -208,6 +210,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         resolvedMainJavaSrc,
                         effectiveProcessorPath,
                         effectiveClasspath,
+                        compilePythonBytecode,
                         options
                     );
                     if (!noCache
@@ -225,6 +228,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             resolvedMainTargetDir,
                             effectiveProcessorPath,
                             effectiveClasspath,
+                            compilePythonBytecode,
                             options
                         ));
                         if (!noCache) {
@@ -283,6 +287,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             mergedTestJavaSrc,
                             effectiveProcessorPath,
                             effectiveTestClasspath,
+                            compilePythonBytecode,
                             options
                         );
                         if (!noCache
@@ -301,6 +306,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                                 resolvedTestTargetDir,
                                 effectiveProcessorPath,
                                 effectiveTestClasspath,
+                                compilePythonBytecode,
                                 options
                             ));
                             if (!noCache) {

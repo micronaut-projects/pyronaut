@@ -20,7 +20,11 @@ abstract class AbstractPyronautProcessorSmokeTest {
     private static final String NON_DETERMINISTIC_LAUNCHER_CLASS = "pyronaut_application/PyronautMain.class";
 
     protected ProcessResult runJvmProcessor(Path project, Map<String, String> projectFiles) throws Exception {
-        prepareProject(project, projectFiles, minimalPyproject("processor-jvm-smoke"));
+        return runJvmProcessor(project, projectFiles, minimalPyproject("processor-jvm-smoke"));
+    }
+
+    protected ProcessResult runJvmProcessor(Path project, Map<String, String> projectFiles, String pyproject) throws Exception {
+        prepareProject(project, projectFiles, pyproject);
         Process process = new ProcessBuilder(
             javaExecutable().toString(),
             "-cp",
@@ -39,7 +43,11 @@ abstract class AbstractPyronautProcessorSmokeTest {
     }
 
     protected ProcessResult runNativeProcessor(String binaryPath, Path project, Map<String, String> projectFiles) throws Exception {
-        prepareProject(project, projectFiles, minimalPyproject("processor-native-smoke"));
+        return runNativeProcessor(binaryPath, project, projectFiles, minimalPyproject("processor-native-smoke"));
+    }
+
+    protected ProcessResult runNativeProcessor(String binaryPath, Path project, Map<String, String> projectFiles, String pyproject) throws Exception {
+        prepareProject(project, projectFiles, pyproject);
         Process process = new ProcessBuilder(
             binaryPath,
             "--project-dir",
@@ -110,6 +118,10 @@ abstract class AbstractPyronautProcessorSmokeTest {
             """);
         files.put("tests/test_repository.py", "def test_repository_fixture():\n    assert True\n");
         return files;
+    }
+
+    protected static String bytecodeEnabledPyproject(String name) {
+        return minimalPyproject(name) + "\n[tool.pyronaut.build.python-bytecode]\nenabled = true\n";
     }
 
     protected static void assertMainArtifacts(Path outputDir, String output) throws IOException {

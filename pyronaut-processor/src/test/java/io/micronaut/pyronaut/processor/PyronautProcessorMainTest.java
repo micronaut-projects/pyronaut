@@ -47,6 +47,7 @@ class PyronautProcessorMainTest {
         assertEquals(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize(), mainRequest.targetDir());
         assertEquals(Path.of("/tmp/build-a.jar"), mainRequest.annotationProcessorPath().getFirst());
         assertEquals(Path.of("/tmp/runtime-a.jar"), mainRequest.classpath().getFirst());
+        assertFalse(mainRequest.compilePythonBytecode());
 
         PyronautCompilerExecutor.CompileRequest testRequest = executor.requests.get(1);
         assertEquals("python", testRequest.pythonSrc().getFileName().toString());
@@ -56,6 +57,26 @@ class PyronautProcessorMainTest {
         assertEquals(Path.of("/tmp/build-a.jar"), testRequest.annotationProcessorPath().getFirst());
         assertEquals(Path.of("/tmp/test-a.jar"), testRequest.classpath().getFirst());
         assertFalse(testRequest.classpath().contains(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize()));
+    }
+
+    @Test
+    void enablesPythonBytecodeFromProjectConfiguration() throws Exception {
+        Path project = tempDir.resolve("project-bytecode");
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(project.resolve("src"));
+        Files.writeString(project.resolve("src/sample.py"), "answer = 42\n");
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject() + "\n[tool.pyronaut.build.python-bytecode]\nenabled = true\n");
+        Files.write(project.resolve("__pyronaut__/resolved-build-dependencies"), List.of("/tmp/build-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__/resolved-runtime-dependencies"), List.of("/tmp/runtime-a.jar"), StandardCharsets.UTF_8);
+        Files.write(project.resolve("__pyronaut__/resolved-test-dependencies"), List.of("/tmp/test-a.jar"), StandardCharsets.UTF_8);
+
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertTrue(executor.requests.getFirst().compilePythonBytecode());
+        assertTrue(executor.requests.get(1).compilePythonBytecode());
     }
 
     @Test
