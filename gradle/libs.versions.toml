@@ -19,7 +19,7 @@ micronaut-control-panel = "2.0.0"
 docker-java = "3.4.1"
 micronaut-test = "5.0.1"
 micronaut-data = "5.1.0"
-javaparser = "3.27.0"
+javaparser = "3.28.2"
 
 [libraries]
 micronaut-serde = { module = "io.micronaut.serde:micronaut-serde-bom", version.ref = "micronaut-serde" }
