@@ -90,6 +90,13 @@ public final class PyronautCreateAppMain implements Callable<Integer> {
               "type": "node-terminal",
               "request": "launch",
               "command": "pyronaut dev --debug-vm"
+            },
+            {
+                // Enable DAP via 'pyronaut run -Dgraalpy.engine.options.dap=true [...]'
+                "name": "Pyronaut: Attach Python Debugger",
+                "type": "node",
+                "request": "attach",
+                "debugServer": 4711
             }
           ]
         }
