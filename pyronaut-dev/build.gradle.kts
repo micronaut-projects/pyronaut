@@ -43,29 +43,6 @@ dependencies {
 
     implementation(mnPicocli.picocli)
 
-
-    // runtime build in modules
-    api("io.micronaut.data:micronaut-data-model")
-    api("io.micronaut.data:micronaut-data-runtime")
-    api("io.micronaut.data:micronaut-data-connection")
-    api("io.micronaut.sql:micronaut-jdbc")
-    api("io.micronaut.cache:micronaut-cache-core")
-    api("io.micronaut.sourcegen:micronaut-sourcegen-annotations")
-    api("io.micronaut.views:micronaut-views-core")
-    api(mnSerde.micronaut.serde.jackson)
-    api(mn.micronaut.context.python.netty)
-    api(mn.micronaut.context.python)
-    api(mn.micronaut.runtime)
-    api(mn.micronaut.retry)
-    api(libs.micronaut.toml)
-    api(mn.micronaut.http.client)
-    api(mn.micronaut.http.server)
-    api(mn.micronaut.http.server.netty)
-    api(mn.micronaut.messaging)
-    api(mn.micronaut.websocket)
-
-    api(mnValidation.micronaut.validation)
-
     // testing API
     api(mnTest.micronaut.test.junit5)
     api(mnTest.junit.jupiter.api)
