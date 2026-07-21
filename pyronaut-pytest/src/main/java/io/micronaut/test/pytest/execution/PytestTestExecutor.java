@@ -29,6 +29,9 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -170,7 +173,7 @@ public class PytestTestExecutor {
             );
             // Call run_pytest with the file path and listener
             Value result = pytestRunner().execute(
-                new String[]{filePath.toString()},
+                pytestArgumentsForDescriptors(fileDescriptor.getChildren(), List.of(filePath.toString())),
                 testListener,
                 junitXmlReportPath
             );
@@ -191,12 +194,15 @@ public class PytestTestExecutor {
         LOG.debug("Running pytest for all discovered tests");
 
         // Collect all unique test files from the test descriptors
+        String[] testArguments = pytestArgumentsForDescriptors(engineDescriptor.getChildren(), List.of());
         List<Path> testFiles = engineDescriptor.getChildren().stream()
-            .filter(child -> child instanceof PytestTestDescriptor)
-            .map(child -> ((PytestTestDescriptor) child).getFilePath())
+            .filter(PytestTestDescriptor.class::isInstance)
+            .map(PytestTestDescriptor.class::cast)
+            .map(PytestTestDescriptor::getFilePath)
+            .distinct()
             .toList();
 
-        if (testFiles.isEmpty()) {
+        if (testArguments.length == 0) {
             LOG.debug("No test files found to execute");
             JUnitPytestTestListener testListener = new JUnitPytestTestListener(
                 listener,
@@ -219,14 +225,9 @@ public class PytestTestExecutor {
                 lastNodeIdReportPath,
                 eventsReportPath
             );
-            // Convert paths to strings for pytest
-            String[] fileArgs = testFiles.stream()
-                .map(Path::toString)
-                .toArray(String[]::new);
-
             // Call run_pytest with the file paths and listener
             Value result = pytestRunner().execute(
-                fileArgs,
+                testArguments,
                 testListener,
                 junitXmlReportPath
             );
@@ -247,8 +248,6 @@ public class PytestTestExecutor {
         LOG.debug("Executing Python test: {}", testDescriptor.getDisplayName());
 
         try {
-            // Execute only the file containing this test via pytest; the plugin will map events back
-            Path filePath = testDescriptor.getFilePath();
             JUnitPytestTestListener testListener = new JUnitPytestTestListener(
                 listener,
                 Set.copyOf(List.of(testDescriptor)),
@@ -257,12 +256,12 @@ public class PytestTestExecutor {
                 eventsReportPath
             );
             Value result = pytestRunner().execute(
-                new String[]{filePath.toString()},
+                new String[]{pytestNodeId(testDescriptor)},
                 testListener,
                 junitXmlReportPath
             );
             failIfPytestFailed(testListener, result);
-            LOG.debug("Test {} executed via pytest for file {}", testDescriptor.getDisplayName(), filePath);
+            LOG.debug("Test {} executed via pytest", testDescriptor.getDisplayName());
 
         } catch (Exception e) {
             if (e instanceof PytestPreconditionException preconditionException) {
@@ -282,6 +281,30 @@ from pyronaut.test import run_pytest
 
 run_pytest
             """);
+    }
+
+    static String[] pytestArgumentsForDescriptors(Collection<? extends TestDescriptor> descriptors, List<String> fallbackArguments) {
+        LinkedHashSet<String> arguments = new LinkedHashSet<>();
+        for (TestDescriptor descriptor : descriptors) {
+            if (descriptor instanceof PytestTestDescriptor pytestTestDescriptor) {
+                arguments.add(pytestNodeId(pytestTestDescriptor));
+            } else if (descriptor instanceof PytestFileDescriptor pytestFileDescriptor) {
+                List<String> childArguments = Arrays.asList(pytestArgumentsForDescriptors(pytestFileDescriptor.getChildren(), List.of()));
+                if (childArguments.isEmpty()) {
+                    fallbackArguments.forEach(arguments::add);
+                } else {
+                    arguments.addAll(childArguments);
+                }
+            }
+        }
+        if (arguments.isEmpty()) {
+            arguments.addAll(fallbackArguments);
+        }
+        return arguments.toArray(String[]::new);
+    }
+
+    static String pytestNodeId(PytestTestDescriptor descriptor) {
+        return descriptor.getPytestNodeId();
     }
 
     private void ensurePytestInstalled() {

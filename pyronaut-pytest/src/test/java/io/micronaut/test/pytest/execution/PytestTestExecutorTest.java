@@ -1,14 +1,19 @@
 package io.micronaut.test.pytest.execution;
 
+import io.micronaut.test.pytest.PytestFileDescriptor;
+import io.micronaut.test.pytest.PytestTestDescriptor;
 import io.micronaut.test.pytest.PythonAssertionError;
 import org.graalvm.polyglot.Value;
 import org.junit.jupiter.api.Test;
 import org.junit.platform.engine.EngineExecutionListener;
 import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.UniqueId;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -27,6 +32,48 @@ class PytestTestExecutorTest {
     void keepsConfiguredReportPathWhenProvided() {
         Path fallback = Path.of("/tmp/reports/junit.xml");
         assertEquals("/custom/reports/junit.xml", PytestTestExecutor.resolveReportPath("/custom/reports/junit.xml", fallback));
+    }
+
+    @Test
+    void buildsExactPytestNodeIdFromDescriptor() {
+        PytestTestDescriptor descriptor = descriptor(
+            Path.of("/workspace/tests/test_demo.py"),
+            "test_demo.py",
+            "TestHealth::test_ok"
+        );
+
+        assertEquals(
+            "/workspace/tests/test_demo.py::TestHealth::test_ok",
+            PytestTestExecutor.pytestNodeId(descriptor)
+        );
+    }
+
+    @Test
+    void usesExactNodeIdsForFilteredDescriptors() {
+        PytestTestDescriptor first = descriptor(Path.of("/workspace/tests/test_demo.py"), "test_demo.py", "test_one");
+        PytestTestDescriptor second = descriptor(Path.of("/workspace/tests/test_demo.py"), "test_demo.py", "test_two");
+
+        assertArrayEquals(
+            new String[]{
+                "/workspace/tests/test_demo.py::test_one",
+                "/workspace/tests/test_demo.py::test_two"
+            },
+            PytestTestExecutor.pytestArgumentsForDescriptors(List.of(first, second), List.of()).clone()
+        );
+    }
+
+    @Test
+    void fileDescriptorFallsBackToFilePathWhenItHasNoChildren() {
+        PytestFileDescriptor file = new PytestFileDescriptor(
+            UniqueId.forEngine("pytest-engine").append("source", "/workspace/tests/test_demo.py"),
+            "test_demo.py",
+            null
+        );
+
+        assertArrayEquals(
+            new String[]{"/workspace/tests/test_demo.py"},
+            PytestTestExecutor.pytestArgumentsForDescriptors(List.of(file), List.of("/workspace/tests/test_demo.py"))
+        );
     }
 
     @Test
@@ -112,5 +159,20 @@ class PytestTestExecutorTest {
         );
 
         assertTrue(PytestTestExecutor.isMissingPytest(failure));
+    }
+
+    private static PytestTestDescriptor descriptor(Path filePath, String source, String testName) {
+        return new PytestTestDescriptor(
+            UniqueId.forEngine("pytest-engine")
+                .append(PytestTestDescriptor.SEGMENT_SOURCE, source)
+                .append(PytestTestDescriptor.SEGMENT_TEST, testName),
+            source + "::" + testName,
+            null,
+            filePath,
+            1,
+            1,
+            0,
+            0
+        );
     }
 }

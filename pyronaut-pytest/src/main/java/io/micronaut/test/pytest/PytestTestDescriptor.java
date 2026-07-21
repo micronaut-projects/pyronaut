@@ -89,4 +89,10 @@ public final class PytestTestDescriptor extends AbstractTestDescriptor {
             || normalizedTestId.endsWith(suffixAbs)
             || normalizedTestId.endsWith(suffixFileOnly);
     }
+
+    public String getPytestNodeId() {
+        List<UniqueId.Segment> segments = getUniqueId().getSegments();
+        String testName = segments.get(2).getValue();
+        return filePath.toString().replace('\\', '/') + "::" + testName;
+    }
 }

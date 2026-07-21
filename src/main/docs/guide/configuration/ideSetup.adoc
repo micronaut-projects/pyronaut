@@ -34,6 +34,8 @@ When `ide = "vscode"` and the project does not already own Pyright configuration
 
 If `pyrightconfig.json` or `[tool.pyright]` already exists, Pyronaut leaves the configuration user-managed and records that decision in the editor stub report.
 
+For VS Code Test Explorer integration, see xref:configuration/vscodeExtension.adoc[].
+
 == PyCharm
 
 When `ide = "pycharm"`, Pyronaut writes a generated `.idea/pyronaut-editor-stubs.iml` module and registers it in `.idea/modules.xml`.

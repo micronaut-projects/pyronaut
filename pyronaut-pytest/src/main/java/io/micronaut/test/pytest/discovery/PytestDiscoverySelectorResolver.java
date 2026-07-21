@@ -138,6 +138,7 @@ public final class PytestDiscoverySelectorResolver {
                 if (testDescriptor instanceof PytestTestDescriptor pytestDescriptor) {
                     if (!testFilters.matches(pytestDescriptor.getUniqueId().toString())
                         && !testFilters.matches(pytestDescriptor.getDisplayName())
+                        && !testFilters.matches(pytestDescriptor.getPytestNodeId())
                         && !testFilters.matches(pytestDescriptor.getFilePath().toString())) {
                         continue;
                     }

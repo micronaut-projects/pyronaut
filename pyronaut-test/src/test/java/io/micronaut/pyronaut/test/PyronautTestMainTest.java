@@ -295,7 +295,6 @@ class PyronautTestMainTest {
 
     @Test
     void acceptsRepeatableTestsSelectors() {
-        PyronautTestMain main = new PyronautTestMain();
         var value = PyronautTestMain.buildPytestTestsParameter(java.util.List.of("tests/test_math.py::test_add", "*test_*"));
         assertEquals(java.util.Optional.of("tests/test_math.py::test_add|*test_*"), value);
     }
@@ -331,6 +330,23 @@ class PyronautTestMainTest {
 
         List<Path> files = PyronautTestMain.resolveDirectTestFileSelectors(project, testsDir, List.of("tests/test_mycontroller.py::test_ok"));
         assertEquals(List.of(selected), files);
+    }
+
+    @Test
+    void normalizesNodeIdSelectorForPytestEngineFiltering() throws Exception {
+        Path project = tempDir.resolve("selector-normalized-project");
+        Path testsDir = project.resolve("tests");
+        Files.createDirectories(testsDir);
+        Path selected = testsDir.resolve("test_mycontroller.py");
+        Files.writeString(selected, "def test_ok():\n  assert True\n", StandardCharsets.UTF_8);
+
+        List<String> selectors = PyronautTestMain.normalizePytestTestSelectors(
+            project,
+            testsDir,
+            List.of("tests/test_mycontroller.py::test_ok", "*controller*")
+        );
+
+        assertEquals(List.of("test_mycontroller.py::test_ok", "*controller*"), selectors);
     }
 
     @Test

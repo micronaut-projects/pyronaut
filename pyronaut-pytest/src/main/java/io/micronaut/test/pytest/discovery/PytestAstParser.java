@@ -48,8 +48,27 @@ final class PytestAstParser {
             def __init__(self):
                 self.tests = []
                 self.current_class = None
+                self.class_depth = 0
 
             def visit_FunctionDef(self, node):
+                self._visit_test_function(node)
+
+            def visit_AsyncFunctionDef(self, node):
+                self._visit_test_function(node)
+
+            def visit_ClassDef(self, node):
+                previous_class = self.current_class
+                previous_depth = self.class_depth
+                if node.name.startswith('Test'):
+                    self.current_class = node.name
+                    self.class_depth = node.col_offset
+                    self.generic_visit(node)
+                    self.current_class = previous_class
+                    self.class_depth = previous_depth
+                else:
+                    self.generic_visit(node)
+
+            def _visit_test_function(self, node):
                 # Check if function name starts with 'test_'
                 if node.name.startswith('test_'):
                     test_info = (
@@ -226,6 +245,7 @@ final class PytestAstParser {
 
     private TestDescriptor createTestDescriptor(Path filePath, Map<String, Object> test, Path baseDirectory) {
         String testName = (String) test.get("name");
+        String className = (String) test.get("class");
         Integer line = (Integer) test.get("line");
         Integer endLine = (Integer) test.get("end_line");
         Integer col = (Integer) test.get("col");
@@ -246,12 +266,13 @@ final class PytestAstParser {
             // Compute path relative to the base directory, including file name
             relativePath = baseDirectory.relativize(filePath).toString().replace('\\', '/');
         }
-        String testId = relativePath + "::" + testName;
+        String pytestTestName = className == null || className.isBlank() ? testName : className + "::" + testName;
+        String testId = relativePath + "::" + pytestTestName;
 
         UniqueId uniqueId = UniqueId.forEngine("pytest-engine")
             .append(PytestTestDescriptor.SEGMENT_SOURCE, relativePath)
-            .append(PytestTestDescriptor.SEGMENT_TEST, testName);
-        TestSource testSource = MethodSource.from(filePath.toString(), testName);
+            .append(PytestTestDescriptor.SEGMENT_TEST, pytestTestName);
+        TestSource testSource = MethodSource.from(filePath.toString(), pytestTestName);
 
         return new PytestTestDescriptor(
             uniqueId,

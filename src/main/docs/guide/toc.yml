@@ -12,6 +12,7 @@ configuration:
   mavenRepositories: Configuring Maven Repositories
   proxyConfig: Proxy Configuration
   ideSetup: IDE Setup for VS Code & PyCharm
+  vscodeExtension: VS Code Test Explorer Extension
   appConfig: Application Configuration with application.toml
   validateConfig: Configuration Validation
 logging:
