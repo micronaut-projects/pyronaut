@@ -78,7 +78,7 @@ See the CLI reference for the full build option surface.
 
 == Control Panel
 
-`pyronaut --tui` enables the Micronaut Control Panel for development runs by default and links the TUI health chip to it:
+The development/TUI Control Panel is opt-in and is disabled by default. Enable it for `pyronaut dev` and `pyronaut --tui` with:
 
 [source,toml]
 ----
@@ -88,7 +88,7 @@ path = "/control-panel"
 production-enabled = false
 ----
 
-Set `enabled = false` to disable the development/TUI Control Panel.
+The command-line option `--control-panel` enables it for that invocation and overrides this setting. `pyronaut dev --control-panel` also works for direct source execution.
 When development Control Panel support is enabled, Pyronaut also adds Micronaut Management and the Control Panel management integration to the development runtime so health and diagnostic panels are available.
 The implicitly enabled development Control Panel dependencies are written only to the `development-runtime` dependency manifest, so they are not packaged by `pyronaut build`.
 Applications can declare their own development-only runtime dependencies with `development-runtime = [...]` under `[tool.pyronaut.dependencies]`.

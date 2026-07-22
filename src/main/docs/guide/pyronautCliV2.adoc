@@ -256,6 +256,7 @@ Common options:
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
 - `--no-validate`: explicitly bypasses lifecycle config validation
+- `--control-panel`: enables the development Control Panel, overriding project configuration
 - `--disable-test-resources`: disables test resources for direct source execution; enabled by default
 
 Behavior:

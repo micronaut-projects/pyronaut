@@ -235,7 +235,7 @@ def run(
             runner=runner,
             runner_with_env=runner_with_env,
             process_runner=process_runner,
-            project_dir=Path.cwd(),
+            project_dir=None,
         )
         if command == "dev":
             return _run_direct_source(
@@ -704,7 +704,11 @@ def _delegate_direct_source(
         environment=_default_environment(command, args),
         args=args,
     )
-    command_line = [executable_path, *jvm_args, *args]
+    forwarded_args = [
+        "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
+        for value in args
+    ]
+    command_line = [executable_path, *jvm_args, *forwarded_args]
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
     return runner(command_line, env)
@@ -786,6 +790,10 @@ def _run_direct_source_with_auto_restart(
     if watch_debounce_seconds < 0:
         watch_debounce_seconds = 0.0
 
+    forwarded_args = [
+        "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
+        for value in args
+    ]
     command_line = [
         executable_path,
         *_build_direct_source_native_jvm_args(
@@ -793,9 +801,9 @@ def _run_direct_source_with_auto_restart(
             env,
             command=command,
             environment=_default_environment(command, args),
-            args=args,
+            args=forwarded_args,
         ),
-        *args,
+        *forwarded_args,
     ]
 
     while True:
@@ -868,6 +876,8 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}")
     if environment is not None and not _has_micronaut_environments_property(args):
         jvm_args.append(f"-Dmicronaut.environments={environment}")
+    if "--control-panel" in args:
+        jvm_args.append("-Dmicronaut.control-panel.enabled=true")
     compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
     if compiler_classpath:
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
@@ -4316,7 +4326,7 @@ def _use_pyronaut_dev_native_toolchain(
 def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     if not argv:
         return False
-    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources", "--verbose"}
+    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources", "--control-panel", "--verbose"}
     value_options = {"--port", "--property", "-D", "--config", "--setup"}
     index = 0
     while index < len(argv):

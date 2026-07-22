@@ -13,7 +13,7 @@ Pyronaut resolves the build's source sets and classpaths, processes the applicat
 
 == Development control panel
 
-`pyronaut dev` enables the Micronaut Control Panel using Pyronaut's development runtime. It is not added to `pyronaut run`.
+The Micronaut Control Panel is disabled by default. For Maven/Gradle projects, `pyronaut dev --control-panel` enables it for that invocation; `pyronaut run` never enables it automatically. Python projects can opt in through `[tool.pyronaut.control-panel].enabled`, and `--control-panel` always overrides configuration.
 
 == Test Resources
 
