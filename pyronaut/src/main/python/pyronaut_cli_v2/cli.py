@@ -2302,6 +2302,28 @@ def _read_pyproject_string_list(table: dict[str, object], *keys: str) -> tuple[s
 
 def _read_pyproject_sources(project_dir: Path) -> _ProjectLayout:
     if _is_external_build_project(project_dir):
+        # External Maven/Gradle builds may configure non-standard resource roots.
+        # The install layout is the authoritative list used by processing and
+        # validation, so include those roots in the dev restart snapshot too.
+        layout_file = project_dir / "__pyronaut__" / "project-layout.properties"
+        if layout_file.is_file():
+            values: dict[str, str] = {}
+            try:
+                for line in layout_file.read_text(encoding="utf-8").splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        key, value = line.split("=", 1)
+                        values[key.strip()] = value.strip()
+                main = values.get("mainResources")
+                test = values.get("testResources")
+                if main or test:
+                    return _ProjectLayout(
+                        java_source_dir="src/main/java",
+                        java_test_dir="src/test/java",
+                        resources_dir=main or "src/main/resources",
+                        test_resources_dir=test or "src/test/resources",
+                    )
+            except OSError:
+                pass
         return _ProjectLayout(
             java_source_dir="src/main/java",
             java_test_dir="src/test/java",
@@ -2768,6 +2790,7 @@ def _run_with_auto_restart(
     local_repository: str | None,
     process_pass: str | None = None,
 ) -> int:
+    validate_on_restart = True
     if poll_interval <= 0:
         poll_interval = 0.25
     if debounce_seconds < 0:
@@ -2846,6 +2869,15 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
+                        if validate_on_restart:
+                            validation_code = _run_lifecycle_validation(
+                                project_dir=str(project_root), scenario="dev",
+                                runner=execute, resolver=resolver,
+                                no_cache=no_cache, env_overrides=env_overrides,
+                            )
+                            if validation_code != SUCCESS:
+                                refresh_code = validation_code
+                                return
                         refresh_code = _run_preflight(
                             str(project_root),
                             no_cache,
@@ -2870,7 +2902,7 @@ def _run_with_auto_restart(
                     print("Failed to stop running process for restart.", file=sys.stderr)
                     return INTERNAL_ERROR
                 if refresh_exception is not None:
-                    print("Failed to refresh artifacts for restart.", file=sys.stderr)
+                    print(f"Failed to refresh artifacts for restart: {refresh_exception}", file=sys.stderr)
                     return INTERNAL_ERROR
                 if refresh_code is None:
                     print("Failed to refresh artifacts for restart.", file=sys.stderr)
@@ -2879,6 +2911,10 @@ def _run_with_auto_restart(
                     print(f"Failed to refresh artifacts for restart (exit code {refresh_code}).", file=sys.stderr)
                     return int(refresh_code)
                 snapshot = next_snapshot
+                # The refresh worker already completed processing for the next
+                # application launch; do not run the same preflight again at
+                # the top of the restart loop.
+                initial_preflight_done = True
                 break
         except KeyboardInterrupt:
             _stop_managed_process(process)

@@ -216,10 +216,14 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         if ("dev".equals(normalizedScenario) || "test".equals(normalizedScenario)) {
             resources.addAll(layout.testResources());
         }
-        return new ValidationSettings(true, true, false, false, "reachable", ReportFormat.BOTH,
+        // External build layouts keep resources separate from compiled classes. Include
+        // them on the validator classpath so application.properties/yaml are actually
+        // loaded during configuration validation.
+        resources.forEach(path -> classpath.add(path.toString()));
+        return new ValidationSettings(true, true, false, true, "reachable", ReportFormat.BOTH,
             root.resolve("__pyronaut__/reports/config-validation").resolve(normalizedScenario), root,
             "dev".equals(normalizedScenario) ? List.of("dev") : "test".equals(normalizedScenario) ? List.of("test") : List.of(),
-            List.copyOf(classpath), List.copyOf(resources), List.of(), List.of(), normalizedScenario);
+            List.copyOf(classpath), List.copyOf(resources), List.of("micronaut.config"), List.of(), normalizedScenario);
     }
 
     private static boolean isTraceEnabled() {
@@ -251,7 +255,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         String formatRaw = format != null ? format : validation.format();
         ReportFormat effectiveFormat = normalizeFormat(formatRaw);
 
-        List<String> effectiveEnvironments = resolveEnvironments(scenarioConfig);
+        List<String> effectiveEnvironments = resolveEnvironments(scenarioConfig, normalizedScenario);
         List<String> effectiveClasspath = resolveClasspath(root, normalizedScenario, scenarioConfig);
         List<Path> effectiveResources = resolveResourcesDirs(root, validation, scenarioConfig);
         Path effectiveProjectBaseDir = projectBaseDir != null
@@ -277,9 +281,11 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         );
     }
 
-    private List<String> resolveEnvironments(PyprojectModel.ValidationScenario scenarioConfig) {
+    private List<String> resolveEnvironments(PyprojectModel.ValidationScenario scenarioConfig, String scenario) {
         Set<String> resolved = new LinkedHashSet<>();
-        resolved.addAll(scenarioConfig.environments());
+        if (!"run".equals(scenario)) {
+            resolved.addAll(scenarioConfig.environments());
+        }
         resolved.addAll(env);
         resolved.addAll(environments);
         resolved.removeIf(String::isBlank);
@@ -359,6 +365,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
 
     private List<String> mergeSuppressions(PyprojectModel.Validation validation) {
         LinkedHashSet<String> merged = new LinkedHashSet<>();
+        merged.add("micronaut.config");
         addNonBlank(merged, validation.suppressions());
         addNonBlank(merged, suppressions);
         addNonBlank(merged, suppress);

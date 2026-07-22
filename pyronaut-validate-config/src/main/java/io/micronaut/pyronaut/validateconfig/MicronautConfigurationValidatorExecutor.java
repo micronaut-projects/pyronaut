@@ -42,6 +42,18 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
     public PyronautValidateConfigMain.ValidationExecutionResult validate(PyronautValidateConfigMain.ValidationSettings settings) throws Exception {
         Files.createDirectories(settings.outputDir());
         suppressDefaultEnvironmentLogging();
+        if (!settings.resourcesDirs().isEmpty()) {
+            // External Maven/Gradle layouts do not copy resources into the processed
+            // classes directory. Point Micronaut's environment at those directories
+            // explicitly so configuration files participate in validation.
+            System.setProperty("micronaut.config.files", settings.resourcesDirs().stream()
+                .flatMap(dir -> java.util.stream.Stream.of("application.properties", "application.yml", "application.yaml", "application.json")
+                    .map(dir::resolve)
+                    .filter(Files::isRegularFile)
+                    .map(Path::toString))
+                .reduce((left, right) -> left + java.io.File.pathSeparator + right)
+                .orElse(""));
+        }
 
         ConfigurationJsonSchemaValidator validator = new ConfigurationJsonSchemaValidator();
         validator.setFailOnNotPresent(settings.failOnNotPresent());
