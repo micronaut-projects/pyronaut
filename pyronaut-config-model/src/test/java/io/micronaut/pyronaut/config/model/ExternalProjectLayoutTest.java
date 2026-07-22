@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExternalProjectLayoutTest {
     @Test
@@ -38,5 +39,19 @@ class ExternalProjectLayoutTest {
             java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of());
         layout.write(root);
         assertEquals(layout, ExternalProjectLayout.read(root));
+    }
+
+    @Test
+    void persistsTestResourcesState() throws Exception {
+        var root = Files.createTempDirectory("pyronaut-layout");
+        var testResourcesJar = Files.createFile(root.resolve("test-resources.jar"));
+        var layout = new ExternalProjectLayout(ExternalProjectLayout.ProjectKind.GRADLE,
+            java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(),
+            java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(),
+            true, java.util.List.of(testResourcesJar));
+        layout.write(root);
+        var restored = ExternalProjectLayout.read(root);
+        assertTrue(restored.testResourcesEnabled());
+        assertEquals(java.util.List.of(testResourcesJar), restored.testResourcesClasspath());
     }
 }

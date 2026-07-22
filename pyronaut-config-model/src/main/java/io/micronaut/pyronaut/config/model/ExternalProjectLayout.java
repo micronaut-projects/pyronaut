@@ -40,7 +40,9 @@ public record ExternalProjectLayout(ProjectKind kind,
                                     List<Path> runtimeClasspath,
                                     List<Path> developmentRuntimeClasspath,
                                     List<Path> testClasspath,
-                                    List<Path> annotationProcessorClasspath) {
+                                    List<Path> annotationProcessorClasspath,
+                                    boolean testResourcesEnabled,
+                                    List<Path> testResourcesClasspath) {
     public static final String FILE_NAME = "project-layout.properties";
 
     public ExternalProjectLayout {
@@ -54,6 +56,7 @@ public record ExternalProjectLayout(ProjectKind kind,
         developmentRuntimeClasspath = copy(developmentRuntimeClasspath);
         testClasspath = copy(testClasspath);
         annotationProcessorClasspath = copy(annotationProcessorClasspath);
+        testResourcesClasspath = copy(testResourcesClasspath);
     }
 
     /**
@@ -69,7 +72,22 @@ public record ExternalProjectLayout(ProjectKind kind,
                                  List<Path> developmentRuntimeClasspath,
                                  List<Path> testClasspath) {
         this(kind, mainJavaSources, testJavaSources, mainResources, testResources,
-            buildClasspath, runtimeClasspath, developmentRuntimeClasspath, testClasspath, List.of());
+            buildClasspath, runtimeClasspath, developmentRuntimeClasspath, testClasspath, List.of(), false, List.of());
+    }
+
+    /** Compatibility constructor for layouts with an explicit processor classpath. */
+    public ExternalProjectLayout(ProjectKind kind,
+                                 List<Path> mainJavaSources,
+                                 List<Path> testJavaSources,
+                                 List<Path> mainResources,
+                                 List<Path> testResources,
+                                 List<Path> buildClasspath,
+                                 List<Path> runtimeClasspath,
+                                 List<Path> developmentRuntimeClasspath,
+                                 List<Path> testClasspath,
+                                 List<Path> annotationProcessorClasspath) {
+        this(kind, mainJavaSources, testJavaSources, mainResources, testResources,
+            buildClasspath, runtimeClasspath, developmentRuntimeClasspath, testClasspath, annotationProcessorClasspath, false, List.of());
     }
 
     private static List<Path> copy(List<Path> paths) {
@@ -110,6 +128,8 @@ public record ExternalProjectLayout(ProjectKind kind,
         write(lines, "developmentRuntimeClasspath", developmentRuntimeClasspath);
         write(lines, "testClasspath", testClasspath);
         write(lines, "annotationProcessorClasspath", annotationProcessorClasspath);
+        lines.add("testResourcesEnabled=" + testResourcesEnabled);
+        write(lines, "testResourcesClasspath", testResourcesClasspath);
         Files.write(target, lines, StandardCharsets.UTF_8);
     }
 
@@ -131,7 +151,9 @@ public record ExternalProjectLayout(ProjectKind kind,
             paths(values.get("mainResources")), paths(values.get("testResources")),
             paths(values.get("buildClasspath")), paths(values.get("runtimeClasspath")),
             paths(values.get("developmentRuntimeClasspath")), paths(values.get("testClasspath")),
-            paths(values.get("annotationProcessorClasspath"))
+            paths(values.get("annotationProcessorClasspath")),
+            Boolean.parseBoolean(values.getOrDefault("testResourcesEnabled", "false")),
+            paths(values.get("testResourcesClasspath"))
         );
     }
 

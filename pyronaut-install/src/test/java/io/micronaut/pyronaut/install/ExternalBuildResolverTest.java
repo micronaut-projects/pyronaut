@@ -5,11 +5,14 @@
  */
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout.ProjectKind;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExternalBuildResolverTest {
     @Test
@@ -46,6 +49,56 @@ class ExternalBuildResolverTest {
         String before = ResolutionCache.externalInstallHash(root, repository);
         Files.writeString(root.resolve("build.gradle"), "plugins { id 'java-library' }");
         org.junit.jupiter.api.Assertions.assertNotEquals(before, ResolutionCache.externalInstallHash(root, repository));
+    }
+
+    @Test
+    void detectsGradleTestResourcesPlugin() throws Exception {
+        var root = Files.createTempDirectory("pyronaut-gradle-test-resources");
+        Files.writeString(root.resolve("build.gradle.kts"), "plugins { id(\"io.micronaut.test-resources\") version \"5.0.0\" }");
+
+        assertTrue(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.GRADLE, null));
+    }
+
+    @Test
+    void doesNotEnableGradleTestResourcesWhenPluginIsAbsent() throws Exception {
+        var root = Files.createTempDirectory("pyronaut-gradle-no-test-resources");
+        Files.writeString(root.resolve("build.gradle"), "plugins { id 'java' }");
+
+        assertFalse(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.GRADLE, null));
+    }
+
+    @Test
+    void doesNotEnableGradleTestResourcesForAnUnappliedPluginReference() throws Exception {
+        var root = Files.createTempDirectory("pyronaut-gradle-unapplied-test-resources");
+        Files.writeString(root.resolve("build.gradle.kts"), "// id(\"io.micronaut.test-resources\") version \"5.0.0\"");
+
+        assertFalse(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.GRADLE, null));
+    }
+
+    @Test
+    void doesNotEnableGradleTestResourcesWhenThePluginIsAppliedFalse() throws Exception {
+        var root = Files.createTempDirectory("pyronaut-gradle-test-resources-apply-false");
+        Files.writeString(root.resolve("build.gradle.kts"), "plugins { id(\"io.micronaut.test-resources\") version \"5.0.0\" apply false }");
+
+        assertFalse(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.GRADLE, null));
+    }
+
+    @Test
+    void detectsMavenTestResourcesWhenEnabledInTheMavenModel() throws Exception {
+        var root = Files.createTempDirectory("pyronaut-maven-test-resources");
+        var pom = root.resolve("pom.xml");
+        Files.writeString(pom, "<project><properties><micronaut.test.resources.enabled>true</micronaut.test.resources.enabled></properties></project>");
+
+        assertTrue(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.MAVEN, pom));
+    }
+
+    @Test
+    void doesNotEnableMavenTestResourcesWhenDisabledInTheMavenModel() throws Exception {
+        var root = Files.createTempDirectory("pyronaut-maven-no-test-resources");
+        var pom = root.resolve("pom.xml");
+        Files.writeString(pom, "<project><properties><micronaut.test.resources.enabled>false</micronaut.test.resources.enabled></properties><dependencies><dependency><groupId>io.micronaut.testresources</groupId><artifactId>micronaut-test-resources-client</artifactId></dependency></dependencies></project>");
+
+        assertFalse(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.MAVEN, pom));
     }
 
 }

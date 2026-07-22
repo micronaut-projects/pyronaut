@@ -66,7 +66,7 @@ final class ResolutionCache {
     static String externalInstallHash(Path projectRoot, Path localRepositoryPath) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update("external-install-v1".getBytes(StandardCharsets.UTF_8));
+            digest.update("external-install-v3-development-support".getBytes(StandardCharsets.UTF_8));
             for (String name : List.of("pom.xml", "mvnw", "settings.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradle.properties")) {
                 Path file = projectRoot.resolve(name);
                 if (Files.isRegularFile(file)) {

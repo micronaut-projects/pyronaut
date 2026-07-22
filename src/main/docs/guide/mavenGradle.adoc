@@ -1,0 +1,24 @@
+= Using Maven and Gradle Projects
+
+Pyronaut can run Java applications whose source layout and dependencies are managed by Maven or Gradle. Run the commands from the build root (the directory containing `pom.xml` or a Gradle build file):
+
+[source,bash]
+----
+pyronaut dev
+pyronaut run
+pyronaut test
+----
+
+Pyronaut resolves the build's source sets and classpaths, processes the application, and then launches the processed classes. `dev`, `run`, and `test` validate configuration using their respective scenarios. Use `--no-validate` to skip the lifecycle validation step.
+
+== Development control panel
+
+`pyronaut dev` enables the Micronaut Control Panel using Pyronaut's development runtime. It is not added to `pyronaut run`.
+
+== Test Resources
+
+When a Gradle build applies `io.micronaut.test-resources`, or the effective Maven model sets `micronaut.test.resources.enabled` to `true`, Pyronaut starts or attaches to Test Resources for `dev` and `test`. The resulting connection settings are passed to the launched application. `run` does not automatically start Test Resources.
+
+== Versioning
+
+Pyronaut-provided support, including the development Control Panel and Test Resources integration, uses the Micronaut platform version inherited by the installed Pyronaut SDK. It does not use or override the Micronaut platform version configured by the Maven or Gradle build. The build continues to resolve its own application dependencies normally.

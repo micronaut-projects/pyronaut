@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.testresources;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.testresources.buildtools.ServerFactory;
 import io.micronaut.testresources.buildtools.ServerSettings;
 import io.micronaut.testresources.buildtools.ServerUtils;
@@ -94,8 +95,8 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
-            PyprojectModel model = modelReader.readProjectDirectory(root);
-            PyprojectModel.TestResources config = model.pyronaut().testResources();
+            PyprojectModel.TestResources config = ExternalProjectLayout.isExternal(root)
+                ? externalTestResourcesConfig() : modelReader.readProjectDirectory(root).pyronaut().testResources();
             Path settingsDir = resolveSettingsDir(root, config);
             Path logsDir = resolveLogsDir(root, settingsDir, config);
             Path portFile = settingsDir.resolve("server.port");
@@ -116,6 +117,11 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             System.err.println("test-resources-server failed: " + e.getMessage());
             return INTERNAL_ERROR;
         }
+    }
+
+    private static PyprojectModel.TestResources externalTestResourcesConfig() {
+        return new PyprojectModel.TestResources(true, true, null, null, true, List.of(), 60,
+            false, null, null, null, java.util.Map.of(), java.util.Map.of(), false, null, "none", List.of());
     }
 
     private Integer start(Path root, Path settingsDir, Path logsDir, Path portFile, PyprojectModel.TestResources config) throws IOException {

@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.validateconfig;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import picocli.CommandLine;
 
@@ -139,9 +140,12 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             String normalizedScenario = normalizeScenario(scenario);
-            PyprojectModel model = modelReader.readProjectDirectory(root);
-            ValidationSettings settings = resolveSettings(root, model, normalizedScenario);
-            validateProductionControlPanelSecurity(model, settings);
+            PyprojectModel model = ExternalProjectLayout.isExternal(root) ? null : modelReader.readProjectDirectory(root);
+            ValidationSettings settings = model == null
+                ? resolveExternalSettings(root, normalizedScenario) : resolveSettings(root, model, normalizedScenario);
+            if (model != null) {
+                validateProductionControlPanelSecurity(model, settings);
+            }
             if (!settings.enabled()) {
                 System.out.println("Configuration validation disabled for scenario '" + normalizedScenario + "'.");
                 return SUCCESS;
@@ -195,6 +199,27 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             System.err.println("validate-config failed: " + e.getMessage());
             return INTERNAL_ERROR;
         }
+    }
+
+    private static ValidationSettings resolveExternalSettings(Path root, String normalizedScenario) throws IOException {
+        ExternalProjectLayout layout = ExternalProjectLayout.read(root);
+        LinkedHashSet<String> classpath = new LinkedHashSet<>();
+        if ("test".equals(normalizedScenario)) {
+            layout.testClasspath().forEach(path -> classpath.add(path.toString()));
+            classpath.add(root.resolve("__pyronaut__/test-classes").toString());
+        } else {
+            ("dev".equals(normalizedScenario) ? layout.developmentRuntimeClasspath() : layout.runtimeClasspath())
+                .forEach(path -> classpath.add(path.toString()));
+        }
+        classpath.add(root.resolve("__pyronaut__/classes").toString());
+        List<Path> resources = new ArrayList<>(layout.mainResources());
+        if ("dev".equals(normalizedScenario) || "test".equals(normalizedScenario)) {
+            resources.addAll(layout.testResources());
+        }
+        return new ValidationSettings(true, true, false, false, "reachable", ReportFormat.BOTH,
+            root.resolve("__pyronaut__/reports/config-validation").resolve(normalizedScenario), root,
+            "dev".equals(normalizedScenario) ? List.of("dev") : "test".equals(normalizedScenario) ? List.of("test") : List.of(),
+            List.copyOf(classpath), List.copyOf(resources), List.of(), List.of(), normalizedScenario);
     }
 
     private static boolean isTraceEnabled() {

@@ -148,6 +148,31 @@ final class MavenClasspathResolver {
         return resolveScopeDetails(model, scope, localRepositoryPath, offline).classpath();
     }
 
+    /**
+     * Resolves the development-only Control Panel support using the platform
+     * packaged with Pyronaut. External Maven/Gradle builds intentionally do
+     * not contribute their dependency-management version to this resolution.
+     */
+    List<Path> resolveManagedDevelopmentSupport(Path localRepositoryPath, boolean offline) {
+        PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
+            null,
+            PyronautManagedVersions.micronautPlatformVersion(),
+            List.of(),
+            new PyprojectModel.Dependencies(List.of(), List.of(), List.of(), List.of()),
+            null,
+            new PyprojectModel.ControlPanel(true, "/control-panel", false),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+        );
+        return resolveScope(new PyprojectModel(null, null, pyronaut), InstallScope.DEVELOPMENT_RUNTIME, localRepositoryPath, offline);
+    }
+
     ResolvedScopeDetails resolveScopeDetails(PyprojectModel model,
                                              InstallScope scope,
                                              Path localRepositoryPath,

@@ -1098,6 +1098,29 @@ additional-resources = ["views"]
         self.assertIn("/tmp/micronaut-control-panel-core-2.0.0.jar", " ".join(command_line))
         self.assertIsNone(env.get("PYRONAUT_TEST_RESOURCES_DISABLED") if env else None)
 
+    def test_external_dev_uses_native_watcher_not_python_auto_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "external"
+            project_dir.mkdir()
+            (project_dir / "build.gradle").write_text("plugins { id 'java' }\n", encoding="utf-8")
+            delegated = []
+
+            def delegate(command, *args, **kwargs):
+                delegated.append(command)
+                return 0
+
+            with patch.object(cli, "_delegate", side_effect=delegate):
+                with patch.object(cli, "_run_lifecycle_validation", return_value=0):
+                    with patch.object(cli, "_run_with_auto_restart", side_effect=AssertionError("external dev must use its native watcher")):
+                        exit_code = cli.run(
+                            ["dev", "--project-dir", str(project_dir)],
+                            runner_with_env=lambda command_line, env=None: 0,
+                            process_runner=lambda command_line, env=None: None,
+                        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(["install", "install", "process", "dev"], delegated)
+
     def test_direct_source_dev_preserves_user_environment_property(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"
@@ -2104,6 +2127,32 @@ sharedServer = true
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"], executed[0])
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "main"], executed[1])
         self._assert_run_delegate(executed[2], str(project_dir))
+
+    def test_existing_test_resources_session_is_attached_and_not_restarted(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+            session_file.parent.mkdir(parents=True, exist_ok=True)
+            settings_file.write_text(
+                "server.uri=http\\://127.0.0.1\\:61234\n"
+                "server.access.token=running-token\n",
+                encoding="utf-8",
+            )
+            session_file.write_text("{\"ownerToken\":\"dev-token\",\"ownerPid\":123,\"ownerCommand\":\"pyronaut dev\"}\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir, owner_command="pyronaut test")
+            with patch.object(cli, "_test_resources_server_available", return_value=True):
+                session.ensure_started(runner=runner, resolver=self._resolver())
+                session.stop_if_owned(runner=runner, resolver=self._resolver())
+
+        self.assertEqual([], executed)
 
     def test_stale_external_test_resources_settings_start_owned_server(self):
         executed = []

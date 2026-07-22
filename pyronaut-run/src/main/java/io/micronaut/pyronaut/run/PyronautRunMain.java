@@ -55,6 +55,7 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String NATIVE_IMAGE_CODE = "org.graalvm.nativeimage.imagecode";
     private static final String PYTHON_APPLICATION_MAIN = "META-INF/GRAALPY-VFS/micronaut-application/src/main.py";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
+    private static final String EXTERNAL_DEVELOPMENT_MODE = "pyronaut.external.development";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -252,8 +253,22 @@ public final class PyronautRunMain implements Callable<Integer> {
         for (Path entry : external.developmentRuntimeClasspath().isEmpty() ? external.runtimeClasspath() : external.developmentRuntimeClasspath()) {
             if (Files.exists(entry)) urls.add(entry.toUri().toURL());
         }
+        if (Boolean.getBoolean(EXTERNAL_DEVELOPMENT_MODE)) {
+            for (Path entry : external.testClasspath()) {
+                String fileName = entry.getFileName().toString();
+                if (fileName.startsWith("micronaut-test-resources-client-")
+                    || fileName.startsWith("micronaut-test-resources-core-")
+                    || fileName.startsWith("micronaut-test-resources-codec-")) {
+                    urls.add(entry.toUri().toURL());
+                }
+            }
+        }
         urls.add(resolvedClassesDir.toUri().toURL());
         for (Path resource : external.mainResources()) if (Files.isDirectory(resource)) urls.add(resource.toUri().toURL());
+        if (Boolean.getBoolean(EXTERNAL_DEVELOPMENT_MODE)) {
+            URL location = PyronautRunMain.class.getProtectionDomain().getCodeSource().getLocation();
+            if (location != null) urls.add(location);
+        }
         return new ResolvedProjectLayout(resolvedClassesDir, List.copyOf(urls));
     }
 

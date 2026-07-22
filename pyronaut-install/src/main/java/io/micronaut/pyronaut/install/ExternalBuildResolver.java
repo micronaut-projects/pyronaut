@@ -29,6 +29,16 @@ import org.w3c.dom.NodeList;
 
 /** Resolves the root Java source layout exposed by Maven or Gradle. */
 final class ExternalBuildResolver {
+    private final MavenClasspathResolver managedResolver;
+
+    ExternalBuildResolver() {
+        this(new MavenClasspathResolver());
+    }
+
+    ExternalBuildResolver(MavenClasspathResolver managedResolver) {
+        this.managedResolver = managedResolver;
+    }
+
     ExternalProjectLayout resolve(Path root, boolean offline) throws IOException {
         return resolve(root, offline, null);
     }
@@ -40,16 +50,19 @@ final class ExternalBuildResolver {
         }
         Path effectivePom = kind == ProjectKind.MAVEN ? writeEffectiveMavenPom(root, offline, localRepository) : null;
         try {
+            org.w3c.dom.Document mavenModel = kind == ProjectKind.MAVEN
+                ? parseMavenModel(effectivePom == null ? root.resolve("pom.xml") : effectivePom) : null;
             System.err.println("Resolving " + kind.name() + " source sets and resources...");
-            List<List<Path>> sourceSets = kind == ProjectKind.GRADLE ? resolveGradleSourceSets(root, offline) : List.of(
+            GradleSourceSets gradleSourceSets = kind == ProjectKind.GRADLE ? resolveGradleSourceSets(root, offline) : null;
+            List<List<Path>> sourceSets = gradleSourceSets == null ? List.of(
                 mavenSourceDirectory(root, "project.build.sourceDirectory", "sourceDirectory", "src/main/java", offline, localRepository),
                 mavenSourceDirectory(root, "project.build.testSourceDirectory", "testSourceDirectory", "src/test/java", offline, localRepository),
                 directories(root, "src/main/resources"), directories(root, "src/test/resources")
-            );
+            ) : gradleSourceSets.sourceSets();
             List<Path> mainSources = sourceSets.get(0).isEmpty() ? directories(root, "src/main/java") : sourceSets.get(0);
             List<Path> testSources = sourceSets.get(1).isEmpty() ? directories(root, "src/test/java") : sourceSets.get(1);
-            List<Path> mainResources = kind == ProjectKind.MAVEN ? mavenResources(effectivePom == null ? root.resolve("pom.xml") : effectivePom, root, "main", "src/main/resources") : (sourceSets.get(2).isEmpty() ? resourceDirectory(root, "src/main/resources") : sourceSets.get(2));
-            List<Path> testResources = kind == ProjectKind.MAVEN ? mavenResources(effectivePom == null ? root.resolve("pom.xml") : effectivePom, root, "test", "src/test/resources") : (sourceSets.get(3).isEmpty() ? resourceDirectory(root, "src/test/resources") : sourceSets.get(3));
+            List<Path> mainResources = kind == ProjectKind.MAVEN ? mavenResources(mavenModel, root, "main", "src/main/resources") : (sourceSets.get(2).isEmpty() ? resourceDirectory(root, "src/main/resources") : sourceSets.get(2));
+            List<Path> testResources = kind == ProjectKind.MAVEN ? mavenResources(mavenModel, root, "test", "src/test/resources") : (sourceSets.get(3).isEmpty() ? resourceDirectory(root, "src/test/resources") : sourceSets.get(3));
             System.err.println("Resolving " + kind.name() + " compile dependencies...");
             List<Path> build = resolveClasspath(root, kind, "build", offline, localRepository);
             System.err.println("Resolving " + kind.name() + " runtime dependencies...");
@@ -59,14 +72,58 @@ final class ExternalBuildResolver {
             System.err.println("Resolving " + kind.name() + " annotation processors...");
             List<Path> annotationProcessors = kind == ProjectKind.GRADLE
                 ? resolveClasspath(root, kind, "annotationProcessor", offline, localRepository)
-                : resolveMavenAnnotationProcessors(root, effectivePom, build, offline, localRepository);
+                : resolveMavenAnnotationProcessors(root, mavenModel, build, offline, localRepository);
+            boolean testResourcesEnabled = kind == ProjectKind.GRADLE
+                ? gradleSourceSets.testResourcesEnabled() : testResourcesEnabled(mavenModel);
+            List<Path> testResourcesClasspath = testResourcesEnabled
+                ? resolveClasspath(root, kind, "testResources", offline, localRepository) : List.of();
+            List<Path> developmentRuntime = new ArrayList<>(runtime);
+            developmentRuntime.addAll(managedResolver.resolveManagedDevelopmentSupport(
+                localRepository == null ? MavenClasspathResolver.resolveLocalMavenRepository() : localRepository,
+                offline
+            ));
             return new ExternalProjectLayout(kind, mainSources, testSources, mainResources, testResources,
-                build, runtime, runtime, test, annotationProcessors);
+                build, runtime, developmentRuntime, test, annotationProcessors, testResourcesEnabled, testResourcesClasspath);
         } finally {
             if (effectivePom != null) {
                 Files.deleteIfExists(effectivePom);
             }
         }
+    }
+
+    static boolean testResourcesEnabled(Path pom) {
+        return testResourcesEnabled(parseMavenModel(pom));
+    }
+
+    private static boolean testResourcesEnabled(org.w3c.dom.Document document) {
+        if (document == null) {
+            return false;
+        }
+        NodeList values = document.getElementsByTagName("micronaut.test.resources.enabled");
+        for (int index = 0; index < values.getLength(); index++) {
+            if (Boolean.parseBoolean(values.item(index).getTextContent().trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static org.w3c.dom.Document parseMavenModel(Path pom) {
+        if (!Files.isRegularFile(pom)) {
+            return null;
+        }
+        try {
+            return DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(pom.toFile());
+        } catch (Exception ignored) {
+            // A malformed Maven model cannot enable Test Resources implicitly.
+            return null;
+        }
+    }
+
+    static boolean testResourcesEnabled(Path root, ProjectKind kind, Path effectivePom) {
+        return kind == ProjectKind.GRADLE
+            ? resolveGradleSourceSets(root, false).testResourcesEnabled()
+            : testResourcesEnabled(effectivePom == null ? root.resolve("pom.xml") : effectivePom);
     }
 
     private static List<Path> directories(Path root, String relative) {
@@ -122,7 +179,9 @@ final class ExternalBuildResolver {
         return null;
     }
 
-    private static List<List<Path>> resolveGradleSourceSets(Path root, boolean offline) {
+    private record GradleSourceSets(List<List<Path>> sourceSets, boolean testResourcesEnabled) { }
+
+    private static GradleSourceSets resolveGradleSourceSets(Path root, boolean offline) {
         Path cache = root.resolve("__pyronaut__");
         try {
             Files.createDirectories(cache);
@@ -146,6 +205,7 @@ final class ExternalBuildResolver {
                                             o << n + '.resources=' + s.resources.srcDirs.collect { it.absolutePath }.join(File.pathSeparator) + '\\n'
                                         }
                                     }
+                                    o << 'testResources.enabled=' + p.plugins.hasPlugin('io.micronaut.test-resources') + '\\n'
                                 }
                             }
                         }
@@ -160,9 +220,10 @@ final class ExternalBuildResolver {
             if (process.waitFor() != 0) {
                 Files.deleteIfExists(output);
                 Files.deleteIfExists(script);
-                return List.of(List.of(), List.of(), List.of(), List.of());
+                return new GradleSourceSets(List.of(List.of(), List.of(), List.of(), List.of()), false);
             }
             List<Path> mainJava = List.of(), testJava = List.of(), mainResources = List.of(), testResources = List.of();
+            boolean testResourcesEnabled = false;
             for (String line : Files.readAllLines(output, StandardCharsets.UTF_8)) {
                 int equals = line.indexOf('=');
                 if (equals < 0) continue;
@@ -173,16 +234,17 @@ final class ExternalBuildResolver {
                     case "test.java" -> testJava = paths;
                     case "main.resources" -> mainResources = paths;
                     case "test.resources" -> testResources = paths;
+                    case "testResources.enabled" -> testResourcesEnabled = Boolean.parseBoolean(line.substring(equals + 1));
                     default -> { }
                 }
             }
             Files.deleteIfExists(output);
             Files.deleteIfExists(script);
-            return List.of(mainJava, testJava, mainResources, testResources);
+            return new GradleSourceSets(List.of(mainJava, testJava, mainResources, testResources), testResourcesEnabled);
         } catch (Exception ignored) {
             deleteQuietly(cache.resolve("external-gradle-sources.txt"));
             deleteQuietly(cache.resolve("external-gradle-sources.gradle"));
-            return List.of(List.of(), List.of(), List.of(), List.of());
+            return new GradleSourceSets(List.of(List.of(), List.of(), List.of(), List.of()), false);
         }
     }
 
@@ -199,10 +261,13 @@ final class ExternalBuildResolver {
     }
 
     private static List<Path> mavenResources(Path pom, Path root, String scope, String fallback) {
-        if (!Files.isRegularFile(pom)) return resourceDirectory(root, fallback);
+        return mavenResources(parseMavenModel(pom), root, scope, fallback);
+    }
+
+    private static List<Path> mavenResources(org.w3c.dom.Document document, Path root, String scope, String fallback) {
+        if (document == null) return resourceDirectory(root, fallback);
         List<Path> result = new ArrayList<>();
         try {
-            var document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(pom.toFile());
             NodeList resources = document.getElementsByTagName("test".equals(scope) ? "testResource" : "resource");
             for (int i = 0; i < resources.getLength(); i++) {
                 var resource = resources.item(i);
@@ -248,17 +313,15 @@ final class ExternalBuildResolver {
     }
 
     private static List<Path> resolveMavenAnnotationProcessors(Path root,
-                                                                Path effectivePom,
+                                                                org.w3c.dom.Document effectiveDocument,
                                                                 List<Path> buildClasspath,
                                                                 boolean offline,
                                                                 Path localRepository) throws IOException {
-        if (effectivePom == null || !Files.isRegularFile(effectivePom)) {
+        if (effectiveDocument == null) {
             return buildClasspath;
         }
         List<String[]> coordinates = new ArrayList<>();
-        org.w3c.dom.Document effectiveDocument;
         try {
-            effectiveDocument = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(effectivePom.toFile());
             NodeList plugins = effectiveDocument.getElementsByTagName("plugin");
             for (int i = 0; i < plugins.getLength(); i++) {
                 var plugin = plugins.item(i);
@@ -375,7 +438,7 @@ final class ExternalBuildResolver {
                 command.add("--no-daemon");
                 initScript = cache.resolve("external-" + scope + ".gradle");
                 Files.deleteIfExists(initScript);
-                String configuration = "test".equals(scope) ? "testRuntimeClasspath" : "build".equals(scope) ? "compileClasspath" : "annotationProcessor".equals(scope) ? "annotationProcessor" : "runtimeClasspath";
+                String configuration = "test".equals(scope) ? "testRuntimeClasspath" : "testResources".equals(scope) ? "testResourcesService" : "build".equals(scope) ? "compileClasspath" : "annotationProcessor".equals(scope) ? "annotationProcessor" : "runtimeClasspath";
                 String outputPath = output.toString().replace("\\", "\\\\");
                 Files.writeString(initScript, "gradle.beforeProject { p -> if (p.parent == null) { p.tasks.register('__pyronautWriteClasspath') { doLast { def c = p.configurations.findByName('" + configuration + "'); if (c == null) { c = p.configurations.findByName('compileClasspath') }; if (c != null) { p.file('" + outputPath + "').text = c.resolve().collect { it.absolutePath }.join(File.pathSeparator) } } } } }", StandardCharsets.UTF_8);
                 command.add("--init-script");

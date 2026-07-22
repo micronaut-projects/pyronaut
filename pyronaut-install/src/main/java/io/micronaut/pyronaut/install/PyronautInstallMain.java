@@ -138,6 +138,10 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 }
                 ExternalProjectLayout layout = externalBuildResolver.resolve(root, offline, localRepo);
                 layout.write(root);
+                if (layout.testResourcesEnabled()) {
+                    Files.write(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-resources-server-dependencies"),
+                        layout.testResourcesClasspath().stream().map(Path::toString).toList());
+                }
                 Files.createDirectories(cacheDir);
                 Files.writeString(hashFile, hash);
                 if (showProgress) {

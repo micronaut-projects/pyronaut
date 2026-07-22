@@ -71,6 +71,7 @@ _TEST_RESOURCES_ENV_TO_PROPERTY = {
     "MICRONAUT_TEST_RESOURCES_SERVER_URI": "micronaut.test.resources.server.uri",
     "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN": "micronaut.test.resources.server.access.token",
     "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT": "micronaut.test.resources.server.client.read.timeout",
+    "MICRONAUT_TEST_RESOURCES_PROJECT_PATH_URI": "micronaut.test.resources.project-path-uri",
 }
 _TEST_RESOURCES_LOG_FILE = "test-resources.log"
 _TEST_RESOURCES_STDIO_LOG_FILE = "launcher-stdio.log"
@@ -299,7 +300,14 @@ def run(
     local_repository = _extract_local_repository(forwarded_args)
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
     delegated_args = _strip_local_repository_args(delegated_args) if command in {"dev", "run", "test"} else delegated_args
-    auto_restart_mode = command == "dev" and (process_runner is not None or (runner is None and runner_with_env is None))
+    # External builds are watched by pyronaut-dev itself. Wrapping that native
+    # watcher in the Python auto-restart loop causes both watchers to process
+    # the same source change.
+    auto_restart_mode = (
+        command == "dev"
+        and not _is_external_build_project(Path(project_dir))
+        and (process_runner is not None or (runner is None and runner_with_env is None))
+    )
 
     effective_java_home_provider = java_home_provider or _default_java_home_provider(
         runner=runner,
@@ -338,6 +346,17 @@ def run(
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
     try:
+        # Test Resources enablement for external builds comes from the layout
+        # produced by install. Refresh it before deciding whether to own a
+        # server; otherwise a stale layout from an earlier invocation can
+        # incorrectly start Test Resources.
+        if command in {"dev", "test"} and _is_external_build_project(Path(project_dir)):
+            install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
+            if no_cache:
+                install_args.append("--no-cache")
+            install_code = _delegate("install", install_args, execute, locate)
+            if install_code != SUCCESS:
+                return install_code
         test_resources_enabled = _test_resources_enabled(Path(project_dir))
         if command in {"dev", "test"} and test_resources_enabled:
             tr_session = _OwnedTestResourcesSession(
@@ -359,17 +378,18 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-            preflight_code = _run_preflight(
-                project_dir,
-                no_cache,
-                local_repository,
-                execute,
-                locate,
-                install=False,
-                process_pass="main",
-            )
-            if preflight_code != SUCCESS:
-                return preflight_code
+            if not _is_external_build_project(Path(project_dir)):
+                preflight_code = _run_preflight(
+                    project_dir,
+                    no_cache,
+                    local_repository,
+                    execute,
+                    locate,
+                    install=False,
+                    process_pass="main",
+                )
+                if preflight_code != SUCCESS:
+                    return preflight_code
             if tr_session is not None:
                 tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
@@ -394,6 +414,18 @@ def run(
             )
 
         if command in {"dev", "run"}:
+            if _is_external_build_project(Path(project_dir)):
+                preflight_code = _run_preflight(
+                    project_dir,
+                    no_cache,
+                    local_repository,
+                    execute,
+                    locate,
+                    install=command != "dev" or not (Path(project_dir) / "__pyronaut__" / "project-layout.properties").exists(),
+                    process_pass="main",
+                )
+                if preflight_code != SUCCESS:
+                    return preflight_code
             if no_validate:
                 sys.stderr.write("[validation] skipped (--no-validate)\n")
             else:
@@ -408,17 +440,18 @@ def run(
                 if validation_code != SUCCESS:
                     return validation_code
 
-            preflight_code = _run_preflight(
-                project_dir,
-                no_cache,
-                local_repository,
-                execute,
-                locate,
-                install=False,
-                process_pass="main",
-            )
-            if preflight_code != SUCCESS:
-                return preflight_code
+            if not _is_external_build_project(Path(project_dir)):
+                preflight_code = _run_preflight(
+                    project_dir,
+                    no_cache,
+                    local_repository,
+                    execute,
+                    locate,
+                    install=False,
+                    process_pass="main",
+                )
+                if preflight_code != SUCCESS:
+                    return preflight_code
 
             if tr_session is not None:
                 tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
@@ -531,6 +564,20 @@ def _delegate(
         if _delegation_trace_enabled():
             print(shlex.join(dev_command_line), file=sys.stderr)
         return runner(dev_command_line, env)
+
+    # pyronaut-dev's native direct-source command treats unknown options as
+    # source paths. Test selectors belong to pyronaut-test, whose launcher
+    # understands repeatable --tests options (including pytest node IDs).
+    if command == "test" and _has_tests_selection(args) and _bundled_native_executable("pyronaut-dev") is not None:
+        return _delegate_via_java(
+            command,
+            args,
+            runner,
+            resolver,
+            debug_vm=debug_vm,
+            env_overrides=env_overrides,
+            java_home_provider=java_home_provider,
+        )
 
     try:
         dev_command_line = _pyronaut_dev_native_command_line(
@@ -953,6 +1000,11 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
     if external is not None:
         key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
         entries = list(external.get(key, []))
+        if command in {"dev", "test"}:
+            entries.extend(
+                entry for entry in external.get("testClasspath", [])
+                if _is_native_test_resources_client_artifact(Path(entry).name)
+            )
     elif command == "dev":
         entries = _read_manifest_entries(_resolve_run_manifest(cache_dir))
     elif command == "run":
@@ -975,7 +1027,11 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
         if delegate_executable is None:
             raise RuntimeError(f"Missing delegated executable: {COMMAND_TO_EXECUTABLE[command]}")
         delegate_entries.extend(_delegate_lib_entries(delegate_executable))
-    entries = [*delegate_entries, *application_entries] if external is not None else [*application_entries, *delegate_entries]
+    # The external build owns the application runtime.  Put it first so its
+    # Micronaut/Test Resources services are resolved against the same versions
+    # Gradle or Maven selected; the Pyronaut delegate only supplies its command
+    # entry point and launcher support.
+    entries = [*application_entries, *delegate_entries]
 
     deduped: list[str] = []
     seen_paths: set[str] = set()
@@ -1053,6 +1109,10 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
         entries.extend(external.get("mainResources", []))
         if command in {"dev", "test"}:
             entries.extend(external.get("testResources", []))
+            entries.extend(
+                entry for entry in external.get("testClasspath", [])
+                if _is_native_test_resources_client_artifact(Path(entry).name)
+            )
         return [entry for entry in entries if Path(entry).exists()]
     if command == "dev":
         classes_dir = cache_dir / "classes"
@@ -1325,17 +1385,24 @@ def _is_test_launcher_provided_artifact(entry: str) -> bool:
 
 def _build_native_test_resources_client_classpath(project_dir: Path) -> str:
     cache_dir = project_dir / "__pyronaut__"
-    entries = [
-        entry
-        for manifest in (
-            cache_dir / "resolved-development-runtime-dependencies",
-            cache_dir / "resolved-test-dependencies",
-            cache_dir / "resolved-runtime-dependencies",
-        )
-        if manifest.exists()
-        for entry in _read_manifest_entries(manifest)
-        if _is_native_test_resources_client_artifact(Path(entry).name)
-    ]
+    external = _read_external_layout(project_dir)
+    if external is not None:
+        entries = [
+            *(entry for entry in external.get("testClasspath", [])
+              if _is_native_test_resources_client_artifact(Path(entry).name)),
+        ]
+    else:
+        entries = [
+            entry
+            for manifest in (
+                cache_dir / "resolved-development-runtime-dependencies",
+                cache_dir / "resolved-test-dependencies",
+                cache_dir / "resolved-runtime-dependencies",
+            )
+            if manifest.exists()
+            for entry in _read_manifest_entries(manifest)
+            if _is_native_test_resources_client_artifact(Path(entry).name)
+        ]
     return os.pathsep.join(_dedupe_classpath_entries(entries))
 
 
@@ -1349,8 +1416,6 @@ def _run_preflight(
     install: bool = True,
     process_pass: str | None = None,
 ) -> int:
-    if _is_external_build_project(Path(project_dir)):
-        install = True
     if install:
         install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
         if no_cache:
@@ -2130,8 +2195,6 @@ def _run_lifecycle_validation(
     no_cache: bool = False,
     env_overrides: dict[str, str] | None = None,
 ) -> int:
-    if _is_external_build_project(Path(project_dir)):
-        return SUCCESS
     args = ["--project-dir", project_dir, "--scenario", scenario]
     if no_cache:
         args.append("--no-cache")
@@ -2519,7 +2582,9 @@ def _test_resources_client_env_from_settings(path: Path) -> dict[str, str] | Non
     env: dict[str, str] = {}
     for env_name, property_name in _TEST_RESOURCES_ENV_TO_PROPERTY.items():
         settings_key = property_name.removeprefix("micronaut.test.resources.")
-        value = settings.get(settings_key)
+        # Server settings use short names for connection details but retain the
+        # full Micronaut property name for the project identity.
+        value = settings.get(settings_key) or settings.get(property_name)
         if value:
             env[env_name] = value
 
@@ -2834,6 +2899,18 @@ def _run_test_cycle(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
 ) -> tuple[int, dict[str, str] | None]:
+    if _is_external_build_project(project_dir):
+        preflight_code = _run_preflight(
+            str(project_dir),
+            no_cache,
+            local_repository,
+            execute,
+            resolver,
+            install=not (project_dir / "__pyronaut__" / "project-layout.properties").exists(),
+            process_pass="test",
+        )
+        if preflight_code != SUCCESS:
+            return preflight_code, test_resources_env_overrides
     if no_validate:
         sys.stderr.write("[validation] skipped (--no-validate)\n")
     else:
@@ -2848,17 +2925,18 @@ def _run_test_cycle(
         if validation_code != SUCCESS:
             return validation_code, test_resources_env_overrides
 
-    preflight_code = _run_preflight(
-        str(project_dir),
-        no_cache,
-        local_repository,
-        execute,
-        resolver,
-        install=False,
-        process_pass="test",
-    )
-    if preflight_code != SUCCESS:
-        return preflight_code, test_resources_env_overrides
+    if not _is_external_build_project(project_dir):
+        preflight_code = _run_preflight(
+            str(project_dir),
+            no_cache,
+            local_repository,
+            execute,
+            resolver,
+            install=False,
+            process_pass="test",
+        )
+        if preflight_code != SUCCESS:
+            return preflight_code, test_resources_env_overrides
 
     if tr_session is not None and test_resources_env_overrides is None:
         tr_session.ensure_started(runner=execute, resolver=resolver, java_home_provider=java_home_provider)
@@ -3035,9 +3113,12 @@ def _build_dev_delegate_invocation(
     env_overrides: dict[str, str] | None,
     java_home_provider: JavaHomeProvider | None,
 ) -> tuple[list[str], dict[str, str]]:
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    delegate_args, dev_jvm_args = _split_dev_delegate_options(args)
+    launch_args = delegate_args if _is_external_build_project(project_dir) else args
     dev_command_line = _pyronaut_dev_native_command_line(
         "run",
-        args,
+        launch_args,
         resolver,
         classpath_command="dev",
         environment="dev",
@@ -3046,18 +3127,79 @@ def _build_dev_delegate_invocation(
         java_home_provider=java_home_provider,
     )
     if dev_command_line is not None:
+        if dev_jvm_args:
+            command_index = dev_command_line.index("run")
+            dev_command_line[command_index:command_index] = dev_jvm_args
         env = _build_non_test_resources_env("dev", java_home_provider)
         env = _merge_env_overrides(env, env_overrides)
-        env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
+        env = _apply_project_virtualenv(env, project_dir)
         return dev_command_line, env
-    return _build_java_delegate_invocation(
-        "dev",
-        args,
+    # The JVM fallback uses pyronaut-run, which does not understand dev-only
+    # convenience options. Convert those options into JVM properties before
+    # constructing its invocation.
+    command_line, env = _build_java_delegate_invocation(
+        "run",
+        delegate_args,
         resolver,
         debug_vm=debug_vm,
         env_overrides=env_overrides,
         java_home_provider=java_home_provider,
     )
+    classpath_index = command_line.index("-cp") + 1
+    classpath = _build_delegate_classpath("dev", project_dir, resolver)
+    dev_executable = resolver("pyronaut-dev")
+    if dev_executable is not None:
+        classpath = os.pathsep.join([classpath, *_delegate_lib_entries(dev_executable)])
+    command_line[classpath_index] = classpath
+    test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
+    if test_resources_client_classpath:
+        command_line.insert(classpath_index - 1, f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
+    for jvm_arg in reversed(_build_test_resources_jvm_args(env_overrides)):
+        command_line.insert(command_line.index("-cp"), jvm_arg)
+    if not _has_micronaut_environments_property(args):
+        command_line.insert(command_line.index("-cp"), "-Dmicronaut.environments=dev")
+    if _is_external_build_project(project_dir):
+        for property_name, value in reversed((
+            ("micronaut.control-panel.enabled", "true"),
+            ("micronaut.control-panel.path", "/control-panel"),
+            ("micronaut.control-panel.security.access", "ANONYMOUS"),
+        )):
+            command_line.insert(command_line.index("-cp"), f"-D{property_name}={value}")
+    for jvm_arg in reversed(dev_jvm_args):
+        command_line.insert(command_line.index("-cp"), jvm_arg)
+    command_line.insert(command_line.index("-cp"), "-Dpyronaut.external.development=true")
+    return command_line, env
+
+
+def _split_dev_delegate_options(args: Sequence[str]) -> tuple[list[str], list[str]]:
+    delegated: list[str] = []
+    jvm_args: list[str] = []
+    index = 0
+    while index < len(args):
+        value = args[index]
+        if value == "--port" and index + 1 < len(args):
+            jvm_args.append(f"-Dmicronaut.server.port={args[index + 1]}")
+            index += 2
+            continue
+        if value.startswith("--port="):
+            jvm_args.append(f"-Dmicronaut.server.port={value.removeprefix('--port=')}")
+            index += 1
+            continue
+        if value == "--property" and index + 1 < len(args):
+            jvm_args.append(f"-D{args[index + 1]}")
+            index += 2
+            continue
+        if value.startswith("--property="):
+            jvm_args.append(f"-D{value.removeprefix('--property=')}")
+            index += 1
+            continue
+        if value.startswith("-D"):
+            jvm_args.append(value)
+            index += 1
+            continue
+        delegated.append(value)
+        index += 1
+    return delegated, jvm_args
 
 
 def _stop_managed_process(process: ManagedProcess) -> bool:
@@ -3780,6 +3922,10 @@ def _normalize_tests_selection_flag(args: list[str]) -> list[str]:
     return normalized
 
 
+def _has_tests_selection(args: Sequence[str]) -> bool:
+    return any(token == "--tests" or token.startswith("--tests=") for token in args)
+
+
 def _extract_no_cache(args: Sequence[str]) -> bool:
     for token in args:
         if token == "--no-cache":
@@ -3991,6 +4137,11 @@ def _pyronaut_dev_native_command_line(
         raise RuntimeError(str(exc)) from exc
     executable_path = _resolve_pyronaut_dev_native_executable(resolver)
     if executable_path is None:
+        if _is_external_build_project(project_dir):
+            # SDK wheels can be installed without the optional native dev
+            # executable. External JVM builds still have a complete delegated
+            # launcher path, so fall back to it instead of rejecting dev/test.
+            return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider)
     selected_environment = (
@@ -4224,7 +4375,21 @@ def _test_resources_disabled() -> bool:
 
 
 def _test_resources_enabled(project_dir: Path) -> bool:
-    return not _test_resources_disabled() and _read_pyproject_test_resources_enabled(project_dir)
+    if _test_resources_disabled():
+        return False
+    if _is_external_build_project(project_dir):
+        return _read_external_test_resources_enabled(project_dir)
+    return _read_pyproject_test_resources_enabled(project_dir)
+
+
+def _read_external_test_resources_enabled(project_dir: Path) -> bool:
+    layout_file = project_dir / "__pyronaut__" / "project-layout.properties"
+    if not layout_file.exists():
+        return False
+    return any(
+        line.strip().lower() == "testresourcesenabled=true"
+        for line in layout_file.read_text(encoding="utf-8").splitlines()
+    )
 
 
 def _is_supported_platform(platform_name: str) -> bool:
@@ -4673,8 +4838,6 @@ class _OwnedTestResourcesSession:
     def _should_attach_to_external_server(self) -> bool:
         if self._shared_server:
             return False
-        if self._session_file.exists():
-            return False
         if not self._settings_file.exists():
             return False
         env = _test_resources_client_env_from_settings(self._settings_file)
@@ -4682,7 +4845,10 @@ class _OwnedTestResourcesSession:
             return False
         if _test_resources_server_available(self._settings_file):
             return True
-        self._emit_status("[test-resources] stale external settings detected; starting owned server instead")
+        if self._session_file.exists():
+            self._emit_status("[test-resources] stale session detected; starting owned server instead")
+        else:
+            self._emit_status("[test-resources] external settings detected but server unavailable; starting owned server instead")
         return False
 
     def _delegate_test_resources_server(
