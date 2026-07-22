@@ -295,6 +295,8 @@ def run(
         return PLATFORM_UNSUPPORTED
 
     project_dir = _extract_project_dir(forwarded_args)
+    if command in {"dev"} and _control_panel_requested(Path(project_dir), forwarded_args):
+        os.environ["PYRONAUT_CONTROL_PANEL_ENABLED"] = "true"
 
     no_cache = _extract_no_cache(forwarded_args)
     local_repository = _extract_local_repository(forwarded_args)
@@ -1017,6 +1019,8 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
     else:
         entries = _read_test_delegate_dependency_entries(cache_dir)
 
+    if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+        entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
     application_entries = entries
     delegate_entries: list[str] = []
     override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
@@ -1065,10 +1069,13 @@ def _read_test_delegate_dependency_entries(cache_dir: Path) -> list[str]:
 
 
 def _build_native_application_classpath(command: str, project_dir: Path, launcher_executable: str | None = None) -> str:
+    entries = _build_native_application_classpath_entries(command, project_dir)
+    if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+        entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
     return os.pathsep.join(
         _dedupe_classpath_entries(
             _filter_native_launcher_provided_entries(
-                _build_native_application_classpath_entries(command, project_dir),
+                entries,
                 launcher_executable,
                 command,
             )
@@ -1090,6 +1097,8 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
             return [entry for entry in entries if Path(entry).exists()]
         key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
         entries.extend(external.get(key, []))
+        if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+            entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
         classes_dir = cache_dir / "classes"
         test_classes_dir = cache_dir / "test-classes"
         if command == "test":
@@ -1159,6 +1168,8 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
             _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
     else:
         raise RuntimeError(f"Native application classpath is not supported for command: {command}")
+    if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+        entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
     return entries
 
 
@@ -3151,7 +3162,11 @@ def _build_dev_delegate_invocation(
 ) -> tuple[list[str], dict[str, str]]:
     project_dir = Path(_extract_project_dir(args)).resolve()
     delegate_args, dev_jvm_args = _split_dev_delegate_options(args)
-    launch_args = delegate_args if _is_external_build_project(project_dir) else args
+    if not _control_panel_requested(project_dir, args):
+        dev_jvm_args.append("-Dmicronaut.control-panel.enabled=false")
+    # Convenience options are consumed by the Python orchestrator and must not
+    # leak into the native pyronaut-dev command line.
+    launch_args = delegate_args
     dev_command_line = _pyronaut_dev_native_command_line(
         "run",
         launch_args,
@@ -3163,10 +3178,12 @@ def _build_dev_delegate_invocation(
         java_home_provider=java_home_provider,
     )
     if dev_command_line is not None:
-        if dev_jvm_args:
-            command_index = dev_command_line.index("run")
-            dev_command_line[command_index:command_index] = dev_jvm_args
+        # The native launcher accepts only its subcommand and source selectors;
+        # convenience JVM properties are applied by the Python/fallback path.
+        # Do not leak them into native picocli parsing.
         env = _build_non_test_resources_env("dev", java_home_provider)
+        if dev_jvm_args:
+            env["JAVA_TOOL_OPTIONS"] = " ".join(dev_jvm_args)
         env = _merge_env_overrides(env, env_overrides)
         env = _apply_project_virtualenv(env, project_dir)
         return dev_command_line, env
@@ -3192,9 +3209,12 @@ def _build_dev_delegate_invocation(
         command_line.insert(classpath_index - 1, f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
     for jvm_arg in reversed(_build_test_resources_jvm_args(env_overrides)):
         command_line.insert(command_line.index("-cp"), jvm_arg)
+    # Control Panel is opt-in for dev. An explicit --control-panel/configured
+    # enablement is added below and intentionally overrides this default.
+    command_line.insert(command_line.index("-cp"), "-Dmicronaut.control-panel.enabled=false")
     if not _has_micronaut_environments_property(args):
         command_line.insert(command_line.index("-cp"), "-Dmicronaut.environments=dev")
-    if _is_external_build_project(project_dir):
+    if _is_external_build_project(project_dir) and _control_panel_requested(project_dir, args):
         for property_name, value in reversed((
             ("micronaut.control-panel.enabled", "true"),
             ("micronaut.control-panel.path", "/control-panel"),
@@ -3217,6 +3237,10 @@ def _split_dev_delegate_options(args: Sequence[str]) -> tuple[list[str], list[st
             jvm_args.append(f"-Dmicronaut.server.port={args[index + 1]}")
             index += 2
             continue
+        if value == "--control-panel":
+            jvm_args.append("-Dmicronaut.control-panel.enabled=true")
+            index += 1
+            continue
         if value.startswith("--port="):
             jvm_args.append(f"-Dmicronaut.server.port={value.removeprefix('--port=')}")
             index += 1
@@ -3236,6 +3260,22 @@ def _split_dev_delegate_options(args: Sequence[str]) -> tuple[list[str], list[st
         delegated.append(value)
         index += 1
     return delegated, jvm_args
+
+
+def _control_panel_requested(project_dir: Path, args: Sequence[str]) -> bool:
+    if "--control-panel" in args:
+        return True
+    table = _read_pyproject_pyronaut_table(project_dir)
+    control_panel = table.get("control-panel") if isinstance(table, dict) else None
+    if not isinstance(control_panel, dict):
+        return False
+    return control_panel.get("enabled") is True
+
+
+def _control_panel_enabled_for_project(project_dir: Path) -> bool:
+    if os.environ.get("PYRONAUT_CONTROL_PANEL_ENABLED", "").lower() == "true":
+        return True
+    return _control_panel_requested(project_dir, ())
 
 
 def _stop_managed_process(process: ManagedProcess) -> bool:
@@ -4452,7 +4492,8 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
     _write_command_help(
         stream,
         usage_lines=[
-            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-validate]",
+            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-validate]"
+            + (" [--control-panel]" if command == "dev" else ""),
             "                    [--classes-dir=<classesDir>]",
             "                    [--config-dir=<configDir>]",
             "                    [--main-class=<mainClass>]",
@@ -4472,6 +4513,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("<source.java|source.py|source-dir>...", "Java or Python source files/directories for direct source execution"),
             ("-D<name=value>", "Set a Micronaut/system property for direct source execution"),
             ("--classes-dir=<classesDir>", "Processed classes directory"),
+            *( [("--control-panel", "Enable the development Control Panel")] if command == "dev" else [] ),
             ("--config=<file-or-dir>", "Configuration file or directory for direct source execution"),
             ("--config-dir=<configDir>", "Processed application configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
@@ -4587,6 +4629,7 @@ def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Calla
         return _run_tamboui_tui(
             project_dir=project_dir,
             initial_mode=initial_mode,
+            control_panel=_extract_flag(args, "--control-panel"),
             report_dir=report_dir,
             trace_delegation=trace_delegation,
             runner=runner_with_env,
@@ -4963,6 +5006,7 @@ def _run_tamboui_tui(
     *,
     project_dir: Path,
     initial_mode: str,
+    control_panel: bool,
     report_dir: Path,
     trace_delegation: bool,
     runner: RunnerWithEnv,
@@ -5053,6 +5097,8 @@ def _run_tamboui_tui(
         command_line.extend(["--native-dev-executable", native_dev_executable])
         for command in native_commands:
             command_line.extend(["--native-command", command])
+    if control_panel:
+        command_line.append("--control-panel")
     if trace_delegation:
         command_line.append("--trace-delegation")
     if _delegation_trace_enabled():

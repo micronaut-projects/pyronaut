@@ -40,7 +40,7 @@ class PyprojectModelReaderTest {
         assertEquals(2, model.pyronaut().dependencies().build().size());
         assertEquals(4, model.pyronaut().dependencies().test().size());
         assertEquals(true, model.pyronaut().run().bannerEnabled());
-        assertEquals(Boolean.TRUE, model.pyronaut().controlPanel().enabled());
+        assertEquals(Boolean.FALSE, model.pyronaut().controlPanel().enabled());
         assertEquals("/control-panel", model.pyronaut().controlPanel().path());
         assertEquals(Boolean.FALSE, model.pyronaut().controlPanel().productionEnabled());
         assertEquals("jvm", model.pyronaut().build().mode());

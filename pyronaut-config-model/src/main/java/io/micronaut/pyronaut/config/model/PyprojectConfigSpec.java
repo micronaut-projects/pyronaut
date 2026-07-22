@@ -173,7 +173,7 @@ public final class PyprojectConfigSpec {
     public static final FieldSpec PYRONAUT_CONTROL_PANEL_ENABLED = bool(
         "tool.pyronaut.control-panel.enabled",
         "Whether development control panel support is enabled.",
-        Boolean.TRUE,
+        Boolean.FALSE,
         List.of(),
         List.of("tool.pyronaut.controlPanel.enabled")
     );

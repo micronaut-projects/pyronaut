@@ -154,13 +154,14 @@ final class MavenClasspathResolver {
      * not contribute their dependency-management version to this resolution.
      */
     List<Path> resolveManagedDevelopmentSupport(Path localRepositoryPath, boolean offline) {
+        boolean enabled = "true".equalsIgnoreCase(System.getenv("PYRONAUT_CONTROL_PANEL_ENABLED"));
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
             null,
             PyronautManagedVersions.micronautPlatformVersion(),
             List.of(),
             new PyprojectModel.Dependencies(List.of(), List.of(), List.of(), List.of()),
             null,
-            new PyprojectModel.ControlPanel(true, "/control-panel", false),
+            new PyprojectModel.ControlPanel(enabled, "/control-panel", false),
             null,
             null,
             null,

@@ -119,6 +119,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     @Option(names = "--mode", defaultValue = "run", description = "Initial mode: run|test")
     String mode;
 
+    @Option(names = "--control-panel", description = "Enable the development control panel")
+    boolean controlPanel;
+
     @Option(names = "--report-dir", description = "Path to pyronaut-test report directory")
     Path reportDir;
 
@@ -575,6 +578,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private ControlPanelSettings controlPanelSettings(Path project) {
+        if (controlPanel) {
+            return new ControlPanelSettings(true, "/control-panel");
+        }
         if (project == null) {
             return ControlPanelSettings.disabled();
         }
