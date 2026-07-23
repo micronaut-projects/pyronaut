@@ -32,6 +32,8 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -56,6 +58,13 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String PYTHON_APPLICATION_MAIN = "META-INF/GRAALPY-VFS/micronaut-application/src/main.py";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String EXTERNAL_DEVELOPMENT_MODE = "pyronaut.external.development";
+    private static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
+    private static final String OPENAPI_SWAGGER_PATHS = "micronaut.router.static-resources.swagger.paths";
+    private static final String OPENAPI_SWAGGER_MAPPING = "micronaut.router.static-resources.swagger.mapping";
+    private static final String OPENAPI_SWAGGER_UI_PATHS = "micronaut.router.static-resources.swagger-ui.paths";
+    private static final String OPENAPI_SWAGGER_UI_MAPPING = "micronaut.router.static-resources.swagger-ui.mapping";
+    private static final String OPENAPI_REDOC_PATHS = "micronaut.router.static-resources.redoc.paths";
+    private static final String OPENAPI_REDOC_MAPPING = "micronaut.router.static-resources.redoc.mapping";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
         new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -143,6 +152,7 @@ public final class PyronautRunMain implements Callable<Integer> {
                 Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
                 layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
             }
+            applyDevelopmentOpenApiExposure(root, configDir);
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -193,9 +203,49 @@ public final class PyronautRunMain implements Callable<Integer> {
         return classLoader.getResource(PYTHON_APPLICATION_MAIN) != null;
     }
 
+    private static void applyDevelopmentOpenApiExposure(Path projectDir, Path configuredConfigDir) {
+        String environments = System.getProperty(MICRONAUT_ENVIRONMENTS, "");
+        boolean development = java.util.Arrays.stream(environments.split(","))
+            .map(String::trim)
+            .anyMatch("dev"::equalsIgnoreCase);
+        if (!development || hasExplicitOpenApiExposure(projectDir, configuredConfigDir)) {
+            return;
+        }
+        setDefaultProperty(OPENAPI_SWAGGER_PATHS, "classpath:META-INF/swagger");
+        setDefaultProperty(OPENAPI_SWAGGER_MAPPING, "/swagger/**");
+        setDefaultProperty(OPENAPI_SWAGGER_UI_PATHS, "classpath:META-INF/swagger/views/swagger-ui");
+        setDefaultProperty(OPENAPI_SWAGGER_UI_MAPPING, "/swagger-ui/**");
+        setDefaultProperty(OPENAPI_REDOC_PATHS, "classpath:META-INF/swagger/views/redoc");
+        setDefaultProperty(OPENAPI_REDOC_MAPPING, "/redoc/**");
+    }
+
+    private static boolean hasExplicitOpenApiExposure(Path projectDir, Path configuredConfigDir) {
+        Path configDir = configuredConfigDir.isAbsolute() ? configuredConfigDir : projectDir.resolve(configuredConfigDir);
+        for (String name : List.of("application.toml", "application.yml", "application.yaml", "application.properties")) {
+            Path config = configDir.resolve(name);
+            try {
+                if (Files.isRegularFile(config)) {
+                    String content = Files.readString(config, StandardCharsets.UTF_8);
+                    if (content.contains("static-resources") && content.contains("swagger")) {
+                        return true;
+                    }
+                }
+            } catch (IOException ignored) {
+                // Defaults remain best effort when configuration cannot be read.
+            }
+        }
+        return false;
+    }
+
     static void enableContextClassLoaderIntrospections() {
         if (System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER) == null) {
             System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, "true");
+        }
+    }
+
+    private static void setDefaultProperty(String name, String value) {
+        if (System.getProperty(name) == null) {
+            System.setProperty(name, value);
         }
     }
 

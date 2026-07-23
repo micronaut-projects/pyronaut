@@ -114,6 +114,12 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String VERIFY_SYSTEM_CLASS = "pyronaut.dev.verify-system-class";
     private static final String VERIFY_SYSTEM_CLASS_RESOURCE = "pyronaut.dev.verify-system-class-resource";
     private static final String PROPERTY_SOURCE_LOADER_SERVICE = "META-INF/services/io.micronaut.context.env.PropertySourceLoader";
+    private static final String OPENAPI_SWAGGER_PATHS = "micronaut.router.static-resources.swagger.paths";
+    private static final String OPENAPI_SWAGGER_MAPPING = "micronaut.router.static-resources.swagger.mapping";
+    private static final String OPENAPI_SWAGGER_UI_PATHS = "micronaut.router.static-resources.swagger-ui.paths";
+    private static final String OPENAPI_SWAGGER_UI_MAPPING = "micronaut.router.static-resources.swagger-ui.mapping";
+    private static final String OPENAPI_REDOC_PATHS = "micronaut.router.static-resources.redoc.paths";
+    private static final String OPENAPI_REDOC_MAPPING = "micronaut.router.static-resources.redoc.mapping";
     private static final String PROPERTY_EXPRESSION_RESOLVER_SERVICE = "META-INF/services/io.micronaut.context.env.PropertyExpressionResolver";
     private static final String APPLICATION_CONTEXT_CONFIGURER_SERVICE = "META-INF/services/io.micronaut.context.ApplicationContextConfigurer";
     private static final String TEST_RESOURCES_RESOLVER_SERVICE = "META-INF/services/io.micronaut.testresources.core.TestResourcesResolver";
@@ -390,6 +396,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (port != null) {
             properties.put("micronaut.server.port", port);
         }
+        addDefaultOpenApiExposure(properties, configs);
         return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties), verboseLogger);
     }
 
@@ -513,6 +520,10 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .annotationProcessorPath(toFiles(classpaths.processor()))
                 .classpath(toFiles(classpaths.compile()))
                 .runtimeClasspath(toFiles(classpaths.runtime()))
+                .targetDir(pyronautDir.resolve("classes").toFile())
+                // Direct-source compilation is in-memory; OpenAPI cannot persist a spec
+                // without a conventional compiler output location.
+                .options(List.of("-Amicronaut.openapi.enabled=false"))
                 .parentClassLoader(runtimeClassLoader);
             configureDirectSource(builder, invocation, stagingRoot);
             builder.compilePythonBytecode("true".equals(invocation.properties().get(DIRECT_COMPILE_PYTHON_BYTECODE)));
@@ -574,6 +585,8 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .annotationProcessorPath(toFiles(classpaths.processor()))
                 .classpath(toFiles(classpaths.compile()))
                 .runtimeClasspath(toFiles(classpaths.runtime()))
+                .targetDir(pyronautDir.resolve("classes").toFile())
+                .options(List.of("-Amicronaut.openapi.enabled=false"))
                 .parentClassLoader(runtimeClassLoader);
 
             configureDirectSource(builder, invocation, stagingRoot);
@@ -956,6 +969,39 @@ public final class PyronautDevMain implements Callable<Integer> {
             throw new IllegalArgumentException("Expected property assignment in the form name=value: " + assignment);
         }
         properties.put(assignment.substring(0, index), assignment.substring(index + 1));
+    }
+
+    private static void addDefaultOpenApiExposure(Map<String, String> properties, List<Path> configs) {
+        if (properties.keySet().stream().anyMatch(PyronautDevMain::isOpenApiExposureProperty)) {
+            return;
+        }
+        try {
+            for (Path config : configs) {
+                if (Files.isRegularFile(config)) {
+                    String content = Files.readString(config);
+                    if (content.contains("static-resources") && content.contains("swagger")) {
+                        return;
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            // A config read failure must not prevent dev from starting.
+        }
+        properties.putIfAbsent(OPENAPI_SWAGGER_PATHS, "classpath:META-INF/swagger");
+        properties.putIfAbsent(OPENAPI_SWAGGER_MAPPING, "/swagger/**");
+        properties.putIfAbsent(OPENAPI_SWAGGER_UI_PATHS, "classpath:META-INF/swagger/views/swagger-ui");
+        properties.putIfAbsent(OPENAPI_SWAGGER_UI_MAPPING, "/swagger-ui/**");
+        properties.putIfAbsent(OPENAPI_REDOC_PATHS, "classpath:META-INF/swagger/views/redoc");
+        properties.putIfAbsent(OPENAPI_REDOC_MAPPING, "/redoc/**");
+    }
+
+    private static boolean isOpenApiExposureProperty(String name) {
+        return name.equals(OPENAPI_SWAGGER_PATHS)
+            || name.equals(OPENAPI_SWAGGER_MAPPING)
+            || name.equals(OPENAPI_SWAGGER_UI_PATHS)
+            || name.equals(OPENAPI_SWAGGER_UI_MAPPING)
+            || name.equals(OPENAPI_REDOC_PATHS)
+            || name.equals(OPENAPI_REDOC_MAPPING);
     }
 
     private static void applyProperties(Map<String, String> properties, Map<String, String> previousProperties) {

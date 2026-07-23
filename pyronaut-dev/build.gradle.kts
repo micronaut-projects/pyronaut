@@ -26,6 +26,7 @@ dependencies {
     implementation("io.micronaut.jaxrs:micronaut-jaxrs-processor")
     implementation("io.micronaut.sourcegen:micronaut-sourcegen-generator-java")
     implementation("io.micronaut.sourcegen:micronaut-sourcegen-model")
+    implementation("io.micronaut.openapi:micronaut-openapi")
 
     // CLI modules
     implementation(project(":micronaut-pyronaut-install"))
@@ -45,6 +46,7 @@ dependencies {
 
 
     // runtime build in modules
+    api("io.micronaut.openapi:micronaut-openapi-annotations")
     api("io.micronaut.data:micronaut-data-model")
     api("io.micronaut.data:micronaut-data-runtime")
     api("io.micronaut.data:micronaut-data-connection")
@@ -249,6 +251,8 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.micronaut.toml.*",
     "-H:Preserve=package=io.micronaut.serde.*",
     "-H:Preserve=package=tools.jackson.core.*",
+    "-H:Preserve=package=io.swagger.v3.oas.models.*",
+    "-H:IncludeResources=templates/.*",
     "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
     "-H:Preserve=package=io.micronaut.test.*",
     "-H:Preserve=package=io.micronaut.testresources.*",
@@ -296,6 +300,8 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
     "--initialize-at-build-time=io.micronaut.core.reflect.ClassUtils\$Optimizations",
     "--initialize-at-build-time=io.micronaut.scheduling.LoomSupport",
+    "--initialize-at-build-time=io.micronaut.http.MediaType",
+    "--initialize-at-build-time=io.micronaut.http.annotation",
 //    Pyronaut
     "--initialize-at-build-time=io.micronaut.pyronaut.install",
     "--initialize-at-build-time=io.micronaut.pyronaut.processor",
@@ -328,6 +334,18 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
     "--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm",
     "--initialize-at-build-time=com.github.javaparser",
+    "--initialize-at-build-time=io.swagger.v3.oas.models",
+    "--initialize-at-build-time=io.micronaut.openapi.javadoc",
+    "--initialize-at-build-time=io.micronaut.openapi.annotation",
+    "--initialize-at-build-time=io.micronaut.openapi.view",
+    "--initialize-at-build-time=io.micronaut.openapi.visitor",
+    "--initialize-at-build-time=io.micronaut.openapi.visitor.ConvertUtils\$1",
+    "--initialize-at-build-time=com.vladsch.flexmark.html2md.converter",
+    "--initialize-at-build-time=com.vladsch.flexmark.util.sequence",
+    "--initialize-at-build-time=com.vladsch.flexmark.util.misc",
+    "--initialize-at-run-time=com.vladsch.flexmark.util.sequence.Escaping",
+    "--initialize-at-build-time=com.vladsch.flexmark.util.data",
+    "--initialize-at-build-time=com.vladsch.flexmark.util.html",
     "--initialize-at-run-time=io.netty",
     "--initialize-at-run-time=ch.qos.logback",
     "--initialize-at-run-time=com.mysql",

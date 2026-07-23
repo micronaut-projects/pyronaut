@@ -128,6 +128,13 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 boolean showProgress = !"off".equalsIgnoreCase(progress);
                 if (!refresh && !noCache && Files.exists(hashFile) && Files.exists(ExternalProjectLayout.file(root))
                     && hash.equals(Files.readString(hashFile).trim())) {
+                    try {
+                        ExternalProjectLayout cachedLayout = ExternalProjectLayout.read(root);
+                        AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+                            cachedLayout.annotationProcessorClasspath().isEmpty() ? cachedLayout.buildClasspath() : cachedLayout.annotationProcessorClasspath());
+                    } catch (Exception discoveryFailure) {
+                        // Option discovery is best effort; dependency installation remains usable.
+                    }
                     if (showProgress) {
                         System.err.println(buildName + " dependencies already configured (cache hit). Use --refresh to resolve again.");
                     }
@@ -138,6 +145,8 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 }
                 ExternalProjectLayout layout = externalBuildResolver.resolve(root, offline, localRepo);
                 layout.write(root);
+                AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+                    layout.annotationProcessorClasspath().isEmpty() ? layout.buildClasspath() : layout.annotationProcessorClasspath());
                 if (layout.testResourcesEnabled()) {
                     Files.write(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-resources-server-dependencies"),
                         layout.testResourcesClasspath().stream().map(Path::toString).toList());
@@ -164,7 +173,18 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 }
                 boolean bypassRequested = refresh || noCache;
                 if (!bypassRequested && ResolutionCache.cacheHit(cacheDir, hash, scopes)) {
+                    try {
+                        AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+                            readManifestClasspath(cacheDir.resolve(InstallScope.BUILD.manifestFile())));
+                    } catch (Exception discoveryFailure) {
+                        // Option discovery is best effort; dependency installation remains usable.
+                    }
                     progressReporter.cacheHit();
+                    if (scopes.contains(InstallScope.RUNTIME)) {
+                        editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(),
+                            readManifestClasspath(cacheDir.resolve(InstallScope.RUNTIME.manifestFile())).stream().map(Path::toString).toList(),
+                            AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
+                    }
                     emitEditorSupportBestEffort(
                         progressReporter,
                         () -> pythonEditorSupport.ensureWrittenFromManifests(root, cacheDir, model.pyronaut().ideStubs())
@@ -185,8 +205,11 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     resolved.put(installScope, classpath);
                     resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
                 }
+                AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+                    resolved.getOrDefault(InstallScope.BUILD, List.of()).stream().map(Path::of).toList());
                 if (resolved.containsKey(InstallScope.RUNTIME)) {
-                    var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(), resolved.get(InstallScope.RUNTIME));
+                    var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(),
+                        resolved.get(InstallScope.RUNTIME), AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
                     if (schemaResult.status() == MicronautApplicationJsonSchemaBundler.Status.GENERATED) {
                         progressReporter.generatedApplicationSchema(schemaResult.mergedSchemas());
                     }
@@ -226,6 +249,16 @@ public final class PyronautInstallMain implements Callable<Integer> {
         return resolvedClasspath.stream()
             .filter(path -> includeInManifest(installScope, path))
             .map(path -> path.toAbsolutePath().toString())
+            .toList();
+    }
+
+    private static List<Path> readManifestClasspath(Path manifest) throws IOException {
+        if (!Files.isRegularFile(manifest)) {
+            return List.of();
+        }
+        return Files.readAllLines(manifest, java.nio.charset.StandardCharsets.UTF_8).stream()
+            .filter(line -> !line.isBlank())
+            .map(Path::of)
             .toList();
     }
 

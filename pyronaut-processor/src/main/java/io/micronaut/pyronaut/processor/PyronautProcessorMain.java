@@ -136,6 +136,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             PyprojectModel model = externalLayout == null ? modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME)) : null;
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
             ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
+            List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false);
+            List<String> testOptions = ProcessorOptions.resolve(root, model, options, true);
             List<Path> pyronautProcessorSupport = externalProcessorSupportClasspath();
 
             List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()
@@ -211,7 +213,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         effectiveProcessorPath,
                         effectiveClasspath,
                         compilePythonBytecode,
-                        options
+                        mainOptions
                     );
                     if (!noCache
                         && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint, resolvedMainTargetDir)) {
@@ -229,7 +231,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             effectiveProcessorPath,
                             effectiveClasspath,
                             compilePythonBytecode,
-                            options
+                            mainOptions
                         ));
                         if (!noCache) {
                             ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint);
@@ -288,7 +290,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             effectiveProcessorPath,
                             effectiveTestClasspath,
                             compilePythonBytecode,
-                            options
+                            testOptions
                         );
                         if (!noCache
                             && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint, resolvedTestTargetDir)) {
@@ -307,7 +309,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                                 effectiveProcessorPath,
                                 effectiveTestClasspath,
                                 compilePythonBytecode,
-                                options
+                                testOptions
                             ));
                             if (!noCache) {
                                 ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint);

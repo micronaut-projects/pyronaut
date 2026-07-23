@@ -67,8 +67,16 @@ final class PyprojectEditorSupport {
                                                                                     Path cacheDir,
                                                                                     PyprojectModel.Sources sources,
                                                                                     List<String> runtimeClasspath) throws IOException {
+        return ensureApplicationSchema(projectDir, cacheDir, sources, runtimeClasspath, List.of());
+    }
+
+    MicronautApplicationJsonSchemaBundler.SchemaWriteResult ensureApplicationSchema(Path projectDir,
+                                                                                    Path cacheDir,
+                                                                                    PyprojectModel.Sources sources,
+                                                                                    List<String> runtimeClasspath,
+                                                                                    List<String> processorOptions) throws IOException {
         Path schemaFile = cacheDir.resolve("schemas").resolve(MicronautApplicationJsonSchemaBundler.SCHEMA_FILE_NAME);
-        MicronautApplicationJsonSchemaBundler.SchemaWriteResult result = applicationSchemaBundler.write(runtimeClasspath, schemaFile);
+        MicronautApplicationJsonSchemaBundler.SchemaWriteResult result = applicationSchemaBundler.write(runtimeClasspath, schemaFile, processorOptions);
         if (result.available()) {
             ensureApplicationDirective(projectDir, schemaFile, sources);
         }
@@ -80,7 +88,11 @@ final class PyprojectEditorSupport {
                                                                                                 PyprojectModel.Sources sources) throws IOException {
         Path schemaFile = cacheDir.resolve("schemas").resolve(MicronautApplicationJsonSchemaBundler.SCHEMA_FILE_NAME);
         Path manifestFile = cacheDir.resolve(InstallScope.RUNTIME.manifestFile());
-        MicronautApplicationJsonSchemaBundler.SchemaWriteResult result = applicationSchemaBundler.writeFromManifest(manifestFile, schemaFile);
+        MicronautApplicationJsonSchemaBundler.SchemaWriteResult result = applicationSchemaBundler.write(
+            Files.exists(manifestFile) ? Files.readAllLines(manifestFile, StandardCharsets.UTF_8) : List.of(),
+            schemaFile,
+            AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir)
+        );
         if (result.available()) {
             ensureApplicationDirective(projectDir, schemaFile, sources);
         }

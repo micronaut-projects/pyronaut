@@ -9,6 +9,7 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
 
     implementation(project(":micronaut-pyronaut-config-model"))
+    implementation(libs.micronaut.toml)
     implementation(mnPicocli.picocli)
     implementation(mn.micronaut.context.python)
     implementation(mn.micronaut.inject.python)

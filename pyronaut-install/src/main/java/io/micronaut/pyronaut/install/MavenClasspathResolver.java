@@ -72,6 +72,8 @@ final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_CLIENT_MODULE = "io.micronaut.testresources:micronaut-test-resources-client";
     private static final String TEST_RESOURCES_SERVER_MODULE = "io.micronaut.testresources:micronaut-test-resources-server";
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
+    private static final String MICRONAUT_OPENAPI_PROCESSOR_MODULE = "io.micronaut.openapi:micronaut-openapi";
+    private static final String MICRONAUT_OPENAPI_ANNOTATIONS_MODULE = "io.micronaut.openapi:micronaut-openapi-annotations";
     private static final String MICRONAUT_CONTEXT_PYTHON_MODULE = "io.micronaut:micronaut-context-python";
     private static final String MICRONAUT_INJECT_PYTHON_MODULE = "io.micronaut:micronaut-inject-python";
     private static final String MICRONAUT_MANAGEMENT_MODULE = "io.micronaut:micronaut-management";
@@ -312,6 +314,7 @@ final class MavenClasspathResolver {
             }
             addDefaultCoordinate(build, MICRONAUT_INJECT_PYTHON_MODULE, managedVersions);
             addDefaultCoordinate(build, MICRONAUT_CONTEXT_PYTHON_MODULE, managedVersions);
+            addDefaultCoordinate(build, MICRONAUT_OPENAPI_PROCESSOR_MODULE, managedVersions);
             return List.copyOf(build);
         }
         if (scope == InstallScope.RUNTIME) {
@@ -321,6 +324,7 @@ final class MavenClasspathResolver {
             }
             addDefaultCoordinate(runtime, MICRONAUT_CONTEXT_PYTHON_MODULE, managedVersions);
             addDefaultCoordinate(runtime, MICRONAUT_TOML_MODULE, managedVersions);
+            addDefaultCoordinate(runtime, MICRONAUT_OPENAPI_ANNOTATIONS_MODULE, managedVersions);
             String testResourcesClient = testResourcesClientCoordinate(model, managedVersions);
             if (testResourcesClient != null) {
                 runtime.add(testResourcesClient);

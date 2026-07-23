@@ -209,6 +209,7 @@ Managed runtime defaults:
 - When dependency versions are managed from the Micronaut platform, `pyronaut install` adds `io.micronaut.toml:micronaut-toml` to the runtime classpath by default, so `application.toml` in the configured resources directory works without an explicit dependency declaration.
 - `pyronaut install` also adds `io.micronaut:micronaut-context-python` to `runtime` by default.
 - `pyronaut install` also adds `io.micronaut:micronaut-inject-python` and `io.micronaut:micronaut-context-python` to `build` by default.
+- `pyronaut install` also adds `io.micronaut.openapi:micronaut-openapi` to `build` and its annotations to `runtime`, enabling OpenAPI processing without a project-specific processor declaration.
 - `pyronaut install` also adds `org.junit.platform:junit-platform-launcher` and `org.junit.jupiter:junit-jupiter-engine` to `test` by default.
 - Commands that need a GraalVM JDK resolve one through the shared toolchain flow described in <<graalvm-toolchains>>.
 
@@ -218,6 +219,14 @@ Editor support:
 - `pyronaut install` prepends a Taplo schema directive to `pyproject.toml` pointing at that schema.
 - If `application.toml` exists in the configured resources directory, `pyronaut install` also builds `__pyronaut__/schemas/micronaut-application.schema.json` from the Micronaut configuration schemas present on the resolved runtime classpath and prepends a schema directive to that file.
 - Runtime configuration schemas are merged by their `x-micronaut.prefix` path, so overlapping contributors such as `micronaut.server` and `micronaut.server.netty` are combined into one rooted schema tree.
+
+Annotation processor options:
+
+- During installation, Pyronaut discovers `TypeElementVisitor.getSupportedOptions()` from the resolved processor classpath and caches the sorted option names under `__pyronaut__/annotation-processor-options.properties`.
+- Matching values from the Micronaut application environment (including `application.toml`, `application.yml`, and `application.properties`) are flattened to dotted keys and passed to processing as `-A` compiler arguments. Unrelated application configuration is ignored.
+- Pyronaut supplies the supported `micronaut.openapi.views.spec` option with `swagger-ui.enabled=true,redoc.enabled=true` by default, unless the application overrides it. This causes Swagger UI and ReDoc HTML assets to be generated under `META-INF/swagger/views`.
+- `pyronaut dev` supplies default static-resource routes for the generated YAML, Swagger UI, and ReDoc under `/swagger/**`, `/swagger-ui/**`, and `/redoc/**`. Explicit `--property` values or application configuration take precedence; `pyronaut run` does not add these routes automatically.
+- The test processing pass always passes `micronaut.openapi.enabled=false`, so OpenAPI files are generated only for main sources.
 - `pyronaut install` also generates Python editor stubs under `__pyronaut__/ide-stubs` from the resolved `runtime` and `test` classpaths.
 - Python editor stub generation is configurable under `[tool.pyronaut.ide-stubs]` with `enabled`, `ide`, `packages`, `exclude-patterns`, and `destination-dir`.
 - `ide` defaults to `vscode` and currently supports `vscode` and `pycharm`.

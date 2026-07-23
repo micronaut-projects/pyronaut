@@ -66,6 +66,10 @@ final class MicronautApplicationJsonSchemaBundler {
     }
 
     SchemaWriteResult write(List<String> runtimeClasspath, Path schemaFile) throws IOException {
+        return write(runtimeClasspath, schemaFile, List.of());
+    }
+
+    SchemaWriteResult write(List<String> runtimeClasspath, Path schemaFile, List<String> processorOptions) throws IOException {
         List<String> normalizedClasspath = runtimeClasspath.stream()
             .filter(entry -> entry != null && !entry.isBlank() && entry.endsWith(".jar"))
             .distinct()
@@ -73,8 +77,9 @@ final class MicronautApplicationJsonSchemaBundler {
             .toList();
         String classpathHash = hashClasspath(normalizedClasspath);
         Path stateFile = schemaFile.resolveSibling(STATE_FILE_NAME);
-        String presentState = "present:" + classpathHash;
-        String emptyState = "empty:" + classpathHash;
+        String optionState = String.join("\n", new TreeSet<>(processorOptions == null ? List.of() : processorOptions));
+        String presentState = "present:" + classpathHash + "\n" + optionState;
+        String emptyState = "empty:" + classpathHash + "\n" + optionState;
         if (Files.exists(stateFile)) {
             String existingState = Files.readString(stateFile, StandardCharsets.UTF_8).trim();
             if (existingState.equals(presentState) && Files.exists(schemaFile)) {
@@ -104,7 +109,12 @@ final class MicronautApplicationJsonSchemaBundler {
                 // do not expose Micronaut schema resources.
             }
         }
-        if (merged == 0) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) root.get("properties");
+        for (String option : new TreeSet<>(processorOptions == null ? List.of() : processorOptions)) {
+            addProcessorOptionSchema(properties, option);
+        }
+        if (merged == 0 && (processorOptions == null || processorOptions.isEmpty())) {
             Files.deleteIfExists(schemaFile);
             Files.createDirectories(stateFile.getParent());
             Files.writeString(stateFile, emptyState, StandardCharsets.UTF_8);
@@ -114,6 +124,37 @@ final class MicronautApplicationJsonSchemaBundler {
         Files.writeString(schemaFile, jsonMapper.writeValueAsString(root), StandardCharsets.UTF_8);
         Files.writeString(stateFile, presentState, StandardCharsets.UTF_8);
         return SchemaWriteResult.generated(merged);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void addProcessorOptionSchema(Map<String, Object> rootProperties, String option) {
+        String[] segments = option.split("\\.");
+        Map<String, Object> properties = rootProperties;
+        for (int index = 0; index < segments.length - 1; index++) {
+            Object existing = properties.get(segments[index]);
+            if (!(existing instanceof Map<?, ?> existingMap)) {
+                Map<String, Object> table = new LinkedHashMap<>();
+                table.put("type", "object");
+                table.put("properties", new LinkedHashMap<String, Object>());
+                properties.put(segments[index], table);
+                existing = table;
+            }
+            Map<String, Object> existingSchema = new LinkedHashMap<>((Map<String, Object>) existing);
+            properties.put(segments[index], existingSchema);
+            Object nested = existingSchema.get("properties");
+            if (!(nested instanceof Map<?, ?>)) {
+                nested = new LinkedHashMap<String, Object>();
+                existingSchema.put("properties", nested);
+            } else if (!(nested instanceof LinkedHashMap<?, ?>)) {
+                nested = new LinkedHashMap<>((Map<String, Object>) nested);
+                existingSchema.put("properties", nested);
+            }
+            properties = (Map<String, Object>) nested;
+        }
+        properties.putIfAbsent(segments[segments.length - 1], Map.of(
+            "type", List.of("string", "boolean", "integer", "number", "array", "object"),
+            "description", "Annotation processor option discovered by Pyronaut."
+        ));
     }
 
     private static String hashClasspath(List<String> runtimeClasspath) throws IOException {

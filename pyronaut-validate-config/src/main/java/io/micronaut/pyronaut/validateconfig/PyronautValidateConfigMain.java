@@ -223,7 +223,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         return new ValidationSettings(true, true, false, true, "reachable", ReportFormat.BOTH,
             root.resolve("__pyronaut__/reports/config-validation").resolve(normalizedScenario), root,
             "dev".equals(normalizedScenario) ? List.of("dev") : "test".equals(normalizedScenario) ? List.of("test") : List.of(),
-            List.copyOf(classpath), List.copyOf(resources), List.of("micronaut.config"), List.of(), normalizedScenario);
+            List.copyOf(classpath), List.copyOf(resources), List.of("micronaut.config", "micronaut.openapi", "micronaut.processing"), List.of(), normalizedScenario);
     }
 
     private static boolean isTraceEnabled() {
@@ -366,6 +366,8 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     private List<String> mergeSuppressions(PyprojectModel.Validation validation) {
         LinkedHashSet<String> merged = new LinkedHashSet<>();
         merged.add("micronaut.config");
+        merged.add("micronaut.openapi");
+        merged.add("micronaut.processing");
         addNonBlank(merged, validation.suppressions());
         addNonBlank(merged, suppressions);
         addNonBlank(merged, suppress);
