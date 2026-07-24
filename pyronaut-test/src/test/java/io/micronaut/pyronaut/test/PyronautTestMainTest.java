@@ -167,7 +167,7 @@ class PyronautTestMainTest {
             command.selectClasses = java.util.List.of(PassingTest.class.getName());
 
             assertEquals(0, command.call());
-            assertEquals("pyronaut-default-logback.xml", propertyDuringBootstrap.get());
+            assertNull(propertyDuringBootstrap.get());
             assertFalse(System.getProperties().containsKey(property));
         } finally {
             restoreProperty(property, previous);

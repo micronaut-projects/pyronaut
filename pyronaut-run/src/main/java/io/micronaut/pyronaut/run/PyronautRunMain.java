@@ -55,7 +55,6 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String NATIVE_IMAGE_CODE = "org.graalvm.nativeimage.imagecode";
-    private static final String PYTHON_APPLICATION_MAIN = "META-INF/GRAALPY-VFS/micronaut-application/src/main.py";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String EXTERNAL_DEVELOPMENT_MODE = "pyronaut.external.development";
     private static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
@@ -167,9 +166,9 @@ public final class PyronautRunMain implements Callable<Integer> {
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
-            boolean hasPythonApplicationMain = hasPythonApplicationMain(applicationClassLoader);
-            boolean defaultLoggingConfigurationApplied = PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
-            if (!hasPythonApplicationMain && defaultLoggingConfigurationApplied) {
+            Thread.currentThread().setContextClassLoader(applicationClassLoader);
+            boolean defaultLoggingConfigurationApplied = PyronautLauncherLogging.shouldInitializeApplicationDefaults(applicationClassLoader);
+            if (defaultLoggingConfigurationApplied) {
                 loggingInitializer.initializeApplicationDefaults();
             }
             if (verboseLogger != null) {
@@ -177,7 +176,6 @@ public final class PyronautRunMain implements Callable<Integer> {
             }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
-            Thread.currentThread().setContextClassLoader(applicationClassLoader);
             contextBootstrapper.bootstrap(applicationClassLoader);
             ApplicationArgs applicationArgs = new ApplicationArgs(
                     model == null ? Boolean.TRUE : model.pyronaut().run().bannerEnabled(), appArgs, verboseLogger != null
@@ -197,10 +195,6 @@ public final class PyronautRunMain implements Callable<Integer> {
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
             restoreSystemProperty(LOGGER_CONFIG_PROPERTY, previousLoggerConfigProperty);
         }
-    }
-
-    private static boolean hasPythonApplicationMain(ClassLoader classLoader) {
-        return classLoader.getResource(PYTHON_APPLICATION_MAIN) != null;
     }
 
     private static void applyDevelopmentOpenApiExposure(Path projectDir, Path configuredConfigDir) {

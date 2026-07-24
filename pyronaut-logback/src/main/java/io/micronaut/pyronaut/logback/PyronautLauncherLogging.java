@@ -30,13 +30,12 @@ import org.slf4j.LoggerFactory;
  */
 @Internal
 public final class PyronautLauncherLogging {
-    public static final String DEFAULT_APPLICATION_LOGBACK_CONFIGURATION = "pyronaut-default-logback.xml";
-
     private static final String SIMPLE_LOGGER_DEFAULT_LEVEL = "org.slf4j.simpleLogger.defaultLogLevel";
     private static final String LOGBACK_STATUS_LISTENER = "logback.statusListenerClass";
     private static final String LOGBACK_NOP_STATUS_LISTENER = "ch.qos.logback.core.status.NopStatusListener";
     private static final String LOGBACK_CONFIGURATION_FILE_PROPERTY = "logback.configurationFile";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
+    static final String APPLICATION_DEFAULTS_MARKER = "pyronaut.application.logging.defaults";
     private static final String CONSOLE_APPENDER_NAME = "PYRONAUT_LAUNCHER_CONSOLE";
     private static final String CONSOLE_PATTERN = "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
     private static final String APPLICATION_CONSOLE_PATTERN = "%cyan(%d{yyyy-MM-dd HH:mm:ss.SSS}) %gray([%level]) %magenta(%logger{36}): %msg%n";
@@ -50,11 +49,15 @@ public final class PyronautLauncherLogging {
 
         ILoggerFactory loggerFactory = LoggerFactory.getILoggerFactory();
         if (loggerFactory instanceof LoggerContext loggerContext) {
-            Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
-            rootLogger.setLevel(Level.WARN);
-            if (!rootLogger.iteratorForAppenders().hasNext()) {
-                rootLogger.addAppender(createConsoleAppender(loggerContext));
-            }
+            initializeLauncherDefaults(loggerContext);
+        }
+    }
+
+    static void initializeLauncherDefaults(LoggerContext loggerContext) {
+        Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+        rootLogger.setLevel(Level.WARN);
+        if (!rootLogger.iteratorForAppenders().hasNext()) {
+            rootLogger.addAppender(createConsoleAppender(loggerContext));
         }
     }
 
@@ -75,28 +78,42 @@ public final class PyronautLauncherLogging {
 
         ILoggerFactory loggerFactory = LoggerFactory.getILoggerFactory();
         if (loggerFactory instanceof LoggerContext loggerContext) {
-            loggerContext.reset();
-            Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
-            rootLogger.setLevel(verboseLogger != null && verboseLogger.isEmpty() ? Level.TRACE : Level.INFO);
-            rootLogger.addAppender(createConsoleAppender(loggerContext, APPLICATION_CONSOLE_PATTERN));
-            if (verboseLogger != null && !verboseLogger.isEmpty()) {
-                loggerContext.getLogger(verboseLogger).setLevel(Level.TRACE);
-            }
+            initializeApplicationDefaults(loggerContext, verboseLogger);
+        }
+    }
+
+    static void initializeApplicationDefaults(LoggerContext loggerContext, String verboseLogger) {
+        loggerContext.reset();
+        System.setProperty(APPLICATION_DEFAULTS_MARKER, Boolean.TRUE.toString());
+        Logger rootLogger = loggerContext.getLogger(Logger.ROOT_LOGGER_NAME);
+        rootLogger.setLevel(verboseLogger != null && verboseLogger.isEmpty() ? Level.TRACE : Level.INFO);
+        rootLogger.addAppender(createConsoleAppender(loggerContext, APPLICATION_CONSOLE_PATTERN));
+        if (verboseLogger != null && !verboseLogger.isEmpty()) {
+            loggerContext.getLogger(verboseLogger).setLevel(Level.TRACE);
         }
     }
 
     /**
-     * Configure Micronaut's default application logging resource when the user did not provide one.
+     * Determine whether Pyronaut should use its programmatic application logging defaults.
      *
-     * @return {@code true} when the default was applied
+     * @return {@code true} when no explicit application configuration was provided
      */
-    public static boolean setDefaultApplicationConfigurationProperty() {
-        if (System.getProperty(LOGBACK_CONFIGURATION_FILE_PROPERTY) == null
-            && System.getProperty(LOGGER_CONFIG_PROPERTY) == null) {
-            System.setProperty(LOGGER_CONFIG_PROPERTY, DEFAULT_APPLICATION_LOGBACK_CONFIGURATION);
-            return true;
+    public static boolean shouldInitializeApplicationDefaults() {
+        return shouldInitializeApplicationDefaults(Thread.currentThread().getContextClassLoader());
+    }
+
+    /**
+     * Determine whether Pyronaut should use its defaults for a particular application class loader.
+     *
+     * @param classLoader the application class loader
+     * @return {@code true} when no explicit application configuration was provided
+     */
+    public static boolean shouldInitializeApplicationDefaults(ClassLoader classLoader) {
+        if (System.getProperty(LOGBACK_CONFIGURATION_FILE_PROPERTY) != null
+            || System.getProperty(LOGGER_CONFIG_PROPERTY) != null) {
+            return false;
         }
-        return false;
+        return true;
     }
 
     private static ConsoleAppender<ILoggingEvent> createConsoleAppender(LoggerContext loggerContext) {

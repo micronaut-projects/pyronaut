@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
@@ -117,7 +118,7 @@ class PyronautRunMainTest {
 
             assertEquals(0, runMain.call());
             assertEquals(1, loggingInitializations.get());
-            assertEquals("pyronaut-default-logback.xml", loggerConfigDuringStart.get());
+            assertNull(loggerConfigDuringStart.get());
             assertFalse(System.getProperties().containsKey("logger.config"));
         } finally {
             restoreProperty("logger.config", previousLoggerConfig);
@@ -156,8 +157,8 @@ class PyronautRunMainTest {
             runMain.projectDir = project;
 
             assertEquals(0, runMain.call());
-            assertEquals(0, loggingInitializations.get());
-            assertEquals("pyronaut-default-logback.xml", loggerConfigDuringStart.get());
+            assertEquals(1, loggingInitializations.get());
+            assertNull(loggerConfigDuringStart.get());
             assertFalse(System.getProperties().containsKey("logger.config"));
         } finally {
             restoreProperty("logger.config", previousLoggerConfig);

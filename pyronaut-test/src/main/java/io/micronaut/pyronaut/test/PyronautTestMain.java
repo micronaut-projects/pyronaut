@@ -208,7 +208,9 @@ public final class PyronautTestMain implements Callable<Integer> {
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
-            PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
+            if (PyronautLauncherLogging.shouldInitializeApplicationDefaults(applicationClassLoader)) {
+                PyronautLauncherLogging.initializeApplicationDefaults((String) null);
+            }
             if (verboseLogger != null) {
                 PyronautLauncherLogging.initializeApplicationDefaults(verboseLogger);
             }

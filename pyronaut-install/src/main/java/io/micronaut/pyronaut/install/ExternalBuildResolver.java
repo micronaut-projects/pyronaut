@@ -23,7 +23,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.NodeList;
 
@@ -77,11 +79,11 @@ final class ExternalBuildResolver {
                 ? gradleSourceSets.testResourcesEnabled() : testResourcesEnabled(mavenModel);
             List<Path> testResourcesClasspath = testResourcesEnabled
                 ? resolveClasspath(root, kind, "testResources", offline, localRepository) : List.of();
-            List<Path> developmentRuntime = new ArrayList<>(runtime);
-            developmentRuntime.addAll(managedResolver.resolveManagedDevelopmentSupport(
+            List<Path> managedDevelopmentSupport = managedResolver.resolveManagedDevelopmentSupport(
                 localRepository == null ? MavenClasspathResolver.resolveLocalMavenRepository() : localRepository,
                 offline
-            ));
+            );
+            List<Path> developmentRuntime = mergeClasspath(runtime, managedDevelopmentSupport);
             return new ExternalProjectLayout(kind, mainSources, testSources, mainResources, testResources,
                 build, runtime, developmentRuntime, test, annotationProcessors, testResourcesEnabled, testResourcesClasspath);
         } finally {
@@ -431,7 +433,7 @@ final class ExternalBuildResolver {
                 command.add(Files.isRegularFile(wrapper) ? wrapper.toString() : "mvn");
                 command.add("dependency:build-classpath");
                 command.add("-Dmdep.outputFile=" + output);
-                command.add("-Dmdep.includeScope=" + ("test".equals(scope) ? "test" : ("build".equals(scope) ? "compile" : "runtime")));
+                command.add("-DincludeScope=" + ("test".equals(scope) ? "test" : ("build".equals(scope) ? "compile" : "runtime")));
             } else {
                 Path wrapper = root.resolve("gradlew");
                 command.add(Files.isRegularFile(wrapper) ? wrapper.toString() : "gradle");
@@ -459,7 +461,7 @@ final class ExternalBuildResolver {
             }
             String value = Files.readString(output, StandardCharsets.UTF_8);
             return java.util.Arrays.stream(value.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
-                .filter(s -> !s.isBlank()).map(Path::of).filter(Files::exists).toList();
+                .filter(s -> !s.isBlank()).map(Path::of).filter(Files::exists).distinct().toList();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted resolving external build classpath", e);
@@ -467,5 +469,18 @@ final class ExternalBuildResolver {
             Files.deleteIfExists(output);
             if (initScript != null) Files.deleteIfExists(initScript);
         }
+    }
+
+    private static List<Path> mergeClasspath(List<Path> primary, List<Path> additional) {
+        Map<String, Path> artifacts = new LinkedHashMap<>();
+        primary.forEach(path -> artifacts.putIfAbsent(mavenArtifactKey(path), path));
+        additional.forEach(path -> artifacts.putIfAbsent(mavenArtifactKey(path), path));
+        return List.copyOf(artifacts.values());
+    }
+
+    private static String mavenArtifactKey(Path path) {
+        Path version = path.getParent();
+        Path artifact = version == null ? null : version.getParent();
+        return artifact == null ? path.toAbsolutePath().normalize().toString() : artifact.getFileName().toString();
     }
 }

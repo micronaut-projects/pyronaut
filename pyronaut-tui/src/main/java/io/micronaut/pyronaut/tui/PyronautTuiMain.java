@@ -37,7 +37,6 @@ public final class PyronautTuiMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
-        PyronautLauncherLogging.setDefaultApplicationConfigurationProperty();
         PyronautLauncherLogging.initialize();
         var exitCode = new CommandLine(new PyronautTuiMain()).execute(args);
         System.exit(exitCode);
