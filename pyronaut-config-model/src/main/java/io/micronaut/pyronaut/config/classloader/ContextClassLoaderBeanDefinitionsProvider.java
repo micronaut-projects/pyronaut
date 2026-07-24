@@ -62,6 +62,9 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
         List<BeanDefinitionReference<?>> references = new ArrayList<>();
         try {
             for (String className : MicronautMetaServiceLoaderUtils.findMicronautMetaServiceEntries(classLoader, BeanDefinitionReference.class.getName())) {
+                if (className.startsWith("io.micronaut.controlpanel.")) {
+                    continue;
+                }
                 addReference(className, classLoader, references, false);
             }
         } catch (IOException e) {

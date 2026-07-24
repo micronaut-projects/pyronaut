@@ -295,9 +295,6 @@ def run(
         return PLATFORM_UNSUPPORTED
 
     project_dir = _extract_project_dir(forwarded_args)
-    if command in {"dev"} and _control_panel_requested(Path(project_dir), forwarded_args):
-        os.environ["PYRONAUT_CONTROL_PANEL_ENABLED"] = "true"
-
     no_cache = _extract_no_cache(forwarded_args)
     local_repository = _extract_local_repository(forwarded_args)
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
@@ -352,7 +349,7 @@ def run(
         # produced by install. Refresh it before deciding whether to own a
         # server; otherwise a stale layout from an earlier invocation can
         # incorrectly start Test Resources.
-        if command in {"dev", "test"} and _is_external_build_project(Path(project_dir)):
+        if command == "test" and _is_external_build_project(Path(project_dir)):
             install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
             if no_cache:
                 install_args.append("--no-cache")
@@ -423,7 +420,7 @@ def run(
                     local_repository,
                     execute,
                     locate,
-                    install=command != "dev" or not (Path(project_dir) / "__pyronaut__" / "project-layout.properties").exists(),
+                    install=command != "dev",
                     process_pass="main",
                 )
                 if preflight_code != SUCCESS:
@@ -876,8 +873,10 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}")
     if environment is not None and not _has_micronaut_environments_property(args):
         jvm_args.append(f"-Dmicronaut.environments={environment}")
-    if "--control-panel" in args:
+    if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
         jvm_args.append("-Dmicronaut.control-panel.enabled=true")
+        jvm_args.append("-Dmicronaut.control-panel.path=/control-panel")
+        jvm_args.append("-Dmicronaut.control-panel.security.access=ANONYMOUS")
     compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
     if compiler_classpath:
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
@@ -895,6 +894,7 @@ def _build_direct_source_native_jvm_args(
     if command in {"dev", "run", "test"}:
         project_dir = Path.cwd().resolve()
         cache_dir = project_dir / "__pyronaut__"
+        classpath = ""
         if cache_dir.is_dir():
             try:
                 classpath = _build_native_application_classpath(command, project_dir, executable_path)
@@ -903,7 +903,26 @@ def _build_direct_source_native_jvm_args(
             else:
                 jvm_args.append(f"-Djava.class.path={classpath}")
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
+        if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
+            # Resolve Control Panel artifacts bundled with the launcher wheel;
+            # do not infer dependencies from project manifests or Maven local.
+            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            if control_panel:
+                existing = classpath.split(os.pathsep) if classpath else []
+                classpath = os.pathsep.join(dict.fromkeys([*existing, *control_panel]))
+                jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
+                jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}")
     return jvm_args
+
+
+def _direct_control_panel_classpath_entries(executable_path: str) -> list[str]:
+    entries: list[str] = []
+    launcher_lib = Path(executable_path).parent.parent / "lib"
+    bundled_dir = launcher_lib / "control-panel"
+    for entry in sorted(bundled_dir.glob("*.jar")):
+        if not entry.name.endswith("-sources.jar"):
+            entries.append(str(entry))
+    return list(dict.fromkeys(entries))
 
 
 def _direct_source_native_compiler_classpath_entries(executable_path: str) -> list[str]:
@@ -1349,6 +1368,8 @@ def _is_native_launcher_provided_artifact(
     file_name = Path(entry).name
     if _is_control_panel_artifact(file_name):
         return command != "dev"
+    if command == "dev" and _versioned_jar_artifact_id(file_name) == "micronaut-management":
+        return False
     if _is_native_test_resources_client_artifact(file_name):
         return True
     coordinate = _artifact_coordinate(entry)
@@ -3191,6 +3212,21 @@ def _build_dev_delegate_invocation(
         # The native launcher accepts only its subcommand and source selectors;
         # convenience JVM properties are applied by the Python/fallback path.
         # Do not leak them into native picocli parsing.
+        if _control_panel_requested(project_dir, args):
+            executable_path = _resolve_pyronaut_dev_native_executable(resolver)
+            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            if control_panel:
+                classpath_property = next((i for i, value in enumerate(dev_command_line) if value.startswith("-Djava.class.path=")), None)
+                if classpath_property is not None:
+                    existing = dev_command_line[classpath_property].split("=", 1)[1]
+                    dev_command_line[classpath_property] = f"-Djava.class.path={os.pathsep.join(dict.fromkeys([existing, *control_panel]))}"
+                command_index = dev_command_line.index("run")
+                dev_command_line[command_index:command_index] = [
+                    "-Dmicronaut.control-panel.enabled=true",
+                    "-Dmicronaut.control-panel.path=/control-panel",
+                    "-Dmicronaut.control-panel.security.access=ANONYMOUS",
+                    f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}",
+                ]
         env = _build_non_test_resources_env("dev", java_home_provider)
         if dev_jvm_args:
             env["JAVA_TOOL_OPTIONS"] = " ".join(dev_jvm_args)
@@ -3249,6 +3285,8 @@ def _split_dev_delegate_options(args: Sequence[str]) -> tuple[list[str], list[st
             continue
         if value == "--control-panel":
             jvm_args.append("-Dmicronaut.control-panel.enabled=true")
+            jvm_args.append("-Dmicronaut.control-panel.path=/control-panel")
+            jvm_args.append("-Dmicronaut.control-panel.security.access=ANONYMOUS")
             index += 1
             continue
         if value.startswith("--port="):
@@ -4245,6 +4283,16 @@ def _pyronaut_dev_native_command_line(
     effective_classpath_command = classpath_command or command
     if effective_classpath_command in {"dev", "run", "test"}:
         classpath = _build_native_application_classpath(effective_classpath_command, project_dir, executable_path)
+        if effective_classpath_command == "dev" and _control_panel_requested(project_dir, args):
+            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            if control_panel:
+                classpath = os.pathsep.join(dict.fromkeys([classpath, *control_panel]))
+                jvm_args.extend((
+                    "-Dmicronaut.control-panel.enabled=true",
+                    "-Dmicronaut.control-panel.path=/control-panel",
+                    "-Dmicronaut.control-panel.security.access=ANONYMOUS",
+                    f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}",
+                ))
         jvm_args = [*jvm_args, f"-Djava.class.path={classpath}"]
         test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
         if test_resources_client_classpath:
@@ -4349,10 +4397,8 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
         except OSError:
             return False
         return False
-    # A standalone verbosity flag is a normal delegated command option; it
-    # does not imply direct-source execution until a source path is present.
-    if (argv[0] in direct_options and argv[0] != "--verbose") or argv[0].startswith("-D"):
-        return True
+    # Development options alone configure the project-based command; direct
+    # source execution requires an explicit source selector.
     return False
 
 

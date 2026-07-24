@@ -9,6 +9,7 @@ plugins {
 }
 
 val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.platform.version")
+val controlPanelRuntime by configurations.creating
 
 dependencies {
     api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
@@ -43,6 +44,12 @@ dependencies {
 
 
     implementation(mnPicocli.picocli)
+
+    // Bundled only for --control-panel direct development launches. These
+    // artifacts are intentionally outside the normal launcher runtime graph.
+    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-core:${libs.versions.micronaut.control.panel.get()}")
+    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-management:${libs.versions.micronaut.control.panel.get()}")
+    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-ui:${libs.versions.micronaut.control.panel.get()}")
 
 
     // runtime build in modules
@@ -85,6 +92,11 @@ dependencies {
     }
 }
 
+val bundleControlPanelJars by tasks.registering(Sync::class) {
+    from(controlPanelRuntime)
+    into(layout.buildDirectory.dir("generated/control-panel-libs"))
+}
+
 configurations.configureEach {
     exclude(group = "org.slf4j", module = "slf4j-simple")
 }
@@ -95,6 +107,7 @@ configurations.named("nativeImageClasspath") {
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-server")
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-control-panel")
     exclude(group = "io.micronaut.controlpanel", module = "micronaut-control-panel-core")
+    exclude(group = "io.micronaut.controlpanel", module = "micronaut-control-panel-management")
     exclude(group = "io.micronaut.controlpanel", module = "micronaut-control-panel-ui")
 }
 
@@ -139,6 +152,9 @@ val writeNativeClasspathManifests by tasks.registering {
 distributions {
     named("main") {
         contents {
+            into("lib/control-panel") {
+                from(bundleControlPanelJars)
+            }
             into("bin") {
                 from(writeNativeClasspathManifests)
             }
@@ -167,7 +183,7 @@ val runtimeMetadataExclusion = providers.provider {
             add("\\Q$jar\\E")
             add("^/META-INF/native-image/.*")
         }
-        configurations.nativeImageClasspath.get().resolvedConfiguration.resolvedArtifacts
+    configurations.nativeImageClasspath.get().resolvedConfiguration.resolvedArtifacts
             .filter { artifact ->
                 artifact.moduleVersion.id.group == "io.micronaut" && artifact.name == "micronaut-core"
             }

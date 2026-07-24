@@ -545,7 +545,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             ContextClassLoaderApplicationContextConfigurers.configure(micronaut, applicationClassLoader);
             // Apply this last so runtime-discovered configurers cannot replace
             // the generated direct-source bean definitions provider.
-            micronaut.beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation));
+            micronaut.beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation, runtimeClassLoader));
             List<String> configLocations = toConfigLocations(invocation.configs());
             if (!configLocations.isEmpty()) {
                 micronaut.overrideConfigLocations(configLocations.toArray(String[]::new));
@@ -597,7 +597,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
-            DirectSourceApplicationContextConfigurer.set(directSourceBeanDefinitionsProvider(invocation));
+            DirectSourceApplicationContextConfigurer.set(directSourceBeanDefinitionsProvider(invocation, runtimeClassLoader));
             defaultTestServerPort();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             if (sourceType(invocation.sources()) == SourceType.PYTHON) {
@@ -858,13 +858,14 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static ClassLoader directSourceLauncherClassLoader(DirectSourceInvocation invocation) {
         ClassLoader launcherClassLoader = PyronautDevMain.class.getClassLoader();
-        if (invocation.setup() != null) {
+        if (invocation.setup() != null || controlPanelRequested(invocation)) {
             return launcherClassLoader;
         }
         return new DirectSourceLauncherClassLoader(launcherClassLoader);
     }
 
-    private static BeanDefinitionsProvider directSourceBeanDefinitionsProvider(DirectSourceInvocation invocation) {
+    private static BeanDefinitionsProvider directSourceBeanDefinitionsProvider(DirectSourceInvocation invocation,
+                                                                                ClassLoader runtimeClassLoader) {
         BeanDefinitionsProvider inMemoryProvider = new InMemoryBeanDefinitionsProvider();
         BeanDefinitionsProvider contextClassLoaderProvider = new ContextClassLoaderBeanDefinitionsProvider();
         return classLoader -> {
@@ -875,7 +876,13 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             List<BeanDefinitionReference<?>> generated = inMemoryProvider.provide(effectiveClassLoader);
             addBeanDefinitionReferences(references, generated, invocation);
-            addBeanDefinitionReferences(references, contextClassLoaderProvider.provide(classLoader), invocation);
+            ClassLoader previous = Thread.currentThread().getContextClassLoader();
+            try {
+                Thread.currentThread().setContextClassLoader(runtimeClassLoader);
+                addBeanDefinitionReferences(references, contextClassLoaderProvider.provide(runtimeClassLoader), invocation);
+            } finally {
+                Thread.currentThread().setContextClassLoader(previous);
+            }
             return List.copyOf(references.values());
         };
     }
@@ -1049,6 +1056,16 @@ public final class PyronautDevMain implements Callable<Integer> {
         List<Path> runtimeClasspath = new ArrayList<>(runtime);
         runtimeClasspath.addAll(test);
         runtimeClasspath.addAll(application);
+        if (controlPanelRequested(invocation)) {
+            String bundled = System.getProperty("pyronaut.dev.control.panel.class.path", "");
+            if (!bundled.isBlank()) {
+                for (String entry : bundled.split(Pattern.quote(File.pathSeparator))) {
+                    if (!entry.isBlank()) {
+                        runtimeClasspath.add(Path.of(entry));
+                    }
+                }
+            }
+        }
         return new DirectSourceClasspaths(
             filterDirectSourcePaths(processor, invocation, developmentMode),
             filterDirectSourcePaths(compile, invocation, developmentMode),
@@ -1063,8 +1080,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         boolean excludeTestResources = !testResourcesEnabled(invocation, developmentMode);
         List<Path> filtered = new ArrayList<>();
         for (Path path : paths) {
+            boolean controlPanel = controlPanelRequested(invocation)
+                || "true".equalsIgnoreCase(System.getProperty("micronaut.control-panel.enabled"));
             if ((excludeTestResources && isTestResourcesJar(path))
-                || isNativeProvidedArtifact(path, nativeArtifacts)) {
+                || (isNativeProvidedArtifact(path, nativeArtifacts) && !controlPanel)) {
                 continue;
             }
             if (!filtered.contains(path)) {
@@ -1072,6 +1091,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
         }
         return filtered;
+    }
+
+    private static boolean controlPanelRequested(DirectSourceInvocation invocation) {
+        return "true".equalsIgnoreCase(invocation.properties().get("micronaut.control-panel.enabled"))
+            || "true".equalsIgnoreCase(System.getProperty("micronaut.control-panel.enabled"));
     }
 
     private static Set<String> nativeProvidedArtifacts() {
@@ -1160,14 +1184,29 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (invocation.setup() != null) {
             Path pyproject = stagingRoot.resolve("pyproject.toml");
             Files.copy(invocation.setup(), pyproject, StandardCopyOption.REPLACE_EXISTING);
+        } else if (controlPanelRequested(invocation)) {
+            Files.writeString(stagingRoot.resolve("pyproject.toml"), """
+                [project]
+                name = "pyronaut-direct-source"
+                version = "0.0.0"
+
+                [tool.pyronaut.toolchain]
+                type = "native"
+
+                [tool.pyronaut.control-panel]
+                enabled = true
+                path = "/control-panel"
+                """, StandardCharsets.UTF_8);
         }
     }
 
     private static Path projectDirectory(Path stagingRoot) {
         String configured = System.getProperty(PROJECT_DIR_PROPERTY);
-        return configured == null || configured.isBlank()
-            ? stagingRoot
-            : Path.of(configured).toAbsolutePath().normalize();
+        if (configured == null || configured.isBlank()) {
+            return stagingRoot;
+        }
+        Path project = Path.of(configured).toAbsolutePath().normalize();
+        return Files.isRegularFile(project.resolve("pyproject.toml")) ? project : stagingRoot;
     }
 
     private static Path projectCacheDirectory(DirectSourceInvocation invocation, Path stagingRoot) {
