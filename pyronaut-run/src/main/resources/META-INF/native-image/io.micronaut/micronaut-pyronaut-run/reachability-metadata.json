@@ -79,9 +79,6 @@
   ],
   "resources": [
     {
-      "glob": "pyronaut-default-logback.xml"
-    },
-    {
       "glob": "META-INF/services/**"
     }
   ]
