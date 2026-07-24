@@ -317,6 +317,7 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
     "--initialize-at-build-time=io.micronaut.core.reflect.ClassUtils\$Optimizations",
     "--initialize-at-build-time=io.micronaut.scheduling.LoomSupport",
+    "--initialize-at-build-time=io.micronaut.http.netty.channel.loom.PrivateLoomSupport",
     "--initialize-at-build-time=io.micronaut.http.MediaType",
     "--initialize-at-build-time=io.micronaut.http.annotation",
     "--initialize-at-build-time=io.micronaut.json",
