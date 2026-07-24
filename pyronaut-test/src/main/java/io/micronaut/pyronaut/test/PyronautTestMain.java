@@ -77,6 +77,8 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String MICRONAUT_SERVER_PORT = "micronaut.server.port";
+    private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
+    private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String PYRONAUT_USE_SYSTEM_APPLICATION_CLASSLOADER = "pyronaut.use.system.application.classloader";
     private static final String DEFAULT_TEST_SERVER_PORT = "0";
@@ -204,6 +206,8 @@ public final class PyronautTestMain implements Callable<Integer> {
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         Path resolvedPytestSourceDir = resolvePytestSourceDir(root, resolvedTestsDir);
         String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
+        String previousFailOnNotPresentProperty = System.getProperty(CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT);
+        String previousConfigurationSuppressionsProperty = System.getProperty(CONFIGURATION_VALIDATOR_SUPPRESSIONS);
         String previousLoggerConfigProperty = System.getProperty(LOGGER_CONFIG_PROPERTY);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
@@ -214,6 +218,8 @@ public final class PyronautTestMain implements Callable<Integer> {
             if (verboseLogger != null) {
                 PyronautLauncherLogging.initializeApplicationDefaults(verboseLogger);
             }
+            setDefaultProperty(CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT, "false");
+            setDefaultProperty(CONFIGURATION_VALIDATOR_SUPPRESSIONS, "logger.levels.*");
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             defaultTestServerPort();
@@ -382,6 +388,8 @@ public final class PyronautTestMain implements Callable<Integer> {
             }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
             restoreSystemProperty(MICRONAUT_SERVER_PORT, previousServerPortProperty);
+            restoreSystemProperty(CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT, previousFailOnNotPresentProperty);
+            restoreSystemProperty(CONFIGURATION_VALIDATOR_SUPPRESSIONS, previousConfigurationSuppressionsProperty);
             restoreSystemProperty(LOGGER_CONFIG_PROPERTY, previousLoggerConfigProperty);
         }
     }
@@ -395,6 +403,12 @@ public final class PyronautTestMain implements Callable<Integer> {
     static void defaultTestServerPort() {
         if (System.getProperty(MICRONAUT_SERVER_PORT) == null) {
             System.setProperty(MICRONAUT_SERVER_PORT, DEFAULT_TEST_SERVER_PORT);
+        }
+    }
+
+    private static void setDefaultProperty(String name, String value) {
+        if (System.getProperty(name) == null) {
+            System.setProperty(name, value);
         }
     }
 

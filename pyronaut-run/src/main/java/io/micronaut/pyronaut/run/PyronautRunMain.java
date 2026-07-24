@@ -58,6 +58,8 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String EXTERNAL_DEVELOPMENT_MODE = "pyronaut.external.development";
     private static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
+    private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
+    private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
     private static final String OPENAPI_SWAGGER_PATHS = "micronaut.router.static-resources.swagger.paths";
     private static final String OPENAPI_SWAGGER_MAPPING = "micronaut.router.static-resources.swagger.mapping";
     private static final String OPENAPI_SWAGGER_UI_PATHS = "micronaut.router.static-resources.swagger-ui.paths";
@@ -152,6 +154,7 @@ public final class PyronautRunMain implements Callable<Integer> {
                 layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
             }
             applyDevelopmentOpenApiExposure(root, configDir);
+            applyConfigurationValidationDefaults();
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
             return 8;
@@ -241,6 +244,11 @@ public final class PyronautRunMain implements Callable<Integer> {
         if (System.getProperty(name) == null) {
             System.setProperty(name, value);
         }
+    }
+
+    private static void applyConfigurationValidationDefaults() {
+        setDefaultProperty(CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT, "false");
+        setDefaultProperty(CONFIGURATION_VALIDATOR_SUPPRESSIONS, "logger.levels.*");
     }
 
     private static void restoreSystemProperty(String name, String value) {

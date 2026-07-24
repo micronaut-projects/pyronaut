@@ -102,6 +102,8 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String MICRONAUT_SERVER_PORT = "micronaut.server.port";
     private static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
+    private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
+    private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
     private static final String MICRONAUT_TEST_RESOURCES_ENABLED = "micronaut.test.resources.enabled";
     private static final String DIRECT_COMPILER_CLASSPATH = "pyronaut.dev.compiler.class.path";
     private static final String DIRECT_APPLICATION_CLASSPATH = "pyronaut.dev.application.class.path";
@@ -249,6 +251,11 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (System.getProperty(name) == null) {
             System.setProperty(name, value);
         }
+    }
+
+    private static void applyConfigurationValidationDefaults() {
+        setDefaultProperty(CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT, "false");
+        setDefaultProperty(CONFIGURATION_VALIDATOR_SUPPRESSIONS, "logger.levels.*");
     }
 
     public static int execute(String[] args) {
@@ -468,6 +475,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             stageConfig(invocation.configs(), stagingRoot.resolve("config"));
             applyProperties(invocation.properties(), previousProperties);
+            applyConfigurationValidationDefaults();
             if (invocation.setup() == null) {
                 previousProperties.put(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY,
                     System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY));

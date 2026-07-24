@@ -61,6 +61,7 @@ dependencies {
     api("io.micronaut.cache:micronaut-cache-core")
     api("io.micronaut.sourcegen:micronaut-sourcegen-annotations")
     api("io.micronaut.views:micronaut-views-core")
+    api("io.micronaut:micronaut-management")
     api(mnSerde.micronaut.serde.jackson)
     api(mn.micronaut.context.python.netty)
     api(mn.micronaut.context.python)
@@ -318,6 +319,10 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.scheduling.LoomSupport",
     "--initialize-at-build-time=io.micronaut.http.MediaType",
     "--initialize-at-build-time=io.micronaut.http.annotation",
+    "--initialize-at-build-time=io.micronaut.management.endpoint",
+    "--initialize-at-build-time=io.micronaut.management.endpoint.annotation",
+    "--initialize-at-build-time=io.micronaut.management.endpoint.health",
+    "--initialize-at-build-time=io.micronaut.management.endpoint.indicator.annotation",
 //    Pyronaut
     "--initialize-at-build-time=io.micronaut.pyronaut.install",
     "--initialize-at-build-time=io.micronaut.pyronaut.processor",
