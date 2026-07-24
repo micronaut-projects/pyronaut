@@ -20,6 +20,13 @@ def graalVmProvisionTask = graalVmDevTag.present ? PyronautGraalVmDevBuilds.regi
 def graalVmToolchainHomeProvider = PyronautGraalVmDevBuilds.javaHomeProvider(project, graalVmDevTag)
     .map { it.absolutePath }
 def graalVmHomeProvider = providers.gradleProperty("pyronautGraalVmHome").orElse(graalVmToolchainHomeProvider)
+def buildJdkVersion = providers.provider {
+    project.extensions.getByType(org.gradle.api.plugins.JavaPluginExtension).toolchain.languageVersion.get().asInt().toString()
+}
+def nativeImageJdkVersion = graalVmDevTag.map { tag ->
+    def matcher = tag.trim() =~ /(\d+)/
+    matcher.find() ? matcher.group(1) : buildJdkVersion.get()
+}.orElse(buildJdkVersion)
 def nativeSdkWheel = providers.gradleProperty("native")
     .map { it.toBoolean() }
     .orElse(false)
@@ -319,6 +326,15 @@ release-tag=${configuredTag}
             toolchainDefaultsFile.delete()
         }
 
+        def versionInfoFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/version.properties").asFile
+        versionInfoFile.parentFile.mkdirs()
+        versionInfoFile.text = """pyronaut=${project.findProperty("projectVersion")}
+micronaut.core=${micronautCoreVersion.get()}
+micronaut.platform=${providers.gradleProperty("pyronaut.micronaut.platform.version").get()}
+graalpy=${graalPyVersion.get()}
+native-image.jdk=${nativeImageJdkVersion.get()}
+"""
+
         def pyprojectFile = wheelStagingDir.get().file("pyproject.toml").asFile
         pyprojectFile.parentFile.mkdirs()
         pyprojectFile.text = """
@@ -340,7 +356,7 @@ build-backend = "setuptools.build_meta"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-pyronaut_cli_v2 = ["tools/**", "toolchain-defaults.properties"]
+pyronaut_cli_v2 = ["tools/**", "toolchain-defaults.properties", "version.properties"]
 """.trim() + System.lineSeparator()
 
         def setupCfgFile = wheelStagingDir.get().file("setup.cfg").asFile
@@ -362,6 +378,7 @@ where = src
 [options.package_data]
 pyronaut_cli_v2 =
     toolchain-defaults.properties
+    version.properties
     tools/*
     tools/*/*
     tools/*/*/*

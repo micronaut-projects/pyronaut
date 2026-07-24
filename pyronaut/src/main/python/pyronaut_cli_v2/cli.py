@@ -87,6 +87,21 @@ _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RESET = "\033[0m"
 
+
+def _print_version() -> None:
+    values: dict[str, str] = {}
+    version_file = Path(__file__).with_name("version.properties")
+    if version_file.is_file():
+        for line in version_file.read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                values[key] = value
+    print(f"Pyronaut: {values.get('pyronaut', 'unknown')}")
+    print(f"Micronaut Core: {values.get('micronaut.core', 'unknown')}")
+    print(f"Micronaut Platform: {values.get('micronaut.platform', 'unknown')}")
+    print(f"GraalPy: {values.get('graalpy', 'unknown')}")
+    print(f"Native Image JDK: {values.get('native-image.jdk', 'unknown')}")
+
 Runner = Callable[[list[str]], int]
 RunnerWithEnv = Callable[[list[str], dict[str, str] | None], int]
 
@@ -186,7 +201,7 @@ def run(
         return SUCCESS
 
     if argv[0] in {"-V", "--version"}:
-        print("pyronaut 2")
+        _print_version()
         return SUCCESS
 
     if "--tui" in argv or argv[0] == "--tui":
