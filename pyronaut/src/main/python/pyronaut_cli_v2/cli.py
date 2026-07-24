@@ -314,12 +314,11 @@ def run(
     local_repository = _extract_local_repository(forwarded_args)
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
     delegated_args = _strip_local_repository_args(delegated_args) if command in {"dev", "run", "test"} else delegated_args
-    # External builds are watched by pyronaut-dev itself. Wrapping that native
-    # watcher in the Python auto-restart loop causes both watchers to process
-    # the same source change.
+    # Keep the dev process under the Python auto-restart loop for both managed
+    # and external builds. The native pyronaut-dev launcher runs one
+    # application instance; it does not watch Gradle/Maven source trees.
     auto_restart_mode = (
         command == "dev"
-        and not _is_external_build_project(Path(project_dir))
         and (process_runner is not None or (runner is None and runner_with_env is None))
     )
 

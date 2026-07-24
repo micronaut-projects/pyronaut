@@ -1072,7 +1072,7 @@ additional-resources = ["views"]
         self.assertNotIn("/tmp/micronaut-control-panel-ui-2.0.0.jar", entries)
         self.assertIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
 
-    def test_dev_auto_restart_uses_dev_delegate_command(self):
+    def test_external_dev_auto_restart_uses_run_delegate_command(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             cache_dir = project_dir / "__pyronaut__"
@@ -1098,12 +1098,11 @@ additional-resources = ["views"]
 
         self.assertEqual(0, exit_code)
         command_line, env = executed[0]
-        self.assertIn("io.micronaut.pyronaut.dev.PyronautDevMain", command_line)
+        self.assertIn("io.micronaut.pyronaut.run.PyronautRunMain", command_line)
         self.assertIn("-Dmicronaut.environments=dev", command_line)
-        self.assertIn("/tmp/micronaut-runtime-5.2.0.jar", " ".join(command_line))
         self.assertIsNone(env.get("PYRONAUT_TEST_RESOURCES_DISABLED") if env else None)
 
-    def test_external_dev_uses_native_watcher_not_python_auto_restart(self):
+    def test_external_dev_uses_python_auto_restart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "external"
             project_dir.mkdir()
@@ -1116,7 +1115,7 @@ additional-resources = ["views"]
 
             with patch.object(cli, "_delegate", side_effect=delegate):
                 with patch.object(cli, "_run_lifecycle_validation", return_value=0):
-                    with patch.object(cli, "_run_with_auto_restart", side_effect=AssertionError("external dev must use its native watcher")):
+                    with patch.object(cli, "_run_with_auto_restart", return_value=0) as auto_restart:
                         exit_code = cli.run(
                             ["dev", "--project-dir", str(project_dir)],
                             runner_with_env=lambda command_line, env=None: 0,
@@ -1124,7 +1123,8 @@ additional-resources = ["views"]
                         )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(["process", "dev"], delegated)
+        auto_restart.assert_called_once()
+        self.assertEqual([], delegated)
 
     def test_direct_source_dev_preserves_user_environment_property(self):
         with tempfile.TemporaryDirectory() as temp_dir:
