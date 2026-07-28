@@ -131,6 +131,8 @@ val nativeCompileClasspath by configurations.creating {
 val writeNativeClasspathManifests by tasks.registering {
     val outputDirectory = layout.buildDirectory.dir("generated/native-classpaths")
     outputs.dir(outputDirectory)
+    inputs.files(nativeCompileClasspath)
+    inputs.files(configurations.nativeImageClasspath)
     doLast {
         val directory = outputDirectory.get().asFile
         directory.mkdirs()

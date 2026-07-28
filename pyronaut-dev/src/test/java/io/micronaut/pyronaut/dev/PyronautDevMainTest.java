@@ -140,6 +140,16 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void enablesOpenApiForDirectApplicationsButNotTests() {
+        assertTrue(PyronautDevMain.directSourceCompilerOptions(false).stream()
+            .noneMatch(option -> option.equals("-Amicronaut.openapi.enabled=false")));
+        assertTrue(PyronautDevMain.directSourceCompilerOptions(true).contains("-Amicronaut.openapi.enabled=false"));
+
+        PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectSourceArgs(List.of("App.java"));
+        assertEquals("swagger-ui.enabled=true,redoc.enabled=true", invocation.properties().get("micronaut.openapi.views.spec"));
+    }
+
+    @Test
     void directSourceCacheUsesWorkingDirectoryWithoutPyproject(@TempDir Path tempDir) {
         String previous = System.getProperty("pyronaut.dev.project.dir");
         try {

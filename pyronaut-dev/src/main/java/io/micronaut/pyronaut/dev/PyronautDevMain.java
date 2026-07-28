@@ -125,6 +125,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String OPENAPI_SWAGGER_UI_MAPPING = "micronaut.router.static-resources.swagger-ui.mapping";
     private static final String OPENAPI_REDOC_PATHS = "micronaut.router.static-resources.redoc.paths";
     private static final String OPENAPI_REDOC_MAPPING = "micronaut.router.static-resources.redoc.mapping";
+    private static final String OPENAPI_VIEWS_SPEC = "micronaut.openapi.views.spec";
     private static final String PROPERTY_EXPRESSION_RESOLVER_SERVICE = "META-INF/services/io.micronaut.context.env.PropertyExpressionResolver";
     private static final String APPLICATION_CONTEXT_CONFIGURER_SERVICE = "META-INF/services/io.micronaut.context.ApplicationContextConfigurer";
     private static final String TEST_RESOURCES_RESOLVER_SERVICE = "META-INF/services/io.micronaut.testresources.core.TestResourcesResolver";
@@ -579,9 +580,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .classpath(toFiles(classpaths.compile()))
                 .runtimeClasspath(toFiles(classpaths.runtime()))
                 .targetDir(pyronautDir.resolve("classes").toFile())
-                // Direct-source compilation is in-memory; OpenAPI cannot persist a spec
-                // without a conventional compiler output location.
-                .options(directSourceCompilerOptions())
+                .options(directSourceCompilerOptions(false))
                 .parentClassLoader(runtimeClassLoader);
             if (invocation.setup() == null) {
                 DirectSourceDeclarationsVisitor declarationsVisitor = new DirectSourceDeclarationsVisitor();
@@ -650,7 +649,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .classpath(toFiles(classpaths.compile()))
                 .runtimeClasspath(toFiles(classpaths.runtime()))
                 .targetDir(pyronautDir.resolve("classes").toFile())
-                .options(directSourceCompilerOptions())
+                .options(directSourceCompilerOptions(true))
                 .parentClassLoader(runtimeClassLoader);
             if (invocation.setup() == null) {
                 DirectSourceDeclarationsVisitor declarationsVisitor = new DirectSourceDeclarationsVisitor();
@@ -878,8 +877,11 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
-    private static List<String> directSourceCompilerOptions() {
-        List<String> options = new ArrayList<>(List.of("-Amicronaut.openapi.enabled=false"));
+    static List<String> directSourceCompilerOptions(boolean testPass) {
+        List<String> options = new ArrayList<>();
+        if (testPass) {
+            options.add("-Amicronaut.openapi.enabled=false");
+        }
         System.getProperties().stringPropertyNames().stream()
             .filter(name -> name.startsWith("micronaut.processing."))
             .sorted()
@@ -1092,6 +1094,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         properties.putIfAbsent(OPENAPI_SWAGGER_UI_MAPPING, "/swagger-ui/**");
         properties.putIfAbsent(OPENAPI_REDOC_PATHS, "classpath:META-INF/swagger/views/redoc");
         properties.putIfAbsent(OPENAPI_REDOC_MAPPING, "/redoc/**");
+        properties.putIfAbsent(OPENAPI_VIEWS_SPEC, "swagger-ui.enabled=true,redoc.enabled=true");
     }
 
     private static boolean isOpenApiExposureProperty(String name) {
