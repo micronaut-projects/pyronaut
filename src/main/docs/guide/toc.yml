@@ -10,6 +10,7 @@ configuration:
   mavenGradle: Using Maven and Gradle Projects
   pyproject: Configuring pyproject.toml
   dependencies: Installing Python & Java dependencies
+  directSourceDeclarations: Declaring Direct Source Dependencies
   mavenRepositories: Configuring Maven Repositories
   proxyConfig: Proxy Configuration
   ideSetup: IDE Setup for VS Code & PyCharm

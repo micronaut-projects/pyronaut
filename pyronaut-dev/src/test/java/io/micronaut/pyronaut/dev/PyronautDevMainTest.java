@@ -19,6 +19,8 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader;
 import io.micronaut.pyronaut.logback.LogbackConfigurer;
+import io.micronaut.python.processing.PythonCall;
+import io.micronaut.python.processing.PythonSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
@@ -37,9 +39,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 final class PyronautDevMainTest {
     @Test
@@ -130,6 +134,61 @@ final class PyronautDevMainTest {
 
         assertEquals(PyronautDevMain.SourceType.JAVA, PyronautDevMain.sourceType(List.of(javaSource)));
         assertEquals(PyronautDevMain.SourceType.PYTHON, PyronautDevMain.sourceType(List.of(pythonSource)));
+    }
+
+    @Test
+    void directSourceCacheUsesWorkingDirectoryWithoutPyproject(@TempDir Path tempDir) {
+        String previous = System.getProperty("pyronaut.dev.project.dir");
+        try {
+            System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
+            PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectSourceArgs(List.of("App.java"));
+            assertEquals(tempDir.resolve("__pyronaut__"), PyronautDevMain.projectCacheDirectory(invocation, Path.of("/tmp/staging")));
+        } finally {
+            restoreProperty("pyronaut.dev.project.dir", previous);
+        }
+    }
+
+    @Test
+    void collectsPythonDirectSourceDeclarationsFromAstMetadata() {
+        DirectSourceDeclarationsVisitor visitor = new DirectSourceDeclarationsVisitor();
+        visitor.visit(new PythonSource("app.py", "python", List.of(
+            new PythonCall("Dependency", List.of(), Map.of("group", "org.apache.commons", "module", "commons-lang3", "version", "3.20.0")),
+            new PythonCall("AppConfig", List.of(), Map.of("name", "example.value", "value", "ok"))
+        )), null);
+
+        DependencyResolveRequest request = assertThrows(DependencyResolveRequest.class, () -> visitor.finish(null));
+
+        assertEquals("org.apache.commons:commons-lang3:3.20.0", request.dependencies().getFirst().coordinate());
+        assertEquals("ok", request.runtimeProperties().get("example.value"));
+    }
+
+    @Test
+    void retriesDirectSourceAfterResolutionAndReusesCachedManifests(@TempDir Path tempDir) throws Exception {
+        Path source = tempDir.resolve("App.java");
+        Files.writeString(source, "class App {}\n");
+        String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
+        AtomicInteger calls = new AtomicInteger();
+        try {
+            System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
+            PyronautDevMain.DirectSourceRunner runner = (invocation, stagingRoot) -> {
+                if (calls.incrementAndGet() % 2 == 1) {
+                    throw new DependencyResolveRequest(List.of(), List.of(), Map.of("processor.option", "enabled"), Map.of("example.value", "ok"));
+                }
+                assertEquals("enabled", System.getProperty("micronaut.processing.processor.option"));
+                assertEquals("ok", DirectSourceDeclarationState.runtimeProperties().get("example.value"));
+                return 0;
+            };
+
+            assertEquals(0, PyronautDevMain.execute(new String[]{source.toString()}, (command, args) -> 0, runner));
+            Path runtimeManifest = tempDir.resolve("__pyronaut__/resolved-runtime-dependencies");
+            assertTrue(Files.isRegularFile(runtimeManifest));
+            long firstModified = Files.getLastModifiedTime(runtimeManifest).toMillis();
+
+            assertEquals(0, PyronautDevMain.execute(new String[]{source.toString()}, (command, args) -> 0, runner));
+            assertEquals(firstModified, Files.getLastModifiedTime(runtimeManifest).toMillis());
+        } finally {
+            restoreProperty("pyronaut.dev.project.dir", previousProjectDirectory);
+        }
     }
 
     @Test
@@ -291,6 +350,44 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void executesDirectJavaTestsWithInlineDeclarations(@TempDir Path tempDir) throws IOException {
+        Path projectDirectory = Files.createDirectories(tempDir.resolve("project"));
+        Path sourceDirectory = Files.createDirectories(tempDir.resolve("src/example"));
+        Path testDirectory = Files.createDirectories(tempDir.resolve("test"));
+        Files.writeString(sourceDirectory.resolve("App.java"), """
+            package example;
+            @pyronaut.build.Dependency(group = "org.apache.commons", module = "commons-lang3", version = "3.20.0")
+            @pyronaut.build.AppConfig(name = "example.value", value = "configured")
+            class App {}
+            """);
+        Files.writeString(testDirectory.resolve("AppTest.java"), """
+            package example;
+            import io.micronaut.context.ApplicationContext;
+            import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
+            import org.apache.commons.lang3.StringUtils;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            @MicronautTest class AppTest {
+                @Test void declarationsWork(ApplicationContext context) {
+                    assertEquals("OK", StringUtils.upperCase("ok"));
+                    assertEquals("configured", context.getProperty("example.value", String.class).orElseThrow());
+                }
+            }
+            """);
+        String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
+        try {
+            System.setProperty("pyronaut.dev.project.dir", projectDirectory.toString());
+            assertEquals(0, PyronautDevMain.execute(new String[]{
+                "test", sourceDirectory.resolve("App.java").toString(),
+                "--", testDirectory.resolve("AppTest.java").toString()
+            }));
+            assertTrue(Files.isRegularFile(projectDirectory.resolve("__pyronaut__/resolved-runtime-dependencies")));
+        } finally {
+            restoreProperty("pyronaut.dev.project.dir", previousProjectDirectory);
+        }
+    }
+
+    @Test
     void reportFlagUsesDefaultDirectoryWhenFollowedByApplicationSource() {
         PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectTestSourceArgs(List.of(
             "--report", "App.java", "--", "AppTest.java"
@@ -311,6 +408,38 @@ final class PyronautDevMainTest {
             new String[]{"test", source.toString(), "--", test.toString()}
         );
         assertEquals(0, exit);
+    }
+
+    @Test
+    void executesDirectPythonTestsWithInlineDeclarations(@TempDir Path tempDir) throws IOException {
+        Path projectDirectory = Files.createDirectories(tempDir.resolve("project"));
+        Path source = tempDir.resolve("app.py");
+        Path test = tempDir.resolve("AppTest.py");
+        Files.writeString(source, """
+            from pyronaut.build import Dependency, AppConfig
+            Dependency(group="org.apache.commons", module="commons-lang3", version="3.20.0")
+            AppConfig(name="example.value", value="configured")
+            class App:
+                pass
+            """);
+        Files.writeString(test, """
+            from micronaut.test.extensions.junit5.annotation import MicronautTest
+            from org.apache.commons.lang3 import StringUtils
+            from org.junit.jupiter.api import Test
+            @MicronautTest
+            class AppTest:
+                @Test
+                def declarations_work(self):
+                    assert StringUtils.upperCase("ok") == "OK"
+            """);
+        String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
+        try {
+            System.setProperty("pyronaut.dev.project.dir", projectDirectory.toString());
+            assertEquals(0, PyronautDevMain.execute(new String[]{"test", source.toString(), "--", test.toString()}));
+            assertTrue(Files.isRegularFile(projectDirectory.resolve("__pyronaut__/resolved-runtime-dependencies")));
+        } finally {
+            restoreProperty("pyronaut.dev.project.dir", previousProjectDirectory);
+        }
     }
 
     @Test

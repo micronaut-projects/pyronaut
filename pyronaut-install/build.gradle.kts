@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    api(project(":micronaut-pyronaut-build-annotations"))
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)
 

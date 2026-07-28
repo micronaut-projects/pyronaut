@@ -1,6 +1,8 @@
 = Application Configuration with application.toml
 
 Micronaut application configuration lives in the configured resources directory.
+
+Direct source applications can declare individual runtime properties with `AppConfig`; see <<configuration.directSourceDeclarations,Declaring Direct Source Dependencies>>.
 By default, that directory is `config`, so the main configuration file is:
 
 [source,text]

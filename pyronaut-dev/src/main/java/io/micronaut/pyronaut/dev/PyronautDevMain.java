@@ -22,6 +22,7 @@ import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.install.PyronautInstallMain;
+import io.micronaut.pyronaut.install.DirectSourceDependencyResolver;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
@@ -57,13 +58,10 @@ import java.io.PrintStream;
 import java.io.ByteArrayOutputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
-import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -73,6 +71,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -467,13 +466,17 @@ public final class PyronautDevMain implements Callable<Integer> {
                     throw new IllegalArgumentException("Application and test sources must use the same language");
                 }
             }
-            stagingRoot = Files.createTempDirectory("pyronaut-dev-source-");
-            stageSetup(invocation, stagingRoot);
-            stageSources(invocation.sources(), stagingRoot.resolve("src"));
-            if (!invocation.testSources().isEmpty()) {
-                stageSources(invocation.testSources(), stagingRoot.resolve("src"));
+            if (canUseOriginalSingleSource(invocation)) {
+                stagingRoot = invocation.sources().getFirst().toAbsolutePath().normalize().getParent();
+            } else {
+                stagingRoot = directSourceStagingRoot(invocation);
+                stageSetup(invocation, stagingRoot);
+                stageSources(invocation.sources(), stagingRoot.resolve("src"));
+                if (!invocation.testSources().isEmpty()) {
+                    stageSources(invocation.testSources(), stagingRoot.resolve("src"));
+                }
+                stageConfig(invocation.configs(), stagingRoot.resolve("config"));
             }
-            stageConfig(invocation.configs(), stagingRoot.resolve("config"));
             applyProperties(invocation.properties(), previousProperties);
             applyConfigurationValidationDefaults();
             if (invocation.setup() == null) {
@@ -491,7 +494,12 @@ public final class PyronautDevMain implements Callable<Integer> {
                     return install;
                 }
             }
-            return directSourceRunner.run(invocation, stagingRoot);
+            try {
+                return directSourceRunner.run(invocation, stagingRoot);
+            } catch (DependencyResolveRequest request) {
+                resolveDirectSourceDeclarations(invocation, stagingRoot, request, previousProperties);
+                return directSourceRunner.run(invocation, stagingRoot);
+            }
         } catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
             return PRECONDITION_FAILED;
@@ -500,18 +508,46 @@ public final class PyronautDevMain implements Callable<Integer> {
             return INTERNAL_ERROR;
         } finally {
             restoreProperties(previousProperties, previousProperties.keySet());
-            if (stagingRoot != null) {
-                deleteDirectoryBestEffort(stagingRoot);
-            }
+            DirectSourceDeclarationState.clear();
         }
+    }
+
+    private static boolean canUseOriginalSingleSource(DirectSourceInvocation invocation) {
+        return !invocation.test()
+            && invocation.setup() == null
+            && invocation.testSources().isEmpty()
+            && invocation.configs().isEmpty()
+            && invocation.sources().size() == 1
+            && Files.isRegularFile(invocation.sources().getFirst());
+    }
+
+    private static Path directSourceStagingRoot(DirectSourceInvocation invocation) {
+        Path source = invocation.sources().getFirst().toAbsolutePath().normalize();
+        Path sourceDirectory = Files.isDirectory(source) ? source : source.getParent();
+        return sourceDirectory.resolve(DEFAULT_PYRONAUT_DIR);
+    }
+
+    private static void resolveDirectSourceDeclarations(DirectSourceInvocation invocation, Path stagingRoot,
+                                                        DependencyResolveRequest request, Map<String, String> previousProperties) throws IOException {
+        List<String> build = request.dependencies().stream().filter(DependencyResolveRequest.Declaration::build).map(DependencyResolveRequest.Declaration::coordinate).toList();
+        List<String> runtime = request.dependencies().stream().filter(declaration -> !declaration.build()).map(DependencyResolveRequest.Declaration::coordinate).toList();
+        DirectSourceDependencyResolver.Result result = new DirectSourceDependencyResolver().resolve(
+            projectCacheDirectory(invocation, stagingRoot), build, runtime, request.repositories());
+        System.out.println("Direct source dependency resolution " + (result.cacheHit() ? "cache hit" : "completed")
+            + ": " + request.dependencies() + (request.repositories().isEmpty() ? "" : ", repositories=" + request.repositories()));
+        DirectSourceDeclarationState.setRuntimeProperties(request.runtimeProperties());
+        previousProperties.put("pyronaut.direct.source.declarations.resolved", System.getProperty("pyronaut.direct.source.declarations.resolved"));
+        System.setProperty("pyronaut.direct.source.declarations.resolved", "true");
+        request.runtimeProperties().forEach((name, value) -> { previousProperties.put(name, System.getProperty(name)); System.setProperty(name, value); });
+        request.buildProperties().forEach((name, value) -> { String key = "micronaut.processing." + name; previousProperties.put(key, System.getProperty(key)); System.setProperty(key, value); });
     }
 
     private static int runInMemoryApplication(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
         if (invocation.test()) {
             return runInMemoryTests(invocation, stagingRoot);
         }
-        Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
-        DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir);
+            Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
+            DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir);
         logClasspaths(invocation, classpaths);
         List<URL> runtimeUrls = toUrls(classpaths.runtime());
         Path configDir = stagingRoot.resolve("config");
@@ -531,8 +567,13 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .targetDir(pyronautDir.resolve("classes").toFile())
                 // Direct-source compilation is in-memory; OpenAPI cannot persist a spec
                 // without a conventional compiler output location.
-                .options(List.of("-Amicronaut.openapi.enabled=false"))
+                .options(directSourceCompilerOptions())
                 .parentClassLoader(runtimeClassLoader);
+            if (invocation.setup() == null) {
+                DirectSourceDeclarationsVisitor declarationsVisitor = new DirectSourceDeclarationsVisitor();
+                builder.annotationProcessors(List.of(new DirectSourceDeclarationsProcessor()));
+                registerDirectDeclarationVisitors(builder, invocation, declarationsVisitor);
+            }
             configureDirectSource(builder, invocation, stagingRoot);
             builder.compilePythonBytecode("true".equals(invocation.properties().get(DIRECT_COMPILE_PYTHON_BYTECODE)));
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
@@ -546,6 +587,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             now = System.currentTimeMillis();
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
+                .properties(DirectSourceDeclarationState.runtimeProperties())
                 .beanResolutionTrace(invocation.verbose() ? BeanResolutionTraceMode.STANDARD_OUT : BeanResolutionTraceMode.NONE)
                 .deducePackage(false)
                 .deduceCloudEnvironment(false)
@@ -594,8 +636,13 @@ public final class PyronautDevMain implements Callable<Integer> {
                 .classpath(toFiles(classpaths.compile()))
                 .runtimeClasspath(toFiles(classpaths.runtime()))
                 .targetDir(pyronautDir.resolve("classes").toFile())
-                .options(List.of("-Amicronaut.openapi.enabled=false"))
+                .options(directSourceCompilerOptions())
                 .parentClassLoader(runtimeClassLoader);
+            if (invocation.setup() == null) {
+                DirectSourceDeclarationsVisitor declarationsVisitor = new DirectSourceDeclarationsVisitor();
+                builder.annotationProcessors(List.of(new DirectSourceDeclarationsProcessor()));
+                registerDirectDeclarationVisitors(builder, invocation, declarationsVisitor);
+            }
 
             configureDirectSource(builder, invocation, stagingRoot);
             builder.compilePythonBytecode("true".equals(invocation.properties().get(DIRECT_COMPILE_PYTHON_BYTECODE)));
@@ -806,11 +853,39 @@ public final class PyronautDevMain implements Callable<Integer> {
                 }
                 return;
             }
+            if (Files.isRegularFile(source) && canUseOriginalSingleSource(invocation)) {
+                // The compiler reads source files into memory; use the original
+                // parent directory for a single source instead of staging it.
+                if (sourceType == SourceType.JAVA) {
+                    builder.javaSrc(source.getParent().toString());
+                } else {
+                    builder.pythonSrc(source.getParent().toString());
+                }
+                return;
+            }
         }
         if (sourceType == SourceType.JAVA) {
             builder.javaSrc(stagingRoot.resolve("src").toString());
         } else {
             builder.pythonSrc(stagingRoot.resolve("src").toString());
+        }
+    }
+
+    private static List<String> directSourceCompilerOptions() {
+        List<String> options = new ArrayList<>(List.of("-Amicronaut.openapi.enabled=false"));
+        System.getProperties().stringPropertyNames().stream()
+            .filter(name -> name.startsWith("micronaut.processing."))
+            .sorted()
+            .forEach(name -> options.add("-A" + name.substring("micronaut.processing.".length()) + "=" + System.getProperty(name)));
+        return options;
+    }
+
+    private static void registerDirectDeclarationVisitors(PyronautCompiler.Builder builder,
+                                                           DirectSourceInvocation invocation,
+                                                           DirectSourceDeclarationsVisitor visitor) throws IOException {
+        SourceType sourceType = sourceType(invocation.sources());
+        if (sourceType == SourceType.PYTHON) {
+            builder.pythonSourceVisitors(List.of(visitor));
         }
     }
 
@@ -1053,7 +1128,11 @@ public final class PyronautDevMain implements Callable<Integer> {
         boolean developmentMode = isDevelopmentMode();
         List<Path> runtime = readManifest(resolveRunManifest(pyronautDir, developmentMode));
         List<Path> test = invocation.test() ? readManifest(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)) : List.of();
-        List<Path> compilerBase = directCompilerClasspath(invocation);
+        List<Path> compilerBase = new ArrayList<>(directCompilerClasspath(invocation));
+        Optional<Path> buildAnnotationsJar = findPyronautBuildAnnotationsJar();
+        if (buildAnnotationsJar.isPresent() && !compilerBase.contains(buildAnnotationsJar.get())) {
+            compilerBase.add(buildAnnotationsJar.get());
+        }
         List<Path> application = directApplicationClasspath();
         List<Path> compile = new ArrayList<>(compilerBase);
         compile.addAll(runtime);
@@ -1081,6 +1160,17 @@ public final class PyronautDevMain implements Callable<Integer> {
         );
     }
 
+    private static Optional<Path> findPyronautBuildAnnotationsJar() throws IOException {
+        Path repository = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        if (!Files.isDirectory(repository)) return Optional.empty();
+        try (var paths = Files.walk(repository, 8)) {
+            return paths.filter(path -> path.getFileName().toString().startsWith("micronaut-pyronaut-build-annotations-"))
+                .filter(path -> path.toString().endsWith(".jar"))
+                .filter(path -> !path.toString().endsWith("-sources.jar") && !path.toString().endsWith("-javadoc.jar"))
+                .findFirst();
+        }
+    }
+
     private static List<Path> filterDirectSourcePaths(List<Path> paths,
                                                        DirectSourceInvocation invocation,
                                                        boolean developmentMode) {
@@ -1091,7 +1181,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             boolean controlPanel = controlPanelRequested(invocation)
                 || "true".equalsIgnoreCase(System.getProperty("micronaut.control-panel.enabled"));
             if ((excludeTestResources && isTestResourcesJar(path))
-                || (isNativeProvidedArtifact(path, nativeArtifacts) && !controlPanel)) {
+                || (isNativeProvidedArtifact(path, nativeArtifacts) && !controlPanel && !isPyronautBuildAnnotationsArtifact(path))) {
                 continue;
             }
             if (!filtered.contains(path)) {
@@ -1117,6 +1207,12 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static boolean isNativeProvidedArtifact(Path path, Set<String> nativeArtifacts) {
         String artifact = versionedJarArtifact(path.getFileName().toString());
         return artifact != null && nativeArtifacts.stream().anyMatch(coordinate -> coordinate.endsWith(":" + artifact));
+    }
+
+    private static boolean isPyronautBuildAnnotationsArtifact(Path path) {
+        String fileName = path.getFileName().toString();
+        return fileName.startsWith("micronaut-pyronaut-build-annotations-") && fileName.endsWith(".jar")
+            && !fileName.endsWith("-sources.jar") && !fileName.endsWith("-javadoc.jar");
     }
 
     private static String versionedJarArtifact(String fileName) {
@@ -1217,8 +1313,17 @@ public final class PyronautDevMain implements Callable<Integer> {
         return Files.isRegularFile(project.resolve("pyproject.toml")) ? project : stagingRoot;
     }
 
-    private static Path projectCacheDirectory(DirectSourceInvocation invocation, Path stagingRoot) {
-        return (invocation.setup() == null ? stagingRoot : projectDirectory(stagingRoot)).resolve(DEFAULT_PYRONAUT_DIR);
+    static Path projectCacheDirectory(DirectSourceInvocation invocation, Path stagingRoot) {
+        if (invocation.setup() == null) {
+            String configured = System.getProperty(PROJECT_DIR_PROPERTY);
+            if (configured != null && !configured.isBlank()) {
+                return Path.of(configured).toAbsolutePath().normalize().resolve(DEFAULT_PYRONAUT_DIR);
+            }
+            Path source = invocation.sources().getFirst().toAbsolutePath().normalize();
+            Path sourceDirectory = Files.isDirectory(source) ? source : source.getParent();
+            return sourceDirectory.resolve(DEFAULT_PYRONAUT_DIR);
+        }
+        return projectDirectory(stagingRoot).resolve(DEFAULT_PYRONAUT_DIR);
     }
 
     private static void stageSources(List<Path> sources, Path targetDir) throws IOException {
@@ -1267,26 +1372,6 @@ public final class PyronautDevMain implements Callable<Integer> {
                     Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
-        }
-    }
-
-    private static void deleteDirectoryBestEffort(Path directory) {
-        try {
-            Files.walkFileTree(directory, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.deleteIfExists(file);
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                    Files.deleteIfExists(dir);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException ignored) {
-            // Best-effort cleanup only.
         }
     }
 

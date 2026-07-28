@@ -12,6 +12,7 @@ val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.plat
 val controlPanelRuntime by configurations.creating
 
 dependencies {
+    implementation(project(":micronaut-pyronaut-build-annotations"))
     api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
     annotationProcessor(mn.micronaut.inject.java)
     annotationProcessor(mnPicocli.picocli.codegen)

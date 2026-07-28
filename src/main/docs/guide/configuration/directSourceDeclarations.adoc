@@ -1,0 +1,55 @@
+= Declaring Direct Source Dependencies
+
+Direct Java and Python source execution can declare Maven dependencies, repositories, and Micronaut properties without a `pyproject.toml`.
+These declarations apply only when running direct sources without `--setup`.
+
+== Java
+
+Place repeatable annotations in `package-info.java`, or directly on the class when
+running a single Java source file:
+
+[source,java]
+----
+@Dependency(group = "org.apache.commons", module = "commons-lang3", version = "3.20.0")
+@AppConfig(name = "datasources.default.dialect", value = "Oracle")
+package example;
+
+import pyronaut.build.AppConfig;
+import pyronaut.build.Dependency;
+----
+
+For example, `App.java` can be self-contained:
+
+[source,java]
+----
+package example;
+
+import org.apache.commons.lang3.StringUtils;
+
+@Dependency(group = "org.apache.commons", module = "commons-lang3", version = "3.20.0")
+@AppConfig(name = "example.value", value = "configured")
+class App {
+    void useDependency() {
+        StringUtils.defaultIfEmpty("", "default");
+    }
+}
+----
+
+Use `scope = Dependency.Scope.BUILD` for annotation processors and `scope = AppConfig.Scope.BUILD` for annotation processor options.
+
+== Python
+
+[source,python]
+----
+from pyronaut.build import AppConfig, Dependency
+
+Dependency(group="org.apache.commons", module="commons-lang3", version="3.20.0")
+AppConfig(name="datasources.default.dialect", value="Oracle")
+----
+
+== Repositories and cache
+
+Declare a repository with `MavenRepository("https://repository.example.com/maven/")` in Java or Python.
+Maven Central is used when no repository is declared; once a repository is declared, only declared repositories are used.
+
+Pyronaut records resolved direct-source dependencies and the declaration fingerprint in `__pyronaut__` in the current working directory. A subsequent run with unchanged dependency and repository declarations reuses that cache. Changing either declaration refreshes it.

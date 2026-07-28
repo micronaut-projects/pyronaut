@@ -46,5 +46,6 @@ public final class DirectSourceApplicationContextConfigurer implements Applicati
     @Override
     public void configure(ApplicationContextBuilder builder) {
         Optional.ofNullable(provider).ifPresent(builder::beanDefinitionsProvider);
+        builder.properties(DirectSourceDeclarationState.runtimeProperties());
     }
 }
