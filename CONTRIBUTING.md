@@ -34,12 +34,9 @@ To also build the Javadocs, run `./gradlew docs`.
 
 If you use IntelliJ IDEA, you can import the project using the Intellij Gradle Tooling ("File / Import Project" and selecting the "settings.gradle" file).
 
-When both the Micronaut Core and GraalPy dependency lines are on `-SNAPSHOT` versions, this build automatically switches to source/bundle bootstrap mode:
+When the Micronaut Core dependency is on a `-SNAPSHOT` version, this build automatically includes Micronaut Core directly from Git.
 
-- Micronaut Core is included directly from Git.
-- GraalPy artifacts are resolved from an isolated local Maven bundle cache under `checkouts/maven-bundles/`.
-
-This avoids requiring contributors to publish either project into their global `mavenLocal`.
+This avoids requiring contributors to publish Micronaut Core into their global `mavenLocal`. Stable GraalPy artifacts are resolved from Maven Central.
 
 If you already have a local Micronaut Core checkout that you want to use instead of the cloned checkout, add this to `~/.gradle/gradle.properties`:
 
@@ -49,29 +46,10 @@ local.git.micronaut-core-python=/path/to/micronaut-core
 
 This path can point to any checkout with the required Python branch contents, for example a local `core.pyronaut` worktree.
 
-If you already have a local GraalPy extensions checkout or a prebuilt Maven bundle, you can point the build at those in `~/.gradle/gradle.properties`:
-
-```
-local.git.graalpy-extensions=/path/to/graalpy-extensions
-pyronaut.graalpy.bundle.repo=/path/to/local/maven-bundle
-```
-
-If you want to override the automatically discovered bundle download URL for one run or in local config, set:
-
-```
-pyronaut.graalpy.bundle.url=https://...
-```
-
 If you want to disable the included Micronaut Core build entirely for a one-off invocation, use:
 
 ```
 ./gradlew -Ppyronaut.include.micronaut.core=false <task>
-```
-
-You can similarly disable the GraalPy bundle bootstrap path with:
-
-```
-./gradlew -Ppyronaut.include.graalpy.extensions=false <task>
 ```
 
 ## Creating a pull request

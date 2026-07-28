@@ -566,6 +566,55 @@ class OrchestratorTest(unittest.TestCase):
             executed,
         )
 
+    def test_direct_source_install_forwards_native_dev_compiler_classpath(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bin_dir = root / "bin"
+            lib_dir = root / "lib"
+            bin_dir.mkdir()
+            lib_dir.mkdir()
+            native_dev = bin_dir / "pyronaut-dev"
+            native_install = bin_dir / "pyronaut-install"
+            native_dev.write_text("", encoding="utf-8")
+            native_install.write_text("", encoding="utf-8")
+            compiler_jar = lib_dir / "micronaut-runtime.jar"
+            compiler_jar.write_text("", encoding="utf-8")
+            (bin_dir / "native-compile-classpath.txt").write_text(
+                str(compiler_jar) + "\n",
+                encoding="utf-8",
+            )
+            source = root / "App.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+            captured = {}
+
+            def runner(command_line, env=None):
+                captured["command"] = command_line
+                captured["env"] = env
+                return 0
+
+            with patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: {
+                    "pyronaut-dev": native_dev,
+                    "pyronaut-install": native_install,
+                }.get(command_name),
+            ):
+                exit_code = cli.run(
+                    ["install", "--project-dir", str(root), str(source)],
+                    runner_with_env=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/java-home",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [str(native_install), "--project-dir", str(root), str(source)],
+            captured["command"],
+        )
+        self.assertEqual(str(compiler_jar), captured["env"]["PYRONAUT_DIRECT_CLASSPATH"])
+
     def test_control_panel_option_without_source_uses_project_development(self):
         self.assertFalse(cli._looks_like_direct_source_invocation(["--control-panel"]))
         self.assertFalse(cli._looks_like_direct_source_invocation(["--port", "8080"]))

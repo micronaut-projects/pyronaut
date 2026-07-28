@@ -688,6 +688,12 @@ def _delegate(
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
     env = _merge_env_overrides(env, env_overrides)
+    if command == "install" and _has_direct_install_sources(args):
+        direct_launcher = _resolve_pyronaut_dev_native_executable(resolver)
+        direct_classpath = _native_launcher_compile_classpath_entries(direct_launcher)
+        if direct_classpath:
+            env = dict(env or os.environ)
+            env["PYRONAUT_DIRECT_CLASSPATH"] = os.pathsep.join(direct_classpath)
     return runner(command_line, env)
 
 
@@ -1493,6 +1499,30 @@ def _local_repository_install_args(local_repository: str | None = None) -> list[
     if repository is None:
         return []
     return ["--local-repository", repository]
+
+
+def _has_direct_install_sources(args: Sequence[str]) -> bool:
+    options_with_values = {
+        "--project-dir",
+        "--project",
+        "--local-repository",
+        "--local-repo",
+        "--scope",
+        "--progress",
+        "--color",
+    }
+    skip_next = False
+    for token in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in options_with_values:
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        return True
+    return False
 
 
 def _run_build(

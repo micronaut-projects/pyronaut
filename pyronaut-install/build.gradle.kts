@@ -9,6 +9,7 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
 
     implementation(project(":micronaut-pyronaut-config-model"))
+    implementation(project(":micronaut-pyronaut-direct-source"))
     implementation(mnSerde.micronaut.serde.jackson)
     implementation(mnPicocli.picocli)
 

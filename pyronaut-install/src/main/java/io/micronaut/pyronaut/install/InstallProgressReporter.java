@@ -115,6 +115,38 @@ final class InstallProgressReporter implements AutoCloseable {
         output.println("Python editor stubs are up to date");
     }
 
+    void directSourceSelection(String language, int sourceCount) {
+        if (!enabled) {
+            return;
+        }
+        output.println("Installing IDE support for " + sourceCount + " direct " + language + " source"
+            + (sourceCount == 1 ? "" : "s") + "...");
+    }
+
+    void directSourceDeclarations(int buildDependencies, int runtimeDependencies, int repositories) {
+        if (!enabled) {
+            return;
+        }
+        output.println("Discovered direct-source declarations ("
+            + buildDependencies + " build, "
+            + runtimeDependencies + " runtime, "
+            + repositories + " repositories)");
+    }
+
+    void directSourceDependencies(int artifactCount) {
+        if (!enabled) {
+            return;
+        }
+        output.println("Resolved direct-source dependencies (" + artifactCount + " artifacts)");
+    }
+
+    void directSourceEditorSupport(String language) {
+        if (!enabled) {
+            return;
+        }
+        output.println("Generated " + language + " IDE support in .vscode, .idea, and __pyronaut__");
+    }
+
     void editorStubsWarnings(int warningCount, Path reportPath) {
         if (!enabled) {
             return;

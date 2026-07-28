@@ -1068,33 +1068,6 @@ fun resolvedFixtureArtifactOutputFiles(
     }.distinct()
 }
 
-fun stagedRepositoryCopyOutputFiles(sourceRepository: java.io.File): List<java.io.File> {
-    if (!sourceRepository.isDirectory) {
-        return emptyList()
-    }
-    val sourceRoot = sourceRepository.toPath()
-    val targetRoot = fixtureStagedRepoDir.asFile.toPath()
-    return sourceRepository
-        .walkTopDown()
-        .filter { it.isFile }
-        .map { sourceFile -> targetRoot.resolve(sourceRoot.relativize(sourceFile.toPath())).toFile() }
-        .toList()
-}
-
-fun Project.stageGraalPyFixtureArtifacts() {
-    val bundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
-        ?.takeIf { it.isNotBlank() }
-        ?.let { java.io.File(it) }
-        ?: throw GradleException("Missing pyronaut.graalpy.bundle.repo system property for GraalPy fixture artifacts")
-    if (!bundleRepo.isDirectory) {
-        throw GradleException("Missing GraalPy fixture repository: ${bundleRepo.absolutePath}")
-    }
-    copy {
-        from(bundleRepo)
-        into(fixtureStagedRepoDir)
-    }
-}
-
 fun isGraalPyVenv(configFile: java.io.File): Boolean {
     if (!configFile.isFile) {
         return false
@@ -1471,24 +1444,6 @@ val stageIncludedCoreExternalFixtureArtifacts by tasks.registering {
     }
 }
 
-val stageGraalPyFixtureArtifacts by tasks.registering {
-    group = "build setup"
-    description = "Stages GraalPy snapshot artifacts into the functional-test file repository."
-    val bundleRepo = System.getProperty("pyronaut.graalpy.bundle.repo")
-    if (!bundleRepo.isNullOrBlank()) {
-        inputs.dir(java.io.File(bundleRepo))
-    }
-    outputs.files(providers.provider {
-        bundleRepo
-            ?.takeIf { it.isNotBlank() }
-            ?.let { stagedRepositoryCopyOutputFiles(java.io.File(it)) }
-            ?: emptyList<java.io.File>()
-    })
-    doLast {
-        project.stageGraalPyFixtureArtifacts()
-    }
-}
-
 val publishFixtureArtifactsToMavenLocal by tasks.registering {
     group = "build setup"
     description = "Stages local fixture artifacts into the functional-test file repository."
@@ -1500,7 +1455,6 @@ val publishFixtureArtifactsToMavenLocal by tasks.registering {
         stageSourcegenFixtureArtifacts,
         stageIncludedCoreExternalFixtureArtifacts,
         stageMicronautTestFixtureArtifacts,
-        stageGraalPyFixtureArtifacts,
     )
 }
 

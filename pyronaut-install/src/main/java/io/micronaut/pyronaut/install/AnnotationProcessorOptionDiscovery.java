@@ -57,7 +57,7 @@ final class AnnotationProcessorOptionDiscovery {
         TreeSet<String> options = new TreeSet<>();
         if (!entries.isEmpty()) {
             URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
-            try (URLClassLoader loader = new URLClassLoader(urls, AnnotationProcessorOptionDiscovery.class.getClassLoader())) {
+            try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
                 Class<?> visitorType = Class.forName("io.micronaut.inject.visitor.TypeElementVisitor", true, loader);
                 for (Object visitor : ServiceLoader.load(visitorType, loader)) {
                     try {

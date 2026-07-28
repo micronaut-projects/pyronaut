@@ -152,7 +152,7 @@ def graalVmJavaVersionForTag = { String tag ->
 
 tasks.register("prepareSdkMavenLocalEnvironment") {
     group = "build setup"
-    description = "Publishes local Pyronaut, included Micronaut Core, and GraalPy snapshot artifacts to the Maven local repository used by demo applications."
+    description = "Publishes local Pyronaut and included Micronaut Core artifacts to the Maven local repository used by demo applications."
     dependsOn({
         rootProject.subprojects
             .collect { it.tasks.findByName("publishToMavenLocal") }
@@ -166,7 +166,6 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
         })
     }
     inputs.property("micronautCoreVersion", micronautCoreVersion)
-    inputs.property("graalPyVersion", graalPyVersion)
     inputs.property("pyronautVersion", providers.provider { project.version.toString() })
     inputs.property("includedMicronautCore", includedMicronautCorePresent)
     inputs.dir(effectiveMavenLocalRepositoryDir).optional()
@@ -182,8 +181,7 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
 
         if (sourceRepository != targetRepository) {
             def relativePaths = ["io/micronaut/pyronaut"] +
-                includedMicronautCoreArtifactIds.collect { "io/micronaut/${it}" } +
-                ["org/graalvm"]
+                includedMicronautCoreArtifactIds.collect { "io/micronaut/${it}" }
             relativePaths.unique().each { relativePath ->
                 def sourceDir = new File(sourceRepository, relativePath)
                 if (sourceDir.isDirectory()) {
@@ -213,28 +211,6 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
                     "${artifactId}-${micronautCoreVersion.get()}.jar"
                 )
             }
-        }
-        if (System.getProperty("pyronaut.graalpy.bundle.repo") != null) {
-            requireMavenVersionDir(
-                targetRepository,
-                "org/graalvm/python/python-embedding/${graalPyVersion.get()}",
-                "python-embedding"
-            )
-            requireMavenArtifactFile(
-                targetRepository,
-                "org/graalvm/python/python-embedding/${graalPyVersion.get()}",
-                "python-embedding-${graalPyVersion.get()}.jar"
-            )
-            requireMavenVersionDir(
-                targetRepository,
-                "org/graalvm/python/python-embedding-tools/${graalPyVersion.get()}",
-                "python-embedding-tools"
-            )
-            requireMavenArtifactFile(
-                targetRepository,
-                "org/graalvm/python/python-embedding-tools/${graalPyVersion.get()}",
-                "python-embedding-tools-${graalPyVersion.get()}.jar"
-            )
         }
         logger.lifecycle("Prepared SDK Maven local environment at ${targetRepository.absolutePath}")
     }

@@ -26,6 +26,10 @@ import io.micronaut.pyronaut.install.DirectSourceDependencyResolver;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
+import io.micronaut.pyronaut.directsource.DirectSourceDeclarationRequest;
+import io.micronaut.pyronaut.directsource.DirectSourceDeclarations;
+import io.micronaut.pyronaut.directsource.DirectSourceDeclarationsProcessor;
+import io.micronaut.pyronaut.directsource.DirectSourceDeclarationsVisitor;
 import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
@@ -470,10 +474,13 @@ public final class PyronautDevMain implements Callable<Integer> {
                 stagingRoot = invocation.sources().getFirst().toAbsolutePath().normalize().getParent();
             } else {
                 stagingRoot = directSourceStagingRoot(invocation);
+                Files.createDirectories(stagingRoot);
                 stageSetup(invocation, stagingRoot);
-                stageSources(invocation.sources(), stagingRoot.resolve("src"));
+                Path stagedSources = stagingRoot.resolve("src");
+                resetStagedSources(stagedSources);
+                stageSources(invocation.sources(), stagedSources);
                 if (!invocation.testSources().isEmpty()) {
-                    stageSources(invocation.testSources(), stagingRoot.resolve("src"));
+                    stageSources(invocation.testSources(), stagedSources);
                 }
                 stageConfig(invocation.configs(), stagingRoot.resolve("config"));
             }
@@ -496,7 +503,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             try {
                 return directSourceRunner.run(invocation, stagingRoot);
-            } catch (DependencyResolveRequest request) {
+            } catch (DirectSourceDeclarationRequest request) {
                 resolveDirectSourceDeclarations(invocation, stagingRoot, request, previousProperties);
                 return directSourceRunner.run(invocation, stagingRoot);
             }
@@ -518,28 +525,35 @@ public final class PyronautDevMain implements Callable<Integer> {
             && invocation.testSources().isEmpty()
             && invocation.configs().isEmpty()
             && invocation.sources().size() == 1
-            && Files.isRegularFile(invocation.sources().getFirst());
+            && Files.isRegularFile(invocation.sources().getFirst())
+            && !invocation.sources().getFirst().getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".java");
     }
 
     private static Path directSourceStagingRoot(DirectSourceInvocation invocation) {
+        String configured = System.getProperty(PROJECT_DIR_PROPERTY);
+        if (configured != null && !configured.isBlank()) {
+            return Path.of(configured).toAbsolutePath().normalize().resolve(DEFAULT_PYRONAUT_DIR);
+        }
         Path source = invocation.sources().getFirst().toAbsolutePath().normalize();
         Path sourceDirectory = Files.isDirectory(source) ? source : source.getParent();
         return sourceDirectory.resolve(DEFAULT_PYRONAUT_DIR);
     }
 
     private static void resolveDirectSourceDeclarations(DirectSourceInvocation invocation, Path stagingRoot,
-                                                        DependencyResolveRequest request, Map<String, String> previousProperties) throws IOException {
-        List<String> build = request.dependencies().stream().filter(DependencyResolveRequest.Declaration::build).map(DependencyResolveRequest.Declaration::coordinate).toList();
-        List<String> runtime = request.dependencies().stream().filter(declaration -> !declaration.build()).map(DependencyResolveRequest.Declaration::coordinate).toList();
+                                                        DirectSourceDeclarationRequest request, Map<String, String> previousProperties) throws IOException {
+        DirectSourceDeclarations declarations = request.declarations();
+        List<String> build = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::build).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        List<String> runtime = declarations.dependencies().stream().filter(declaration -> !declaration.build()).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         DirectSourceDependencyResolver.Result result = new DirectSourceDependencyResolver().resolve(
-            projectCacheDirectory(invocation, stagingRoot), build, runtime, request.repositories());
+            projectCacheDirectory(invocation, stagingRoot), build, runtime, declarations.repositories());
         System.out.println("Direct source dependency resolution " + (result.cacheHit() ? "cache hit" : "completed")
-            + ": " + request.dependencies() + (request.repositories().isEmpty() ? "" : ", repositories=" + request.repositories()));
-        DirectSourceDeclarationState.setRuntimeProperties(request.runtimeProperties());
-        previousProperties.put("pyronaut.direct.source.declarations.resolved", System.getProperty("pyronaut.direct.source.declarations.resolved"));
-        System.setProperty("pyronaut.direct.source.declarations.resolved", "true");
-        request.runtimeProperties().forEach((name, value) -> { previousProperties.put(name, System.getProperty(name)); System.setProperty(name, value); });
-        request.buildProperties().forEach((name, value) -> { String key = "micronaut.processing." + name; previousProperties.put(key, System.getProperty(key)); System.setProperty(key, value); });
+            + ": " + declarations.dependencies() + (declarations.repositories().isEmpty() ? "" : ", repositories=" + declarations.repositories()));
+        io.micronaut.pyronaut.dev.DirectSourceDeclarationState.setRuntimeProperties(declarations.runtimeProperties());
+        String resolvedProperty = io.micronaut.pyronaut.directsource.DirectSourceDeclarationState.RESOLVED_PROPERTY;
+        previousProperties.put(resolvedProperty, System.getProperty(resolvedProperty));
+        System.setProperty(resolvedProperty, "true");
+        declarations.runtimeProperties().forEach((name, value) -> { previousProperties.put(name, System.getProperty(name)); System.setProperty(name, value); });
+        declarations.buildProperties().forEach((name, value) -> { String key = "micronaut.processing." + name; previousProperties.put(key, System.getProperty(key)); System.setProperty(key, value); });
     }
 
     private static int runInMemoryApplication(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
@@ -781,6 +795,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             if (Files.isDirectory(resolved)) {
                 try (var paths = Files.walk(resolved)) {
                     files.addAll(paths.filter(Files::isRegularFile)
+                        .filter(path -> !isManagedSourcePath(resolved, path))
                         .filter(path -> path.toString().endsWith(".java") || path.toString().endsWith(".py"))
                         .toList());
                 }
@@ -845,14 +860,6 @@ public final class PyronautDevMain implements Callable<Integer> {
         SourceType sourceType = sourceType(invocation.sources());
         if (invocation.sources().size() == 1) {
             Path source = invocation.sources().getFirst().toAbsolutePath().normalize();
-            if (Files.isDirectory(source)) {
-                if (sourceType == SourceType.JAVA) {
-                    builder.javaSrc(source.toString());
-                } else {
-                    builder.pythonSrc(source.toString());
-                }
-                return;
-            }
             if (Files.isRegularFile(source) && canUseOriginalSingleSource(invocation)) {
                 // The compiler reads source files into memory; use the original
                 // parent directory for a single source instead of staging it.
@@ -898,7 +905,9 @@ public final class PyronautDevMain implements Callable<Integer> {
                 throw new IllegalArgumentException("Source does not exist: " + source);
             }
             try (var paths = Files.walk(resolved)) {
-                for (Path path : paths.filter(Files::isRegularFile).toList()) {
+                for (Path path : paths.filter(Files::isRegularFile)
+                    .filter(candidate -> !isManagedSourcePath(resolved, candidate))
+                    .toList()) {
                     String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
                     java |= name.endsWith(".java");
                     python |= name.endsWith(".py");
@@ -1340,6 +1349,17 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
+    private static void resetStagedSources(Path targetDir) throws IOException {
+        if (Files.isDirectory(targetDir)) {
+            try (var paths = Files.walk(targetDir)) {
+                for (Path path : paths.sorted(Collections.reverseOrder()).toList()) {
+                    Files.delete(path);
+                }
+            }
+        }
+        Files.createDirectories(targetDir);
+    }
+
     private static void stageConfig(List<Path> configs, Path targetDir) throws IOException {
         if (configs.isEmpty()) {
             return;
@@ -1359,7 +1379,7 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static void copyDirectoryContents(Path source, Path target) throws IOException {
         try (var stream = Files.walk(source)) {
-            for (Path path : stream.toList()) {
+            for (Path path : stream.filter(candidate -> !isManagedSourcePath(source, candidate)).toList()) {
                 Path relative = source.relativize(path);
                 if (relative.toString().isEmpty()) {
                     continue;
@@ -1373,6 +1393,16 @@ public final class PyronautDevMain implements Callable<Integer> {
                 }
             }
         }
+    }
+
+    private static boolean isManagedSourcePath(Path sourceRoot, Path path) {
+        Path relative = sourceRoot.toAbsolutePath().normalize().relativize(path.toAbsolutePath().normalize());
+        for (Path element : relative) {
+            if (DEFAULT_PYRONAUT_DIR.equals(element.toString())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     enum ToolCommand {

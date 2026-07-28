@@ -175,6 +175,54 @@ pyronaut install --dependencies --scope all --project-dir /path/to/app
 pyronaut install --progress off --color never --project-dir /path/to/app
 ```
 
+### Direct-source IDE setup
+
+Projects that declare their build directly in Java or Python sources do not need
+a `pyproject.toml` to install editor support:
+
+```bash
+pyronaut install App.java
+pyronaut install '*.java'
+pyronaut install app.py helpers.py
+pyronaut install --project-dir /path/to/app src/
+```
+
+All selected files must use the same language. Relative source paths are
+resolved from `--project-dir` (the current directory by default), which is also
+where `__pyronaut__` and editor configuration are written. Shell-expanded and
+quoted glob patterns are supported.
+
+For Java sources, install merges Pyronaut-owned entries into `.classpath` for
+Eclipse, writes `java.project.sourcePaths` and
+`java.project.referencedLibraries` to `.vscode/settings.json`, and registers a
+dedicated `.idea/pyronaut-direct-source.iml` module for IntelliJ. Java package
+declarations are used to calculate the source roots. Existing unrelated
+settings, classpath entries, and IntelliJ modules are preserved. The generated
+classpath includes both dependencies declared with `@Dependency` and the
+compile APIs supplied by the direct-source launcher.
+
+Install also creates `Pyronaut: Run Direct Sources` and
+`Pyronaut: Test Direct Sources` launch entries. VS Code stores these in
+`.vscode/launch.json`; IntelliJ stores equivalent Shell Script configurations
+under `.idea/runConfigurations`. The application entry executes `pyronaut dev`.
+Sources whose names or directories follow standard test conventions are
+excluded from that command and placed after `--` in the `pyronaut test`
+command, for example `pyronaut test 'example/App.java' --
+'example/AppTest.java'`. This avoids IDE-native JUnit classpath inference.
+
+For Python sources, install uses the normal IDE-stub pipeline and updates
+`.vscode/settings.json` for Pylance. Existing `pyrightconfig.json`,
+`[tool.pyright]`, interpreter, and user setting safeguards still apply.
+
+When neither a supported project descriptor nor positional sources are
+present, install reports an error with a direct-source usage example.
+
+Direct-source resolution uses the normal `__pyronaut__` manifests. Its cache
+key includes the declarations, repository URLs, selected local repository,
+source contents, selected source paths, and bundled launcher classpath
+metadata. `--refresh`, `--no-cache`, `--offline`, and `--local-repository`
+apply to direct-source installs in the same way as descriptor-based installs.
+
 Option behavior:
 
 - `--dependencies`: renders dependency tree output instead of install-focused progress and cache writes.

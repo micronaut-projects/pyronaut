@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.ArrayList;
 import java.util.List;
 
 /** Resolves and caches dependencies declared by a direct source invocation. */
@@ -42,24 +43,76 @@ public final class DirectSourceDependencyResolver {
      * @throws IOException if the cache cannot be read or written
      */
     public Result resolve(Path cacheDirectory, List<String> build, List<String> runtime, List<String> repositories) throws IOException {
-        String hash = fingerprint(build, runtime, repositories);
+        DetailedResult detailed = resolveDetailed(
+            cacheDirectory,
+            build,
+            runtime,
+            repositories,
+            MavenClasspathResolver.resolveLocalMavenRepository(),
+            false,
+            false,
+            List.of()
+        );
+        return new Result(detailed.build(), detailed.runtime(), detailed.cacheHit());
+    }
+
+    /**
+     * Resolves declarations with install command repository and cache controls.
+     *
+     * @param cacheDirectory persistent direct-source cache directory
+     * @param build build-scoped Maven coordinates
+     * @param runtime runtime-scoped Maven coordinates
+     * @param repositories Maven repository URLs
+     * @param localRepository local Maven repository
+     * @param offline whether repository access is offline
+     * @param bypassCache whether manifests must be rewritten
+     * @param fingerprintInputs additional source and launcher cache inputs
+     * @return detailed resolved classpaths
+     * @throws IOException if the cache cannot be read or written
+     */
+    public DetailedResult resolveDetailed(Path cacheDirectory,
+                                          List<String> build,
+                                          List<String> runtime,
+                                          List<String> repositories,
+                                          Path localRepository,
+                                          boolean offline,
+                                          boolean bypassCache,
+                                          List<String> fingerprintInputs) throws IOException {
+        String hash = fingerprint(build, runtime, repositories, localRepository, fingerprintInputs);
         Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
         Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
-        if (Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
+        if (!bypassCache && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
             && Files.isRegularFile(buildManifest) && Files.isRegularFile(runtimeManifest)) {
-            return new Result(read(buildManifest), read(runtimeManifest), true);
+            List<String> cachedBuild = read(buildManifest);
+            List<String> cachedRuntime = read(runtimeManifest);
+            return new DetailedResult(
+                cachedBuild,
+                cachedRuntime,
+                artifactsFromClasspath(cachedBuild),
+                artifactsFromClasspath(cachedRuntime),
+                true
+            );
         }
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(null, PyronautManagedVersions.micronautPlatformVersion(),
             repositories, new PyprojectModel.Dependencies(runtime, List.of(), build, List.of()), null, null, null, null, null, null, null, null, null, null);
         PyprojectModel model = new PyprojectModel(null, null, pyronaut);
-        Path local = MavenClasspathResolver.resolveLocalMavenRepository();
-        List<String> buildResult = resolver.resolveScope(model, InstallScope.BUILD, local, false).stream().map(Path::toString).toList();
-        List<String> runtimeResult = resolver.resolveScope(model, InstallScope.RUNTIME, local, false).stream().map(Path::toString).toList();
+        MavenClasspathResolver.ResolvedScopeDetails buildDetails =
+            resolver.resolveScopeDetails(model, InstallScope.BUILD, localRepository, offline, bypassCache);
+        MavenClasspathResolver.ResolvedScopeDetails runtimeDetails =
+            resolver.resolveScopeDetails(model, InstallScope.RUNTIME, localRepository, offline, bypassCache);
+        List<String> buildResult = buildDetails.classpath().stream().map(Path::toString).toList();
+        List<String> runtimeResult = runtimeDetails.classpath().stream().map(Path::toString).toList();
         Files.createDirectories(cacheDirectory);
         Files.write(buildManifest, buildResult);
         Files.write(runtimeManifest, runtimeResult);
         Files.writeString(cacheDirectory.resolve(HASH_FILE), hash);
-        return new Result(buildResult, runtimeResult, false);
+        return new DetailedResult(
+            buildResult,
+            runtimeResult,
+            artifactsFromResolvedDetails(buildDetails.editorArtifacts()),
+            artifactsFromResolvedDetails(runtimeDetails.editorArtifacts()),
+            false
+        );
     }
 
     private static List<String> read(Path path) throws IOException {
@@ -74,11 +127,23 @@ public final class DirectSourceDependencyResolver {
      * @return SHA-256 fingerprint
      */
     static String fingerprint(List<String> build, List<String> runtime, List<String> repositories) {
+        return fingerprint(build, runtime, repositories, null, List.of());
+    }
+
+    static String fingerprint(List<String> build,
+                              List<String> runtime,
+                              List<String> repositories,
+                              Path localRepository,
+                              List<String> additionalInputs) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             update(digest, "build", build);
             update(digest, "runtime", runtime);
             update(digest, "repositories", repositories);
+            update(digest, "local-repository", localRepository == null
+                ? List.of()
+                : List.of(localRepository.toAbsolutePath().normalize().toString()));
+            update(digest, "additional", additionalInputs);
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
@@ -93,6 +158,38 @@ public final class DirectSourceDependencyResolver {
             digest.update((byte) 0);
         }
     }
+
+    private static List<ResolvedArtifact> artifactsFromResolvedDetails(List<MavenClasspathResolver.ResolvedEditorArtifact> artifacts) {
+        return artifacts.stream()
+            .map(artifact -> new ResolvedArtifact(
+                artifact.groupId(),
+                artifact.artifactId(),
+                artifact.version(),
+                artifact.binaryJar().toAbsolutePath().normalize().toString(),
+                artifact.sourceJar() == null ? null : artifact.sourceJar().toAbsolutePath().normalize().toString()
+            ))
+            .toList();
+    }
+
+    private static List<ResolvedArtifact> artifactsFromClasspath(List<String> classpath) {
+        List<ResolvedArtifact> artifacts = new ArrayList<>();
+        for (String entry : classpath) {
+            Path binary = Path.of(entry).toAbsolutePath().normalize();
+            String fileName = binary.getFileName() == null ? "" : binary.getFileName().toString();
+            Path source = fileName.endsWith(".jar")
+                ? binary.resolveSibling(fileName.substring(0, fileName.length() - 4) + "-sources.jar")
+                : null;
+            artifacts.add(new ResolvedArtifact(
+                null,
+                null,
+                null,
+                binary.toString(),
+                source != null && Files.isRegularFile(source) ? source.toString() : null
+            ));
+        }
+        return List.copyOf(artifacts);
+    }
+
     /**
      * Result of direct-source dependency resolution.
      *
@@ -104,6 +201,42 @@ public final class DirectSourceDependencyResolver {
         List<String> build,
         List<String> runtime,
         boolean cacheHit
+    ) {
+    }
+
+    /**
+     * Detailed direct-source resolution result for editor integration.
+     *
+     * @param build resolved build classpath
+     * @param runtime resolved runtime classpath
+     * @param buildArtifacts build artifact metadata
+     * @param runtimeArtifacts runtime artifact metadata
+     * @param cacheHit whether existing manifests were reused
+     */
+    public record DetailedResult(
+        List<String> build,
+        List<String> runtime,
+        List<ResolvedArtifact> buildArtifacts,
+        List<ResolvedArtifact> runtimeArtifacts,
+        boolean cacheHit
+    ) {
+    }
+
+    /**
+     * Resolved editor artifact metadata.
+     *
+     * @param groupId Maven group, if known
+     * @param artifactId Maven artifact, if known
+     * @param version Maven version, if known
+     * @param binaryJar binary JAR path
+     * @param sourceJar source JAR path, if available
+     */
+    public record ResolvedArtifact(
+        String groupId,
+        String artifactId,
+        String version,
+        String binaryJar,
+        String sourceJar
     ) {
     }
 }

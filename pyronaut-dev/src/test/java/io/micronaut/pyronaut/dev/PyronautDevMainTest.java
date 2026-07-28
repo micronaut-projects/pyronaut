@@ -18,6 +18,9 @@ package io.micronaut.pyronaut.dev;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader;
+import io.micronaut.pyronaut.directsource.DirectSourceDeclarationRequest;
+import io.micronaut.pyronaut.directsource.DirectSourceDeclarations;
+import io.micronaut.pyronaut.directsource.DirectSourceDeclarationsVisitor;
 import io.micronaut.pyronaut.logback.LogbackConfigurer;
 import io.micronaut.python.processing.PythonCall;
 import io.micronaut.python.processing.PythonSource;
@@ -149,6 +152,31 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void stagesJavaSourcesUnderConfiguredProjectDirectory(@TempDir Path tempDir) throws IOException {
+        Path projectDirectory = Files.createDirectories(tempDir.resolve("project"));
+        Path sourceDirectory = Files.createDirectories(projectDirectory.resolve("example"));
+        Path source = sourceDirectory.resolve("App.java");
+        Files.writeString(source, "package example; class App {}\n");
+        String previous = System.getProperty("pyronaut.dev.project.dir");
+        try {
+            System.setProperty("pyronaut.dev.project.dir", projectDirectory.toString());
+            int exit = PyronautDevMain.execute(
+                new String[]{source.toString()},
+                (command, args) -> 0,
+                (invocation, stagingRoot) -> {
+                    assertEquals(projectDirectory.resolve("__pyronaut__"), stagingRoot);
+                    assertTrue(Files.isRegularFile(stagingRoot.resolve("src/App.java")));
+                    assertTrue(Files.notExists(sourceDirectory.resolve("__pyronaut__")));
+                    return 0;
+                }
+            );
+            assertEquals(0, exit);
+        } finally {
+            restoreProperty("pyronaut.dev.project.dir", previous);
+        }
+    }
+
+    @Test
     void collectsPythonDirectSourceDeclarationsFromAstMetadata() {
         DirectSourceDeclarationsVisitor visitor = new DirectSourceDeclarationsVisitor();
         visitor.visit(new PythonSource("app.py", "python", List.of(
@@ -156,10 +184,10 @@ final class PyronautDevMainTest {
             new PythonCall("AppConfig", List.of(), Map.of("name", "example.value", "value", "ok"))
         )), null);
 
-        DependencyResolveRequest request = assertThrows(DependencyResolveRequest.class, () -> visitor.finish(null));
+        DirectSourceDeclarationRequest request = assertThrows(DirectSourceDeclarationRequest.class, () -> visitor.finish(null));
 
-        assertEquals("org.apache.commons:commons-lang3:3.20.0", request.dependencies().getFirst().coordinate());
-        assertEquals("ok", request.runtimeProperties().get("example.value"));
+        assertEquals("org.apache.commons:commons-lang3:3.20.0", request.declarations().dependencies().getFirst().coordinate());
+        assertEquals("ok", request.declarations().runtimeProperties().get("example.value"));
     }
 
     @Test
@@ -172,7 +200,12 @@ final class PyronautDevMainTest {
             System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
             PyronautDevMain.DirectSourceRunner runner = (invocation, stagingRoot) -> {
                 if (calls.incrementAndGet() % 2 == 1) {
-                    throw new DependencyResolveRequest(List.of(), List.of(), Map.of("processor.option", "enabled"), Map.of("example.value", "ok"));
+                    throw new DirectSourceDeclarationRequest(new DirectSourceDeclarations(
+                        List.of(),
+                        List.of(),
+                        Map.of("processor.option", "enabled"),
+                        Map.of("example.value", "ok")
+                    ));
                 }
                 assertEquals("enabled", System.getProperty("micronaut.processing.processor.option"));
                 assertEquals("ok", DirectSourceDeclarationState.runtimeProperties().get("example.value"));
@@ -195,6 +228,9 @@ final class PyronautDevMainTest {
     void disablesPythonForDirectJavaSourcesAndRestoresProperty(@TempDir Path tempDir) throws IOException {
         Path source = tempDir.resolve("Foo.java");
         Files.writeString(source, "class Foo {}\n");
+        Path staleTestSource = tempDir.resolve("__pyronaut__/src/FooTest.java");
+        Files.createDirectories(staleTestSource.getParent());
+        Files.writeString(staleTestSource, "class FooTest {}\n");
         String previous = System.getProperty("micronaut.python.enabled");
         try {
             System.clearProperty("micronaut.python.enabled");
@@ -204,6 +240,7 @@ final class PyronautDevMainTest {
                 (invocation, stagingRoot) -> {
                     assertEquals("false", System.getProperty("micronaut.python.enabled"));
                     assertTrue(Files.exists(stagingRoot.resolve("src/Foo.java")));
+                    assertTrue(Files.notExists(stagingRoot.resolve("src/FooTest.java")));
                     return 0;
                 }
             );

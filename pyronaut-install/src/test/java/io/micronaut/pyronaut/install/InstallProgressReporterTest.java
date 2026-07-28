@@ -19,12 +19,20 @@ class InstallProgressReporterTest {
             reporter.startScope(InstallScope.RUNTIME);
             reporter.finishScope(InstallScope.RUNTIME, 3);
             reporter.generatedApplicationSchema(12);
+            reporter.directSourceSelection("Java", 2);
+            reporter.directSourceDeclarations(1, 2, 1);
+            reporter.directSourceDependencies(4);
+            reporter.directSourceEditorSupport("Java");
         }
 
         String output = buffer.toString(StandardCharsets.UTF_8);
         assertTrue(output.contains("Resolving runtime dependencies..."));
         assertTrue(output.contains("Resolved runtime dependencies (3 artifacts)"));
         assertTrue(output.contains("Generated application schema from runtime classpath (12 fragments)"));
+        assertTrue(output.contains("Installing IDE support for 2 direct Java sources..."));
+        assertTrue(output.contains("Discovered direct-source declarations (1 build, 2 runtime, 1 repositories)"));
+        assertTrue(output.contains("Resolved direct-source dependencies (4 artifacts)"));
+        assertTrue(output.contains("Generated Java IDE support"));
         assertFalse(output.contains("\r"));
     }
 
@@ -50,6 +58,10 @@ class InstallProgressReporterTest {
             reporter.startScope(InstallScope.TEST);
             reporter.finishScope(InstallScope.TEST, 2);
             reporter.generatedApplicationSchema(5);
+            reporter.directSourceSelection("Java", 2);
+            reporter.directSourceDeclarations(1, 2, 1);
+            reporter.directSourceDependencies(4);
+            reporter.directSourceEditorSupport("Java");
         }
 
         assertEquals("", buffer.toString(StandardCharsets.UTF_8));

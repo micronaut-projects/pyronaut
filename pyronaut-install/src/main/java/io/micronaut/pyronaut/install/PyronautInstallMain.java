@@ -49,7 +49,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
         }
     }
 
-    @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory containing pyproject.toml")
+    @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project root for descriptors, sources, and generated files")
     Path projectDir = Path.of(".");
 
     @CommandLine.Option(names = {"--local-repository", "--local-repo"}, description = "Local Maven repository directory for resolved dependency artifacts")
@@ -75,6 +75,9 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
     @CommandLine.Option(names = "--offline", description = "Use offline mode for repository access")
     boolean offline;
+
+    @CommandLine.Parameters(arity = "0..*", paramLabel = "SOURCE", description = "Direct .java/.py source files, directories, or glob patterns")
+    List<Path> sources = List.of();
 
     private final PyprojectModelReader modelReader;
     private final MavenClasspathResolver resolver;
@@ -119,6 +122,25 @@ public final class PyronautInstallMain implements Callable<Integer> {
             initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
             Path root = projectDir.toAbsolutePath().normalize();
             Path pyproject = root.resolve(PyprojectModelReader.FILE_NAME);
+            if (!sources.isEmpty()) {
+                if (Files.exists(pyproject) || ExternalProjectLayout.isExternal(root)) {
+                    throw new IllegalArgumentException(
+                        "Direct source arguments cannot be combined with pyproject.toml, Maven, or Gradle project configuration"
+                    );
+                }
+                Path localRepo = resolveLocalRepository(root);
+                try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
+                    new DirectSourceInstaller().install(
+                        root,
+                        sources,
+                        localRepo,
+                        offline,
+                        refresh || noCache,
+                        progressReporter
+                    );
+                }
+                return InstallExitCode.SUCCESS.code();
+            }
             if (ExternalProjectLayout.isExternal(root)) {
                 Path cacheDir = root.resolve(DEFAULT_PYRONAUT_DIR);
                 Path localRepo = resolveLocalRepository(root);
@@ -162,6 +184,11 @@ public final class PyronautInstallMain implements Callable<Integer> {
             DependencyTreeRenderer.ColorMode.fromCliValue(color);
             List<InstallScope> scopes = selectedScopes();
 
+            if (!Files.isRegularFile(pyproject)) {
+                throw new IllegalArgumentException(
+                    "Missing pyproject.toml. Pass direct sources, for example: pyronaut install App.java"
+                );
+            }
             PyprojectModel model = modelReader.readFile(pyproject);
             Path cacheDir = root.resolve(DEFAULT_PYRONAUT_DIR);
             Path localRepo = resolveLocalRepository(root);

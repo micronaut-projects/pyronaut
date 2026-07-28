@@ -19,6 +19,7 @@ dependencies {
 
     // platform processors
     implementation(mn.micronaut.inject.python)
+    implementation(project(":micronaut-pyronaut-direct-source"))
     implementation(project(":micronaut-pyronaut-processor"))
     implementation(mnSerde.micronaut.serde.processor)
     implementation(mnValidation.micronaut.validation.processor)
