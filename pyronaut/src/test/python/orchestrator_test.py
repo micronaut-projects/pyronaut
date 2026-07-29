@@ -631,6 +631,127 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("-Dmicronaut.control-panel.path=/control-panel", jvm_args)
         self.assertIn("-Dmicronaut.control-panel.security.access=ANONYMOUS", jvm_args)
 
+    def test_dev_detects_standalone_main_python_source(self):
+        previous_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            try:
+                os.chdir(project_dir)
+                with patch.object(cli, "_run_direct_source", return_value=0) as direct_source:
+                    exit_code = cli.run(
+                        [
+                            "dev",
+                            "--port",
+                            "8181",
+                            "--property",
+                            "example.enabled=true",
+                            "--control-panel",
+                        ],
+                        runner=self._runner_ok(),
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                        java_home_provider=lambda: "/tmp/java-home",
+                    )
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(0, exit_code)
+        direct_source.assert_called_once()
+        self.assertEqual(
+            [
+                "--port",
+                "8181",
+                "--property",
+                "example.enabled=true",
+                "--control-panel",
+                "main.py",
+            ],
+            direct_source.call_args.args[1],
+        )
+
+    def test_dev_explicit_source_remains_authoritative_when_main_python_exists(self):
+        previous_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "main.py").write_text("print('default')\n", encoding="utf-8")
+            source = project_dir / "app.py"
+            source.write_text("print('explicit')\n", encoding="utf-8")
+            source_dir = project_dir / "src"
+            source_dir.mkdir()
+            try:
+                os.chdir(project_dir)
+                for selector in (source.name, source_dir.name):
+                    with self.subTest(selector=selector):
+                        with patch.object(cli, "_run_direct_source", return_value=0) as direct_source:
+                            exit_code = cli.run(
+                                ["dev", selector],
+                                runner=self._runner_ok(),
+                                resolver=self._resolver(),
+                                platform_name="linux",
+                                java_home_provider=lambda: "/tmp/java-home",
+                            )
+                        self.assertEqual(0, exit_code)
+                        self.assertEqual([selector], direct_source.call_args.args[1])
+            finally:
+                os.chdir(previous_cwd)
+
+    def test_dev_does_not_detect_main_python_source_in_project(self):
+        previous_cwd = Path.cwd()
+        project_markers = (
+            "pyproject.toml",
+            "pom.xml",
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            try:
+                os.chdir(project_dir)
+                for marker in project_markers:
+                    marker_file = project_dir / marker
+                    marker_file.write_text("", encoding="utf-8")
+                    self.assertIsNone(cli._default_dev_source([]))
+                    marker_file.unlink()
+                self.assertIsNone(cli._default_dev_source(["--project-dir", str(project_dir)]))
+            finally:
+                os.chdir(previous_cwd)
+
+    def test_dev_without_main_python_source_stays_in_project_mode(self):
+        previous_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                os.chdir(temp_dir)
+                self.assertIsNone(cli._default_dev_source([]))
+            finally:
+                os.chdir(previous_cwd)
+
+    def test_run_and_test_do_not_detect_main_python_source(self):
+        previous_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            try:
+                os.chdir(project_dir)
+                for command in ("run", "test"):
+                    with self.subTest(command=command):
+                        with (
+                            patch.object(cli, "_run_direct_source", return_value=0) as direct_source,
+                            redirect_stderr(io.StringIO()),
+                        ):
+                            cli.run(
+                                [command],
+                                runner=self._runner_ok(),
+                                resolver=self._resolver(),
+                                platform_name="linux",
+                            )
+                        direct_source.assert_not_called()
+            finally:
+                os.chdir(previous_cwd)
+
     def test_run_direct_python_script_uses_pyronaut_dev_native_executable(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:

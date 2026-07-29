@@ -451,10 +451,20 @@ final class PyronautDevMainTest {
         Path test = tempDir.resolve("AppTest.py");
         Files.writeString(source, "class App:\n    pass\n");
         Files.writeString(test, "from micronaut.test.extensions.junit5.annotation import MicronautTest\nfrom org.junit.jupiter.api import Test\n@MicronautTest\nclass AppTest:\n    @Test\n    def passes(self):\n        assert True\n");
-        int exit = PyronautDevMain.execute(
-            new String[]{"test", source.toString(), "--", test.toString()}
-        );
-        assertEquals(0, exit);
+        PrintStream previousOut = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+            int exit = PyronautDevMain.execute(
+                new String[]{"test", source.toString(), "--", test.toString()}
+            );
+            String testOutput = output.toString(StandardCharsets.UTF_8);
+            assertEquals(0, exit, testOutput);
+            assertTrue(testOutput.contains("1 tests successful"), testOutput);
+            assertTrue(testOutput.contains("0 tests skipped"), testOutput);
+        } finally {
+            System.setOut(previousOut);
+        }
     }
 
     @Test

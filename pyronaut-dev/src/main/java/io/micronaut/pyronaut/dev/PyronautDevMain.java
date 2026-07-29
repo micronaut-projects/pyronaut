@@ -19,6 +19,7 @@ import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.BeanDefinitionsProvider;
 import io.micronaut.context.BeanResolutionTraceMode;
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.install.PyronautInstallMain;
@@ -52,6 +53,7 @@ import org.junit.platform.launcher.core.LauncherFactory;
 import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
 import org.junit.platform.launcher.listeners.TestExecutionSummary;
 import org.junit.platform.engine.TestExecutionResult;
+import org.graalvm.polyglot.Context;
 import picocli.CommandLine;
 
 import java.io.File;
@@ -62,6 +64,7 @@ import java.io.PrintStream;
 import java.io.ByteArrayOutputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.net.URLDecoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
@@ -79,6 +82,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -608,7 +612,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             ContextClassLoaderApplicationContextConfigurers.configure(micronaut, applicationClassLoader);
             // Apply this last so runtime-discovered configurers cannot replace
             // the generated direct-source bean definitions provider.
-            micronaut.beanDefinitionsProvider(directSourceBeanDefinitionsProvider(invocation, runtimeClassLoader));
+            micronaut.beanDefinitionsProvider(
+                directSourceBeanDefinitionsProvider(invocation, () -> applicationClassLoader, runtimeClassLoader)
+            );
             List<String> configLocations = toConfigLocations(invocation.configs());
             if (!configLocations.isEmpty()) {
                 micronaut.overrideConfigLocations(configLocations.toArray(String[]::new));
@@ -629,6 +635,8 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static int runInMemoryTests(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
+        boolean pythonSource = sourceType(invocation.sources()) == SourceType.PYTHON;
+        DirectPythonContextState previousPythonContext = pythonSource ? detachPythonContext() : null;
         Path pyronautDir = projectCacheDirectory(invocation, stagingRoot);
         DirectSourceClasspaths classpaths = resolveDirectSourceClasspaths(invocation, pyronautDir);
         logClasspaths(invocation, classpaths);
@@ -643,6 +651,15 @@ public final class PyronautDevMain implements Callable<Integer> {
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
         try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
+            DeferredGeneratedClassLoader testContextClassLoader = new DeferredGeneratedClassLoader(runtimeClassLoader);
+            Thread.currentThread().setContextClassLoader(testContextClassLoader);
+            DirectSourceApplicationContextConfigurer.set(
+                directSourceBeanDefinitionsProvider(
+                    invocation,
+                    testContextClassLoader::generatedClassLoader,
+                    runtimeClassLoader
+                )
+            );
             long now = System.currentTimeMillis();
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(classpaths.processor()))
@@ -660,15 +677,14 @@ public final class PyronautDevMain implements Callable<Integer> {
             configureDirectSource(builder, invocation, stagingRoot);
             builder.compilePythonBytecode("true".equals(invocation.properties().get(DIRECT_COMPILE_PYTHON_BYTECODE)));
             ClassLoader applicationClassLoader = builder.build().buildClassLoader();
+            testContextClassLoader.generatedClassLoader(applicationClassLoader);
             if (invocation.verbose()) {
                 System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");
             }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
-            DirectSourceApplicationContextConfigurer.set(directSourceBeanDefinitionsProvider(invocation, runtimeClassLoader));
             defaultTestServerPort();
-            Thread.currentThread().setContextClassLoader(applicationClassLoader);
-            if (sourceType(invocation.sources()) == SourceType.PYTHON) {
+            if (pythonSource) {
                 GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader, Map.of(), GraalPyContextFactory.APPLICATION_MAIN);
             }
 
@@ -734,6 +750,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             return summary.getTotalFailureCount() == 0 ? SUCCESS : TESTS_FAILED;
         } finally {
+            if (pythonSource) {
+                restorePythonContext(previousPythonContext);
+            }
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
             if (previousBeanIntrospectionsProvider != null) {
                 BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
@@ -742,6 +761,33 @@ public final class PyronautDevMain implements Callable<Integer> {
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
             restoreSystemProperty(MICRONAUT_SERVER_PORT, previousServerPortProperty);
         }
+    }
+
+    private static DirectPythonContextState detachPythonContext() {
+        Context context = PythonContextRuntime.isInitialized() ? PythonContextRuntime.getContext() : null;
+        ClassLoader classLoader = PythonContextRuntime.getContextClassLoader();
+        boolean reuse = PythonContextRuntime.isReuseContext();
+        PythonContextRuntime.setReuseContext(false);
+        PythonContextRuntime.resetContext();
+        return new DirectPythonContextState(context, classLoader, reuse);
+    }
+
+    private static void restorePythonContext(DirectPythonContextState previous) {
+        if (PythonContextRuntime.isInitialized()) {
+            Context directContext = PythonContextRuntime.getContext();
+            PythonContextRuntime.setReuseContext(false);
+            try {
+                directContext.close(true);
+            } catch (RuntimeException ignored) {
+                // The Micronaut test context may already have closed it.
+            } finally {
+                PythonContextRuntime.resetContext();
+            }
+        }
+        if (previous.context() != null) {
+            PythonContextRuntime.setContext(previous.context(), previous.classLoader());
+        }
+        PythonContextRuntime.setReuseContext(previous.reuse());
     }
 
     private static Path writeReports(Path report, TestExecutionSummary summary, List<JUnitReportWriter.TestResult> results) throws IOException {
@@ -817,42 +863,6 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
         }
         return "python";
-    }
-
-    private static final class ConsoleTestExecutionListener implements TestExecutionListener {
-        private final PrintStream output;
-
-        private ConsoleTestExecutionListener(PrintStream output) {
-            this.output = output;
-        }
-
-        @Override
-        public void executionSkipped(TestIdentifier testIdentifier, String reason) {
-            if (testIdentifier.isTest()) {
-                output.println("  skipped: " + (reason == null ? "no reason supplied" : reason));
-            }
-        }
-
-        @Override
-        public void executionStarted(TestIdentifier testIdentifier) {
-            if (testIdentifier.isTest()) {
-                output.println("> " + testIdentifier.getDisplayName());
-            }
-        }
-
-        @Override
-        public void executionFinished(TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
-            if (testIdentifier.isTest()) {
-                String status = testExecutionResult.getStatus().name();
-                String highlightedStatus = switch (status) {
-                    case "SUCCESSFUL" -> "\u001B[32mSUCCESSFUL\u001B[0m";
-                    case "FAILED" -> "\u001B[31mFAILED\u001B[0m";
-                    default -> status;
-                };
-                output.println("  " + highlightedStatus);
-                testExecutionResult.getThrowable().ifPresent(throwable -> throwable.printStackTrace(output));
-            }
-        }
     }
 
     private static void configureDirectSource(PyronautCompiler.Builder builder, DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
@@ -958,18 +968,25 @@ public final class PyronautDevMain implements Callable<Integer> {
         return new DirectSourceLauncherClassLoader(launcherClassLoader);
     }
 
-    private static BeanDefinitionsProvider directSourceBeanDefinitionsProvider(DirectSourceInvocation invocation,
-                                                                                ClassLoader runtimeClassLoader) {
+    private static BeanDefinitionsProvider directSourceBeanDefinitionsProvider(
+        DirectSourceInvocation invocation,
+        Supplier<ClassLoader> generatedClassLoaderSupplier,
+        ClassLoader runtimeClassLoader
+    ) {
         BeanDefinitionsProvider inMemoryProvider = new InMemoryBeanDefinitionsProvider();
         BeanDefinitionsProvider contextClassLoaderProvider = new ContextClassLoaderBeanDefinitionsProvider();
         return classLoader -> {
             Map<String, BeanDefinitionReference<?>> references = new LinkedHashMap<>();
-            ClassLoader effectiveClassLoader = Thread.currentThread().getContextClassLoader();
-            if (effectiveClassLoader == null) {
-                effectiveClassLoader = classLoader;
+            ClassLoader generatedClassLoader = generatedClassLoaderSupplier.get();
+            if (generatedClassLoader != null) {
+                List<BeanDefinitionReference<?>> generated = inMemoryProvider.provide(generatedClassLoader);
+                addBeanDefinitionReferences(references, generated, invocation);
+                addBeanDefinitionReferences(
+                    references,
+                    loadGeneratedBeanDefinitionReferences(generatedClassLoader),
+                    invocation
+                );
             }
-            List<BeanDefinitionReference<?>> generated = inMemoryProvider.provide(effectiveClassLoader);
-            addBeanDefinitionReferences(references, generated, invocation);
             ClassLoader previous = Thread.currentThread().getContextClassLoader();
             try {
                 Thread.currentThread().setContextClassLoader(runtimeClassLoader);
@@ -979,6 +996,40 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             return List.copyOf(references.values());
         };
+    }
+
+    private static List<BeanDefinitionReference<?>> loadGeneratedBeanDefinitionReferences(ClassLoader classLoader) {
+        String resourceName = "META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference";
+        String resourcePrefix = "/CLASS_OUTPUT/" + resourceName + "/";
+        List<BeanDefinitionReference<?>> references = new ArrayList<>();
+        try {
+            Enumeration<URL> resources = classLoader.getResources(resourceName);
+            while (resources.hasMoreElements()) {
+                URL resource = resources.nextElement();
+                String path = resource.getPath();
+                int start = path.indexOf(resourcePrefix);
+                if (start < 0) {
+                    continue;
+                }
+                String className = URLDecoder.decode(
+                    path.substring(start + resourcePrefix.length()),
+                    StandardCharsets.UTF_8
+                );
+                try {
+                    Object instance = Class.forName(className, true, classLoader)
+                        .getDeclaredConstructor()
+                        .newInstance();
+                    if (instance instanceof BeanDefinitionReference<?> reference) {
+                        references.add(reference);
+                    }
+                } catch (ReflectiveOperationException | LinkageError ignored) {
+                    // Ignore resources that do not represent a loadable generated bean definition.
+                }
+            }
+        } catch (IOException ignored) {
+            // No generated bean definitions found.
+        }
+        return references;
     }
 
     private static void addBeanDefinitionReferences(Map<String, BeanDefinitionReference<?>> references,
@@ -1406,6 +1457,82 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
         }
         return false;
+    }
+
+    private record DirectPythonContextState(Context context, ClassLoader classLoader, boolean reuse) {
+    }
+
+    private static final class ConsoleTestExecutionListener implements TestExecutionListener {
+        private final PrintStream output;
+
+        private ConsoleTestExecutionListener(PrintStream output) {
+            this.output = output;
+        }
+
+        @Override
+        public void executionSkipped(TestIdentifier testIdentifier, String reason) {
+            if (testIdentifier.isTest()) {
+                output.println("  skipped: " + (reason == null ? "no reason supplied" : reason));
+            }
+        }
+
+        @Override
+        public void executionStarted(TestIdentifier testIdentifier) {
+            if (testIdentifier.isTest()) {
+                output.println("> " + testIdentifier.getDisplayName());
+            }
+        }
+
+        @Override
+        public void executionFinished(TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
+            if (testIdentifier.isTest()) {
+                String status = testExecutionResult.getStatus().name();
+                String highlightedStatus = switch (status) {
+                    case "SUCCESSFUL" -> "\u001B[32mSUCCESSFUL\u001B[0m";
+                    case "FAILED" -> "\u001B[31mFAILED\u001B[0m";
+                    default -> status;
+                };
+                output.println("  " + highlightedStatus);
+                testExecutionResult.getThrowable().ifPresent(throwable -> throwable.printStackTrace(output));
+            }
+        }
+    }
+
+    private static final class DeferredGeneratedClassLoader extends ClassLoader {
+        private volatile ClassLoader generatedClassLoader;
+
+        private DeferredGeneratedClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        private ClassLoader generatedClassLoader() {
+            return generatedClassLoader;
+        }
+
+        private void generatedClassLoader(ClassLoader generatedClassLoader) {
+            this.generatedClassLoader = generatedClassLoader;
+        }
+
+        @Override
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            ClassLoader generated = generatedClassLoader;
+            if (generated == null) {
+                throw new ClassNotFoundException(name);
+            }
+            return generated.loadClass(name);
+        }
+
+        @Override
+        public URL getResource(String name) {
+            ClassLoader generated = generatedClassLoader;
+            return generated == null ? super.getResource(name) : generated.getResource(name);
+        }
+
+        @Override
+        public Enumeration<URL> getResources(String name) throws IOException {
+            ClassLoader generated = generatedClassLoader;
+            return generated == null ? super.getResources(name) : generated.getResources(name);
+        }
     }
 
     enum ToolCommand {

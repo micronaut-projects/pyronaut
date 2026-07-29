@@ -270,6 +270,7 @@ Common options:
 
 Behavior:
 
+- When no source is specified, detects `main.py` in the current directory for standalone direct-source development. A `pyproject.toml`, Maven build, or Gradle build keeps project mode.
 - Runs `pyronaut-validate-config --scenario dev` before preflight by default.
 - Automatically performs install/process preflight before launching.
 - Starts an owned test-resources server when test resources are enabled and no reusable external server settings are present.

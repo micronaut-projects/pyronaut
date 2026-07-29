@@ -19,6 +19,7 @@ import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.ApplicationContextConfigurer;
 import io.micronaut.context.BeanDefinitionsProvider;
 import io.micronaut.core.annotation.Internal;
+import io.micronaut.core.order.Ordered;
 
 import java.util.Optional;
 
@@ -47,5 +48,10 @@ public final class DirectSourceApplicationContextConfigurer implements Applicati
     public void configure(ApplicationContextBuilder builder) {
         Optional.ofNullable(provider).ifPresent(builder::beanDefinitionsProvider);
         builder.properties(DirectSourceDeclarationState.runtimeProperties());
+    }
+
+    @Override
+    public int getOrder() {
+        return Ordered.LOWEST_PRECEDENCE;
     }
 }

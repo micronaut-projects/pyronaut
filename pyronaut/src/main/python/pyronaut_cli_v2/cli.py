@@ -245,6 +245,11 @@ def run(
         _print_test_usage()
         return SUCCESS
 
+    if command == "dev" and not _looks_like_direct_source_invocation(forwarded_args):
+        default_source = _default_dev_source(forwarded_args)
+        if default_source is not None:
+            forwarded_args.append(default_source)
+
     if command in {"dev", "run"} and _looks_like_direct_source_invocation(forwarded_args):
         direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
             runner=runner,
@@ -2304,6 +2309,16 @@ def _is_external_build_project(project_dir: Path) -> bool:
         (project_dir / name).is_file()
         for name in ("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
     )
+
+
+def _default_dev_source(args: Sequence[str]) -> str | None:
+    if _extract_project_dir(args) != ".":
+        return None
+    project_dir = Path.cwd()
+    if (project_dir / "pyproject.toml").is_file() or _is_external_build_project(project_dir):
+        return None
+    main_source = project_dir / "main.py"
+    return main_source.name if main_source.is_file() else None
 
 
 def _resolve_build_mode(project_dir: Path, args: Sequence[str]) -> str:
@@ -4601,7 +4616,11 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             f"       pyronaut {command} [--port=<port>] [--property=<name=value>]",
             "                    [-D<name=value>] [--config=<file-or-dir>]",
             "                    [--setup=<pyproject.toml>]",
-            "                    <source.py|source-dir>...",
+            (
+                "                    [<source.py|source-dir>...]"
+                if command == "dev"
+                else "                    <source.py|source-dir>..."
+            ),
         ],
         description=(
             "Run a processed Pyronaut application or direct Java/Python sources in development mode"
@@ -4611,6 +4630,11 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
         options=[
             ("[<appArgs>...]", "Arguments passed to the processed application"),
             ("<source.java|source.py|source-dir>...", "Java or Python source files/directories for direct source execution"),
+            *(
+                [("main.py", "Detected in the current directory when no source or project build is present")]
+                if command == "dev"
+                else []
+            ),
             ("-D<name=value>", "Set a Micronaut/system property for direct source execution"),
             ("--classes-dir=<classesDir>", "Processed classes directory"),
             *( [("--control-panel", "Enable the development Control Panel")] if command == "dev" else [] ),

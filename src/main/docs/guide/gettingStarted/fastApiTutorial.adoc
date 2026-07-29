@@ -1,0 +1,173 @@
+= The FastAPI Tutorial
+
+This tutorial recreates the flow of the https://fastapi.tiangolo.com/#example[FastAPI example] with Pyronaut.
+
+The tutorial is designed for readers familiar with FastAPI and who want to learn Pyronaut.
+
+It uses standard Python type hints, generates an OpenAPI description and interactive documentation, validates input, reloads during development, and includes an automated test.
+
+== Create It
+
+Create an empty directory, change into it, and create `main.py`:
+
+[source,python]
+----
+include::src/main/docs/examples/gettingStarted/fastapi/initial/main.py[]
+----
+
+The `@Get` decorators declare two HTTP `GET` operations.
+The `item_id: int` type hint tells Pyronaut to convert and validate the path value as an integer.
+Because `q` defaults to `None`, it is an optional query parameter.
+
+== Run It
+
+Run the development server from the directory containing `main.py`:
+
+[source,bash]
+----
+pyronaut dev
+----
+
+When no source is specified, `pyronaut dev` detects a standalone `main.py` in the current directory.
+Development mode watches the source and reloads the application after changes.
+The server listens on `http://localhost:8080` by default.
+
+== Check It
+
+Call the root operation:
+
+[source,bash]
+----
+curl http://localhost:8080/
+----
+
+The response is:
+
+[source,json]
+----
+{"Hello":"World"}
+----
+
+Call the item operation:
+
+[source,bash]
+----
+curl "http://localhost:8080/items/5?q=somequery"
+----
+
+The response is:
+
+[source,json]
+----
+{"item_id":5,"q":"somequery"}
+----
+
+The application now:
+
+* Handles `GET` requests at `/` and `/items/{item_id}`.
+* Converts `item_id` to an `int`.
+* Accepts the optional `q` query parameter as a `str`.
+* Returns both responses as JSON.
+
+Passing a value that cannot be converted to an integer returns `400 Bad Request`:
+
+[source,bash]
+----
+curl -i http://localhost:8080/items/foo
+----
+
+A representative response begins:
+
+[source,text]
+----
+HTTP/1.1 400 Bad Request
+----
+
+== Interactive API Documentation
+
+Open http://localhost:8080/swagger-ui/index.html[Swagger UI] to explore and call the API interactively.
+Pyronaut generates the OpenAPI description from the routes and Python types while compiling `main.py`.
+
+== Alternative API Documentation
+
+Open http://localhost:8080/redoc/index.html[ReDoc] for an alternative rendering of the same generated OpenAPI description.
+
+== Upgrade the Example
+
+Replace `main.py` with the following version to accept an `Item` request body:
+
+[source,python]
+----
+include::src/main/docs/examples/gettingStarted/fastapi/upgraded/main.py[]
+----
+
+`Item` is a standard Python dataclass.
+`@Serdeable` enables compile-time JSON serialization, while `@Validated`, `Valid`, `NotBlank`, and `Positive` apply Micronaut Validation to the request body.
+No reflection or Pydantic model is required.
+
+The development server reloads the application automatically.
+Try the new `PUT` operation:
+
+[source,bash]
+----
+curl -X PUT http://localhost:8080/items/5 \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Foo","price":42.0,"is_offer":true}'
+----
+
+The response is:
+
+[source,json]
+----
+{"item_name":"Foo","item_id":5}
+----
+
+The upgraded Swagger UI and ReDoc pages include the request body and its validation constraints.
+An invalid body produces `400 Bad Request`:
+
+[source,bash]
+----
+curl -i -X PUT http://localhost:8080/items/5 \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"","price":-1}'
+----
+
+The response begins:
+
+[source,text]
+----
+HTTP/1.1 400 Bad Request
+----
+
+== Test It
+
+Create `test_main.py` next to `main.py`:
+
+[source,python]
+----
+include::src/main/docs/examples/gettingStarted/fastapi/upgraded/test_main.py[]
+----
+
+Run the application source and test source together:
+
+[source,bash]
+----
+pyronaut test main.py -- test_main.py
+----
+
+`@MicronautTest` starts and stops an embedded server for the test class.
+The injected `HttpClient` calls the application over HTTP, covering the root response, path and query binding, a valid request body, and a validation failure.
+The development server does not need to be running separately.
+
+== Recap
+
+With standard Python type hints and a small set of Pyronaut decorators, the application provides:
+
+* Editor completion and type checking for parameters and dataclasses.
+* Conversion and validation of path, query, and JSON body values.
+* Compile-time JSON serialization without reflection.
+* Automatic OpenAPI generation with Swagger UI and ReDoc.
+* Development-time reloads with `pyronaut dev`.
+* Standalone HTTP integration tests with `@MicronautTest` and `pyronaut test`.
+
+The types are declared once and reused for HTTP binding, validation, serialization, documentation, and tests.

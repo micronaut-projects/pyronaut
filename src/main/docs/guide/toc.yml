@@ -2,7 +2,9 @@ introduction:
   title: Introduction
 releaseHistory: Release History
 installation: Installing Pyronaut
-gettingStarted: Getting Started
+gettingStarted:
+  title: Getting Started
+  fastApiTutorial: The FastAPI Tutorial
 projectStructure:
   title: Pyronaut Project Layout
 configuration:
