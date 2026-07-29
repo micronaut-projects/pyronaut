@@ -44,8 +44,6 @@ val functionalTestMicronautPlatformVersion = requiredGradleProperty("pyronaut.mi
 val functionalTestMicronautTestVersion = versionFromCatalog("micronaut-test")
 val functionalTestResourcesVersion = versionFromCatalog("micronaut-test-resources")
 val functionalTestGraalPyVersion = versionFromCatalog("graalpy")
-val includedCoreSourcegenVersion = versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen")
-val includedCoreJavaParserVersion = versionFromIncludedMicronautCoreCatalog("managed-java-parser-core")
 val useNativeExecutables = providers
     .gradleProperty("native")
     .map(String::toBoolean)
@@ -111,6 +109,9 @@ val fixturePlatformPom by configurations.creating {
 }
 
 dependencies.add(fixturePlatformPom.name, "io.micronaut.platform:micronaut-platform:$functionalTestMicronautPlatformVersion@pom")
+
+val includedCoreSourcegenVersion = readMavenPomTag(fixturePlatformPom.singleFile, "micronaut.sourcegen.version")
+val includedCoreJavaParserVersion = readMavenPomTag(fixturePlatformPom.singleFile, "java.parser.core.version")
 
 val sourcegenFixtureArtifactIds = listOf(
     "micronaut-sourcegen-annotations",
@@ -268,15 +269,6 @@ fun Configuration.useJavaRuntimeClasspathAttributes() {
             objects.named(TargetJvmEnvironment::class.java, TargetJvmEnvironment.STANDARD_JVM)
         )
     }
-}
-
-fun versionFromIncludedMicronautCoreCatalog(key: String): String {
-    val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
-        ?: throw GradleException("Unable to resolve $key without the included micronaut-core build")
-    return versionFromCatalog(
-        includedBuild.projectDir.resolve("gradle/libs.versions.toml"),
-        key
-    )
 }
 
 fun defaultFixtureEnv(): Map<String, String> {
@@ -663,7 +655,7 @@ fun mavenPomContent(
     }
     val sourcegenPlaceholder = "${'$'}{micronaut.sourcegen.version}"
     if (artifactId == "micronaut-core-bom" && content.contains(sourcegenPlaceholder)) {
-        val sourcegenVersion = versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen")
+        val sourcegenVersion = includedCoreSourcegenVersion
         content = content.replace(
             "  </properties>",
             "    <micronaut.sourcegen.version>$sourcegenVersion</micronaut.sourcegen.version>\n  </properties>"
@@ -676,7 +668,7 @@ fun mavenPomContent(
     if (artifactId == "micronaut-platform") {
         content = replacePomProperty(content, "graal.version", functionalTestGraalPyVersion)
         content = replacePomProperty(content, "graalpy.embedding.version", functionalTestGraalPyVersion)
-        content = replacePomProperty(content, "micronaut.sourcegen.version", versionFromIncludedMicronautCoreCatalog("micronaut-sourcegen"))
+        content = replacePomProperty(content, "micronaut.sourcegen.version", includedCoreSourcegenVersion)
         content = replacePomProperty(content, "micronaut.test.version", functionalTestMicronautTestVersion)
         content = replacePomProperty(content, "micronaut.test.resources.version", functionalTestResourcesVersion)
         content = replacePomProperty(content, "micronaut.testresources.version", functionalTestResourcesVersion)
@@ -766,8 +758,9 @@ fun micronautDataVersionFromPlatformPom(): String =
     readMavenPomTag(fixturePlatformPom.singleFile, "micronaut.data.version")
 
 fun Project.stageIncludedMicronautCoreFixtureArtifacts() {
-    val includedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
-        ?: throw GradleException("functional-test requires the included micronaut-core build when using $functionalTestMicronautCoreVersion")
+    // Micronaut Core is consumed from the published snapshot repository.
+    if (gradle.includedBuilds.none { it.name == "micronaut-core" }) return
+    val includedBuild = gradle.includedBuilds.first { it.name == "micronaut-core" }
     val properties = readProperties(includedBuild.projectDir.resolve("gradle.properties"))
     val coreGroupId = properties.getProperty("projectGroupId")
     val sourceVersion = properties.getProperty("projectVersion")
