@@ -101,6 +101,7 @@ public final class PyprojectModelReader {
             new PyprojectModel.Build(
                 resolveBuildMode(parsed),
                 readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED),
+                readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_BASE_IMAGE),
                 resolveBuildMetadata(parsed),
                 resolveBuildDocker(parsed)
             ),
@@ -267,7 +268,8 @@ public final class PyprojectModelReader {
             readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_NATIVE_BUILDER_IMAGE),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_NATIVE_BASE_IMAGE),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BUILDER_IMAGE),
-            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BASE_IMAGE)
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BASE_IMAGE),
+            readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_BASE_IMAGE)
         );
     }
 

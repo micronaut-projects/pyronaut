@@ -148,6 +148,13 @@ public final class PyprojectConfigSpec {
         "jvm",
         List.of("jvm", "native")
     );
+    public static final FieldSpec PYRONAUT_BUILD_BASE_IMAGE = string(
+        "tool.pyronaut.build.base-image",
+        "Local reusable Pyronaut native runtime image path.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.baseImage")
+    );
     public static final FieldSpec PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED = bool(
         "tool.pyronaut.build.python-bytecode.enabled",
         "Whether generated Python resources should include GraalPy bytecode caches.",
@@ -362,6 +369,13 @@ public final class PyprojectConfigSpec {
         null,
         List.of(),
         List.of("tool.pyronaut.build.docker.staticNativeBaseImage")
+    );
+    public static final FieldSpec PYRONAUT_BUILD_DOCKER_BASE_IMAGE = string(
+        "tool.pyronaut.build.docker.base-image",
+        "Reusable Pyronaut native Docker image.",
+        null,
+        List.of(),
+        List.of("tool.pyronaut.build.docker.baseImage")
     );
     public static final SectionSpec PYRONAUT_IDE_STUBS_SECTION = section(
         "tool.pyronaut.ide-stubs",
@@ -744,6 +758,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_DEPENDENCIES_BUILD,
         PYRONAUT_DEPENDENCIES_TEST,
         PYRONAUT_BUILD_MODE,
+        PYRONAUT_BUILD_BASE_IMAGE,
         PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED,
         PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_TEST_MODE,
@@ -777,6 +792,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_BUILD_DOCKER_NATIVE_BASE_IMAGE,
         PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BUILDER_IMAGE,
         PYRONAUT_BUILD_DOCKER_STATIC_NATIVE_BASE_IMAGE,
+        PYRONAUT_BUILD_DOCKER_BASE_IMAGE,
         PYRONAUT_IDE_STUBS_ENABLED,
         PYRONAUT_IDE_STUBS_IDE,
         PYRONAUT_IDE_STUBS_PACKAGES,

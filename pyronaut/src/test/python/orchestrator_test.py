@@ -997,7 +997,7 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("micronaut-context-python-5.1.0.jar", compiler_arg)
         self.assertIn("micronaut-inject-python-5.1.0.jar", compiler_arg)
 
-    def test_run_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):
+    def test_run_prefers_bundled_production_native_executable_with_application_classpath(self):
         executed = []
         original_test_resources_disabled = os.environ.get("PYRONAUT_TEST_RESOURCES_DISABLED")
         os.environ["PYRONAUT_TEST_RESOURCES_DISABLED"] = "true"
@@ -1006,6 +1006,9 @@ class OrchestratorTest(unittest.TestCase):
                 native_dev = Path(temp_dir) / "pyronaut-dev"
                 native_dev.write_text("", encoding="utf-8")
                 native_dev.chmod(0o755)
+                native_run = Path(temp_dir) / "pyronaut-run"
+                native_run.write_text("", encoding="utf-8")
+                native_run.chmod(0o755)
                 project_dir = Path(temp_dir) / "demo"
                 (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
                 (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
@@ -1044,7 +1047,7 @@ additional-resources = ["views"]
                     executed.append(command_line)
                     return 0
 
-                with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else native_run if command_name == "pyronaut-run" else None):
                     with redirect_stderr(io.StringIO()):
                         exit_code = cli.run(
                             ["run", "--project-dir", str(project_dir), "--main-class", "example.Main"],
@@ -1068,26 +1071,48 @@ additional-resources = ["views"]
         )
         run_command = executed[2]
         self.assertNotIn("-cp", run_command)
-        self.assertEqual(str(native_dev), run_command[0])
-        properties = self._extract_native_system_properties(run_command, "run")
+        self.assertEqual(str(native_run), run_command[0])
+        properties = self._extract_native_system_properties(run_command, "--project-dir")
         classpath = properties["java.class.path"].split(os.pathsep)
-        self.assertEqual("/tmp/runtime-dev.jar", classpath[0])
-        self.assertNotIn("/tmp/runtime.jar", classpath)
+        self.assertEqual("/tmp/runtime.jar", classpath[0])
         self.assertIn(str((project_dir / "__pyronaut__" / "classes").resolve()), classpath)
         self.assertIn(str((project_dir / "app-config").resolve()), classpath)
         self.assertIn(str((project_dir / "views").resolve()), classpath)
-        self.assertNotIn("/tmp/micronaut-test-resources-client-4.0.0.jar", classpath)
         self.assertNotIn("/tmp/pyronaut-run.jar", classpath)
-        test_resources_client_classpath = properties["pyronaut.dev.test.resources.client.classpath"].split(os.pathsep)
-        self.assertEqual(
-            [
-                "/tmp/micronaut-test-resources-client-4.0.0.jar",
-                "/tmp/micronaut-test-resources-core-4.0.0.jar",
-                "/tmp/micronaut-test-resources-codec-4.0.0.jar",
-            ],
-            test_resources_client_classpath,
-        )
-        self.assertEqual(["run", "--project-dir", str(project_dir), "--main-class", "example.Main"], run_command[run_command.index("run") :])
+        self.assertEqual(["--project-dir", str(project_dir), "--main-class", "example.Main"], run_command[run_command.index("--project-dir") :])
+
+    def test_native_run_selects_python_production_runtime(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True)
+            runtime = Path(temp_dir) / "micronaut-context-python-5.1.0.jar"
+            runtime.write_text("", encoding="utf-8")
+            (cache_dir / "resolved-runtime-dependencies").write_text(f"{runtime}\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.toolchain]
+type = "native"
+""".strip() + "\n",
+                encoding="utf-8",
+            )
+            native_run_python = Path(temp_dir) / "pyronaut-run-python"
+            native_run_python.write_text("", encoding="utf-8")
+            native_run_python.chmod(0o755)
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda name: native_run_python if name == "pyronaut-run-python" else None):
+                command_line = cli._pyronaut_run_native_command_line(  # noqa: SLF001
+                    "run",
+                    ["--project-dir", str(project_dir)],
+                    self._resolver(),
+                )
+
+        self.assertIsNotNone(command_line)
+        self.assertEqual(str(native_run_python), command_line[0])
 
     def test_native_application_classpath_filters_only_manifested_native_image_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1314,7 +1339,7 @@ additional-resources = ["views"]
         self.assertNotIn("-Dmicronaut.environments=dev", jvm_args)
         self.assertTrue(cli._has_micronaut_environments_property(["-Dmicronaut.environments=custom", str(source)]))  # noqa: SLF001
 
-    def test_run_auto_restart_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):
+    def test_run_auto_restart_prefers_bundled_production_native_executable_with_application_classpath(self):
         executed = []
         started = []
         original_test_resources_disabled = os.environ.get("PYRONAUT_TEST_RESOURCES_DISABLED")
@@ -1324,6 +1349,9 @@ additional-resources = ["views"]
                 native_dev = Path(temp_dir) / "pyronaut-dev"
                 native_dev.write_text("", encoding="utf-8")
                 native_dev.chmod(0o755)
+                native_run = Path(temp_dir) / "pyronaut-run"
+                native_run.write_text("", encoding="utf-8")
+                native_run.chmod(0o755)
                 project_dir = Path(temp_dir) / "demo"
                 (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
                 self._write_manifests(project_dir, development_runtime=True)
@@ -1352,7 +1380,7 @@ type = "native"
                     started.append((command_line, env))
                     return FakeProcess()
 
-                with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else native_run if command_name == "pyronaut-run" else None):
                     exit_code = cli.run(
                         ["run", "--project-dir", str(project_dir)],
                         runner=runner,
@@ -1372,17 +1400,17 @@ type = "native"
                 [str(native_dev), "validate-config", "--project-dir", str(project_dir), "--scenario", "run"],
                 [str(native_dev), "process", "--project-dir", str(project_dir), "--pass", "main"],
             ],
-            executed,
+            executed[:2],
         )
-        self.assertEqual(1, len(started))
-        run_command = started[0][0]
-        self.assertEqual(str(native_dev), run_command[0])
+        self.assertEqual([], started)
+        run_command = executed[2]
+        self.assertEqual(str(native_run), run_command[0])
         self.assertNotIn("-cp", run_command)
-        properties = self._extract_native_system_properties(run_command, "run")
+        properties = self._extract_native_system_properties(run_command, "--project-dir")
         classpath = properties["java.class.path"].split(os.pathsep)
-        self.assertEqual("/tmp/runtime-dev.jar", classpath[0])
+        self.assertEqual("/tmp/runtime.jar", classpath[0])
         self.assertIn(str((project_dir / "__pyronaut__" / "classes").resolve()), classpath)
-        self.assertEqual(["run", "--project-dir", str(project_dir)], run_command[run_command.index("run") :])
+        self.assertEqual(["--project-dir", str(project_dir)], run_command[run_command.index("--project-dir") :])
 
     def test_test_prefers_bundled_pyronaut_dev_native_executable_with_test_classpath_and_resources_properties(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2525,7 +2553,7 @@ logsDir = "var/custom-test-resources-logs"
                 classpath = cli._build_delegate_classpath(  # noqa: SLF001 - exercising internal helper directly
                     "run",
                     project_dir.resolve(),
-                    lambda command_name: str(executable) if command_name == "pyronaut-run" else f"/tmp/{command_name}",
+                    lambda command_name: str(executable) if command_name in {"pyronaut-run", "pyronaut-run-python"} else f"/tmp/{command_name}",
                 )
             finally:
                 if previous is not None:
@@ -2569,7 +2597,7 @@ logsDir = "var/custom-test-resources-logs"
                 classpath = cli._build_delegate_classpath(  # noqa: SLF001 - exercising internal helper directly
                     "run",
                     project_dir.resolve(),
-                    lambda command_name: str(executable) if command_name == "pyronaut-run" else f"/tmp/{command_name}",
+                    lambda command_name: str(executable) if command_name in {"pyronaut-run", "pyronaut-run-python"} else f"/tmp/{command_name}",
                 )
             finally:
                 if previous is not None:
@@ -4070,6 +4098,54 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
         self.assertIn("Docker image build complete: example/demo:1.2.3-native", stdout.getvalue())
 
+    def test_build_docker_base_image_creates_reusable_base_then_application_layer(self):
+        executed = []
+        dockerfiles: list[str] = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if len(command_line) >= 2 and command_line[1] == "build":
+                dockerfile = Path(command_line[command_line.index("-f") + 1])
+                dockerfiles.append(dockerfile.read_text(encoding="utf-8"))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
+            root_dir = Path(temp_dir)
+            project_dir = root_dir / "crema-docker-demo"
+            runtime_jar = project_dir / "__pyronaut__" / "m2-repository" / "example" / "runtime.jar"
+            runtime_jar.parent.mkdir(parents=True, exist_ok=True)
+            runtime_jar.write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                str(runtime_jar.resolve()) + "\n", encoding="utf-8"
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"demo-app\"\nversion = \"1.2.3\"\n",
+                encoding="utf-8",
+            )
+            native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
+
+            def resolver(command_name):
+                return native_executable if command_name == "pyronaut-native-build" else f"/tmp/{command_name}"
+
+            exit_code = cli.run(
+                ["build", "--native", "--docker", "--base-image", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=resolver,
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        docker_commands = [command for command, _ in executed if len(command) >= 2 and command[1] == "build"]
+        self.assertEqual(2, len(docker_commands))
+        self.assertIn("--target", docker_commands[0])
+        self.assertIn("pyronaut-base", docker_commands[0])
+        self.assertIn("demo-app:1.2.3-native-base", docker_commands[0])
+        self.assertIn("demo-app:1.2.3-native", docker_commands[1])
+        self.assertIn("--base-image", dockerfiles[0])
+        self.assertIn("FROM pyronaut-base", dockerfiles[0])
+        self.assertIn("COPY app/__pyronaut__/classes /app/__pyronaut__/classes", dockerfiles[0])
+
     def test_build_docker_uses_custom_dockerfiles_from_pyproject(self):
         executed = []
         captured: dict[str, object] = {}
@@ -4152,6 +4228,57 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
         self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
         self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i1", captured["docker_command"])
+
+    def test_build_docker_reuses_configured_base_with_custom_runtime_dockerfile(self):
+        captured: dict[str, object] = {}
+
+        def runner_with_env(command_line, env):
+            if len(command_line) >= 2 and command_line[1] == "build":
+                context_dir = Path(command_line[-1])
+                dockerfile = Path(command_line[command_line.index("-f") + 1])
+                captured["docker_command"] = command_line
+                captured["dockerfile_name"] = dockerfile.name
+                captured["dockerfile"] = dockerfile.read_text(encoding="utf-8")
+                captured["context_files"] = sorted(str(path.relative_to(context_dir)) for path in context_dir.rglob("*"))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
+            project_dir = Path(temp_dir) / "custom-crema-docker-demo"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            (project_dir / "docker").mkdir(parents=True, exist_ok=True)
+            (project_dir / "docker" / "DockerfileNative").write_text(
+                "ARG PYRONAUT_BASE_IMAGE\nFROM ${PYRONAUT_BASE_IMAGE}\nCOPY app/__pyronaut__/classes /app/__pyronaut__/classes\n",
+                encoding="utf-8",
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        "name = \"demo-app\"",
+                        "version = \"1.2.3\"",
+                        "",
+                        "[tool.pyronaut.build.docker]",
+                        "base-image = \"registry.example.com/acme/runtime:1\"",
+                        "dockerfile-native = \"docker/DockerfileNative\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            exit_code = cli.run(
+                ["build", "--native", "--docker", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("DockerfileNative", captured["dockerfile_name"])
+        self.assertIn("PYRONAUT_BASE_IMAGE=registry.example.com/acme/runtime:1", captured["docker_command"])
+        self.assertIn("FROM ${PYRONAUT_BASE_IMAGE}", captured["dockerfile"])
+        self.assertIn("app/__pyronaut__/classes", captured["context_files"])
+        self.assertNotIn("app/__pyronaut__/tools/pyronaut-native-build", captured["context_files"])
 
     def test_prepare_jvm_build_wheel_staging_rewrites_manifest_and_generates_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4443,6 +4570,96 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code)
         self.assertEqual("/tmp/pyronaut-native-build", executed[3][0][0])
         self.assertEqual("wheel", executed[4][0][3])
+
+    def test_build_mode_defaults_to_native_from_toolchain_type(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-toolchain-default"
+            project_dir.mkdir(parents=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"native\"\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual("native", cli._resolve_build_mode(project_dir, []))  # noqa: SLF001 - precedence coverage
+            self.assertEqual("jvm", cli._resolve_build_mode(project_dir, ["--jvm"]))  # noqa: SLF001 - precedence coverage
+
+    def test_build_base_image_uses_python_runner_and_configured_output(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if command_line and command_line[0] == "/tmp/pyronaut-native-build":
+                output = Path(command_line[command_line.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("base", encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "python-base"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text(
+                "/tmp/micronaut-context-python.jar\n", encoding="utf-8"
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.build]\nbase-image = \"runtime/python-base\"\n",
+                encoding="utf-8",
+            )
+
+            exit_code = cli.run(
+                ["build", "--base-image", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, exit_code)
+        native_command = executed[3][0]
+        self.assertIn("--base-image", native_command)
+        self.assertIn("--include-python", native_command)
+        self.assertEqual(str((project_dir / "runtime" / "python-base").resolve()), native_command[native_command.index("--output") + 1])
+
+    def test_native_wheel_reuses_configured_local_base_image(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if command_line and command_line[0] == "/tmp/pyronaut-native-build":
+                output = Path(command_line[command_line.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("base", encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "base-reuse"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"demo\"\nversion = \"1.0\"\n\n[tool.pyronaut.build]\nbase-image = \"runtime/base\"\n",
+                encoding="utf-8",
+            )
+
+            base_exit = cli.run(
+                ["build", "--base-image", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+            wheel_exit = cli.run(
+                ["build", "--native", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, base_exit)
+        self.assertEqual(0, wheel_exit)
+        native_commands = [command for command, _ in executed if command and command[0] == "/tmp/pyronaut-native-build"]
+        self.assertEqual(1, len(native_commands))
 
     def test_build_mode_flag_with_separate_value_uses_native(self):
         executed = []
@@ -5372,7 +5589,7 @@ java-version = 25
             for index, token in enumerate(executed[0][0])
             if token == "--native-command"
         ]
-        self.assertEqual(["validate-config", "install", "process", "run", "test"], native_command_names)
+        self.assertEqual(["validate-config", "install", "process", "test"], native_command_names)
 
     def test_tui_help_delegates_to_tui_executable_help(self):
         executed = []

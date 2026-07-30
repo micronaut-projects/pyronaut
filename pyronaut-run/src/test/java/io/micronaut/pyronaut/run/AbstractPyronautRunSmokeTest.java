@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.run;
 
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
+import example.JavaHelloController;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
@@ -43,9 +44,23 @@ abstract class AbstractPyronautRunSmokeTest {
         );
         assertEquals(0, processExit);
         assertProcessedMainArtifacts(project);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
+            "",
+            StandardCharsets.UTF_8
+        );
 
         RunResult result = runPyronautRun(project);
         assertTrue(result.responseBody().contains("Hello World"), result.output());
+    }
+
+    protected void assertPrecompiledJavaApplicationServesHttpResponse() throws Exception {
+        Path project = tempDir.resolve("java-app");
+        int port = reservePort();
+        preparePrecompiledJavaProject(project, port);
+
+        RunResult result = runPyronautRun(project);
+        assertTrue(result.responseBody().contains("Hello Java"), result.output());
     }
 
     protected abstract RunResult runPyronautRun(Path project) throws Exception;
@@ -145,7 +160,9 @@ abstract class AbstractPyronautRunSmokeTest {
                 if (response.statusCode() == 200) {
                     return response.body();
                 }
-                lastFailure = new IllegalStateException("Unexpected status " + response.statusCode());
+                lastFailure = new IllegalStateException(
+                    "Unexpected status " + response.statusCode() + ": " + response.body()
+                );
             } catch (Exception e) {
                 lastFailure = e;
             }
@@ -251,6 +268,39 @@ abstract class AbstractPyronautRunSmokeTest {
         Path target = project.resolve(relativePath);
         Files.createDirectories(target.getParent());
         Files.writeString(target, contents, StandardCharsets.UTF_8);
+    }
+
+    private static void preparePrecompiledJavaProject(Path project, int port) throws Exception {
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        Files.createDirectories(classesDir);
+        writeProjectFile(project, "pyproject.toml", minimalPyproject());
+        writeProjectFile(
+            project,
+            "config/application.properties",
+            "micronaut.server.port=" + port + System.lineSeparator()
+        );
+
+        Path testClasses = Path.of(JavaHelloController.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        copyTree(testClasses.resolve("example"), classesDir.resolve("example"));
+        copyTree(
+            testClasses.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference"),
+            classesDir.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference")
+        );
+    }
+
+    private static void copyTree(Path source, Path target) throws IOException {
+        try (var files = Files.walk(source)) {
+            for (Path path : files.toList()) {
+                Path relative = source.relativize(path);
+                Path destination = target.resolve(relative);
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.createDirectories(destination.getParent());
+                    Files.copy(path, destination);
+                }
+            }
+        }
     }
 
     private static String currentRuntimeClasspathManifest() {

@@ -19,6 +19,8 @@ configuration:
   vscodeExtension: VS Code Test Explorer Extension
   appConfig: Application Configuration with application.toml
   validateConfig: Configuration Validation
+packaging:
+  title: Packaging & Deployment
 logging:
   title: Python Logging with Logback
 testing:

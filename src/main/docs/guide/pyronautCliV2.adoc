@@ -281,7 +281,10 @@ Behavior:
 
 === `pyronaut run`
 
-Runs the processed application via `pyronaut-run` in runtime-only mode.
+Runs the processed application via the production runtime image in runtime-only
+mode: `pyronaut-run` for Java projects and `pyronaut-run-python` when the
+resolved runtime includes Micronaut Python support. This is intentionally
+separate from `pyronaut dev`, which always uses the development image.
 
 Common options:
 
@@ -297,6 +300,9 @@ Behavior:
 - Does not start test resources by default.
 - Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS` when an external project-local server is configured.
 - Uses the runtime classpath manifest plus processed classes.
+- For native toolchains, excludes runtime artifacts already bundled in the
+  selected production image by Maven `group:artifact`, so the image's copy
+  takes precedence over a project dependency with the same module identity.
 - Includes the configured resources directory and any `additional-resources` directories on the classpath when present.
 
 === `pyronaut test`
@@ -371,13 +377,22 @@ Build mode selection:
 - `--mode jvm|native`
 - `--jvm` (shortcut for JVM mode)
 - `--native` (shortcut for native mode)
-- `tool.pyronaut.build.mode` in `pyproject.toml` (default mode)
+- `tool.pyronaut.build.mode` in `pyproject.toml`
+- `tool.pyronaut.toolchain.type` when no build mode is explicitly configured
+
+The precedence is command-line mode, then `tool.pyronaut.build.mode`, then
+`tool.pyronaut.toolchain.type`, then JVM mode. For example, setting
+`tool.pyronaut.toolchain.type = "native"` makes `pyronaut build` create a
+native build by default, while `pyronaut build --jvm` still explicitly creates
+a JVM wheel.
 
 Common options:
 
 - `--project-dir <dir>`
 - `--docker`: build a container image instead of a wheel/native binary on the host
 - `--static`: static native container build; only valid with `--native --docker`
+- `--base-image`: build a reusable Crema production runtime image
+- `--base-image-output <path>`: choose the local output for `--base-image`
 - `--verbose` (native mode, forwarded to `native-image`)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 
@@ -415,6 +430,79 @@ Native Docker mode (`pyronaut build --native --docker`):
 - Builds an image tagged `<image-name>:<project-version>-native`.
 - Uses `tool.pyronaut.build.docker.native-builder-image` and `tool.pyronaut.build.docker.native-base-image` by default.
 - When `--static` is present, the generated Dockerfile adds `--static --libc=musl` and uses `tool.pyronaut.build.docker.static-native-builder-image` plus `tool.pyronaut.build.docker.static-native-base-image`.
+
+==== Reusable Crema base images
+
+`pyronaut build --base-image` creates a production native launcher that uses
+runtime class loading (`-H:+RuntimeClassLoading`) to run already processed
+applications. It does not include the compiler, annotation processors, test
+frameworks, or other development tooling. Java applications use the
+`pyronaut-run` launcher; Python applications use `pyronaut-run-python`, which
+adds the GraalPy/Truffle and Python logging runtime.
+
+The repository's own runtime images use this exact same builder: run
+`./gradlew :micronaut-pyronaut-run:buildCremaNativeImage` or
+`./gradlew :micronaut-pyronaut-run-python:buildCremaNativeImage`. The standard
+`nativeCompile` task delegates to the corresponding shared-builder task.
+
+The base builder includes the application's runtime dependencies, so custom
+dependencies declared in `pyproject.toml` are available to subsequent
+application builds. Base-image builds enable the native-image build report and
+SBOM export; inspect the generated report to verify included dependencies.
+
+[source,toml]
+----
+[tool.pyronaut.build]
+base-image = "build/pyronaut-base/pyronaut-run"
+----
+
+[source,bash]
+----
+pyronaut build --base-image
+pyronaut build
+----
+
+Without `base-image`, Pyronaut builds an application-specific native binary.
+With it, the later native build packages the configured reusable launcher and
+the processed application classes separately.
+
+For Docker, `pyronaut build --native --docker --base-image` first creates and
+tags `<image-name>:<project-version>-native-base` and then creates the final
+application image. Future Docker builds reuse that base when no explicit
+Docker base is configured. To share a base between projects or CI builds,
+configure its OCI image reference:
+
+[source,toml]
+----
+[tool.pyronaut.build.docker]
+base-image = "registry.example.com/acme/pyronaut-runtime:1"
+----
+
+With `build.docker.base-image`, native Docker builds copy only application
+configuration, processed classes, and schemas into a new layer over that
+runtime image. The base image contains `/opt/pyronaut/bin/pyronaut-run` (or
+`pyronaut-run-python`); the application layer uses it with
+`--project-dir /app`.
+
+==== Custom Dockerfiles with a reusable base
+
+Custom Dockerfiles receive `PYRONAUT_BASE_IMAGE` as a build argument. A
+runtime-only application Dockerfile can therefore keep the reusable launcher
+and application code in distinct layers:
+
+[source,dockerfile]
+----
+ARG PYRONAUT_BASE_IMAGE
+FROM ${PYRONAUT_BASE_IMAGE}
+WORKDIR /app
+COPY app/config /app/config
+COPY app/__pyronaut__/classes /app/__pyronaut__/classes
+COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
+ENTRYPOINT ["/opt/pyronaut/bin/pyronaut-run", "--project-dir", "/app"]
+----
+
+Set `tool.pyronaut.build.docker.dockerfile-native` to this Dockerfile and
+`tool.pyronaut.build.docker.base-image` to the already-built runtime image.
 
 Custom Dockerfiles:
 
@@ -598,7 +686,7 @@ Distribution sources:
 
 Behavior notes:
 
-- `tool.pyronaut.toolchain.type` controls how the `pyronaut` command executes CLI tooling. It does not control whether `pyronaut build` produces JVM or native application output; use `tool.pyronaut.build.mode` or build flags for that.
+- `tool.pyronaut.toolchain.type` controls how the `pyronaut` command executes CLI tooling and is also the default build mode when `tool.pyronaut.build.mode` and command-line build mode are absent.
 - Command-specific `tool.pyronaut.processor.mode` and `tool.pyronaut.test.mode` settings override the global toolchain type for those commands.
 - If no explicit toolchain is configured, Pyronaut CLI accepts any compatible GraalVM JDK 25+ already available on the machine.
 - If an explicit toolchain is configured, Pyronaut only reuses an installed JDK when the distribution, version, and Java major version match the requested spec.

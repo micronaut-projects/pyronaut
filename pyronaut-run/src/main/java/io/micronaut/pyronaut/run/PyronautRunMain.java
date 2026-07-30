@@ -23,20 +23,19 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospect
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
-import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.ServiceLoader;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
@@ -54,7 +53,6 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
-    private static final String NATIVE_IMAGE_CODE = "org.graalvm.nativeimage.imagecode";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String EXTERNAL_DEVELOPMENT_MODE = "pyronaut.external.development";
     private static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
@@ -105,13 +103,14 @@ public final class PyronautRunMain implements Callable<Integer> {
     private final ApplicationStarter applicationStarter;
     private final PyprojectModelReader modelReader;
     private final LoggingInitializer loggingInitializer;
+    private final PyronautRunConfigurer runConfigurer;
 
     public PyronautRunMain() {
         this(
             new PyprojectModelReader(),
             classLoader -> { },
             PyronautRunMain::startMicronautApplication,
-                () -> PyronautLauncherLogging.initializeApplicationDefaults((String) null)
+            loadRunConfigurer()
         );
     }
 
@@ -122,7 +121,7 @@ public final class PyronautRunMain implements Callable<Integer> {
             modelReader,
             contextBootstrapper,
             applicationStarter,
-                () -> PyronautLauncherLogging.initializeApplicationDefaults((String) null)
+            loadRunConfigurer()
         );
     }
 
@@ -130,9 +129,26 @@ public final class PyronautRunMain implements Callable<Integer> {
                     ContextBootstrapper contextBootstrapper,
                     ApplicationStarter applicationStarter,
                     LoggingInitializer loggingInitializer) {
+        this(modelReader, contextBootstrapper, applicationStarter, PyronautRunConfigurer.NO_OP, loggingInitializer);
+    }
+
+    private PyronautRunMain(PyprojectModelReader modelReader,
+                            ContextBootstrapper contextBootstrapper,
+                            ApplicationStarter applicationStarter,
+                            PyronautRunConfigurer runConfigurer) {
+        this(modelReader, contextBootstrapper, applicationStarter, runConfigurer,
+            () -> runConfigurer.initializeApplicationDefaults(null));
+    }
+
+    private PyronautRunMain(PyprojectModelReader modelReader,
+                            ContextBootstrapper contextBootstrapper,
+                            ApplicationStarter applicationStarter,
+                            PyronautRunConfigurer runConfigurer,
+                            LoggingInitializer loggingInitializer) {
         this.modelReader = modelReader;
         this.contextBootstrapper = contextBootstrapper;
         this.applicationStarter = applicationStarter;
+        this.runConfigurer = runConfigurer;
         this.loggingInitializer = loggingInitializer;
     }
 
@@ -170,12 +186,12 @@ public final class PyronautRunMain implements Callable<Integer> {
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
-            boolean defaultLoggingConfigurationApplied = PyronautLauncherLogging.shouldInitializeApplicationDefaults(applicationClassLoader);
+            boolean defaultLoggingConfigurationApplied = runConfigurer.shouldInitializeApplicationDefaults(applicationClassLoader);
             if (defaultLoggingConfigurationApplied) {
                 loggingInitializer.initializeApplicationDefaults();
             }
             if (verboseLogger != null) {
-                PyronautLauncherLogging.initializeApplicationDefaults(verboseLogger);
+                runConfigurer.initializeApplicationDefaults(verboseLogger);
             }
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
@@ -303,7 +319,9 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
         LinkedHashSet<URL> urls = new LinkedHashSet<>();
         for (Path entry : external.developmentRuntimeClasspath().isEmpty() ? external.runtimeClasspath() : external.developmentRuntimeClasspath()) {
-            if (Files.exists(entry)) urls.add(entry.toUri().toURL());
+            if (Files.exists(entry)) {
+                urls.add(entry.toUri().toURL());
+            }
         }
         if (Boolean.getBoolean(EXTERNAL_DEVELOPMENT_MODE)) {
             for (Path entry : external.testClasspath()) {
@@ -316,14 +334,19 @@ public final class PyronautRunMain implements Callable<Integer> {
             }
         }
         urls.add(resolvedClassesDir.toUri().toURL());
-        for (Path resource : external.mainResources()) if (Files.isDirectory(resource)) urls.add(resource.toUri().toURL());
+        for (Path resource : external.mainResources()) {
+            if (Files.isDirectory(resource)) {
+                urls.add(resource.toUri().toURL());
+            }
+        }
         if (Boolean.getBoolean(EXTERNAL_DEVELOPMENT_MODE)) {
             URL location = PyronautRunMain.class.getProtectionDomain().getCodeSource().getLocation();
-            if (location != null) urls.add(location);
+            if (location != null) {
+                urls.add(location);
+            }
         }
         return new ResolvedProjectLayout(resolvedClassesDir, List.copyOf(urls));
     }
-
 
     static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir, List<Path> additionalResourceDirs) throws IOException {
         Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
@@ -437,7 +460,8 @@ public final class PyronautRunMain implements Callable<Integer> {
         boolean start(Path resolvedClassesDir, ApplicationArgs args) throws Exception;
     }
 
-    record ApplicationArgs(Boolean bannerEnabled, List<String> appArgs, boolean verbose) {}
+    record ApplicationArgs(Boolean bannerEnabled, List<String> appArgs, boolean verbose) {
+    }
 
     @FunctionalInterface
     interface LoggingInitializer {
@@ -450,9 +474,6 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
 
         ClassLoader applicationClassLoader() {
-            if (usesNativeSystemClassLoader()) {
-                return ClassLoader.getSystemClassLoader();
-            }
             return new URLClassLoader(classpathUrls.toArray(URL[]::new), resolveApplicationClassLoader());
         }
 
@@ -460,11 +481,6 @@ public final class PyronautRunMain implements Callable<Integer> {
         public void close() throws IOException {
         }
 
-        private static boolean usesNativeSystemClassLoader() {
-            return System.getProperty(NATIVE_IMAGE_CODE) != null
-                && System.getProperty("java.class.path") != null
-                && !System.getProperty("java.class.path").isBlank();
-        }
     }
 
     private record TestResourcesProperty(String environmentVariable, String systemProperty) {
@@ -525,8 +541,14 @@ public final class PyronautRunMain implements Callable<Integer> {
     }
 
     static void main(String[] args) {
-        PyronautLauncherLogging.initialize();
+        loadRunConfigurer().initializeLauncher();
         int exitCode = new CommandLine(new PyronautRunMain()).execute(args);
         System.exit(exitCode);
+    }
+
+    private static PyronautRunConfigurer loadRunConfigurer() {
+        return ServiceLoader.load(PyronautRunConfigurer.class, PyronautRunMain.class.getClassLoader())
+            .findFirst()
+            .orElse(PyronautRunConfigurer.NO_OP);
     }
 }
