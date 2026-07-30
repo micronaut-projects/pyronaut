@@ -4,6 +4,7 @@ import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import picocli.CommandLine;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -48,15 +49,91 @@ class PyronautProcessorMainTest {
         assertEquals(Path.of("/tmp/build-a.jar"), mainRequest.annotationProcessorPath().getFirst());
         assertEquals(Path.of("/tmp/runtime-a.jar"), mainRequest.classpath().getFirst());
         assertFalse(mainRequest.compilePythonBytecode());
+        assertFalse(mainRequest.incremental());
+        assertEquals(
+            project.resolve("__pyronaut__/incremental/main").toAbsolutePath().normalize(),
+            mainRequest.incrementalCacheDirectory()
+        );
 
         PyronautCompilerExecutor.CompileRequest testRequest = executor.requests.get(1);
         assertEquals("python", testRequest.pythonSrc().getFileName().toString());
         assertEquals("java", testRequest.javaSrc().getFileName().toString());
         assertEquals(testRequest.pythonSrc().getParent(), testRequest.javaSrc().getParent());
+        assertEquals(
+            project.resolve("__pyronaut__/test-merged-sources").toAbsolutePath().normalize(),
+            testRequest.pythonSrc().getParent()
+        );
         assertEquals(project.resolve("__pyronaut__/test-classes").toAbsolutePath().normalize(), testRequest.targetDir());
         assertEquals(Path.of("/tmp/build-a.jar"), testRequest.annotationProcessorPath().getFirst());
         assertEquals(Path.of("/tmp/test-a.jar"), testRequest.classpath().getFirst());
         assertFalse(testRequest.classpath().contains(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize()));
+        assertFalse(testRequest.incremental());
+        assertEquals(
+            project.resolve("__pyronaut__/incremental/test").toAbsolutePath().normalize(),
+            testRequest.incrementalCacheDirectory()
+        );
+
+        Files.delete(project.resolve("__pyronaut__/processor-main.sha256"));
+        Files.delete(project.resolve("__pyronaut__/processor-test.sha256"));
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(testRequest.pythonSrc(), executor.requests.get(3).pythonSrc());
+        assertEquals(testRequest.javaSrc(), executor.requests.get(3).javaSrc());
+    }
+
+    @Test
+    void enablesIncrementalCompilationFromConfigurationAndAllowsCliOverride() throws Exception {
+        Path project = tempDir.resolve("project-incremental");
+        prepareCachedProject(project);
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            minimalPyproject() + "\n[tool.pyronaut.processor]\nincremental = true\n"
+        );
+
+        CapturingExecutor configuredExecutor = new CapturingExecutor();
+        PyronautProcessorMain configured = new PyronautProcessorMain(
+            new PyprojectModelReader(),
+            configuredExecutor
+        );
+        configured.projectDir = project;
+        configured.pass = "main";
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), configured.call());
+        assertTrue(configuredExecutor.requests.getFirst().incremental());
+
+        Files.deleteIfExists(project.resolve("__pyronaut__/processor-main.sha256"));
+        CapturingExecutor overriddenExecutor = new CapturingExecutor();
+        PyronautProcessorMain overridden = new PyronautProcessorMain(
+            new PyprojectModelReader(),
+            overriddenExecutor
+        );
+        int exitCode = new CommandLine(overridden).execute(
+            "--project-dir", project.toString(),
+            "--pass", "main",
+            "--progress", "off",
+            "--no-incremental"
+        );
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), exitCode);
+        assertFalse(overriddenExecutor.requests.getFirst().incremental());
+
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            minimalPyproject() + "\n[tool.pyronaut.processor]\nincremental = false\n"
+        );
+        CapturingExecutor enabledExecutor = new CapturingExecutor();
+        PyronautProcessorMain enabled = new PyronautProcessorMain(
+            new PyprojectModelReader(),
+            enabledExecutor
+        );
+        exitCode = new CommandLine(enabled).execute(
+            "--project-dir", project.toString(),
+            "--pass", "main",
+            "--progress", "off",
+            "--incremental"
+        );
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), exitCode);
+        assertTrue(enabledExecutor.requests.getFirst().incremental());
     }
 
     @Test
@@ -524,12 +601,21 @@ class PyronautProcessorMainTest {
         command.projectDir = project;
 
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertTrue(executor.requests.stream().noneMatch(
+            PyronautCompilerExecutor.CompileRequest::incremental
+        ));
         Path classes = project.resolve("__pyronaut__/classes");
         assertTrue(Files.isRegularFile(project.resolve("__pyronaut__/external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java")));
         assertTrue(Files.isRegularFile(classes.resolve("META-INF/services/io.micronaut.context.ApplicationContextConfigurer")));
         assertFalse(Files.exists(classes.resolve("META-INF/pyronaut/python-enabled")));
         assertTrue(Files.readString(project.resolve("__pyronaut__/external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java"))
             .contains("@ContextConfigurer"));
+
+        int defaultRequestCount = executor.requests.size();
+        command.incremental = Boolean.TRUE;
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertTrue(executor.requests.subList(defaultRequestCount, executor.requests.size()).stream()
+            .allMatch(PyronautCompilerExecutor.CompileRequest::incremental));
     }
 
     @Test
@@ -597,6 +683,28 @@ class PyronautProcessorMainTest {
             List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
         ).write(project);
         return project;
+    }
+
+    private static void prepareCachedProject(Path project) throws Exception {
+        Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(project.resolve("src-java"));
+        Files.writeString(project.resolve("src/sample.py"), "VALUE = 1\n");
+        Files.write(
+            project.resolve("__pyronaut__/resolved-build-dependencies"),
+            List.of("/tmp/build-a.jar"),
+            StandardCharsets.UTF_8
+        );
+        Files.write(
+            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
+            List.of("/tmp/runtime-a.jar"),
+            StandardCharsets.UTF_8
+        );
+        Files.write(
+            project.resolve("__pyronaut__/resolved-test-dependencies"),
+            List.of("/tmp/test-a.jar"),
+            StandardCharsets.UTF_8
+        );
     }
 
     private static String minimalPyproject() {

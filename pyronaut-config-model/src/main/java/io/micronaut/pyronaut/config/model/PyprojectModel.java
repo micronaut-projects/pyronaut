@@ -89,8 +89,15 @@ public record PyprojectModel(Project project,
      * tool.pyronaut.processor table.
      *
      * @param mode processor execution mode (for example jvm or native)
+     * @param incremental whether incremental compilation is enabled
      */
-    public record Processor(String mode) {
+    public record Processor(String mode, Boolean incremental) {
+        /**
+         * @param mode processor execution mode
+         */
+        public Processor(String mode) {
+            this(mode, Boolean.FALSE);
+        }
     }
 
     /**

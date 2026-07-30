@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -91,6 +92,35 @@ class PyronautProcessorNativeSmokeTest extends AbstractPyronautProcessorSmokeTes
         assertEquals(
             snapshotOutput(jvmResult.project().resolve("__pyronaut__/test-classes")),
             snapshotOutput(nativeResult.project().resolve("__pyronaut__/test-classes"))
+        );
+    }
+
+    @Test
+    void nativeBinaryReusesIncrementalStateAcrossRuns() throws Exception {
+        String binaryPath = System.getProperty("pyronaut.processor.native.binary");
+        Path project = tempDir.resolve("incremental-project");
+        ProcessResult first = runNativeProcessor(
+            binaryPath,
+            project,
+            helloWorldProjectFiles(),
+            incrementalPyproject("processor-native-incremental")
+        );
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), first.exitCode(), first.output());
+
+        var changedFiles = helloWorldProjectFiles();
+        changedFiles.put("src/main.py", "from app import HelloController\nVALUE = 2\n");
+        ProcessResult second = runNativeProcessor(
+            binaryPath,
+            project,
+            changedFiles,
+            incrementalPyproject("processor-native-incremental")
+        );
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), second.exitCode(), second.output());
+        assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
+        assertTrue(
+            Files.isRegularFile(project.resolve("__pyronaut__/incremental/main/state.properties")),
+            second.output()
         );
     }
 }

@@ -29,6 +29,19 @@ import java.util.Map;
  * Internal resolved layout for a Java project managed by an external build.
  * The format is deliberately a line-oriented properties file so it remains
  * usable by the native launchers without a JSON runtime dependency.
+ *
+ * @param kind project kind
+ * @param mainJavaSources main Java source directories
+ * @param testJavaSources test Java source directories
+ * @param mainResources main resource directories
+ * @param testResources test resource directories
+ * @param buildClasspath build classpath
+ * @param runtimeClasspath runtime classpath
+ * @param developmentRuntimeClasspath development runtime classpath
+ * @param testClasspath test classpath
+ * @param annotationProcessorClasspath annotation processor classpath
+ * @param testResourcesEnabled whether test resources are enabled
+ * @param testResourcesClasspath test resources classpath
  */
 @Internal
 public record ExternalProjectLayout(ProjectKind kind,
@@ -165,8 +178,20 @@ public record ExternalProjectLayout(ProjectKind kind,
             .filter(s -> !s.isBlank()).map(ExternalProjectLayout::unescape).map(Path::of).toList();
     }
 
-    private static String escape(String value) { return value.replace("\\", "\\\\").replace("=", "\\="); }
-    private static String unescape(String value) { return value.replace("\\=", "=").replace("\\\\", "\\"); }
+    private static String escape(String value) {
+        return value.replace("\\", "\\\\").replace("=", "\\=");
+    }
 
-    public enum ProjectKind { PYPROJECT, MAVEN, GRADLE }
+    private static String unescape(String value) {
+        return value.replace("\\=", "=").replace("\\\\", "\\");
+    }
+
+    /**
+     * Supported external project kinds.
+     */
+    public enum ProjectKind {
+        PYPROJECT,
+        MAVEN,
+        GRADLE
+    }
 }

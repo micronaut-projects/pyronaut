@@ -16,6 +16,7 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"test-resources\""));
         assertTrue(schema.contains("\"docker\""));
         assertTrue(schema.contains("\"processor\""));
+        assertTrue(schema.contains("\"incremental\""));
         assertTrue(schema.contains("\"sources\""));
         assertTrue(schema.contains("\"core\""));
         assertTrue(schema.contains("\"platform\""));

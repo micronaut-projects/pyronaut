@@ -46,6 +46,7 @@ class PyprojectModelReaderTest {
         assertEquals("jvm", model.pyronaut().build().mode());
         assertEquals(Boolean.FALSE, model.pyronaut().build().pythonBytecodeEnabled());
         assertEquals("jvm", model.pyronaut().processor().mode());
+        assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
         assertEquals("src", model.pyronaut().sources().python());
         assertEquals("tests", model.pyronaut().sources().pythonTest());
         assertEquals("src-java", model.pyronaut().sources().java());
@@ -312,6 +313,7 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals("jvm", model.pyronaut().processor().mode());
+        assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
     }
 
     @Test
@@ -329,6 +331,42 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals("native", model.pyronaut().processor().mode());
+    }
+
+    @Test
+    void parseIncrementalProcessorCompilationWhenConfigured() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.processor]
+            incremental = true
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals(Boolean.TRUE, model.pyronaut().processor().incremental());
+    }
+
+    @Test
+    void rejectInvalidIncrementalProcessorType() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.processor]
+            incremental = "yes"
+            """);
+
+        PyprojectModelException exception = assertThrows(
+            PyprojectModelException.class,
+            () -> reader.readFile(file)
+        );
+        assertEquals(
+            "Invalid type for 'tool.pyronaut.processor.incremental': expected boolean",
+            exception.getMessage()
+        );
     }
 
     @Test

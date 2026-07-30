@@ -39,6 +39,8 @@ interface PyronautCompilerExecutor {
                           List<Path> annotationProcessorPath,
                           List<Path> classpath,
                           boolean compilePythonBytecode,
+                          boolean incremental,
+                          Path incrementalCacheDirectory,
                           List<String> options) {
     }
 
@@ -59,6 +61,8 @@ interface PyronautCompilerExecutor {
                     .annotationProcessorPath(toFiles(request.annotationProcessorPath()))
                     .classpath(toFiles(request.classpath()))
                     .compilePythonBytecode(request.compilePythonBytecode())
+                    .incremental(request.incremental())
+                    .incrementalCacheDirectory(request.incrementalCacheDirectory().toFile())
                     .options(request.options())
                     .build()
                     .compile();

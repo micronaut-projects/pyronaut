@@ -51,4 +51,27 @@ class PyronautProcessorJvmSmokeTest extends AbstractPyronautProcessorSmokeTest {
         org.junit.jupiter.api.Assertions.assertTrue(content.contains("__pycache__"), content);
         org.junit.jupiter.api.Assertions.assertTrue(content.contains(".pyc"), content);
     }
+
+    @Test
+    void jvmProcessReusesIncrementalStateAcrossRuns() throws Exception {
+        Path project = tempDir.resolve("incremental-project");
+        ProcessResult first = runJvmProcessor(
+            project,
+            helloWorldProjectFiles(),
+            incrementalPyproject("processor-jvm-incremental")
+        );
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), first.exitCode(), first.output());
+
+        var changedFiles = helloWorldProjectFiles();
+        changedFiles.put("src/main.py", "from app import HelloController\nVALUE = 2\n");
+        ProcessResult second = runJvmProcessor(
+            project,
+            changedFiles,
+            incrementalPyproject("processor-jvm-incremental")
+        );
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), second.exitCode(), second.output());
+        assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
+        assertExists(project, "__pyronaut__/incremental/main/state.properties", second.output());
+    }
 }

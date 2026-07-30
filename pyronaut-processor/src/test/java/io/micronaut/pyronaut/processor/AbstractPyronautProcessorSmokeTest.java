@@ -124,6 +124,10 @@ abstract class AbstractPyronautProcessorSmokeTest {
         return minimalPyproject(name) + "\n[tool.pyronaut.build.python-bytecode]\nenabled = true\n";
     }
 
+    protected static String incrementalPyproject(String name) {
+        return minimalPyproject(name) + "\n[tool.pyronaut.processor]\nincremental = true\n";
+    }
+
     protected static void assertMainArtifacts(Path outputDir, String output) throws IOException {
         assertTrue(Files.isDirectory(outputDir), output);
         assertTrue(containsClassFile(outputDir), output);

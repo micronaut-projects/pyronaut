@@ -159,6 +159,11 @@ public final class PyprojectConfigSpec {
         "jvm",
         List.of("jvm", "native")
     );
+    public static final FieldSpec PYRONAUT_PROCESSOR_INCREMENTAL = bool(
+        "tool.pyronaut.processor.incremental",
+        "Whether processor output should be compiled incrementally.",
+        false
+    );
     public static final FieldSpec PYRONAUT_TEST_MODE = enumString(
         "tool.pyronaut.test.mode",
         "Test execution mode.",
@@ -746,6 +751,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_BUILD_MODE,
         PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED,
         PYRONAUT_PROCESSOR_MODE,
+        PYRONAUT_PROCESSOR_INCREMENTAL,
         PYRONAUT_TEST_MODE,
         PYRONAUT_RUN_BANNER_ENABLED,
         PYRONAUT_CONTROL_PANEL_ENABLED,
