@@ -1,0 +1,170 @@
+= Incremental Processing
+
+`pyronaut process` normally performs a clean compilation of all configured Python and Java sources.
+Incremental processing is opt-in and is disabled by default.
+
+Enable it in `pyproject.toml`:
+
+[source,toml]
+----
+[tool.pyronaut.processor]
+incremental = true
+python-incremental-mode = "conservative"
+----
+
+You can override the project setting for one invocation:
+
+[source,bash]
+----
+pyronaut process --incremental
+pyronaut process --no-incremental
+----
+
+`--incremental` and `--no-incremental` take precedence over `tool.pyronaut.processor.incremental`.
+Projects without an explicit setting remain non-incremental, including projects processed through `--project-dir`.
+
+== What Is Reused
+
+Pyronaut first uses its whole-pass fingerprint to skip processing when no input changed.
+When an input changed, incremental processing retains unaffected classes and resources, adds the existing output directory to the compilation classpath, and recompiles the changed sources and their known transitive dependents.
+
+State for the two processing passes is kept separately:
+
+- `__pyronaut__/incremental/main`
+- `__pyronaut__/incremental/test`
+
+Outputs produced from one source are _isolating_.
+Changing or deleting that source replaces only its outputs and recompiles sources that depend on it.
+Outputs produced from a set of sources are _aggregating_.
+Changing any contributor reruns the aggregating processing over all contributors and replaces its shared outputs.
+For example, OpenAPI processing aggregates multiple controllers into one OpenAPI document.
+
+Python source files, generated bean metadata, direct VFS sources, and Python bytecode can be tracked as isolating outputs.
+Package initializers, bridge modules, VFS indexes, and other shared Python resources are aggregating outputs and are regenerated whenever the contributing Python set changes.
+
+== Full Compilation Fallbacks
+
+Correctness takes precedence over reusing outputs.
+Pyronaut performs a clean full compilation when incremental state is absent, corrupt, incompatible, or refers to a missing output.
+It also performs a full compilation when a compiler-wide input changes, including:
+
+- source roots, compiler options, application settings, or Python bytecode mode
+- classpath, boot classpath, or annotation processor path contents
+- the selected Python incremental mode
+- an annotation processor that does not declare supported incremental behavior
+- an isolating processor that produces an output without exactly one originating source
+- recovery after a failed compilation
+
+The state is replaced only after a successful compilation.
+If compilation fails, the next invocation performs a repairing full compilation.
+
+`--no-cache` disables incremental reuse even when incremental processing is configured.
+It clears the pass outputs and incremental state and performs a full compilation.
+
+== Python Dependency Policy
+
+Pyronaut builds a dependency graph from statically visible local imports, declared types, decorators, annotations, and cross-language type references.
+Python can also express relationships that static processing cannot prove.
+Choose how those cases affect recompilation with `python-incremental-mode`:
+
+`conservative`:: This is the default. When a Python change is affected by a dynamic or unresolved relationship, all Python sources are reprocessed. This avoids stale generated output at the cost of broader compilation.
+`optimistic`:: Only sources selected by the statically discovered graph are reprocessed. This can make dynamic projects faster, but the developer is responsible for ensuring an undiscovered relationship cannot change generated output.
+
+Both modes still reprocess aggregating visitors over all contributors.
+Deleting a Python source also expands processing so shared Python outputs cannot retain deleted-source data.
+An unrelated Java-only change does not trigger the conservative all-Python fallback unless it reaches Python through the dependency graph.
+
+Pyronaut treats the following as indicators that Python relationships might be dynamic or unresolved:
+
+- `__import__(...)` or `import_module(...)`
+- `getattr(...)`, `globals()`, or `locals()`
+- star imports such as `from example import *`
+- `@Mixin`
+- a relative or local-package import that cannot be resolved to a configured Python source
+
+=== Writing Incremental Python Code
+
+Prefer explicit, module-level imports:
+
+[source,python]
+----
+from petclinic.models import Owner
+from petclinic.repositories import OwnerRepository
+
+
+class OwnerService:
+    repository: OwnerRepository
+
+    def find(self, owner_id: int) -> Owner:
+        ...
+----
+
+This lets a change to `Owner` or `OwnerRepository` propagate to `OwnerService` without recompiling unrelated modules.
+
+To keep the dependency graph precise:
+
+- use explicit imports instead of star imports
+- import local modules by their stable configured package name
+- keep type annotations and decorators explicit
+- avoid discovering classes or decorators through strings when they affect generated Micronaut metadata
+- avoid mutating module exports dynamically when processors depend on those exports
+- keep `__init__.py` re-exports straightforward; package initializers are shared outputs and are regenerated when Python changes
+
+Runtime dynamism that cannot affect compiled or generated output does not require conservative processing.
+If a dynamic relationship does affect generated beans, routes, serialization metadata, or another processor output, keep `conservative` mode or arrange an explicit static dependency.
+Use `optimistic` only when tests cover those relationships well enough to detect stale output.
+
+=== Writing Incremental Java Code
+
+Java dependencies are tracked from compiler declarations and references, including inheritance, method and field types, annotations, package-private access, transitive references, and constant owners.
+Ordinary Java source using explicit types therefore remains incremental:
+
+[source,java]
+----
+final class OwnerService {
+    private final OwnerRepository repository;
+
+    OwnerService(OwnerRepository repository) {
+        this.repository = repository;
+    }
+
+    Owner find(long id) {
+        return repository.findById(id);
+    }
+}
+----
+
+Prefer compiler-visible type references over class names encoded only as strings when generated output depends on the relationship.
+Reflection and service discovery used only at runtime do not require recompilation, but an annotation processor that scans or resolves those relationships must declare and implement the appropriate aggregating behavior.
+
+== Writing Incremental Visitors and Annotation Processors
+
+A Micronaut `TypeElementVisitor` that creates output for one source should remain `VisitorKind.ISOLATING` and associate every generated output with that one originating element.
+Do not read unrelated source types or the complete application classpath to decide an isolating output.
+
+A visitor whose result combines multiple sources must return `VisitorKind.AGGREGATING`:
+
+[source,java]
+----
+@Override
+public VisitorKind getVisitorKind() {
+    return VisitorKind.AGGREGATING;
+}
+----
+
+This includes registries, indexes, and single documents generated from multiple controllers or models.
+Aggregating processing is broader, but it ensures removed or changed contributors cannot leave stale data in a shared output.
+
+Custom JSR 269 annotation processors must advertise exactly one of the incremental processor options already used by Gradle:
+
+[source,java]
+----
+@SupportedOptions("org.gradle.annotation.processing.isolating")
+final class ExampleProcessor extends AbstractProcessor {
+    // Each generated output must have exactly one originating element.
+}
+----
+
+Use `org.gradle.annotation.processing.aggregating` instead when outputs combine multiple sources.
+These are supported-option marker strings; enabling them does not add a Gradle runtime dependency.
+An unknown processor, a processor declaring both or neither marker, an output outside the compiler target, or an isolating output with zero or multiple originating elements causes Pyronaut to fall back to full compilation.

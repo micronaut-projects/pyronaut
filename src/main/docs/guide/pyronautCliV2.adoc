@@ -249,7 +249,13 @@ Common options:
 
 - `--project-dir <dir>`
 - `--verbose`: full diagnostics on failures
-- `--no-cache`: bypass processor source cache
+- `--incremental`: enable incremental Python and Java compilation for this invocation
+- `--no-incremental`: disable incremental compilation for this invocation
+- `--no-cache`: clear processor outputs and incremental state, then perform a full compilation without reusing either cache
+
+The CLI `--incremental` and `--no-incremental` options override `tool.pyronaut.processor.incremental`.
+Incremental compilation is disabled when neither the CLI nor project configuration enables it.
+See <<incrementalProcessing,Incremental Processing>> for cache locations, invalidation behavior, and source-writing guidance.
 
 Default processing outputs:
 

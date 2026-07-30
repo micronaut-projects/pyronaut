@@ -68,6 +68,8 @@ mode = "jvm" # jvm|native
 
 [tool.pyronaut.processor]
 mode = "jvm" # jvm|native
+incremental = false
+python-incremental-mode = "conservative" # conservative|optimistic
 
 [tool.pyronaut.test]
 mode = "jvm" # jvm|native
@@ -75,6 +77,7 @@ mode = "jvm" # jvm|native
 
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
 See the CLI reference for the full build option surface.
+See <<incrementalProcessing,Incremental Processing>> before enabling incremental processing or selecting the optimistic Python dependency policy.
 
 == Control Panel
 
