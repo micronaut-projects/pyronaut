@@ -104,6 +104,19 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     )
     Boolean incremental;
 
+    @CommandLine.Option(
+        names = "--daemon",
+        negatable = true,
+        description = "Use the persistent compiler daemon"
+    )
+    Boolean daemon;
+
+    @CommandLine.Option(names = "--daemon-server", hidden = true)
+    Path daemonServerDirectory;
+
+    @CommandLine.Option(names = "--daemon-token", hidden = true)
+    String daemonToken;
+
     @CommandLine.Option(names = "--pass", defaultValue = "all", description = "Processing pass to run: all|main|test")
     String pass = "all";
 
@@ -115,18 +128,29 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
     private final PyprojectModelReader modelReader;
     private final PyronautCompilerExecutor compilerExecutor;
+    private final boolean daemonRequest;
 
     public PyronautProcessorMain() {
-        this(new PyprojectModelReader(), new PyronautCompilerExecutor.Default());
+        this(new PyprojectModelReader(), new PyronautCompilerExecutor.Default(), false);
     }
 
     PyronautProcessorMain(PyprojectModelReader modelReader, PyronautCompilerExecutor compilerExecutor) {
+        this(modelReader, compilerExecutor, false);
+    }
+
+    PyronautProcessorMain(PyprojectModelReader modelReader,
+                          PyronautCompilerExecutor compilerExecutor,
+                          boolean daemonRequest) {
         this.modelReader = modelReader;
         this.compilerExecutor = compilerExecutor;
+        this.daemonRequest = daemonRequest;
     }
 
     @Override
     public Integer call() {
+        if (daemonServerDirectory != null) {
+            return CompilerDaemon.runServer(daemonServerDirectory, daemonToken);
+        }
         if (System.getProperty("java.home") == null) {
             String javaHome = System.getenv("JAVA_HOME");
             if (javaHome == null) {
@@ -143,6 +167,22 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             ExternalProjectLayout externalLayout = ExternalProjectLayout.isExternal(root)
                 ? ExternalProjectLayout.read(root) : null;
             PyprojectModel model = externalLayout == null ? modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME)) : null;
+            boolean daemonEnabled = daemon != null
+                ? daemon
+                : model != null && Boolean.TRUE.equals(model.pyronaut().processor().daemon());
+            CommandLine.ParseResult parseResult = commandSpec == null
+                ? null
+                : commandSpec.commandLine().getParseResult();
+            if (daemonEnabled && !daemonRequest && parseResult != null) {
+                try {
+                    return CompilerDaemon.execute(
+                        root,
+                        parseResult.originalArgs()
+                    );
+                } catch (CompilerDaemon.UnavailableException e) {
+                    System.err.println("Compiler daemon unavailable; processing in the current process: " + e.getMessage());
+                }
+            }
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
             ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
             List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false);

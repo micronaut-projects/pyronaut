@@ -170,6 +170,11 @@ public final class PyprojectConfigSpec {
         "conservative",
         List.of("conservative", "optimistic")
     );
+    public static final FieldSpec PYRONAUT_PROCESSOR_DAEMON = bool(
+        "tool.pyronaut.processor.daemon",
+        "Whether processor invocations should use a persistent compiler daemon.",
+        false
+    );
     public static final FieldSpec PYRONAUT_TEST_MODE = enumString(
         "tool.pyronaut.test.mode",
         "Test execution mode.",
@@ -759,6 +764,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_PROCESSOR_INCREMENTAL,
         PYRONAUT_PROCESSOR_PYTHON_INCREMENTAL_MODE,
+        PYRONAUT_PROCESSOR_DAEMON,
         PYRONAUT_TEST_MODE,
         PYRONAUT_RUN_BANNER_ENABLED,
         PYRONAUT_CONTROL_PANEL_ENABLED,

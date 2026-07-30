@@ -91,13 +91,14 @@ public record PyprojectModel(Project project,
      * @param mode processor execution mode (for example jvm or native)
      * @param incremental whether incremental compilation is enabled
      * @param pythonIncrementalMode handling of dynamic or unresolved Python relationships
+     * @param daemon whether the compiler daemon is enabled
      */
-    public record Processor(String mode, Boolean incremental, String pythonIncrementalMode) {
+    public record Processor(String mode, Boolean incremental, String pythonIncrementalMode, Boolean daemon) {
         /**
          * @param mode processor execution mode
          */
         public Processor(String mode) {
-            this(mode, Boolean.FALSE, "conservative");
+            this(mode, Boolean.FALSE, "conservative", Boolean.FALSE);
         }
 
         /**
@@ -105,7 +106,16 @@ public record PyprojectModel(Project project,
          * @param incremental whether incremental compilation is enabled
          */
         public Processor(String mode, Boolean incremental) {
-            this(mode, incremental, "conservative");
+            this(mode, incremental, "conservative", Boolean.FALSE);
+        }
+
+        /**
+         * @param mode processor execution mode
+         * @param incremental whether incremental compilation is enabled
+         * @param pythonIncrementalMode handling of dynamic or unresolved Python relationships
+         */
+        public Processor(String mode, Boolean incremental, String pythonIncrementalMode) {
+            this(mode, incremental, pythonIncrementalMode, Boolean.FALSE);
         }
     }
 

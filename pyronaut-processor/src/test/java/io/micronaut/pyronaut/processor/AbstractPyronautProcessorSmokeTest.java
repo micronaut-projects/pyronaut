@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.processor;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,6 +12,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -24,17 +26,25 @@ abstract class AbstractPyronautProcessorSmokeTest {
     }
 
     protected ProcessResult runJvmProcessor(Path project, Map<String, String> projectFiles, String pyproject) throws Exception {
+        return runJvmProcessor(project, projectFiles, pyproject, List.of());
+    }
+
+    protected ProcessResult runJvmProcessor(Path project,
+                                            Map<String, String> projectFiles,
+                                            String pyproject,
+                                            List<String> jvmOptions) throws Exception {
         prepareProject(project, projectFiles, pyproject);
-        Process process = new ProcessBuilder(
-            javaExecutable().toString(),
-            "-cp",
-            System.getProperty("java.class.path", ""),
-            PyronautProcessorMain.class.getName(),
-            "--project-dir",
-            project.toString(),
-            "--progress",
-            "off"
-        )
+        List<String> command = new java.util.ArrayList<>();
+        command.add(javaExecutable().toString());
+        command.addAll(jvmOptions);
+        command.add("-cp");
+        command.add(System.getProperty("java.class.path", ""));
+        command.add(PyronautProcessorMain.class.getName());
+        command.add("--project-dir");
+        command.add(project.toString());
+        command.add("--progress");
+        command.add("off");
+        Process process = new ProcessBuilder(command)
             .redirectErrorStream(true)
             .start();
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -126,6 +136,21 @@ abstract class AbstractPyronautProcessorSmokeTest {
 
     protected static String incrementalPyproject(String name) {
         return minimalPyproject(name) + "\n[tool.pyronaut.processor]\nincremental = true\n";
+    }
+
+    protected static String daemonIncrementalPyproject(String name) {
+        return minimalPyproject(name)
+            + "\n[tool.pyronaut.processor]\nincremental = true\ndaemon = true\n";
+    }
+
+    protected static long daemonPid(Path project) throws Exception {
+        Properties properties = new Properties();
+        try (InputStream input = Files.newInputStream(
+            project.resolve("__pyronaut__/daemon/daemon.properties")
+        )) {
+            properties.load(input);
+        }
+        return Long.parseLong(properties.getProperty("pid"));
     }
 
     protected static void assertMainArtifacts(Path outputDir, String output) throws IOException {

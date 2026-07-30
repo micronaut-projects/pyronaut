@@ -123,4 +123,35 @@ class PyronautProcessorNativeSmokeTest extends AbstractPyronautProcessorSmokeTes
             second.output()
         );
     }
+
+    @Test
+    void nativeBinaryReusesCompilerDaemonAcrossRuns() throws Exception {
+        String binaryPath = System.getProperty("pyronaut.processor.native.binary");
+        Path project = tempDir.resolve("daemon-project");
+        String pyproject = daemonIncrementalPyproject("processor-native-daemon");
+        long daemonPid = -1;
+        try {
+            ProcessResult first = runNativeProcessor(
+                binaryPath,
+                project,
+                helloWorldProjectFiles(),
+                pyproject
+            );
+            assertEquals(PyronautProcessorExitCode.SUCCESS.code(), first.exitCode(), first.output());
+            daemonPid = daemonPid(project);
+            assertTrue(ProcessHandle.of(daemonPid).orElseThrow().isAlive());
+
+            var changedFiles = helloWorldProjectFiles();
+            changedFiles.put("src/main.py", "from app import HelloController\nVALUE = 4\n");
+            ProcessResult second = runNativeProcessor(binaryPath, project, changedFiles, pyproject);
+
+            assertEquals(PyronautProcessorExitCode.SUCCESS.code(), second.exitCode(), second.output());
+            assertEquals(daemonPid, daemonPid(project));
+            assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
+        } finally {
+            if (daemonPid > 0) {
+                ProcessHandle.of(daemonPid).ifPresent(ProcessHandle::destroy);
+            }
+        }
+    }
 }

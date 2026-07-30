@@ -251,9 +251,12 @@ Common options:
 - `--verbose`: full diagnostics on failures
 - `--incremental`: enable incremental Python and Java compilation for this invocation
 - `--no-incremental`: disable incremental compilation for this invocation
+- `--daemon`: use the persistent compiler daemon for this invocation
+- `--no-daemon`: process in the current command process for this invocation
 - `--no-cache`: clear processor outputs and incremental state, then perform a full compilation without reusing either cache
 
 The CLI `--incremental` and `--no-incremental` options override `tool.pyronaut.processor.incremental`.
+Likewise, `--daemon` and `--no-daemon` override `tool.pyronaut.processor.daemon`.
 Incremental compilation is disabled when neither the CLI nor project configuration enables it.
 See <<incrementalProcessing,Incremental Processing>> for cache locations, invalidation behavior, and source-writing guidance.
 

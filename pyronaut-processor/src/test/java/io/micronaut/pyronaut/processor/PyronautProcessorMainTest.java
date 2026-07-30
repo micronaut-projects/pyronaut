@@ -147,6 +147,31 @@ class PyronautProcessorMainTest {
     }
 
     @Test
+    void noDaemonCliOptionOverridesProjectConfiguration() throws Exception {
+        Path project = tempDir.resolve("project-daemon-override");
+        prepareCachedProject(project);
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            minimalPyproject() + "\n[tool.pyronaut.processor]\ndaemon = true\n"
+        );
+        CapturingExecutor executor = new CapturingExecutor();
+        PyronautProcessorMain command = new PyronautProcessorMain(
+            new PyprojectModelReader(),
+            executor
+        );
+
+        int exitCode = new CommandLine(command).execute(
+            "--project-dir", project.toString(),
+            "--pass", "main",
+            "--progress", "off",
+            "--no-daemon"
+        );
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), exitCode);
+        assertEquals(1, executor.requests.size());
+    }
+
+    @Test
     void enablesPythonBytecodeFromProjectConfiguration() throws Exception {
         Path project = tempDir.resolve("project-bytecode");
         Files.createDirectories(project.resolve("__pyronaut__"));

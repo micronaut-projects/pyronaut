@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -73,5 +74,49 @@ class PyronautProcessorJvmSmokeTest extends AbstractPyronautProcessorSmokeTest {
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), second.exitCode(), second.output());
         assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
         assertExists(project, "__pyronaut__/incremental/main/state.properties", second.output());
+    }
+
+    @Test
+    void jvmProcessReusesCompilerDaemonAcrossRunsAndShutsDownWhenIdle() throws Exception {
+        Path project = tempDir.resolve("daemon-project");
+        String pyproject = daemonIncrementalPyproject("processor-jvm-daemon");
+        List<String> jvmOptions = List.of("-Dpyronaut.processor.daemon.idle-timeout-seconds=3");
+
+        ProcessResult first = runJvmProcessor(
+            project,
+            helloWorldProjectFiles(),
+            pyproject,
+            jvmOptions
+        );
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), first.exitCode(), first.output());
+        long daemonPid = daemonPid(project);
+        org.junit.jupiter.api.Assertions.assertTrue(ProcessHandle.of(daemonPid).orElseThrow().isAlive());
+
+        var changedFiles = helloWorldProjectFiles();
+        changedFiles.put("src/main.py", "from app import HelloController\nVALUE = 3\n");
+        ProcessResult second = runJvmProcessor(project, changedFiles, pyproject, jvmOptions);
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), second.exitCode(), second.output());
+        assertEquals(daemonPid, daemonPid(project));
+        assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
+
+        var invalidFiles = helloWorldProjectFiles();
+        invalidFiles.put("src/app.py", "class Broken(\n");
+        ProcessResult invalid = runJvmProcessor(project, invalidFiles, pyproject, jvmOptions);
+        assertEquals(PyronautProcessorExitCode.PROCESSING_ERROR.code(), invalid.exitCode(), invalid.output());
+        org.junit.jupiter.api.Assertions.assertFalse(
+            invalid.output().isBlank(),
+            "Daemon compiler diagnostics were not forwarded to the client"
+        );
+
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(8).toNanos();
+        while (ProcessHandle.of(daemonPid).map(ProcessHandle::isAlive).orElse(false)
+            && System.nanoTime() < deadline) {
+            Thread.sleep(50);
+        }
+        org.junit.jupiter.api.Assertions.assertFalse(
+            ProcessHandle.of(daemonPid).map(ProcessHandle::isAlive).orElse(false),
+            "Compiler daemon did not stop after its idle timeout"
+        );
     }
 }

@@ -20,6 +20,7 @@ mode = "jvm"
 mode = "jvm"
 incremental = false
 python-incremental-mode = "conservative"
+daemon = false
 
 [tool.pyronaut.dependencies]
 runtime = [ "io.micronaut:micronaut-inject-python",

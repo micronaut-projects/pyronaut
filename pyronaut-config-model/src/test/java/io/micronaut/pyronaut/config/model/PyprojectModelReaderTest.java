@@ -48,6 +48,7 @@ class PyprojectModelReaderTest {
         assertEquals("jvm", model.pyronaut().processor().mode());
         assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
         assertEquals("conservative", model.pyronaut().processor().pythonIncrementalMode());
+        assertEquals(Boolean.FALSE, model.pyronaut().processor().daemon());
         assertEquals("src", model.pyronaut().sources().python());
         assertEquals("tests", model.pyronaut().sources().pythonTest());
         assertEquals("src-java", model.pyronaut().sources().java());
@@ -316,6 +317,7 @@ class PyprojectModelReaderTest {
         assertEquals("jvm", model.pyronaut().processor().mode());
         assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
         assertEquals("conservative", model.pyronaut().processor().pythonIncrementalMode());
+        assertEquals(Boolean.FALSE, model.pyronaut().processor().daemon());
     }
 
     @Test
@@ -363,6 +365,21 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals("optimistic", model.pyronaut().processor().pythonIncrementalMode());
+    }
+
+    @Test
+    void parseProcessorDaemonWhenConfigured() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.processor]
+            daemon = true
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals(Boolean.TRUE, model.pyronaut().processor().daemon());
     }
 
     @Test
