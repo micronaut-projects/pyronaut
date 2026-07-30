@@ -53,6 +53,8 @@ Incremental compilation can also be enabled explicitly:
 ```toml
 [tool.pyronaut.processor]
 incremental = true
+# Optional; defaults to "conservative"
+python-incremental-mode = "optimistic"
 ```
 
 or for one invocation:
@@ -66,6 +68,13 @@ state is stored separately for the main and test passes under
 `__pyronaut__/incremental/main` and `__pyronaut__/incremental/test`. Isolating visitor
 outputs are rebuilt only for changed sources and their dependents; aggregating visitors
 reprocess all contributing sources and replace their shared outputs.
+
+The default `conservative` Python mode reprocesses every Python source when a changed
+Python dependency chain contains dynamic access or unresolved imports that cannot be
+tracked statically. Set `python-incremental-mode = "optimistic"` to rely on the discovered
+dependency graph in those cases. This can reduce compilation work for dynamic projects,
+but the user is responsible for forcing a clean build when an untracked dynamic relationship
+changes.
 
 Incremental compilation is disabled by default. Changes to compiler options or dependency
 contents, incompatible processors, corrupt state, and missing outputs trigger a repairing

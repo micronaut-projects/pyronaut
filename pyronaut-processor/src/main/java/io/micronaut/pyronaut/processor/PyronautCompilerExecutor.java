@@ -19,6 +19,7 @@ import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.python.compiler.PyronautCompiler;
+import io.micronaut.python.compiler.PythonIncrementalMode;
 
 import java.io.File;
 import java.io.IOException;
@@ -40,6 +41,7 @@ interface PyronautCompilerExecutor {
                           List<Path> classpath,
                           boolean compilePythonBytecode,
                           boolean incremental,
+                          PythonIncrementalMode pythonIncrementalMode,
                           Path incrementalCacheDirectory,
                           List<String> options) {
     }
@@ -62,6 +64,7 @@ interface PyronautCompilerExecutor {
                     .classpath(toFiles(request.classpath()))
                     .compilePythonBytecode(request.compilePythonBytecode())
                     .incremental(request.incremental())
+                    .pythonIncrementalMode(request.pythonIncrementalMode())
                     .incrementalCacheDirectory(request.incrementalCacheDirectory().toFile())
                     .options(request.options())
                     .build()

@@ -76,6 +76,17 @@ final class PyronautProcessorNoCacheTest {
             List.of()
         );
         assertFalse(baseline.equals(incremental));
+        String optimistic = ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(processorPath),
+            List.of(classpath),
+            false,
+            true,
+            "optimistic",
+            List.of()
+        );
+        assertFalse(incremental.equals(optimistic));
 
         Files.writeString(classpathMarker, "two");
         String changedClasspath = ProcessorSourceCache.fingerprint(

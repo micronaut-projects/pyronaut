@@ -2,6 +2,7 @@ package io.micronaut.pyronaut.processor;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.python.compiler.PythonIncrementalMode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
@@ -50,6 +51,7 @@ class PyronautProcessorMainTest {
         assertEquals(Path.of("/tmp/runtime-a.jar"), mainRequest.classpath().getFirst());
         assertFalse(mainRequest.compilePythonBytecode());
         assertFalse(mainRequest.incremental());
+        assertEquals(PythonIncrementalMode.CONSERVATIVE, mainRequest.pythonIncrementalMode());
         assertEquals(
             project.resolve("__pyronaut__/incremental/main").toAbsolutePath().normalize(),
             mainRequest.incrementalCacheDirectory()
@@ -68,6 +70,7 @@ class PyronautProcessorMainTest {
         assertEquals(Path.of("/tmp/test-a.jar"), testRequest.classpath().getFirst());
         assertFalse(testRequest.classpath().contains(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize()));
         assertFalse(testRequest.incremental());
+        assertEquals(PythonIncrementalMode.CONSERVATIVE, testRequest.pythonIncrementalMode());
         assertEquals(
             project.resolve("__pyronaut__/incremental/test").toAbsolutePath().normalize(),
             testRequest.incrementalCacheDirectory()
@@ -86,7 +89,10 @@ class PyronautProcessorMainTest {
         prepareCachedProject(project);
         Files.writeString(
             project.resolve("pyproject.toml"),
-            minimalPyproject() + "\n[tool.pyronaut.processor]\nincremental = true\n"
+            minimalPyproject()
+                + "\n[tool.pyronaut.processor]\n"
+                + "incremental = true\n"
+                + "python-incremental-mode = \"optimistic\"\n"
         );
 
         CapturingExecutor configuredExecutor = new CapturingExecutor();
@@ -99,6 +105,10 @@ class PyronautProcessorMainTest {
 
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), configured.call());
         assertTrue(configuredExecutor.requests.getFirst().incremental());
+        assertEquals(
+            PythonIncrementalMode.OPTIMISTIC,
+            configuredExecutor.requests.getFirst().pythonIncrementalMode()
+        );
 
         Files.deleteIfExists(project.resolve("__pyronaut__/processor-main.sha256"));
         CapturingExecutor overriddenExecutor = new CapturingExecutor();

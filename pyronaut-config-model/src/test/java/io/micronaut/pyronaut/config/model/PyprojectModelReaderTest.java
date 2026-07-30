@@ -47,6 +47,7 @@ class PyprojectModelReaderTest {
         assertEquals(Boolean.FALSE, model.pyronaut().build().pythonBytecodeEnabled());
         assertEquals("jvm", model.pyronaut().processor().mode());
         assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
+        assertEquals("conservative", model.pyronaut().processor().pythonIncrementalMode());
         assertEquals("src", model.pyronaut().sources().python());
         assertEquals("tests", model.pyronaut().sources().pythonTest());
         assertEquals("src-java", model.pyronaut().sources().java());
@@ -314,6 +315,7 @@ class PyprojectModelReaderTest {
         PyprojectModel model = reader.readFile(file);
         assertEquals("jvm", model.pyronaut().processor().mode());
         assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
+        assertEquals("conservative", model.pyronaut().processor().pythonIncrementalMode());
     }
 
     @Test
@@ -346,6 +348,43 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals(Boolean.TRUE, model.pyronaut().processor().incremental());
+    }
+
+    @Test
+    void parsePythonIncrementalModeWhenConfigured() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.processor]
+            python-incremental-mode = "optimistic"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals("optimistic", model.pyronaut().processor().pythonIncrementalMode());
+    }
+
+    @Test
+    void rejectInvalidPythonIncrementalMode() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.processor]
+            python-incremental-mode = "fast"
+            """);
+
+        PyprojectModelException exception = assertThrows(
+            PyprojectModelException.class,
+            () -> reader.readFile(file)
+        );
+        assertEquals(
+            "Invalid value for 'tool.pyronaut.processor.python-incremental-mode': "
+                + "expected one of [conservative, optimistic]",
+            exception.getMessage()
+        );
     }
 
     @Test

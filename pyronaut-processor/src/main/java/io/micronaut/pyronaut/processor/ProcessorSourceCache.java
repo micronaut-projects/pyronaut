@@ -114,6 +114,7 @@ final class ProcessorSourceCache {
                               List<Path> classpath,
                               boolean compilePythonBytecode,
                               boolean incremental,
+                              String pythonIncrementalMode,
                               List<String> options) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -125,11 +126,31 @@ final class ProcessorSourceCache {
             updatePathList(digest, "classpath", classpath);
             updateString(digest, "compile-python-bytecode=" + compilePythonBytecode + "\n");
             updateString(digest, "incremental=" + incremental + "\n");
+            updateString(digest, "python-incremental-mode=" + pythonIncrementalMode + "\n");
             updateStringList(digest, "options", options);
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
         }
+    }
+
+    static String fingerprint(Path pythonSources,
+                              Path javaSources,
+                              List<Path> annotationProcessorPath,
+                              List<Path> classpath,
+                              boolean compilePythonBytecode,
+                              boolean incremental,
+                              List<String> options) {
+        return fingerprint(
+            pythonSources,
+            javaSources,
+            annotationProcessorPath,
+            classpath,
+            compilePythonBytecode,
+            incremental,
+            "conservative",
+            options
+        );
     }
 
     static String fingerprint(Path pythonSources,

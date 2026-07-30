@@ -19,6 +19,7 @@ import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
+import io.micronaut.python.compiler.PythonIncrementalMode;
 import picocli.CommandLine;
 
 import java.nio.file.StandardCopyOption;
@@ -203,6 +204,12 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             boolean incrementalCompilation = !noCache && (incremental != null
                 ? incremental
                 : model != null && Boolean.TRUE.equals(model.pyronaut().processor().incremental()));
+            String configuredPythonIncrementalMode = model == null
+                ? "conservative"
+                : model.pyronaut().processor().pythonIncrementalMode();
+            PythonIncrementalMode pythonIncrementalMode = PythonIncrementalMode.valueOf(
+                configuredPythonIncrementalMode.toUpperCase(Locale.ROOT)
+            );
             Path mainIncrementalCache = root.resolve(DEFAULT_INCREMENTAL_DIR).resolve("main").normalize();
             Path testIncrementalCache = root.resolve(DEFAULT_INCREMENTAL_DIR).resolve("test").normalize();
 
@@ -231,6 +238,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         effectiveClasspath,
                         compilePythonBytecode,
                         incrementalCompilation,
+                        configuredPythonIncrementalMode,
                         mainOptions
                     );
                     if (!noCache
@@ -263,6 +271,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             effectiveClasspath,
                             compilePythonBytecode,
                             incrementalCompilation,
+                            pythonIncrementalMode,
                             mainIncrementalCache,
                             mainOptions
                         ));
@@ -334,6 +343,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             effectiveTestClasspath,
                             compilePythonBytecode,
                             incrementalCompilation,
+                            configuredPythonIncrementalMode,
                             testOptions
                         );
                         if (!noCache
@@ -367,6 +377,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                                 effectiveTestClasspath,
                                 compilePythonBytecode,
                                 incrementalCompilation,
+                                pythonIncrementalMode,
                                 testIncrementalCache,
                                 testOptions
                             ));
