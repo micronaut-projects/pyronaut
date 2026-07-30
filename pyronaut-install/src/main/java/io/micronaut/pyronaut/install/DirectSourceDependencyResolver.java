@@ -15,22 +15,44 @@
  */
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.core.annotation.Internal;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
+import io.micronaut.testresources.core.TestResourcesResolver;
 import java.io.IOException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.ServiceConfigurationError;
+import java.util.ServiceLoader;
+import java.util.Set;
 
 /** Resolves and caches dependencies declared by a direct source invocation. */
 public final class DirectSourceDependencyResolver {
     private static final String HASH_FILE = "direct-source-declarations.sha256";
-    private final MavenClasspathResolver resolver = new MavenClasspathResolver();
+    private static final String LAUNCH_METADATA_FILE = "direct-source-launch.properties";
+    private static final String LAUNCH_CACHE_VERSION = "3";
+    private final MavenClasspathResolver resolver;
+
+    /** Creates a resolver using the configured Maven environment. */
+    public DirectSourceDependencyResolver() {
+        this(new MavenClasspathResolver());
+    }
+
+    DirectSourceDependencyResolver(MavenClasspathResolver resolver) {
+        this.resolver = resolver;
+    }
 
     /**
      * Resolves declarations and persists manifests for subsequent direct-source invocations.
@@ -112,6 +134,264 @@ public final class DirectSourceDependencyResolver {
             artifactsFromResolvedDetails(buildDetails.editorArtifacts()),
             artifactsFromResolvedDetails(runtimeDetails.editorArtifacts()),
             false
+        );
+    }
+
+    /**
+     * Resolves a direct-source launch, including conditional Test Resources dependencies.
+     *
+     * @param cacheDirectory persistent direct-source cache directory
+     * @param build build-scoped Maven coordinates
+     * @param runtime runtime-scoped Maven coordinates
+     * @param repositories Maven repository URLs
+     * @param runtimeProperties inline runtime {@code @AppConfig} properties
+     * @param testResourcesEligible whether the launch command permits automatic Test Resources
+     * @return launch classpaths, conditional Test Resources decision, and cache status
+     * @throws IOException if the cache cannot be read or written
+     */
+    @Internal
+    public LaunchResult resolveForLaunch(Path cacheDirectory,
+                                         List<String> build,
+                                         List<String> runtime,
+                                         List<String> repositories,
+                                         Map<String, String> runtimeProperties,
+                                         boolean testResourcesEligible) throws IOException {
+        Path localRepository = MavenClasspathResolver.resolveLocalMavenRepository();
+        boolean effectiveTestResourcesEligibility =
+            testResourcesEligible && !resolver.isTestResourcesDisabledViaEnvironment();
+        List<String> launchInputs = launchFingerprintInputs(
+            runtimeProperties,
+            effectiveTestResourcesEligibility
+        );
+        String hash = fingerprint(build, runtime, repositories, localRepository, launchInputs);
+        Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
+        Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
+        Path serverManifest = cacheDirectory.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile());
+        Path metadata = cacheDirectory.resolve(LAUNCH_METADATA_FILE);
+        if (Files.isRegularFile(cacheDirectory.resolve(HASH_FILE))
+            && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
+            && Files.isRegularFile(buildManifest)
+            && Files.isRegularFile(runtimeManifest)
+            && Files.isRegularFile(metadata)) {
+            boolean required = readTestResourcesRequired(metadata);
+            if (!required || Files.isRegularFile(serverManifest)) {
+                return new LaunchResult(
+                    read(buildManifest),
+                    read(runtimeManifest),
+                    required ? read(serverManifest) : List.of(),
+                    required,
+                    true
+                );
+            }
+        }
+
+        PyprojectModel baseModel = model(build, runtime, repositories, null);
+        boolean required = false;
+        MavenClasspathResolver.ResolvedScopeDetails serverDetails = null;
+        if (effectiveTestResourcesEligibility && runtimeProperties != null && !runtimeProperties.isEmpty()) {
+            PyprojectModel enabledModel = model(build, runtime, repositories, enabledTestResources());
+            serverDetails = resolver.resolveScopeDetails(
+                enabledModel,
+                InstallScope.TEST_RESOURCES_SERVER,
+                localRepository,
+                false,
+                false,
+                true
+            );
+            required = requiresTestResources(serverDetails.classpath(), runtimeProperties);
+            if (required) {
+                baseModel = enabledModel;
+            }
+        }
+
+        MavenClasspathResolver.ResolvedScopeDetails buildDetails =
+            resolver.resolveScopeDetails(baseModel, InstallScope.BUILD, localRepository, false, false);
+        MavenClasspathResolver.ResolvedScopeDetails runtimeDetails =
+            resolver.resolveScopeDetails(baseModel, InstallScope.RUNTIME, localRepository, false, false);
+        List<String> buildResult = classpathStrings(buildDetails);
+        List<String> runtimeResult = classpathStrings(runtimeDetails);
+        List<String> serverResult = required && serverDetails != null ? classpathStrings(serverDetails) : List.of();
+        Files.createDirectories(cacheDirectory);
+        Files.write(buildManifest, buildResult);
+        Files.write(runtimeManifest, runtimeResult);
+        if (required) {
+            Files.write(serverManifest, serverResult);
+        } else {
+            Files.deleteIfExists(serverManifest);
+        }
+        Files.writeString(metadata, "testResourcesRequired=" + required + System.lineSeparator());
+        Files.writeString(cacheDirectory.resolve(HASH_FILE), hash);
+        return new LaunchResult(buildResult, runtimeResult, serverResult, required, false);
+    }
+
+    private static PyprojectModel model(List<String> build,
+                                        List<String> runtime,
+                                        List<String> repositories,
+                                        PyprojectModel.TestResources testResources) {
+        PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
+            null,
+            PyronautManagedVersions.micronautPlatformVersion(),
+            repositories,
+            new PyprojectModel.Dependencies(runtime, List.of(), build, List.of()),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            testResources
+        );
+        return new PyprojectModel(null, null, pyronaut);
+    }
+
+    private static PyprojectModel.TestResources enabledTestResources() {
+        return new PyprojectModel.TestResources(
+            false,
+            true,
+            null,
+            null,
+            true,
+            List.of(),
+            null,
+            false,
+            null,
+            null,
+            null,
+            Map.of(),
+            Map.of(),
+            false,
+            null,
+            "none",
+            List.of()
+        );
+    }
+
+    private static List<String> launchFingerprintInputs(Map<String, String> runtimeProperties,
+                                                        boolean testResourcesEligible) {
+        List<String> inputs = new ArrayList<>();
+        inputs.add("launch-cache-version=" + LAUNCH_CACHE_VERSION);
+        inputs.add("test-resources-eligible=" + testResourcesEligible);
+        if (runtimeProperties != null) {
+            runtimeProperties.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> inputs.add("runtime-property=" + entry.getKey() + "=" + entry.getValue()));
+        }
+        return List.copyOf(inputs);
+    }
+
+    private static boolean readTestResourcesRequired(Path metadata) throws IOException {
+        return Files.readAllLines(metadata).stream()
+            .map(String::trim)
+            .anyMatch("testResourcesRequired=true"::equals);
+    }
+
+    private static List<String> classpathStrings(MavenClasspathResolver.ResolvedScopeDetails details) {
+        return details.classpath().stream().map(Path::toString).toList();
+    }
+
+    private static boolean requiresTestResources(List<Path> serverClasspath,
+                                                 Map<String, String> runtimeProperties) throws IOException {
+        if (serverClasspath.isEmpty()) {
+            return false;
+        }
+        URL[] urls = serverClasspath.stream()
+            .map(Path::toUri)
+            .map(uri -> {
+                try {
+                    return uri.toURL();
+                } catch (IOException e) {
+                    throw new IllegalStateException(e);
+                }
+            })
+            .toArray(URL[]::new);
+        try (URLClassLoader classLoader = new URLClassLoader(urls, DirectSourceDependencyResolver.class.getClassLoader())) {
+            List<TestResourcesResolver> resolvers;
+            try {
+                resolvers = ServiceLoader.load(TestResourcesResolver.class, classLoader)
+                    .stream()
+                    .map(ServiceLoader.Provider::get)
+                    .toList();
+            } catch (ServiceConfigurationError | LinkageError | RuntimeException e) {
+                throw new IOException("Unable to inspect inferred Test Resources providers", e);
+            }
+            return requiresTestResources(resolvers, runtimeProperties);
+        }
+    }
+
+    static boolean requiresTestResources(Collection<? extends TestResourcesResolver> resolvers,
+                                         Map<String, String> runtimeProperties) throws IOException {
+        Map<String, Object> testResourcesConfig = testResourcesConfig(runtimeProperties);
+        for (TestResourcesResolver resolver : resolvers) {
+            try {
+                List<String> requiredEntries = safeList(resolver.getRequiredPropertyEntries());
+                Map<String, Collection<String>> propertyEntries = propertyEntries(runtimeProperties, requiredEntries);
+                List<String> resolvable = safeList(resolver.getResolvableProperties(propertyEntries, testResourcesConfig));
+                boolean configuredNamespace = resolvable.stream()
+                    .anyMatch(property -> namespaceConfigured(property, requiredEntries, runtimeProperties.keySet()));
+                if (configuredNamespace && resolvable.stream().anyMatch(property -> !runtimeProperties.containsKey(property))) {
+                    return true;
+                }
+            } catch (LinkageError | RuntimeException e) {
+                throw new IOException("Unable to inspect inferred Test Resources provider " + resolver.getClass().getName(), e);
+            }
+        }
+        return false;
+    }
+
+    private static List<String> safeList(List<String> values) {
+        return values == null ? List.of() : values;
+    }
+
+    private static Map<String, Collection<String>> propertyEntries(Map<String, String> runtimeProperties,
+                                                                   List<String> requiredEntries) {
+        Map<String, Collection<String>> entries = new LinkedHashMap<>();
+        for (String prefix : requiredEntries) {
+            Set<String> values = new LinkedHashSet<>();
+            String entryPrefix = prefix + ".";
+            runtimeProperties.keySet().stream()
+                .filter(key -> key.startsWith(entryPrefix))
+                .map(key -> key.substring(entryPrefix.length()))
+                .map(value -> {
+                    int separator = value.indexOf('.');
+                    return separator < 0 ? value : value.substring(0, separator);
+                })
+                .filter(value -> !value.isBlank())
+                .sorted()
+                .forEach(values::add);
+            entries.put(prefix, List.copyOf(values));
+        }
+        return entries;
+    }
+
+    private static Map<String, Object> testResourcesConfig(Map<String, String> runtimeProperties) {
+        Map<String, Object> config = new LinkedHashMap<>();
+        String prefix = TestResourcesResolver.TEST_RESOURCES_PROPERTY + ".";
+        runtimeProperties.entrySet().stream()
+            .filter(entry -> entry.getKey().startsWith(prefix))
+            .sorted(Map.Entry.comparingByKey())
+            .forEach(entry -> config.put(entry.getKey().substring(prefix.length()), entry.getValue()));
+        return config;
+    }
+
+    private static boolean namespaceConfigured(String resolvableProperty,
+                                               List<String> requiredEntries,
+                                               Set<String> configuredProperties) {
+        if (resolvableProperty == null || resolvableProperty.isBlank()) {
+            return false;
+        }
+        if (!requiredEntries.isEmpty()) {
+            return requiredEntries.stream().anyMatch(entry ->
+                resolvableProperty.startsWith(entry + ".")
+                    && configuredProperties.stream().anyMatch(property -> property.startsWith(entry + "."))
+            );
+        }
+        int separator = resolvableProperty.indexOf('.');
+        String namespace = separator < 0 ? resolvableProperty : resolvableProperty.substring(0, separator);
+        return configuredProperties.stream().anyMatch(property ->
+            property.equals(namespace) || property.startsWith(namespace + ".")
         );
     }
 
@@ -218,6 +498,25 @@ public final class DirectSourceDependencyResolver {
         List<String> runtime,
         List<ResolvedArtifact> buildArtifacts,
         List<ResolvedArtifact> runtimeArtifacts,
+        boolean cacheHit
+    ) {
+    }
+
+    /**
+     * Internal result used to launch a direct source.
+     *
+     * @param build resolved build classpath
+     * @param runtime resolved runtime classpath
+     * @param testResourcesServer inferred Test Resources server classpath
+     * @param testResourcesRequired whether inline configuration requires Test Resources
+     * @param cacheHit whether existing launch metadata and manifests were reused
+     */
+    @Internal
+    public record LaunchResult(
+        List<String> build,
+        List<String> runtime,
+        List<String> testResourcesServer,
+        boolean testResourcesRequired,
         boolean cacheHit
     ) {
     }

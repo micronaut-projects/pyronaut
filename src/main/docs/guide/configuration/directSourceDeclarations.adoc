@@ -37,6 +37,33 @@ class App {
 
 Use `scope = Dependency.Scope.BUILD` for annotation processors and `scope = AppConfig.Scope.BUILD` for annotation processor options.
 
+== Conditional Test Resources
+
+Direct `pyronaut dev` and `pyronaut test` commands inspect runtime dependencies together with inline runtime `@AppConfig` declarations.
+When an inferred Micronaut Test Resources provider can supply a missing property in a configured namespace, Pyronaut starts or attaches to a project-local Test Resources server for that launch.
+Dependencies alone, build-scoped configuration, fully supplied connection properties, `--property`, `-D`, and `--config` do not activate automatic orchestration.
+Use `--disable-test-resources` to turn it off explicitly.
+Direct `pyronaut run` remains production-only and never activates Test Resources.
+
+For example, this complete source declares Micronaut Data JDBC and MySQL, but deliberately omits the datasource URL and credentials:
+
+[source,java]
+----
+include::src/main/docs/examples/direct-source/mysql/App.java[tag=source]
+----
+
+Run it in development mode, then insert and query repository-backed data:
+
+[source,bash]
+----
+pyronaut dev App.java
+
+curl -X POST http://localhost:8080/books/TheDispossessed
+curl http://localhost:8080/books/count
+----
+
+Both requests return `1`. The first launch starts the inferred MySQL container; stopping the development process also stops the owned Test Resources server. An already-running project-local server is attached to without transferring ownership.
+
 == Python
 
 [source,python]
@@ -52,4 +79,4 @@ AppConfig(name="datasources.default.dialect", value="Oracle")
 Declare a repository with `MavenRepository("https://repository.example.com/maven/")` in Java or Python.
 Maven Central is used when no repository is declared; once a repository is declared, only declared repositories are used.
 
-Pyronaut records resolved direct-source dependencies and the declaration fingerprint in `__pyronaut__` in the current working directory. A subsequent run with unchanged dependency and repository declarations reuses that cache. Changing either declaration refreshes it.
+Pyronaut records resolved direct-source dependencies and the declaration fingerprint in `__pyronaut__` in the current working directory. The cached launch metadata includes command eligibility, sorted inline runtime configuration, and the positive or negative Test Resources decision. A subsequent launch with unchanged inputs reuses that cache.

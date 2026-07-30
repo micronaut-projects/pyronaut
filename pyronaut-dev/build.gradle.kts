@@ -238,6 +238,7 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=module=java.base,package=java.*,package=jdk.internal.*,package=sun.*,module=java.sql,package=java.sql,package=java.sql.*,package=javax.sql,module=jdk.compiler,module=java.compiler,package=io.micronaut.*,package=jakarta.annotation,package=jakarta.annotation.*,package=jakarta.inject,package=jakarta.inject.*,package=org.junit.*,package=org.opentest4j.*,package=org.objectweb.asm,package=org.objectweb.asm.*,package=com.github.javaparser,package=com.github.javaparser.*,package=org.apache.maven.*,package=org.eclipse.aether.*,package=org.codehaus.plexus.*",
     "-H:Preserve=package=java.lang.*",
     "-H:Preserve=package=java.lang.invoke.*",
+    "-H:IncludeResources=pyronaut-test-resources-logback\\.xml",
     "-H:Preserve=package=java.text.*",
     "-H:Preserve=package=java.time.*",
     "-H:Preserve=package=java.util.*",

@@ -45,6 +45,8 @@ import java.util.zip.ZipOutputStream;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -205,9 +207,13 @@ final class PyronautDevMainTest {
         Path source = tempDir.resolve("App.java");
         Files.writeString(source, "class App {}\n");
         String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
+        String previousRuntimeProperty = System.getProperty("example.value");
+        String previousBuildProperty = System.getProperty("micronaut.processing.processor.option");
         AtomicInteger calls = new AtomicInteger();
         try {
             System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
+            System.setProperty("example.value", "original-runtime");
+            System.setProperty("micronaut.processing.processor.option", "original-build");
             PyronautDevMain.DirectSourceRunner runner = (invocation, stagingRoot) -> {
                 if (calls.incrementAndGet() % 2 == 1) {
                     throw new DirectSourceDeclarationRequest(new DirectSourceDeclarations(
@@ -222,16 +228,119 @@ final class PyronautDevMainTest {
                 return 0;
             };
 
-            assertEquals(0, PyronautDevMain.execute(new String[]{source.toString()}, (command, args) -> 0, runner));
+            String[] args = {
+                "-Dexample.value=command-runtime",
+                "-Dmicronaut.processing.processor.option=command-build",
+                source.toString()
+            };
+            assertEquals(0, PyronautDevMain.execute(args, (command, arguments) -> 0, runner));
+            assertEquals("original-runtime", System.getProperty("example.value"));
+            assertEquals("original-build", System.getProperty("micronaut.processing.processor.option"));
             Path runtimeManifest = tempDir.resolve("__pyronaut__/resolved-runtime-dependencies");
             assertTrue(Files.isRegularFile(runtimeManifest));
             long firstModified = Files.getLastModifiedTime(runtimeManifest).toMillis();
 
-            assertEquals(0, PyronautDevMain.execute(new String[]{source.toString()}, (command, args) -> 0, runner));
+            assertEquals(0, PyronautDevMain.execute(args, (command, arguments) -> 0, runner));
             assertEquals(firstModified, Files.getLastModifiedTime(runtimeManifest).toMillis());
+            assertEquals("original-runtime", System.getProperty("example.value"));
+            assertEquals("original-build", System.getProperty("micronaut.processing.processor.option"));
+        } finally {
+            restoreProperty("pyronaut.dev.project.dir", previousProjectDirectory);
+            restoreProperty("example.value", previousRuntimeProperty);
+            restoreProperty("micronaut.processing.processor.option", previousBuildProperty);
+        }
+    }
+
+    @Test
+    void directRunNeverActivatesInferredTestResources(@TempDir Path tempDir) throws Exception {
+        Path source = tempDir.resolve("App.java");
+        Files.writeString(source, "class App {}\n");
+        String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
+        AtomicInteger calls = new AtomicInteger();
+        try {
+            System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
+            PyronautDevMain.DirectSourceRunner runner = (invocation, stagingRoot) -> {
+                if (calls.incrementAndGet() == 1) {
+                    throw new DirectSourceDeclarationRequest(mysqlDeclarations());
+                }
+                assertEquals("false", System.getProperty(
+                    PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY
+                ));
+                assertNull(System.getProperty("pyronaut.dev.test.resources.client.classpath"));
+                return 0;
+            };
+
+            assertEquals(0, PyronautDevMain.execute(
+                new String[]{"run", source.toString()},
+                (command, args) -> 0,
+                runner
+            ));
+            assertFalse(Files.exists(tempDir.resolve(
+                "__pyronaut__/resolved-test-resources-server-dependencies"
+            )));
+            assertFalse(Files.readAllLines(tempDir.resolve(
+                "__pyronaut__/resolved-runtime-dependencies"
+            )).stream().anyMatch(path -> path.contains("micronaut-test-resources-client")));
         } finally {
             restoreProperty("pyronaut.dev.project.dir", previousProjectDirectory);
         }
+    }
+
+    @Test
+    void disableTestResourcesPreventsDirectDevInference(@TempDir Path tempDir) throws Exception {
+        Path source = tempDir.resolve("App.java");
+        Files.writeString(source, "class App {}\n");
+        String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
+        String previousDirectCommand = System.getProperty("pyronaut.dev.direct.command");
+        AtomicInteger calls = new AtomicInteger();
+        try {
+            System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
+            System.setProperty("pyronaut.dev.direct.command", "dev");
+            PyronautDevMain.DirectSourceRunner runner = (invocation, stagingRoot) -> {
+                if (calls.incrementAndGet() == 1) {
+                    throw new DirectSourceDeclarationRequest(mysqlDeclarations());
+                }
+                assertEquals("false", System.getProperty(
+                    PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY
+                ));
+                assertNull(System.getProperty("pyronaut.dev.test.resources.client.classpath"));
+                return 0;
+            };
+
+            assertEquals(0, PyronautDevMain.execute(
+                new String[]{"--disable-test-resources", source.toString()},
+                (command, args) -> 0,
+                runner
+            ));
+            assertFalse(Files.exists(tempDir.resolve(
+                "__pyronaut__/resolved-test-resources-server-dependencies"
+            )));
+        } finally {
+            restoreProperty("pyronaut.dev.project.dir", previousProjectDirectory);
+            restoreProperty("pyronaut.dev.direct.command", previousDirectCommand);
+        }
+    }
+
+    private static DirectSourceDeclarations mysqlDeclarations() {
+        return new DirectSourceDeclarations(
+            List.of(
+                new DirectSourceDeclarations.Dependency(
+                    "io.micronaut.data:micronaut-data-jdbc",
+                    false
+                ),
+                new DirectSourceDeclarations.Dependency(
+                    "io.micronaut.sql:micronaut-jdbc-hikari",
+                    false
+                ),
+                new DirectSourceDeclarations.Dependency(
+                    "com.mysql:mysql-connector-j",
+                    false
+                )
+            ),
+            List.of(),
+            Map.of(),
+            Map.of("datasources.default.db-type", "mysql")
+        );
     }
 
     @Test
@@ -391,6 +500,52 @@ final class PyronautDevMainTest {
             );
             assertEquals(0, exit);
             assertTrue(output.toString(StandardCharsets.UTF_8).contains("Test run finished"), output.toString(StandardCharsets.UTF_8));
+        } finally {
+            System.setOut(previousOut);
+        }
+    }
+
+    @Test
+    void reportsDirectJavaContainerFailuresAndLinksTheReport(@TempDir Path tempDir) throws IOException {
+        Path source = tempDir.resolve("App.java");
+        Path test = tempDir.resolve("AppTest.java");
+        Files.writeString(source, "package demo; class App {}\n");
+        Files.writeString(test, """
+            package demo;
+            import org.junit.jupiter.api.BeforeAll;
+            import org.junit.jupiter.api.Test;
+            class AppTest {
+                @BeforeAll
+                static void failContainer() {
+                    throw new IllegalStateException("container startup exploded");
+                }
+                @Test
+                void neverStarts() {
+                }
+            }
+            """);
+        PrintStream previousOut = System.out;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+            int exit = PyronautDevMain.execute(
+                new String[]{"test", source.toString(), "--", test.toString()}
+            );
+
+            Path reportDirectory = tempDir.resolve("__pyronaut__/reports/tests");
+            Path htmlReport = reportDirectory.resolve("index.html");
+            Path xmlReport = reportDirectory.resolve("junit.xml");
+            String testOutput = output.toString(StandardCharsets.UTF_8);
+            assertEquals(1, exit, testOutput);
+            assertTrue(testOutput.contains("0 tests started"), testOutput);
+            assertTrue(testOutput.contains("Test report:"), testOutput);
+            assertTrue(testOutput.contains(htmlReport.toString()), testOutput);
+            assertTrue(Files.isRegularFile(htmlReport));
+            assertTrue(Files.isRegularFile(xmlReport));
+            assertTrue(Files.readString(htmlReport).contains("container startup exploded"));
+            assertTrue(Files.readString(htmlReport).contains("Errors: 1"));
+            assertTrue(Files.readString(xmlReport).contains("errors=\"1\""));
+            assertTrue(Files.readString(xmlReport).contains("java.lang.IllegalStateException: container startup exploded"));
         } finally {
             System.setOut(previousOut);
         }
