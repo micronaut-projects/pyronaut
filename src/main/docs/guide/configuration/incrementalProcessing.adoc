@@ -43,7 +43,7 @@ If the compiler or annotation processor classpath changes, or a compilation fail
 
 Endpoint metadata is stored in `__pyronaut__/daemon/daemon.properties`.
 Diagnostics that occur outside an active request are appended to `__pyronaut__/daemon/daemon.log`.
-The daemon shuts down after two minutes without a request and removes its endpoint metadata.
+The daemon shuts down after ten minutes without a request and removes its endpoint metadata.
 The next command starts a new daemon.
 If endpoint health checks or communication fail, the client removes stale metadata and starts a replacement; if a daemon cannot be started, Pyronaut reports the reason and safely processes in the current command process.
 

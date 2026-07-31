@@ -67,7 +67,7 @@ final class CompilerDaemon {
     private static final Duration START_TIMEOUT = Duration.ofSeconds(15);
     private static final int CONNECT_TIMEOUT_MILLIS = 2_000;
     private static final int ACCEPT_POLL_MILLIS = 1_000;
-    private static final long DEFAULT_IDLE_TIMEOUT_SECONDS = 120;
+    private static final long DEFAULT_IDLE_TIMEOUT_SECONDS = 600;
     private static final String METADATA_FILE = "daemon.properties";
     private static final String LOCK_FILE = "daemon.lock";
     private static final String LOG_FILE = "daemon.log";
