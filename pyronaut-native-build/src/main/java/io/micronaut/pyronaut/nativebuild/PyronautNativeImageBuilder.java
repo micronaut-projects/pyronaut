@@ -147,8 +147,6 @@ public final class PyronautNativeImageBuilder {
 
     private static final List<String> PYTHON_ARGUMENTS = List.of(
         "--enable-native-access=org.graalvm.truffle",
-        "--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary",
-        "--initialize-at-build-time=com.sun.tools.javac.api.JavacTool",
         "-H:Preserve=package=ch.qos.logback.classic.*",
         "-H:Preserve=package=ch.qos.logback.core.*"
     );

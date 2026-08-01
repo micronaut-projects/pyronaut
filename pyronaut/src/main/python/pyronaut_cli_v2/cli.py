@@ -1981,7 +1981,7 @@ def _read_pyproject_build_base_image(project_dir: Path) -> str | None:
     build = pyronaut.get("build")
     if not isinstance(build, dict):
         return None
-    return _read_pyproject_string(build, "base-image", "baseImage")
+    return _read_pyproject_string(build, "base-image")
 
 
 def _is_python_runtime_project(project_dir: Path) -> bool:

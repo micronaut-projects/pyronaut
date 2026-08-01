@@ -153,7 +153,7 @@ public final class PyprojectConfigSpec {
         "Local reusable Pyronaut native runtime image path.",
         null,
         List.of(),
-        List.of("tool.pyronaut.build.baseImage")
+        List.of()
     );
     public static final FieldSpec PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED = bool(
         "tool.pyronaut.build.python-bytecode.enabled",

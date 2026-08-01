@@ -578,8 +578,6 @@ class PyprojectModelReaderTest {
             [tool.pyronaut]
 
             [tool.pyronaut.build]
-            baseImage = "build/pyronaut-run"
-
             [tool.pyronaut.build.docker]
             imageName = "example/demo"
             dockerfileNative = "DockerfileNative"
@@ -592,7 +590,7 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModel model = reader.readFile(file);
-        assertEquals("build/pyronaut-run", model.pyronaut().build().baseImage());
+        assertEquals(null, model.pyronaut().build().baseImage());
         assertEquals("example/demo", model.pyronaut().build().docker().imageName());
         assertEquals("DockerfileNative", model.pyronaut().build().docker().dockerfileNative());
         assertEquals("example/jvm", model.pyronaut().build().docker().jvmBaseImage());

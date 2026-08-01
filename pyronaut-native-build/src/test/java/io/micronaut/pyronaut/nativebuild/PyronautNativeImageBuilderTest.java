@@ -69,8 +69,8 @@ class PyronautNativeImageBuilderTest {
         String classpath = command.get(command.indexOf("-cp") + 1);
         assertTrue(classpath.contains(pythonClasspathEntry.toString()));
         assertTrue(command.contains("--enable-native-access=org.graalvm.truffle"));
-        assertTrue(command.contains("--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary"));
-        assertTrue(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
+        assertFalse(command.contains("--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary"));
+        assertFalse(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
         assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.classic.*"));
     }
 
