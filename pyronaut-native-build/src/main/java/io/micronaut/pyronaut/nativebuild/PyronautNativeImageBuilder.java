@@ -47,7 +47,7 @@ public final class PyronautNativeImageBuilder {
         "-H:Preserve=package=io.micronaut.http.netty.*",
         "--enable-http",
         "--enable-https",
-        "-H:Preserve=module=java.base,package=java.*,package=jdk.internal.*,package=sun.*,module=java.sql,package=java.sql,package=java.sql.*,package=javax.sql,package=io.micronaut.*,package=jakarta.annotation,package=jakarta.annotation.*,package=jakarta.inject,package=jakarta.inject.*",
+        "-H:Preserve=module=java.base,package=java.*,package=jdk.internal.misc.*,package=jdk.internal.access.*,package=sun.*,module=java.sql,package=java.sql,package=java.sql.*,package=javax.sql,package=io.micronaut.*,package=jakarta.annotation,package=jakarta.annotation.*,package=jakarta.inject,package=jakarta.inject.*",
         "-H:Preserve=package=java.lang.*",
         "-H:Preserve=package=java.lang.invoke.*",
         "-H:Preserve=package=java.text.*",
