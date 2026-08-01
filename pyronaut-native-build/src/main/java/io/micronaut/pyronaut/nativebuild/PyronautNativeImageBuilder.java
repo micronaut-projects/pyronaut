@@ -142,6 +142,11 @@ public final class PyronautNativeImageBuilder {
         "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
         "--initialize-at-run-time=io.netty",
         "--initialize-at-run-time=io.micronaut.core.io.socket.SocketUtils",
+        "--initialize-at-run-time=jdk.jshell",
+        "--initialize-at-run-time=jdk.internal.jshell.tool",
+        "--initialize-at-run-time=jdk.internal.shellsupport.doc",
+        "--initialize-at-run-time=com.sun.tools.javac.api",
+        "--initialize-at-run-time=jdk.internal.org.jline",
         "-H:-UnlockExperimentalVMOptions"
     );
 

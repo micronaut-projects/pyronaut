@@ -598,18 +598,20 @@ def _delegate(
             java_home_provider=java_home_provider,
         )
 
-    try:
-        dev_command_line = _pyronaut_dev_native_command_line(
-            command,
-            args,
-            resolver,
-            debug_vm=debug_vm,
-            env_overrides=env_overrides,
-            java_home_provider=java_home_provider,
-        )
-    except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
-        return PRECONDITION_FAILED
+    dev_command_line = None
+    if command != "run":
+        try:
+            dev_command_line = _pyronaut_dev_native_command_line(
+                command,
+                args,
+                resolver,
+                debug_vm=debug_vm,
+                env_overrides=env_overrides,
+                java_home_provider=java_home_provider,
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
     if dev_command_line is not None:
         if _delegation_trace_enabled():
             print(shlex.join(dev_command_line), file=sys.stderr)
