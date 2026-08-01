@@ -19,6 +19,7 @@ import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
+import io.micronaut.python.compiler.PythonIncrementalMode;
 import picocli.CommandLine;
 
 import java.nio.file.StandardCopyOption;
@@ -47,6 +48,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_TARGET_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_TEST_TARGET_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_TEST_SOURCES_DIR = "__pyronaut__/test-sources";
+    private static final String DEFAULT_INCREMENTAL_DIR = "__pyronaut__/incremental";
     private static final String APPLICATION_VFS_SRC = "META-INF/GRAALPY-VFS/micronaut-application/src";
     private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
     private static final String APPLICATION_CONTEXT_CONFIGURER_SERVICE = "META-INF/services/io.micronaut.context.ApplicationContextConfigurer";
@@ -95,6 +97,26 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     @CommandLine.Option(names = "--no-cache", description = "Bypass processor source cache reads/writes")
     boolean noCache;
 
+    @CommandLine.Option(
+        names = "--incremental",
+        negatable = true,
+        description = "Enable incremental Python and Java compilation"
+    )
+    Boolean incremental;
+
+    @CommandLine.Option(
+        names = "--daemon",
+        negatable = true,
+        description = "Use the persistent compiler daemon"
+    )
+    Boolean daemon;
+
+    @CommandLine.Option(names = "--daemon-server", hidden = true)
+    Path daemonServerDirectory;
+
+    @CommandLine.Option(names = "--daemon-token", hidden = true)
+    String daemonToken;
+
     @CommandLine.Option(names = "--pass", defaultValue = "all", description = "Processing pass to run: all|main|test")
     String pass = "all";
 
@@ -106,18 +128,29 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
     private final PyprojectModelReader modelReader;
     private final PyronautCompilerExecutor compilerExecutor;
+    private final boolean daemonRequest;
 
     public PyronautProcessorMain() {
-        this(new PyprojectModelReader(), new PyronautCompilerExecutor.Default());
+        this(new PyprojectModelReader(), new PyronautCompilerExecutor.Default(), false);
     }
 
     PyronautProcessorMain(PyprojectModelReader modelReader, PyronautCompilerExecutor compilerExecutor) {
+        this(modelReader, compilerExecutor, false);
+    }
+
+    PyronautProcessorMain(PyprojectModelReader modelReader,
+                          PyronautCompilerExecutor compilerExecutor,
+                          boolean daemonRequest) {
         this.modelReader = modelReader;
         this.compilerExecutor = compilerExecutor;
+        this.daemonRequest = daemonRequest;
     }
 
     @Override
     public Integer call() {
+        if (daemonServerDirectory != null) {
+            return CompilerDaemon.runServer(daemonServerDirectory, daemonToken);
+        }
         if (System.getProperty("java.home") == null) {
             String javaHome = System.getenv("JAVA_HOME");
             if (javaHome == null) {
@@ -134,6 +167,22 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             ExternalProjectLayout externalLayout = ExternalProjectLayout.isExternal(root)
                 ? ExternalProjectLayout.read(root) : null;
             PyprojectModel model = externalLayout == null ? modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME)) : null;
+            boolean daemonEnabled = daemon != null
+                ? daemon
+                : model != null && Boolean.TRUE.equals(model.pyronaut().processor().daemon());
+            CommandLine.ParseResult parseResult = commandSpec == null
+                ? null
+                : commandSpec.commandLine().getParseResult();
+            if (daemonEnabled && !daemonRequest && parseResult != null) {
+                try {
+                    return CompilerDaemon.execute(
+                        root,
+                        parseResult.originalArgs()
+                    );
+                } catch (CompilerDaemon.UnavailableException e) {
+                    System.err.println("Compiler daemon unavailable; processing in the current process: " + e.getMessage());
+                }
+            }
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
             ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
             List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false);
@@ -163,7 +212,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             if (externalLayout != null) {
                 mergedExternalMainRoot = prepareExternalMergedSourceRoot(root, "external-main-sources");
                 resolvedMainJavaSrc = mergedExternalMainRoot;
-                for (Path source : externalLayout.mainJavaSources()) mergeSourceTrees(source, mergedExternalMainRoot);
+                for (Path source : externalLayout.mainJavaSources()) {
+                    mergeSourceTrees(source, mergedExternalMainRoot);
+                }
                 writeExternalContextConfigurer(resolvedMainJavaSrc);
             }
             Path resolvedMainTargetDir = root.resolve(targetDir).normalize();
@@ -181,13 +232,26 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             if (externalLayout != null) {
                 mergedExternalTestRoot = prepareExternalMergedSourceRoot(root, "external-test-sources");
                 resolvedTestJavaSrc = mergedExternalTestRoot;
-                for (Path source : externalLayout.testJavaSources()) mergeSourceTrees(source, mergedExternalTestRoot);
+                for (Path source : externalLayout.testJavaSources()) {
+                    mergeSourceTrees(source, mergedExternalTestRoot);
+                }
             }
             Path resolvedTestTargetDir = root.resolve(testTargetDir).normalize();
             Path resolvedTestSourcesDir = root.resolve(DEFAULT_TEST_SOURCES_DIR).normalize();
             Path resolvedCacheDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
             boolean compilePythonBytecode = model != null
                 && Boolean.TRUE.equals(model.pyronaut().build().pythonBytecodeEnabled());
+            boolean incrementalCompilation = !noCache && (incremental != null
+                ? incremental
+                : model != null && Boolean.TRUE.equals(model.pyronaut().processor().incremental()));
+            String configuredPythonIncrementalMode = model == null
+                ? "conservative"
+                : model.pyronaut().processor().pythonIncrementalMode();
+            PythonIncrementalMode pythonIncrementalMode = PythonIncrementalMode.valueOf(
+                configuredPythonIncrementalMode.toUpperCase(Locale.ROOT)
+            );
+            Path mainIncrementalCache = root.resolve(DEFAULT_INCREMENTAL_DIR).resolve("main").normalize();
+            Path testIncrementalCache = root.resolve(DEFAULT_INCREMENTAL_DIR).resolve("test").normalize();
 
             String mainStatus;
             String testStatus;
@@ -213,17 +277,32 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         effectiveProcessorPath,
                         effectiveClasspath,
                         compilePythonBytecode,
+                        incrementalCompilation,
+                        configuredPythonIncrementalMode,
                         mainOptions
                     );
                     if (!noCache
-                        && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint, resolvedMainTargetDir)) {
+                        && ProcessorSourceCache.cacheHit(
+                            resolvedCacheDir,
+                            ProcessorSourceCache.MAIN_HASH_FILE,
+                            mainFingerprint,
+                            resolvedMainTargetDir,
+                            incrementalCompilation
+                        )) {
                         progressReporter.cacheHit("main", mainSourceCount);
                         mainStatus = "cache hit";
                     } else {
                         if (noCache) {
                             progressReporter.cacheBypass("main", mainSourceCount);
                         }
-                        prepareGeneratedOutputDirectory(resolvedMainTargetDir);
+                        ProcessorSourceCache.invalidate(
+                            resolvedCacheDir,
+                            ProcessorSourceCache.MAIN_HASH_FILE
+                        );
+                        if (!incrementalCompilation) {
+                            prepareGeneratedOutputDirectory(resolvedMainTargetDir);
+                            deleteTree(mainIncrementalCache);
+                        }
                         compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
                             resolvedMainPythonSrc,
                             resolvedMainJavaSrc,
@@ -231,10 +310,18 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             effectiveProcessorPath,
                             effectiveClasspath,
                             compilePythonBytecode,
+                            incrementalCompilation,
+                            pythonIncrementalMode,
+                            mainIncrementalCache,
                             mainOptions
                         ));
                         if (!noCache) {
-                            ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.MAIN_HASH_FILE, mainFingerprint);
+                            ProcessorSourceCache.writeHash(
+                                resolvedCacheDir,
+                                ProcessorSourceCache.MAIN_HASH_FILE,
+                                mainFingerprint,
+                                incrementalCompilation ? resolvedMainTargetDir : null
+                            );
                         }
                         progressReporter.finishPass("main", mainSourceCount);
                         mainStatus = "processed";
@@ -263,7 +350,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                     }
 
                     mergedTestRoot = externalLayout == null
-                        ? Files.createTempDirectory("pyronaut-test-sources-")
+                        ? prepareExternalMergedSourceRoot(root, "test-merged-sources")
                         : prepareExternalMergedSourceRoot(root, "external-test-merged-sources");
                     Path mergedTestPythonSrc = mergedTestRoot.resolve("python");
                     Path mergedTestJavaSrc = mergedTestRoot.resolve("java");
@@ -279,7 +366,12 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         + ProcessorSourceCache.countSources(mergedTestJavaSrc, ".java");
                     progressReporter.startPass("test", testSourceCount);
                     if (testSourceCount == 0L) {
+                        ProcessorSourceCache.invalidate(
+                            resolvedCacheDir,
+                            ProcessorSourceCache.TEST_HASH_FILE
+                        );
                         prepareGeneratedOutputDirectory(resolvedTestTargetDir);
+                        deleteTree(testIncrementalCache);
                         syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                         progressReporter.noSources("test");
                         testStatus = "no sources";
@@ -290,10 +382,18 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             effectiveProcessorPath,
                             effectiveTestClasspath,
                             compilePythonBytecode,
+                            incrementalCompilation,
+                            configuredPythonIncrementalMode,
                             testOptions
                         );
                         if (!noCache
-                            && ProcessorSourceCache.cacheHit(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint, resolvedTestTargetDir)) {
+                            && ProcessorSourceCache.cacheHit(
+                                resolvedCacheDir,
+                                ProcessorSourceCache.TEST_HASH_FILE,
+                                testFingerprint,
+                                resolvedTestTargetDir,
+                                incrementalCompilation
+                            )) {
                             syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                             progressReporter.cacheHit("test", testSourceCount);
                             testStatus = "cache hit";
@@ -301,7 +401,14 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             if (noCache) {
                                 progressReporter.cacheBypass("test", testSourceCount);
                             }
-                            prepareGeneratedOutputDirectory(resolvedTestTargetDir);
+                            ProcessorSourceCache.invalidate(
+                                resolvedCacheDir,
+                                ProcessorSourceCache.TEST_HASH_FILE
+                            );
+                            if (!incrementalCompilation) {
+                                prepareGeneratedOutputDirectory(resolvedTestTargetDir);
+                                deleteTree(testIncrementalCache);
+                            }
                             compilerExecutor.compile(new PyronautCompilerExecutor.CompileRequest(
                                 mergedTestPythonSrc,
                                 mergedTestJavaSrc,
@@ -309,10 +416,18 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                                 effectiveProcessorPath,
                                 effectiveTestClasspath,
                                 compilePythonBytecode,
+                                incrementalCompilation,
+                                pythonIncrementalMode,
+                                testIncrementalCache,
                                 testOptions
                             ));
                             if (!noCache) {
-                                ProcessorSourceCache.writeHash(resolvedCacheDir, ProcessorSourceCache.TEST_HASH_FILE, testFingerprint);
+                                ProcessorSourceCache.writeHash(
+                                    resolvedCacheDir,
+                                    ProcessorSourceCache.TEST_HASH_FILE,
+                                    testFingerprint,
+                                    incrementalCompilation ? resolvedTestTargetDir : null
+                                );
                             }
                             syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                             progressReporter.finishPass("test", testSourceCount);

@@ -11,6 +11,7 @@ configuration:
   title: Configuration & Build Setup
   mavenGradle: Using Maven and Gradle Projects
   pyproject: Configuring pyproject.toml
+  incrementalProcessing: Incremental Processing
   dependencies: Installing Python & Java dependencies
   directSourceDeclarations: Declaring Direct Source Dependencies
   mavenRepositories: Configuring Maven Repositories
