@@ -118,6 +118,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String DIRECT_APPLICATION_CLASSPATH = "pyronaut.dev.application.class.path";
     private static final String DIRECT_COMPILE_PYTHON_BYTECODE = "pyronaut.dev.compile-python-bytecode";
     private static final String DIRECT_COMMAND = "pyronaut.dev.direct.command";
+    private static final String PROCESSOR_DAEMON_COMMAND_PREFIX = "pyronaut.processor.daemon.command-prefix";
     private static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
     private static final String DEFAULT_TEST_SERVER_PORT = "0";
     private static final String NETTY_NO_UNSAFE = "io.netty.noUnsafe";
@@ -1668,7 +1669,19 @@ public final class PyronautDevMain implements Callable<Integer> {
         public int invoke(ToolCommand command, String... args) {
             return switch (command) {
                 case INSTALL -> new CommandLine(new PyronautInstallMain()).execute(args);
-                case PROCESS -> new CommandLine(new PyronautProcessorMain()).execute(args);
+                case PROCESS -> {
+                    String previous = System.getProperty(PROCESSOR_DAEMON_COMMAND_PREFIX);
+                    System.setProperty(PROCESSOR_DAEMON_COMMAND_PREFIX, "process");
+                    try {
+                        yield new CommandLine(new PyronautProcessorMain()).execute(args);
+                    } finally {
+                        if (previous == null) {
+                            System.clearProperty(PROCESSOR_DAEMON_COMMAND_PREFIX);
+                        } else {
+                            System.setProperty(PROCESSOR_DAEMON_COMMAND_PREFIX, previous);
+                        }
+                    }
+                }
                 case RUN -> {
                     PyronautLauncherLogging.initializeApplicationDefaults(false);
                     yield new CommandLine(new PyronautRunMain()).execute(args);

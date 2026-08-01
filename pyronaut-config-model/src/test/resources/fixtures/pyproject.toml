@@ -16,6 +16,12 @@ repositories = [
 [tool.pyronaut.build]
 mode = "jvm"
 
+[tool.pyronaut.processor]
+mode = "jvm"
+incremental = false
+python-incremental-mode = "conservative"
+daemon = false
+
 [tool.pyronaut.dependencies]
 runtime = [ "io.micronaut:micronaut-inject-python",
     "io.micronaut:micronaut-context-python",

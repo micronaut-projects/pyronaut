@@ -7,15 +7,18 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautProcessorCompilationTest {
+    private static final FileTime UNCHANGED_MARKER = FileTime.fromMillis(1_000);
 
     @TempDir
     Path tempDir;
@@ -96,6 +99,85 @@ class PyronautProcessorCompilationTest {
         Path filesList = project.resolve("__pyronaut__/classes/META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt");
         assertTrue(Files.readString(filesList).contains("__pycache__"));
         assertTrue(Files.readString(filesList).contains(".pyc"));
+    }
+
+    @Test
+    void incrementallyCompilesIndependentJavaAndPythonSources() throws Exception {
+        Path project = tempDir.resolve("project-incremental");
+        Path srcDir = Files.createDirectories(project.resolve("src"));
+        Path javaDir = Files.createDirectories(project.resolve("src-java"));
+        Path cacheDir = Files.createDirectories(project.resolve("__pyronaut__"));
+        Path alphaPython = srcDir.resolve("alpha.py");
+        Path alphaJava = javaDir.resolve("Alpha.java");
+        Files.writeString(alphaPython, "class AlphaPython:\n    value: int = 1\n");
+        Files.writeString(srcDir.resolve("beta.py"), "class BetaPython:\n    value: int = 2\n");
+        Files.writeString(alphaJava, "public class Alpha { int value() { return 1; } }\n");
+        Files.writeString(javaDir.resolve("Beta.java"), "public class Beta {}\n");
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            minimalPyproject() + "\n[tool.pyronaut.processor]\nincremental = true\n"
+        );
+        writeClasspathCaches(cacheDir);
+
+        PyronautProcessorMain command = new PyronautProcessorMain();
+        command.projectDir = project;
+        command.pass = "main";
+        command.progress = "off";
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+
+        Path output = project.resolve("__pyronaut__/classes");
+        Path betaClass = output.resolve("Beta.class");
+        Path betaPython = output.resolve(
+            "META-INF/GRAALPY-VFS/micronaut-application/src/beta.py"
+        );
+        Path filesList = output.resolve(
+            "META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt"
+        );
+        Files.setLastModifiedTime(betaClass, UNCHANGED_MARKER);
+        Files.setLastModifiedTime(betaPython, UNCHANGED_MARKER);
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertEquals(UNCHANGED_MARKER, Files.getLastModifiedTime(betaClass));
+        assertEquals(UNCHANGED_MARKER, Files.getLastModifiedTime(betaPython));
+
+        Files.delete(betaClass);
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertTrue(Files.isRegularFile(betaClass));
+        Files.setLastModifiedTime(betaClass, UNCHANGED_MARKER);
+        Files.setLastModifiedTime(betaPython, UNCHANGED_MARKER);
+        Files.setLastModifiedTime(filesList, UNCHANGED_MARKER);
+
+        Files.writeString(alphaPython, "class AlphaPython:\n    value: int = 3\n");
+        Files.writeString(alphaJava, "public class Alpha { int value() { return 2; } }\n");
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+
+        assertEquals(UNCHANGED_MARKER, Files.getLastModifiedTime(betaClass));
+        assertEquals(UNCHANGED_MARKER, Files.getLastModifiedTime(betaPython));
+        assertNotEquals(UNCHANGED_MARKER, Files.getLastModifiedTime(filesList));
+        assertTrue(Files.isRegularFile(cacheDir.resolve("incremental/main/state.properties")));
+
+        Files.delete(alphaPython);
+        Files.delete(alphaJava);
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertFalse(Files.exists(output.resolve("Alpha.class")));
+        assertFalse(Files.exists(
+            output.resolve("META-INF/GRAALPY-VFS/micronaut-application/src/alpha.py")
+        ));
+        assertFalse(Files.readString(filesList).contains("/src/alpha.py"));
+        assertTrue(Files.isRegularFile(betaClass));
+        assertTrue(Files.isRegularFile(betaPython));
+
+        Files.setLastModifiedTime(betaClass, UNCHANGED_MARKER);
+        Files.setLastModifiedTime(betaPython, UNCHANGED_MARKER);
+        Files.writeString(srcDir.resolve("gamma.py"), "class GammaPython:\n    value: int = 4\n");
+        Files.writeString(javaDir.resolve("Gamma.java"), "public class Gamma {}\n");
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        assertTrue(Files.isRegularFile(output.resolve("Gamma.class")));
+        assertTrue(Files.isRegularFile(
+            output.resolve("META-INF/GRAALPY-VFS/micronaut-application/src/gamma.py")
+        ));
+        assertEquals(UNCHANGED_MARKER, Files.getLastModifiedTime(betaClass));
+        assertEquals(UNCHANGED_MARKER, Files.getLastModifiedTime(betaPython));
     }
 
     @Test

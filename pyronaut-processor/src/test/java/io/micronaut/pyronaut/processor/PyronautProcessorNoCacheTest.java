@@ -44,6 +44,77 @@ final class PyronautProcessorNoCacheTest {
     }
 
     @Test
+    void incrementalModeAndDependencyContentsParticipateInCacheFingerprint(
+        @TempDir Path tempDir
+    ) throws Exception {
+        Path python = Files.createDirectories(tempDir.resolve("src"));
+        Path java = Files.createDirectories(tempDir.resolve("src-java"));
+        Path processorPath = Files.createDirectories(tempDir.resolve("processor-path"));
+        Path classpath = Files.createDirectories(tempDir.resolve("classpath"));
+        Path processorMarker = processorPath.resolve("processor.version");
+        Path classpathMarker = classpath.resolve("dependency.version");
+        Files.writeString(python.resolve("controller.py"), "VALUE = 1\n");
+        Files.writeString(processorMarker, "one");
+        Files.writeString(classpathMarker, "one");
+
+        String baseline = ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(processorPath),
+            List.of(classpath),
+            false,
+            false,
+            List.of()
+        );
+        String incremental = ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(processorPath),
+            List.of(classpath),
+            false,
+            true,
+            List.of()
+        );
+        assertFalse(baseline.equals(incremental));
+        String optimistic = ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(processorPath),
+            List.of(classpath),
+            false,
+            true,
+            "optimistic",
+            List.of()
+        );
+        assertFalse(incremental.equals(optimistic));
+
+        Files.writeString(classpathMarker, "two");
+        String changedClasspath = ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(processorPath),
+            List.of(classpath),
+            false,
+            false,
+            List.of()
+        );
+        assertFalse(baseline.equals(changedClasspath));
+
+        Files.writeString(classpathMarker, "one");
+        Files.writeString(processorMarker, "two");
+        String changedProcessorPath = ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(processorPath),
+            List.of(classpath),
+            false,
+            false,
+            List.of()
+        );
+        assertFalse(baseline.equals(changedProcessorPath));
+    }
+
+    @Test
     void noCacheSkipsCacheWrite(@TempDir Path tempDir) throws Exception {
         Path projectDir = tempDir.resolve("app");
         Files.createDirectories(projectDir);
@@ -69,13 +140,21 @@ final class PyronautProcessorNoCacheTest {
 
         ProcessorSourceCache.writeHash(cacheDir, ProcessorSourceCache.MAIN_HASH_FILE, "stale");
         ProcessorSourceCache.writeHash(cacheDir, ProcessorSourceCache.TEST_HASH_FILE, "stale");
+        Path mainIncrementalState = cacheDir.resolve("incremental/main/state.properties");
+        Path testIncrementalState = cacheDir.resolve("incremental/test/state.properties");
+        Files.createDirectories(mainIncrementalState.getParent());
+        Files.createDirectories(testIncrementalState.getParent());
+        Files.writeString(mainIncrementalState, "stale", StandardCharsets.UTF_8);
+        Files.writeString(testIncrementalState, "stale", StandardCharsets.UTF_8);
 
         class CountingExecutor implements PyronautCompilerExecutor {
             int calls;
+            boolean incremental;
 
             @Override
             public void compile(CompileRequest request) {
                 calls++;
+                incremental |= request.incremental();
             }
         }
 
@@ -91,6 +170,13 @@ final class PyronautProcessorNoCacheTest {
         int code = main.call();
         assertTrue(code == PyronautProcessorExitCode.SUCCESS.code());
         assertTrue(executor.calls >= 1);
+        assertFalse(executor.incremental);
+        assertFalse(Files.exists(mainIncrementalState));
+        assertFalse(Files.exists(testIncrementalState));
+        assertFalse(Files.exists(mainTarget.resolve("marker.txt")));
+        assertFalse(Files.exists(testTarget.resolve("marker.txt")));
+        assertFalse(Files.exists(cacheDir.resolve(ProcessorSourceCache.MAIN_HASH_FILE)));
+        assertFalse(Files.exists(cacheDir.resolve(ProcessorSourceCache.TEST_HASH_FILE)));
         assertFalse(ProcessorSourceCache.cacheHit(cacheDir, ProcessorSourceCache.MAIN_HASH_FILE, ProcessorSourceCache.fingerprint(
             projectDir.resolve("src"),
             projectDir.resolve("src-java"),

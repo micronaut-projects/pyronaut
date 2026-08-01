@@ -19,6 +19,8 @@ import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.python.compiler.PyronautCompiler;
+import io.micronaut.python.compiler.PythonIncrementalMode;
+import io.micronaut.python.processing.PythonProcessingSession;
 
 import java.io.File;
 import java.io.IOException;
@@ -39,10 +41,23 @@ interface PyronautCompilerExecutor {
                           List<Path> annotationProcessorPath,
                           List<Path> classpath,
                           boolean compilePythonBytecode,
+                          boolean incremental,
+                          PythonIncrementalMode pythonIncrementalMode,
+                          Path incrementalCacheDirectory,
                           List<String> options) {
     }
 
     final class Default implements PyronautCompilerExecutor {
+        private final PythonProcessingSession processingSession;
+
+        Default() {
+            this(null);
+        }
+
+        Default(PythonProcessingSession processingSession) {
+            this.processingSession = processingSession;
+        }
+
         @Override
         public void compile(CompileRequest request) {
             try {
@@ -52,16 +67,21 @@ interface PyronautCompilerExecutor {
             }
             BeanIntrospectionsProvider previousProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             try {
-                PyronautCompiler.builder()
+                PyronautCompiler.Builder builder = PyronautCompiler.builder()
                     .pythonSrc(request.pythonSrc().toString())
                     .javaSrc(request.javaSrc().toString())
                     .targetDir(request.targetDir().toFile())
                     .annotationProcessorPath(toFiles(request.annotationProcessorPath()))
                     .classpath(toFiles(request.classpath()))
                     .compilePythonBytecode(request.compilePythonBytecode())
-                    .options(request.options())
-                    .build()
-                    .compile();
+                    .incremental(request.incremental())
+                    .pythonIncrementalMode(request.pythonIncrementalMode())
+                    .incrementalCacheDirectory(request.incrementalCacheDirectory().toFile())
+                    .options(request.options());
+                if (processingSession != null) {
+                    builder.pythonProcessingSession(processingSession);
+                }
+                builder.build().compile();
             } finally {
                 BeanIntrospectionProviders.set(previousProvider);
             }

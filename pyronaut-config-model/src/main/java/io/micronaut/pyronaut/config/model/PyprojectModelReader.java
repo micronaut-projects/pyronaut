@@ -104,7 +104,12 @@ public final class PyprojectModelReader {
                 resolveBuildMetadata(parsed),
                 resolveBuildDocker(parsed)
             ),
-            new PyprojectModel.Processor(resolveProcessorMode(parsed)),
+            new PyprojectModel.Processor(
+                resolveProcessorMode(parsed),
+                readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_INCREMENTAL),
+                readEnum(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_PYTHON_INCREMENTAL_MODE),
+                readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_DAEMON)
+            ),
             new PyprojectModel.Test(resolveTestMode(parsed)),
             sources,
             resolveToolchain(parsed),
