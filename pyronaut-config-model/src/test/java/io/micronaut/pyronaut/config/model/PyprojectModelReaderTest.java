@@ -634,6 +634,9 @@ class PyprojectModelReaderTest {
 
             [tool.pyronaut]
 
+            [tool.pyronaut.build]
+            base-image = "build/pyronaut-base/pyronaut-run"
+
             [tool.pyronaut.build.docker]
             image-name = "example/demo"
             dockerfile = "docker/Dockerfile.jvm"
@@ -643,9 +646,11 @@ class PyprojectModelReaderTest {
             native-base-image = "gcr.io/distroless/base"
             static-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25-muslib"
             static-native-base-image = "scratch"
+            base-image = "registry.example.com/acme/pyronaut-runtime:1"
             """);
 
         PyprojectModel model = reader.readFile(file);
+        assertEquals("build/pyronaut-base/pyronaut-run", model.pyronaut().build().baseImage());
         assertEquals("example/demo", model.pyronaut().build().docker().imageName());
         assertEquals("docker/Dockerfile.jvm", model.pyronaut().build().docker().dockerfile());
         assertEquals("docker/Dockerfile.native", model.pyronaut().build().docker().dockerfileNative());
@@ -654,6 +659,7 @@ class PyprojectModelReaderTest {
         assertEquals("gcr.io/distroless/base", model.pyronaut().build().docker().nativeBaseImage());
         assertEquals("container-registry.oracle.com/graalvm/native-image:25-muslib", model.pyronaut().build().docker().staticNativeBuilderImage());
         assertEquals("scratch", model.pyronaut().build().docker().staticNativeBaseImage());
+        assertEquals("registry.example.com/acme/pyronaut-runtime:1", model.pyronaut().build().docker().baseImage());
     }
 
     @Test
@@ -665,6 +671,7 @@ class PyprojectModelReaderTest {
 
             [tool.pyronaut]
 
+            [tool.pyronaut.build]
             [tool.pyronaut.build.docker]
             imageName = "example/demo"
             dockerfileNative = "DockerfileNative"
@@ -673,9 +680,11 @@ class PyprojectModelReaderTest {
             nativeBaseImage = "example/native"
             staticNativeBuilderImage = "example/static-builder"
             staticNativeBaseImage = "example/static-native"
+            baseImage = "example/runtime"
             """);
 
         PyprojectModel model = reader.readFile(file);
+        assertEquals(null, model.pyronaut().build().baseImage());
         assertEquals("example/demo", model.pyronaut().build().docker().imageName());
         assertEquals("DockerfileNative", model.pyronaut().build().docker().dockerfileNative());
         assertEquals("example/jvm", model.pyronaut().build().docker().jvmBaseImage());
@@ -683,6 +692,7 @@ class PyprojectModelReaderTest {
         assertEquals("example/native", model.pyronaut().build().docker().nativeBaseImage());
         assertEquals("example/static-builder", model.pyronaut().build().docker().staticNativeBuilderImage());
         assertEquals("example/static-native", model.pyronaut().build().docker().staticNativeBaseImage());
+        assertEquals("example/runtime", model.pyronaut().build().docker().baseImage());
     }
 
     @Test

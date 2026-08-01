@@ -62,6 +62,7 @@ def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-processor", command: "pyronaut-processor"],
     [path: ":micronaut-pyronaut-dev", command: "pyronaut-dev"],
     [path: ":micronaut-pyronaut-run", command: "pyronaut-run"],
+    [path: ":micronaut-pyronaut-run-python", command: "pyronaut-run-python"],
     [path: ":micronaut-pyronaut-test", command: "pyronaut-test"],
     [path: ":micronaut-pyronaut-create-app", command: "pyronaut-create"],
     [path: ":micronaut-pyronaut-native-build", command: "pyronaut-native-build"],
@@ -70,7 +71,9 @@ def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-tui", command: "pyronaut-tui", installDir: "pyronaut-tui"]
 ]
 def delegatedNativeCliProjects = [
-    [path: ":micronaut-pyronaut-dev", command: "pyronaut-dev"]
+    [path: ":micronaut-pyronaut-dev", command: "pyronaut-dev"],
+    [path: ":micronaut-pyronaut-run", command: "pyronaut-run"],
+    [path: ":micronaut-pyronaut-run-python", command: "pyronaut-run-python"]
 ]
 def nativeWheelExcludedJars = [
     "**/slf4j-simple-*.jar"
@@ -209,14 +212,12 @@ tasks.register("prepareWheelSources", Sync) {
                 if (nativeBinary.exists()) {
                     nativeBinary.setExecutable(true)
                 }
-                def nativeProvidedClasspath = project(cliProject.path).configurations.nativeImageClasspath.files
-                    .collect { it.name }
-                    .unique()
-                    .sort()
-                    .join(System.lineSeparator())
-                def nativeProvidedFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-provided-classpath.txt").asFile
-                nativeProvidedFile.parentFile.mkdirs()
-                nativeProvidedFile.text = nativeProvidedClasspath + System.lineSeparator()
+                def nativeProvidedClasspathSource = project(cliProject.path).layout.buildDirectory.file("generated/native-classpaths/native-provided-classpath.txt").get().asFile
+                def nativeProvidedClasspathTarget = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-provided-classpath.txt").asFile
+                if (nativeProvidedClasspathSource.isFile()) {
+                    nativeProvidedClasspathTarget.parentFile.mkdirs()
+                    nativeProvidedClasspathTarget.text = nativeProvidedClasspathSource.text
+                }
                 def compileClasspathSource = project(cliProject.path).layout.buildDirectory.file("generated/native-classpaths/native-compile-classpath.txt").get().asFile
                 def compileClasspathTarget = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-compile-classpath.txt").asFile
                 if (compileClasspathSource.isFile()) {

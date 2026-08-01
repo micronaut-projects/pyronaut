@@ -69,17 +69,6 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private static final String DEFAULT_METADATA_URL = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/" + DEFAULT_METADATA_VERSION + "/graalvm-reachability-metadata-" + DEFAULT_METADATA_VERSION + "-repository.zip";
     private static final String VERSIONED_METADATA_URL_TEMPLATE = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/%s/graalvm-reachability-metadata-%s-repository.zip";
 
-    private static String loadDefaultMetadataVersion() {
-        try (InputStream input = PyronautNativeBuildMain.class.getResourceAsStream("metadata-version.txt")) {
-            if (input == null) {
-                throw new IllegalStateException("Missing reachability metadata version resource");
-            }
-            return new String(input.readAllBytes(), StandardCharsets.UTF_8).trim();
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed reading reachability metadata version", e);
-        }
-    }
-
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
 
@@ -91,6 +80,18 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
     @CommandLine.Option(names = "--verbose", description = "Print and pass verbose mode to native-image")
     boolean verbose;
+
+    @CommandLine.Option(names = "--base-image", description = "Build a reusable Crema runtime image")
+    boolean baseImage;
+
+    @CommandLine.Option(names = "--default-base-image", description = "Build the bundled Crema runtime without project dependencies")
+    boolean defaultBaseImage;
+
+    @CommandLine.Option(names = "--include-python", description = "Include the Python and Truffle production runtime")
+    boolean includePython;
+
+    @CommandLine.Option(names = "--user-package", description = "Application package to preserve in a closed-world native image")
+    List<String> userPackages = new ArrayList<>();
 
     @CommandLine.Unmatched
     List<String> passthroughNativeImageArgs = new ArrayList<>();
@@ -113,6 +114,17 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         this.metadataRepositoryDownloader = metadataRepositoryDownloader;
     }
 
+    private static String loadDefaultMetadataVersion() {
+        try (InputStream input = PyronautNativeBuildMain.class.getResourceAsStream("metadata-version.txt")) {
+            if (input == null) {
+                throw new IllegalStateException("Missing reachability metadata version resource");
+            }
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8).trim();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed reading reachability metadata version", e);
+        }
+    }
+
     @Override
     public Integer call() {
         Path root = projectDir.toAbsolutePath().normalize();
@@ -130,6 +142,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             }
 
             List<Path> runtimeClasspath = readManifest(root, runtimeManifest);
+            if (baseImage || defaultBaseImage) {
+                return buildBaseImage(root, runtimeClasspath, defaultBaseImage);
+            }
             List<Path> nativeClasspath = new ArrayList<>(runtimeClasspath);
             nativeClasspath.addAll(pyronautRunClasspathEntries());
             removeDuplicateVirtualFileSystemEntries(nativeClasspath, runtimeClasspath.size());
@@ -163,7 +178,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             command.add("--no-fallback");
             command.add("--initialize-at-run-time=io.netty");
             command.add("-H:Preserve=package=io.micronaut.http.*");
-            addUserPackagePreservation(command, classesDir);
+            addUserPackagePreservation(command, classesDir, userPackages);
             if (!configurationDirs.isEmpty()) {
                 command.add("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
             }
@@ -192,6 +207,46 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
     }
 
+    private Integer buildBaseImage(Path root,
+                                   List<Path> runtimeClasspath,
+                                   boolean bundledOnly) throws IOException, InterruptedException {
+        List<Path> runnerClasspath = pyronautRunClasspathEntries(includePython);
+        List<Path> baseClasspath = bundledOnly
+            ? new ArrayList<>()
+            : new ArrayList<>(excludeRunnerProvidedModules(runtimeClasspath, runnerClasspath));
+        baseClasspath.addAll(runnerClasspath);
+        PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
+            root.resolve(output).normalize(),
+            (command, workingDirectory) -> runNativeImage(command, workingDirectory)
+        )
+            .nativeImageExecutable(Path.of(nativeImageExecutable))
+            .workingDirectory(root)
+            .includePython(includePython)
+            .emitBuildReport(true)
+            .includeSbom(true)
+            .addClasspath(baseClasspath);
+        if (verbose) {
+            builder.addNativeImageArgument("--verbose");
+        }
+        passthroughNativeImageArgs.forEach(builder::addNativeImageArgument);
+        PyronautNativeImageBuilder.BuildResult result = builder.build();
+        if (result.exitCode() == SUCCESS) {
+            System.out.println("Base image build complete: " + result.executable());
+            System.out.println("Native-image report output: " + result.outputDirectory());
+        }
+        return result.exitCode();
+    }
+
+    private int runNativeImage(List<String> command, Path workingDirectory) throws IOException, InterruptedException {
+        try {
+            return nativeImageInvoker.run(command, workingDirectory);
+        } catch (IOException | InterruptedException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Native-image invocation failed", e);
+        }
+    }
+
     private void rejectMainClassOverride() {
         if (passthroughNativeImageArgs.stream().anyMatch(arg -> arg.equals("--main-class") || arg.startsWith("--main-class="))) {
             throw new IllegalStateException("--main-class is not supported for native builds; PyronautRunMain is always used");
@@ -199,6 +254,10 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     }
 
     private static List<Path> pyronautRunClasspathEntries() {
+        return pyronautRunClasspathEntries(true);
+    }
+
+    private static List<Path> pyronautRunClasspathEntries(boolean includePython) {
         String classpath = System.getProperty("java.class.path", "");
         if (classpath.isBlank()) {
             throw new IllegalStateException("Unable to locate the bundled Pyronaut runner classpath");
@@ -207,7 +266,49 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .map(Path::of)
             .map(path -> path.toAbsolutePath().normalize())
             .filter(Files::exists)
+            .filter(path -> isProductionRunnerClasspathEntry(path, includePython))
             .distinct()
+            .toList();
+    }
+
+    private static boolean isProductionRunnerClasspathEntry(Path path, boolean includePython) {
+        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (name.contains("pyronaut-native-build")
+            || name.contains("graalvm-reachability-metadata")
+            || name.contains("picocli-codegen")
+            || name.contains("inject-java")
+            || name.contains("junit")
+            || name.contains("opentest4j")) {
+            return false;
+        }
+        if (includePython) {
+            return true;
+        }
+        return !name.contains("pyronaut-run-python")
+            && !name.contains("pyronaut-logback")
+            && !name.contains("graalpy")
+            && !name.contains("python")
+            && !name.contains("truffle")
+            && !name.contains("polyglot")
+            && !name.contains("logback");
+    }
+
+    private static List<Path> excludeRunnerProvidedModules(List<Path> runtimeClasspath, List<Path> runnerClasspath) {
+        Set<String> providedModules = new LinkedHashSet<>();
+        for (Path entry : runnerClasspath) {
+            String gav = gavFromClasspathEntry(entry);
+            if (gav != null) {
+                providedModules.add(gav.substring(0, gav.lastIndexOf(':')));
+            }
+        }
+        if (providedModules.isEmpty()) {
+            return runtimeClasspath;
+        }
+        return runtimeClasspath.stream()
+            .filter(entry -> {
+                String gav = gavFromClasspathEntry(entry);
+                return gav == null || !providedModules.contains(gav.substring(0, gav.lastIndexOf(':')));
+            })
             .toList();
     }
 
@@ -374,8 +475,19 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         return generatedDir;
     }
 
-    private static void addUserPackagePreservation(List<String> command, Path classesDir) throws IOException {
+    private static void addUserPackagePreservation(List<String> command,
+                                                   Path classesDir,
+                                                   List<String> configuredPackages) throws IOException {
         Set<String> packages = new TreeSet<>();
+        for (String configuredPackage : configuredPackages) {
+            if (configuredPackage != null && !configuredPackage.isBlank()) {
+                packages.add(configuredPackage.trim());
+            }
+        }
+        if (!packages.isEmpty()) {
+            addPackagePreservation(command, packages);
+            return;
+        }
         try (var stream = Files.walk(classesDir)) {
             stream.filter(Files::isRegularFile)
                 .filter(path -> path.getFileName().toString().endsWith(".class"))
@@ -386,6 +498,10 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 .filter(name -> !name.isBlank())
                 .forEach(packages::add);
         }
+        addPackagePreservation(command, packages);
+    }
+
+    private static void addPackagePreservation(List<String> command, Set<String> packages) {
         for (String packageName : packages) {
             command.add("-H:Preserve=package=" + packageName + ".*");
         }
@@ -570,6 +686,18 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
 
         int nameCount = normalized.getNameCount();
+        for (int i = 0; i + 6 < nameCount; i++) {
+            if ("modules-2".equals(normalized.getName(i).toString())
+                && "files-2.1".equals(normalized.getName(i + 1).toString())) {
+                String group = normalized.getName(i + 2).toString();
+                String artifact = normalized.getName(i + 3).toString();
+                String version = normalized.getName(i + 4).toString();
+                String fileName = normalized.getFileName().toString();
+                if (fileName.startsWith(artifact + "-" + version) && fileName.endsWith(".jar")) {
+                    return group + ":" + artifact + ":" + version;
+                }
+            }
+        }
         String artifact = normalized.getName(nameCount - 3).toString();
         String version = normalized.getName(nameCount - 2).toString();
         String fileName = normalized.getFileName().toString();
@@ -592,21 +720,19 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 }
             }
         }
-        if (repoRootIndex < 0 || repoRootIndex + 3 >= nameCount) {
-            return null;
-        }
-
-        StringBuilder group = new StringBuilder();
-        for (int i = repoRootIndex + 1; i < nameCount - 3; i++) {
-            if (!group.isEmpty()) {
-                group.append('.');
+        if (repoRootIndex >= 0 && repoRootIndex + 3 < nameCount) {
+            StringBuilder group = new StringBuilder();
+            for (int i = repoRootIndex + 1; i < nameCount - 3; i++) {
+                if (!group.isEmpty()) {
+                    group.append('.');
+                }
+                group.append(normalized.getName(i));
             }
-            group.append(normalized.getName(i));
+            if (!group.isEmpty()) {
+                return group + ":" + artifact + ":" + version;
+            }
         }
-        if (group.isEmpty()) {
-            return null;
-        }
-        return group + ":" + artifact + ":" + version;
+        return null;
     }
 
     private static List<Path> readManifest(Path root, Path file) {

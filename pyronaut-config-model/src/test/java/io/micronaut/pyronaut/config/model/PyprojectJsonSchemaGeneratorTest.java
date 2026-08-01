@@ -36,6 +36,7 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"exclude-patterns\""));
         assertTrue(schema.contains("\"dockerfile-native\""));
         assertTrue(schema.contains("\"static-native-base-image\""));
+        assertTrue(schema.contains("\"base-image\""));
         assertTrue(schema.contains("\"fail-on-not-present\""));
         assertTrue(schema.contains("\"validate-dependency-injection\""));
         assertTrue(schema.contains("\"client-timeout\""));
@@ -60,6 +61,7 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"destinationDir\""));
         assertTrue(schema.contains("\"excludePatterns\""));
         assertTrue(schema.contains("\"dockerfileNative\""));
+        assertTrue(schema.contains("\"baseImage\""));
         assertTrue(schema.contains("\"deprecated\": true"));
         assertTrue(schema.contains("\"x-taplo\""));
         assertTrue(schema.contains("\"hidden\": true"));

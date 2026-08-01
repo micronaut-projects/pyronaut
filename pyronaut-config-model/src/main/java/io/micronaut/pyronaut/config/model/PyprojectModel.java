@@ -235,15 +235,21 @@ public record PyprojectModel(Project project,
      *
      * @param mode default build mode (for example jvm or native)
      * @param pythonBytecodeEnabled whether generated Python resources include bytecode caches
+     * @param baseImage local reusable native runtime image path
      * @param metadata native image metadata settings
      * @param docker container image build settings
      */
     public record Build(String mode,
                         Boolean pythonBytecodeEnabled,
+                        String baseImage,
                         Metadata metadata,
                         Docker docker) {
+        public Build(String mode, Boolean pythonBytecodeEnabled, Metadata metadata, Docker docker) {
+            this(mode, pythonBytecodeEnabled, null, metadata, docker);
+        }
+
         public Build(String mode, Metadata metadata, Docker docker) {
-            this(mode, false, metadata, docker);
+            this(mode, false, null, metadata, docker);
         }
     }
 
@@ -272,6 +278,7 @@ public record PyprojectModel(Project project,
      * @param nativeBaseImage native runtime base image for non-static builds
      * @param staticNativeBuilderImage native builder image for static builds
      * @param staticNativeBaseImage native runtime base image for static builds
+     * @param baseImage reusable Pyronaut native runtime image
      */
     public record Docker(String imageName,
                          String dockerfile,
@@ -280,7 +287,19 @@ public record PyprojectModel(Project project,
                          String nativeBuilderImage,
                          String nativeBaseImage,
                          String staticNativeBuilderImage,
-                         String staticNativeBaseImage) {
+                         String staticNativeBaseImage,
+                         String baseImage) {
+        public Docker(String imageName,
+                      String dockerfile,
+                      String dockerfileNative,
+                      String jvmBaseImage,
+                      String nativeBuilderImage,
+                      String nativeBaseImage,
+                      String staticNativeBuilderImage,
+                      String staticNativeBaseImage) {
+            this(imageName, dockerfile, dockerfileNative, jvmBaseImage, nativeBuilderImage, nativeBaseImage,
+                staticNativeBuilderImage, staticNativeBaseImage, null);
+        }
     }
 
     /**

@@ -213,7 +213,7 @@ class PyronautRunMainTest {
     }
 
     @Test
-    void nativeRuntimeUsesSystemClassLoaderWhenJavaClassPathIsSupplied() throws Exception {
+    void nativeRuntimeUsesApplicationUrlClassLoaderWhenJavaClassPathIsSupplied() throws Exception {
         String previousNativeImageCode = System.getProperty("org.graalvm.nativeimage.imagecode");
         String previousClasspath = System.getProperty("java.class.path");
         try {
@@ -221,7 +221,8 @@ class PyronautRunMainTest {
             System.setProperty("java.class.path", tempDir.toString());
             PyronautRunMain.ResolvedProjectLayout layout = new PyronautRunMain.ResolvedProjectLayout(tempDir, List.of());
 
-            assertEquals(ClassLoader.getSystemClassLoader(), layout.applicationClassLoader());
+            assertTrue(layout.applicationClassLoader() instanceof java.net.URLClassLoader);
+            assertEquals(ClassLoader.getSystemClassLoader(), layout.applicationClassLoader().getParent());
         } finally {
             restoreProperty("org.graalvm.nativeimage.imagecode", previousNativeImageCode);
             restoreProperty("java.class.path", previousClasspath);

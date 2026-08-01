@@ -1,0 +1,187 @@
+= Packaging & Deployment
+
+`pyronaut build` packages the processed application for distribution. The
+selected mode comes from `--jvm` or `--native`, then
+`tool.pyronaut.build.mode`, then `tool.pyronaut.toolchain.type`. Use
+`--docker` to create a container image instead of a host artifact.
+
+== Choosing a package type
+
+[cols="1,1,2",options="header"]
+|===
+|Package type |Command |Best fit and trade-off
+
+|JVM wheel
+|`pyronaut build --jvm`
+|The default Python distribution. It has the shortest build time and is a good
+choice when a JVM is already available in the deployment environment.
+
+|JVM Docker image
+|`pyronaut build --jvm --docker`
+|A portable container form of the JVM wheel. JVM deployment generally offers
+the best peak throughput after warm-up, at the cost of JVM startup time and a
+larger memory footprint.
+
+|Application native executable
+|`pyronaut build --native`
+|Produces a standalone executable with fast startup and low memory use. Each
+application build performs native-image analysis, which is comparatively slow,
+and application code must satisfy native-image's closed-world requirements,
+including reachability metadata or reflection configuration where needed.
+
+|Application native Docker image
+|`pyronaut build --native --docker`
+|Builds the native executable in a Linux container and packages it in a small
+runtime image. Choose this when the target platform is a container platform.
+
+|Crema base image
+|`pyronaut build --base-image`
+|Builds a reusable native production launcher. It balances JVM and fully native
+deployment: the native launcher gives native startup characteristics, while
+processed application code is loaded at runtime rather than being subject to a
+new closed-world analysis for every application build.
+|===
+
+== Wheels and JVM containers
+
+A JVM build produces a Python wheel in `dist/`:
+
+[source,bash]
+----
+pyronaut build --jvm
+----
+
+Install the wheel into the target Python environment in the normal way. The
+wheel carries the processed application and its runtime launch support; the
+deployment environment must provide a compatible GraalVM JDK.
+
+Use Docker when the deployment platform expects an OCI image:
+
+[source,bash]
+----
+pyronaut build --jvm --docker
+----
+
+The default Dockerfile stages the processed classes, application resources,
+resolved runtime dependencies, and the appropriate production launcher.
+
+== Application native images
+
+Native builds create `__pyronaut__/native/application` by default:
+
+[source,bash]
+----
+pyronaut build --native
+----
+
+Native images offer fast startup and low memory consumption, which is useful
+for short-lived workloads and densely deployed services. The trade-off is build
+time: every application-native build performs native-image analysis. Native
+image analysis also uses a closed-world model, so libraries that use reflection,
+dynamic proxies, resources, or other dynamic behavior may need reachability
+metadata or explicit native-image configuration. See
+xref:pyronautCliV2.adoc#reachability-metadata-repository-native-mode[] for the
+metadata repository settings.
+
+Pyronaut derives application packages from processed output and preserves them
+in fully closed-world native images, keeping user classes available for runtime
+reflection without widening a reusable production base image.
+
+Use a container-native build to compile for Linux inside the configured native
+builder image:
+
+[source,bash]
+----
+pyronaut build --native --docker
+----
+
+== Crema production runtimes and base images
+
+Crema is a reusable native production runtime. It contains Pyronaut's runtime
+modules but excludes compilers, annotation processors, test libraries, and
+other development tooling. `pyronaut-run` is the Java runtime; Python projects
+use `pyronaut-run-python`, which additionally contains GraalPy, Truffle, and
+the Python Logback integration.
+
+Build a base image once after declaring the dependencies that should be shared:
+
+[source,bash]
+----
+pyronaut build --base-image
+----
+
+Use the bundled language-specific runtime when no dependency needs to be
+included in a custom base:
+
+[source,bash]
+----
+pyronaut build --native --base-image=default
+----
+
+[source,toml]
+----
+[tool.pyronaut.build]
+base-image = "default"
+----
+
+Later native builds reuse the configured base image:
+
+[source,bash]
+----
+pyronaut build
+----
+
+Set a stable output location in `pyproject.toml` when the image is shared by
+multiple builds:
+
+[source,toml]
+----
+[tool.pyronaut.build]
+mode = "native"
+base-image = "build/pyronaut-base/pyronaut-run-python"
+----
+
+Crema avoids rebuilding the native runtime for each source change. The base
+image is the only expensive native-image build; subsequent application builds
+package processed classes and application dependencies for runtime loading.
+They retain native startup time without requiring each application to meet the
+same closed-world reflection configuration requirements as a fully
+application-native image. Inspect the base-image native-image report and SBOM
+to confirm that its shared dependencies are included.
+
+For Docker, build and tag the native base layer, then build the application
+layer:
+
+[source,bash]
+----
+pyronaut build --native --docker --base-image
+pyronaut build --native --docker
+----
+
+To reuse a base produced in CI or another project, configure its image name:
+
+[source,toml]
+----
+[tool.pyronaut.build.docker]
+base-image = "registry.example.com/acme/pyronaut-runtime:1"
+----
+
+The final image then adds only the application configuration, processed
+classes, and schemas on top of the shared production runtime layer. For a
+custom layering arrangement, see xref:pyronautCliV2.adoc#custom-dockerfiles-with-a-reusable-base[].
+
+== Direct-source applications
+
+`pyronaut build` packages standalone sources through the same JVM, native,
+Docker, and base-image flows as a regular project:
+
+[source,bash]
+----
+pyronaut build App.java --native --name hello-java --version 1.0.0
+pyronaut build App.py --docker --base-image=default
+----
+
+Sources compile to disk under `__pyronaut__/direct-source-build`. Use
+`--setup pyproject.toml` for project configuration. Inline `@Dependency`
+declarations are resolved before packaging and become part of a custom base
+image's SBOM.

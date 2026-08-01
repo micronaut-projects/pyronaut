@@ -41,7 +41,7 @@ COMMAND_TO_EXECUTABLE = {
     "test-resources-server": "pyronaut-test-resources-server",
 }
 DEV_NATIVE_EXECUTABLE = "pyronaut-dev"
-DEV_NATIVE_COMMANDS = {"install", "process", "run", "test", "validate-config"}
+DEV_NATIVE_COMMANDS = {"install", "process", "test", "validate-config"}
 TOOLCHAIN_TYPE_JVM = "jvm"
 TOOLCHAIN_TYPE_NATIVE = "native"
 
@@ -56,6 +56,7 @@ JAVA_DELEGATE_JAR_ENV = {
     "test": "PYRONAUT_TEST_JAR",
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
+PYTHON_RUN_EXECUTABLE = "pyronaut-run-python"
 _DEFAULT_DOCKER_JVM_BASE_IMAGE = "container-registry.oracle.com/graalvm/jdk:25"
 _DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25i1"
 _DEFAULT_DOCKER_NATIVE_BASE_IMAGE = "gcr.io/distroless/base"
@@ -335,6 +336,15 @@ def run(
     )
 
     if command == "build":
+        if _looks_like_direct_build_invocation(forwarded_args):
+            return _run_direct_source_build(
+                args=forwarded_args,
+                runner=execute,
+                resolver=locate,
+                no_cache=no_cache,
+                no_validate=no_validate,
+                java_home_provider=effective_java_home_provider,
+            )
         return _run_build(
             args=forwarded_args,
             runner=execute,
@@ -597,18 +607,20 @@ def _delegate(
             java_home_provider=java_home_provider,
         )
 
-    try:
-        dev_command_line = _pyronaut_dev_native_command_line(
-            command,
-            args,
-            resolver,
-            debug_vm=debug_vm,
-            env_overrides=env_overrides,
-            java_home_provider=java_home_provider,
-        )
-    except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
-        return PRECONDITION_FAILED
+    dev_command_line = None
+    if command != "run":
+        try:
+            dev_command_line = _pyronaut_dev_native_command_line(
+                command,
+                args,
+                resolver,
+                debug_vm=debug_vm,
+                env_overrides=env_overrides,
+                java_home_provider=java_home_provider,
+            )
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
     if dev_command_line is not None:
         if _delegation_trace_enabled():
             print(shlex.join(dev_command_line), file=sys.stderr)
@@ -620,6 +632,28 @@ def _delegate(
         env = _merge_env_overrides(env, env_overrides)
         env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
         return runner(dev_command_line, env)
+
+    try:
+        run_command_line = _pyronaut_run_native_command_line(
+            command,
+            args,
+            resolver,
+            debug_vm=debug_vm,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    if run_command_line is not None:
+        if _delegation_trace_enabled():
+            print(shlex.join(run_command_line), file=sys.stderr)
+        try:
+            env = _build_non_test_resources_env(command, java_home_provider)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
+        env = _merge_env_overrides(env, env_overrides)
+        env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
+        return runner(run_command_line, env)
 
     # JVM external delegates keep their own launcher/runtime classpath
     # isolated from resolved application dependencies. Native external
@@ -1079,13 +1113,14 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
         entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
     application_entries = entries
     delegate_entries: list[str] = []
-    override_jar = _read_env(JAVA_DELEGATE_JAR_ENV[command])
+    delegate_executable_name = _delegate_executable_name(command, project_dir)
+    override_jar = _read_env(_delegate_jar_env(command, project_dir))
     if override_jar:
         delegate_entries.extend([value for value in override_jar.split(os.pathsep) if value])
     else:
-        delegate_executable = resolver(COMMAND_TO_EXECUTABLE[command])
+        delegate_executable = resolver(delegate_executable_name)
         if delegate_executable is None:
-            raise RuntimeError(f"Missing delegated executable: {COMMAND_TO_EXECUTABLE[command]}")
+            raise RuntimeError(f"Missing delegated executable: {delegate_executable_name}")
         delegate_entries.extend(_delegate_lib_entries(delegate_executable))
     # The external build owns the application runtime.  Put it first so its
     # Micronaut/Test Resources services are resolved against the same versions
@@ -1108,6 +1143,18 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
         if file_name:
             seen_file_names.add(file_name)
     return os.pathsep.join(deduped)
+
+
+def _delegate_executable_name(command: str, project_dir: Path) -> str:
+    if command == "run" and _is_python_runtime_project(project_dir):
+        return PYTHON_RUN_EXECUTABLE
+    return COMMAND_TO_EXECUTABLE[command]
+
+
+def _delegate_jar_env(command: str, project_dir: Path) -> str:
+    if command == "run" and _is_python_runtime_project(project_dir):
+        return "PYRONAUT_RUN_PYTHON_JAR"
+    return JAVA_DELEGATE_JAR_ENV[command]
 
 
 def _read_test_delegate_dependency_entries(cache_dir: Path) -> list[str]:
@@ -1532,6 +1579,263 @@ def _has_direct_install_sources(args: Sequence[str]) -> bool:
     return False
 
 
+def _looks_like_direct_build_invocation(args: Sequence[str]) -> bool:
+    return bool(_direct_build_source_selectors(args))
+
+
+def _direct_build_source_selectors(args: Sequence[str]) -> list[str]:
+    value_options = {"--project-dir", "--project", "--mode", "--main-class", "--base-image-output", "--name", "--version", "--setup"}
+    selectors: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            break
+        if token in value_options:
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in value_options):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        path = Path(token)
+        if token.endswith((".java", ".py")) or path.is_dir():
+            selectors.append(token)
+        index += 1
+    return selectors
+
+
+def _extract_build_value(args: Sequence[str], option: str) -> str | None:
+    for index, token in enumerate(args):
+        if token == option:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {option}")
+            value = args[index + 1].strip()
+            if not value:
+                raise ValueError(f"Invalid empty value for {option}")
+            return value
+        if token.startswith(option + "="):
+            value = token.split("=", 1)[1].strip()
+            if not value:
+                raise ValueError(f"Invalid empty value for {option}")
+            return value
+    return None
+
+
+def _direct_build_source_files(root: Path, selectors: Sequence[str]) -> tuple[str, list[Path]]:
+    files: list[Path] = []
+    for selector in selectors:
+        selected = Path(selector)
+        path = selected if selected.is_absolute() else root / selected
+        if not path.exists():
+            raise ValueError(f"Direct source does not exist: {selector}")
+        candidates = sorted(path.rglob("*.java")) + sorted(path.rglob("*.py")) if path.is_dir() else [path]
+        files.extend(candidate.resolve() for candidate in candidates if candidate.suffix in {".java", ".py"})
+    files = list(dict.fromkeys(files))
+    if not files:
+        raise ValueError("Direct source build contains no .java or .py files")
+    languages = {"java" if file.suffix == ".java" else "python" for file in files}
+    if len(languages) != 1:
+        raise ValueError("Direct source build cannot mix Java and Python sources")
+    return languages.pop(), files
+
+
+def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Path, language: str) -> list[str]:
+    selectors = set(_direct_build_source_selectors(args))
+    value_options = {"--project-dir", "--project", "--name", "--version", "--setup"}
+    result: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--base-image-output" and index + 1 < len(args):
+            output = Path(args[index + 1])
+            result.extend([token, str(output if output.is_absolute() else (root / output).resolve())])
+            index += 2
+            continue
+        if token.startswith("--base-image-output="):
+            output = Path(token.split("=", 1)[1])
+            result.append("--base-image-output=" + str(output if output.is_absolute() else (root / output).resolve()))
+            index += 1
+            continue
+        if token in value_options:
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in value_options):
+            index += 1
+            continue
+        if token in selectors:
+            index += 1
+            continue
+        result.append(token)
+        index += 1
+    result.extend(["--project-dir", str(staging_project)])
+    if _extract_build_base_image(args) and _extract_build_base_image_output(args) is None:
+        launcher = PYTHON_RUN_EXECUTABLE if language == "python" else COMMAND_TO_EXECUTABLE["run"]
+        result.extend(["--base-image-output", str(root / "__pyronaut__" / "native" / "base" / launcher)])
+    return result
+
+
+def _write_direct_build_pyproject(target: Path, project_name: str, project_version: str, language: str) -> None:
+    source_key = "python" if language == "python" else "java"
+    source_dir = _DEFAULT_PYTHON_SOURCE_DIR if language == "python" else _DEFAULT_JAVA_SOURCE_DIR
+    target.write_text(
+        "[project]\n"
+        f"name = {project_name!r}\n"
+        f"version = {project_version!r}\n\n"
+        "[tool.pyronaut.sources]\n"
+        f"{source_key} = {source_dir!r}\n",
+        encoding="utf-8",
+    )
+
+
+def _run_direct_source_build(
+    *,
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    no_cache: bool,
+    no_validate: bool,
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    root = Path(_extract_project_dir(args)).resolve()
+    selectors = _direct_build_source_selectors(args)
+    try:
+        language, source_files = _direct_build_source_files(root, selectors)
+        configured_name = _extract_build_value(args, "--name")
+        configured_version = _extract_build_value(args, "--version")
+        setup = _extract_build_value(args, "--setup")
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
+    fingerprint_inputs = [
+        *(f"{file}:{hashlib.sha256(file.read_bytes()).hexdigest()}" for file in source_files),
+        f"name:{configured_name or ''}",
+        f"version:{configured_version or ''}",
+    ]
+    if setup is not None:
+        setup_fingerprint_path = Path(setup)
+        if not setup_fingerprint_path.is_absolute():
+            setup_fingerprint_path = root / setup_fingerprint_path
+        if setup_fingerprint_path.is_file():
+            fingerprint_inputs.append(
+                f"setup:{setup_fingerprint_path.resolve()}:{hashlib.sha256(setup_fingerprint_path.read_bytes()).hexdigest()}"
+            )
+    source_fingerprint = hashlib.sha256("\n".join(fingerprint_inputs).encode("utf-8")).hexdigest()[:16]
+    staging_project = root / "__pyronaut__" / "direct-source-build" / source_fingerprint
+    if staging_project.exists():
+        shutil.rmtree(staging_project)
+    staging_project.mkdir(parents=True, exist_ok=True)
+    try:
+        if setup is not None:
+            setup_path = Path(setup)
+            setup_path = setup_path if setup_path.is_absolute() else root / setup_path
+            if not setup_path.is_file():
+                raise ValueError(f"Configured setup file does not exist: {setup}")
+            shutil.copy2(setup_path, staging_project / "pyproject.toml")
+        setup_name, setup_version = _read_pyproject_project_metadata(staging_project)
+        project_name = configured_name or (setup_name if setup is not None else source_files[0].stem)
+        project_version = configured_version or (setup_version if setup is not None else "0.1.0")
+        if not (staging_project / "pyproject.toml").exists():
+            _write_direct_build_pyproject(staging_project / "pyproject.toml", project_name, project_version, language)
+        layout = _read_pyproject_sources(staging_project)
+        if setup is not None:
+            for resource_dir in (layout.resources_dir, *layout.additional_resources_dirs):
+                source_resource_dir = setup_path.parent / resource_dir
+                if source_resource_dir.is_dir():
+                    shutil.copytree(source_resource_dir, staging_project / resource_dir, dirs_exist_ok=True)
+        source_dir = layout.python_source_dir if language == "python" else layout.java_source_dir
+        destination = staging_project / source_dir
+        destination.mkdir(parents=True, exist_ok=True)
+        for source in source_files:
+            shutil.copy2(source, destination / source.name)
+
+        declaration_root = staging_project / "declarations"
+        declaration_root.mkdir(parents=True, exist_ok=True)
+        declaration_selectors: list[str] = []
+        for source in source_files:
+            staged_source = declaration_root / source.name
+            shutil.copy2(source, staged_source)
+            declaration_selectors.append(staged_source.name)
+        install_args = [
+            "--project-dir",
+            str(declaration_root),
+            *_local_repository_install_args(_extract_local_repository(args)),
+            *declaration_selectors,
+        ]
+        if no_cache:
+            install_args.append("--no-cache")
+        install_code = _delegate("install", install_args, runner, resolver, java_home_provider=java_home_provider)
+        if install_code != SUCCESS:
+            return install_code
+        source_cache = declaration_root / "__pyronaut__"
+        staging_cache = staging_project / "__pyronaut__"
+        staging_cache.mkdir(parents=True, exist_ok=True)
+        for name in (
+            "resolved-build-dependencies",
+            "resolved-runtime-dependencies",
+            "resolved-test-dependencies",
+            "m2-repository",
+        ):
+            source = source_cache / name
+            if source.is_dir():
+                shutil.copytree(source, staging_cache / name, dirs_exist_ok=True)
+            elif source.is_file():
+                shutil.copy2(source, staging_cache / name)
+        # Direct source installation has no test sources and therefore does
+        # not materialize this otherwise-required shared pipeline manifest.
+        (staging_cache / "resolved-test-dependencies").touch(exist_ok=True)
+
+        if setup is not None:
+            direct_manifests = {
+                name: _read_manifest_entries(staging_cache / name)
+                for name in (
+                    "resolved-build-dependencies",
+                    "resolved-runtime-dependencies",
+                    "resolved-test-dependencies",
+                )
+            }
+            setup_install_args = [
+                "--project-dir",
+                str(staging_project),
+                *_local_repository_install_args(_extract_local_repository(args)),
+            ]
+            if no_cache:
+                setup_install_args.append("--no-cache")
+            setup_install_code = _delegate("install", setup_install_args, runner, resolver, java_home_provider=java_home_provider)
+            if setup_install_code != SUCCESS:
+                return setup_install_code
+            for name, direct_entries in direct_manifests.items():
+                manifest = staging_cache / name
+                configured_entries = _read_manifest_entries(manifest)
+                manifest.write_text(
+                    "".join(f"{entry}\n" for entry in dict.fromkeys([*configured_entries, *direct_entries])),
+                    encoding="utf-8",
+                )
+
+        exit_code = _run_build(
+            args=_direct_build_arguments(args, staging_project, root, language),
+            runner=runner,
+            resolver=resolver,
+            no_cache=no_cache,
+            no_validate=no_validate,
+            java_home_provider=java_home_provider,
+            project_metadata=(project_name, project_version),
+            preflight_install=False,
+        )
+        if exit_code == SUCCESS and not _extract_build_docker(args):
+            dist = root / "dist"
+            dist.mkdir(parents=True, exist_ok=True)
+            for artifact in (staging_project / "dist").glob("*"):
+                if artifact.is_file():
+                    shutil.copy2(artifact, dist / artifact.name)
+        return exit_code
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+
+
 def _run_build(
     args: Sequence[str],
     runner: RunnerWithEnv,
@@ -1539,6 +1843,8 @@ def _run_build(
     no_cache: bool,
     no_validate: bool,
     java_home_provider: JavaHomeProvider | None,
+    project_metadata: tuple[str, str] | None = None,
+    preflight_install: bool = True,
 ) -> int:
     if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
         _print_build_usage()
@@ -1553,8 +1859,23 @@ def _run_build(
         return USAGE_ERROR
     docker_build = _extract_build_docker(args)
     static_native = _extract_build_static(args)
+    base_image_build = _extract_build_base_image(args)
+    requested_default_base_image = _extract_build_default_base_image(args)
+    configured_default_base_image = (_read_pyproject_build_base_image(project_dir) or "").strip().lower() == "default"
+    default_base_image = requested_default_base_image or (configured_default_base_image and not base_image_build)
+    if base_image_build and default_base_image:
+        print("--base-image and --base-image=default cannot be combined", file=sys.stderr)
+        return USAGE_ERROR
+    if default_base_image and mode == "jvm":
+        print("--base-image=default is only supported for native builds", file=sys.stderr)
+        return USAGE_ERROR
+    if base_image_build:
+        if _extract_build_mode_flag(args) == "jvm":
+            print("--base-image cannot be combined with JVM mode", file=sys.stderr)
+            return USAGE_ERROR
+        mode = "native"
     try:
-        project_name, project_version = _read_pyproject_project_metadata(project_dir)
+        project_name, project_version = project_metadata or _read_pyproject_project_metadata(project_dir)
         main_class = _extract_main_class(args)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -1581,9 +1902,19 @@ def _run_build(
         if validation_code != SUCCESS:
             return validation_code
 
-    preflight = _run_preflight(str(project_dir), no_cache, None, runner, resolver)
+    preflight = _run_preflight(str(project_dir), no_cache, None, runner, resolver, install=preflight_install)
     if preflight != SUCCESS:
         return preflight
+
+    if base_image_build and not docker_build:
+        return _run_native_base_image_build(
+            args=args,
+            runner=runner,
+            resolver=resolver,
+            project_dir=project_dir,
+            verbose=verbose,
+            java_home_provider=java_home_provider,
+        )
 
     if docker_build:
         return _run_docker_build(
@@ -1597,6 +1928,8 @@ def _run_build(
             main_class=main_class,
             verbose=verbose,
             static_native=static_native,
+            base_image_build=base_image_build,
+            default_base_image=default_base_image,
         )
 
     dist_dir = project_dir / "dist"
@@ -1619,25 +1952,40 @@ def _run_build(
         output_dir = project_dir / "__pyronaut__" / "native"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_binary = output_dir / project_name
-        delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
-        if delegate_executable is None:
-            print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
+        configured_base = _configured_local_base_image(project_dir)
+        configured_default_base = (_read_pyproject_build_base_image(project_dir) or "").strip().lower() == "default"
+        if default_base_image:
+            configured_base = _bundled_default_base_image(project_dir)
+        if (default_base_image or configured_default_base) and configured_base is None:
+            print("The bundled default native base image is not installed for this platform.", file=sys.stderr)
             return PRECONDITION_FAILED
-        native_command = [
-            delegate_executable,
-            "--project-dir",
-            str(project_dir),
-            "--output",
-            str(output_binary),
-        ]
-        if verbose:
-            native_command.append("--verbose")
-        native_command.extend(_extract_native_build_passthrough_args(args))
-        if _delegation_trace_enabled():
-            print(shlex.join(native_command), file=sys.stderr)
-        exit_code = runner(native_command, env)
-        if exit_code != SUCCESS:
-            return exit_code
+        if configured_base is not None:
+            if not configured_base.is_file():
+                print(f"Configured base image does not exist: {configured_base}. Run pyronaut build --base-image first.", file=sys.stderr)
+                return PRECONDITION_FAILED
+            shutil.copy2(configured_base, output_binary)
+            output_binary.chmod(0o755)
+        else:
+            delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
+            if delegate_executable is None:
+                print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
+                return PRECONDITION_FAILED
+            native_command = [
+                delegate_executable,
+                "--project-dir",
+                str(project_dir),
+                "--output",
+                str(output_binary),
+            ]
+            native_command.extend(_native_user_package_args(project_dir))
+            if verbose:
+                native_command.append("--verbose")
+            native_command.extend(_extract_native_build_passthrough_args(args))
+            if _delegation_trace_enabled():
+                print(shlex.join(native_command), file=sys.stderr)
+            exit_code = runner(native_command, env)
+            if exit_code != SUCCESS:
+                return exit_code
         if not output_binary.exists():
             print(f"Native build reported success but no binary was produced at: {output_binary}", file=sys.stderr)
             return PRECONDITION_FAILED
@@ -1771,6 +2119,18 @@ def _prepare_build_wheel_staging(
         (pyronaut_dir / "native").mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary_path, pyronaut_dir / "native" / binary_name)
         (pyronaut_dir / "native" / binary_name).chmod(0o755)
+        classes_dir = project_dir / "__pyronaut__" / "classes"
+        runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+        if not classes_dir.is_dir():
+            raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+        _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+        if runtime_manifest.exists():
+            _stage_manifest_artifacts(
+                source=runtime_manifest,
+                target=pyronaut_dir / "resolved-runtime-dependencies",
+                project_dir=project_dir,
+                pyronaut_dir=pyronaut_dir,
+            )
         launcher_code = _native_build_launcher_code(binary_name)
     else:
         classes_dir = project_dir / "__pyronaut__" / "classes"
@@ -1888,6 +2248,149 @@ def _extract_build_static(args: Sequence[str]) -> bool:
     return any(token == "--static" for token in args)
 
 
+def _extract_build_base_image(args: Sequence[str]) -> bool:
+    return any(token == "--base-image" for token in args)
+
+
+def _extract_build_default_base_image(args: Sequence[str]) -> bool:
+    return any(token == "--base-image=default" for token in args)
+
+
+def _extract_build_base_image_output(args: Sequence[str]) -> str | None:
+    for index, token in enumerate(args):
+        if token == "--base-image-output":
+            if index + 1 >= len(args):
+                raise ValueError("Missing value for --base-image-output")
+            return args[index + 1]
+        if token.startswith("--base-image-output="):
+            return token.split("=", 1)[1]
+    return None
+
+
+def _read_pyproject_build_base_image(project_dir: Path) -> str | None:
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    if not isinstance(pyronaut, dict):
+        return None
+    build = pyronaut.get("build")
+    if not isinstance(build, dict):
+        return None
+    return _read_pyproject_string(build, "base-image")
+
+
+def _is_python_runtime_project(project_dir: Path) -> bool:
+    if not (project_dir / "pyproject.toml").is_file() or _is_external_build_project(project_dir):
+        return False
+    runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+    if runtime_manifest.is_file():
+        with contextlib.suppress(OSError):
+            if "micronaut-context-python" in runtime_manifest.read_text(encoding="utf-8"):
+                return True
+    return False
+
+
+def _configured_local_base_image(project_dir: Path) -> Path | None:
+    configured = _read_pyproject_build_base_image(project_dir)
+    if configured is not None:
+        if configured.strip().lower() == "default":
+            return _bundled_default_base_image(project_dir)
+        path = Path(configured)
+        return path if path.is_absolute() else (project_dir / path).resolve()
+    launcher = "pyronaut-run-python" if _is_python_runtime_project(project_dir) else "pyronaut-run"
+    default_base = project_dir / "__pyronaut__" / "native" / "base" / launcher
+    return default_base if default_base.is_file() else None
+
+
+def _bundled_default_base_image(project_dir: Path) -> Path | None:
+    launcher = PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]
+    executable = _bundled_native_executable(launcher)
+    return executable if executable is not None and executable.is_file() else None
+
+
+def _native_user_package_args(project_dir: Path) -> list[str]:
+    classes_dir = project_dir / "__pyronaut__" / "classes"
+    if not classes_dir.is_dir():
+        return []
+    packages = {
+        ".".join(class_file.relative_to(classes_dir).parent.parts)
+        for class_file in classes_dir.rglob("*.class")
+        if class_file.parent != classes_dir
+    }
+    return [argument for package in sorted(packages) if package for argument in ("--user-package", package)]
+
+
+def _docker_base_marker(project_dir: Path) -> Path:
+    return project_dir / "__pyronaut__" / "native" / "base" / "docker-image"
+
+
+def _configured_docker_base_image(project_dir: Path, docker_config: dict[str, str]) -> str | None:
+    configured = docker_config.get("base_image")
+    if configured:
+        return configured
+    marker = _docker_base_marker(project_dir)
+    if marker.is_file():
+        value = marker.read_text(encoding="utf-8").strip()
+        return value or None
+    return None
+
+
+def _record_docker_base_image(project_dir: Path, image_name: str) -> None:
+    marker = _docker_base_marker(project_dir)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(image_name + "\n", encoding="utf-8")
+
+
+def _resolve_base_image_output(project_dir: Path, args: Sequence[str]) -> Path:
+    configured = _extract_build_base_image_output(args) or _read_pyproject_build_base_image(project_dir)
+    if configured is None:
+        launcher = "pyronaut-run-python" if _is_python_runtime_project(project_dir) else "pyronaut-run"
+        return project_dir / "__pyronaut__" / "native" / "base" / launcher
+    path = Path(configured)
+    return path if path.is_absolute() else (project_dir / path).resolve()
+
+
+def _run_native_base_image_build(
+    *,
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    project_dir: Path,
+    verbose: bool,
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    try:
+        env = _build_non_test_resources_env("build", java_home_provider)
+        _build_native_classpath(project_dir)
+        output = _resolve_base_image_output(project_dir, args)
+    except (RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    output.parent.mkdir(parents=True, exist_ok=True)
+    delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
+    if delegate_executable is None:
+        print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
+        return PRECONDITION_FAILED
+    command = [
+        delegate_executable,
+        "--project-dir", str(project_dir),
+        "--output", str(output),
+        "--base-image",
+    ]
+    if _is_python_runtime_project(project_dir):
+        command.append("--include-python")
+    if verbose:
+        command.append("--verbose")
+    command.extend(_extract_native_build_passthrough_args(args))
+    if _delegation_trace_enabled():
+        print(shlex.join(command), file=sys.stderr)
+    exit_code = runner(command, env)
+    if exit_code == SUCCESS and not output.is_file():
+        print(f"Base image build reported success but no binary was produced at: {output}", file=sys.stderr)
+        return PRECONDITION_FAILED
+    if exit_code == SUCCESS:
+        print(f"Base image build complete: {output}")
+    return exit_code
+
+
 def _read_pyproject_build_docker_config(project_dir: Path) -> dict[str, str]:
     data = _read_pyproject_data(project_dir)
     if not isinstance(data, dict):
@@ -1916,6 +2419,7 @@ def _read_pyproject_build_docker_config(project_dir: Path) -> dict[str, str]:
         "native_base_image": ("native-base-image", "nativeBaseImage"),
         "static_native_builder_image": ("static-native-builder-image", "staticNativeBuilderImage"),
         "static_native_base_image": ("static-native-base-image", "staticNativeBaseImage"),
+        "base_image": ("base-image", "baseImage"),
     }
     for key, candidates in aliases.items():
         for candidate in candidates:
@@ -1984,7 +2488,7 @@ def _prepare_jvm_docker_context(
     project_dir: Path,
     context_dir: Path,
     resolver: Callable[[str], str | None],
-) -> None:
+) -> str:
     app_dir = _prepare_common_docker_app_context(project_dir, context_dir)
     pyronaut_dir = app_dir / "__pyronaut__"
     classes_dir = project_dir / "__pyronaut__" / "classes"
@@ -2000,10 +2504,12 @@ def _prepare_jvm_docker_context(
         project_dir=project_dir,
         pyronaut_dir=pyronaut_dir,
     )
-    delegate_executable = resolver(COMMAND_TO_EXECUTABLE["run"])
+    runner_name = _delegate_executable_name("run", project_dir)
+    delegate_executable = resolver(runner_name)
     if delegate_executable is None:
-        raise RuntimeError(f"Missing delegated executable: {COMMAND_TO_EXECUTABLE['run']}")
-    _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / "pyronaut-run")
+        raise RuntimeError(f"Missing delegated executable: {runner_name}")
+    _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / runner_name)
+    return runner_name
 
 
 def _prepare_native_docker_context(
@@ -2035,12 +2541,23 @@ def _prepare_native_docker_context(
     _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / "pyronaut-native-build")
 
 
-def _write_jvm_dockerfile(*, target: Path, base_image: str) -> None:
+def _prepare_crema_native_docker_context(*, project_dir: Path, context_dir: Path) -> None:
+    app_dir = _prepare_common_docker_app_context(project_dir, context_dir)
+    pyronaut_dir = app_dir / "__pyronaut__"
+    classes_dir = project_dir / "__pyronaut__" / "classes"
+    if not classes_dir.is_dir():
+        raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+    _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
+    (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
+
+
+def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str) -> None:
     dockerfile = f"""\
 FROM {base_image}
 WORKDIR /app
 COPY app/ /app/
-ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]
+ENTRYPOINT ["/app/__pyronaut__/tools/{runner_name}/bin/{runner_name}", "--project-dir", "/app"]
 """
     target.write_text(dockerfile, encoding="utf-8")
 
@@ -2088,6 +2605,67 @@ ENTRYPOINT ["/app/{project_name}"]
     target.write_text(dockerfile, encoding="utf-8")
 
 
+def _write_crema_base_dockerfile(
+    *,
+    target: Path,
+    builder_image: str,
+    runtime_image: str,
+    runner_name: str,
+    include_python: bool,
+    verbose: bool,
+    static_native: bool,
+    passthrough_args: Sequence[str],
+    bundled_only: bool = False,
+) -> None:
+    output_binary = f"/workspace/base/{runner_name}"
+    build_command = [
+        "/workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build",
+        "--project-dir", "/workspace/app",
+        "--output", output_binary,
+        "--base-image",
+    ]
+    if bundled_only:
+        build_command.append("--default-base-image")
+    if include_python:
+        build_command.append("--include-python")
+    if verbose:
+        build_command.append("--verbose")
+    build_command.extend(passthrough_args)
+    if static_native:
+        build_command.extend(["--static", "--libc=musl"])
+    dockerfile = f"""\\
+FROM {builder_image} AS builder
+WORKDIR /workspace
+COPY app/ /workspace/app/
+RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
+RUN {shlex.join(build_command)}
+
+FROM {runtime_image} AS pyronaut-base
+WORKDIR /opt/pyronaut
+COPY --from=builder {output_binary} /opt/pyronaut/bin/{runner_name}
+
+FROM pyronaut-base
+WORKDIR /app
+COPY app/config /app/config
+COPY app/__pyronaut__/classes /app/__pyronaut__/classes
+COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
+ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
+"""
+    target.write_text(dockerfile, encoding="utf-8")
+
+
+def _write_crema_application_dockerfile(*, target: Path, base_image: str, runner_name: str) -> None:
+    dockerfile = f"""\\
+FROM {base_image}
+WORKDIR /app
+COPY app/config /app/config
+COPY app/__pyronaut__/classes /app/__pyronaut__/classes
+COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
+ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
+"""
+    target.write_text(dockerfile, encoding="utf-8")
+
+
 def _copy_dockerfile_into_context(source: Path, context_dir: Path) -> Path:
     target = context_dir / source.name
     shutil.copy2(source, target)
@@ -2101,6 +2679,7 @@ def _build_docker_command(
     context_dir: Path,
     verbose: bool,
     build_args: dict[str, str],
+    target: str | None = None,
 ) -> list[str]:
     docker_executable = shutil.which("docker") or "docker"
     command = [docker_executable, "build"]
@@ -2108,6 +2687,8 @@ def _build_docker_command(
         command.append("--progress=plain")
     for key, value in build_args.items():
         command.extend(["--build-arg", f"{key}={value}"])
+    if target is not None:
+        command.extend(["--target", target])
     command.extend(["-t", image_tag, "-f", str(dockerfile), str(context_dir)])
     return command
 
@@ -2124,6 +2705,8 @@ def _run_docker_build(
     main_class: str,
     verbose: bool,
     static_native: bool,
+    base_image_build: bool = False,
+    default_base_image: bool = False,
 ) -> int:
     docker_config = _read_pyproject_build_docker_config(project_dir)
     image_name = docker_config.get("image_name") or _default_docker_image_name(project_name)
@@ -2140,7 +2723,6 @@ def _run_docker_build(
             "PYRONAUT_NATIVE_STATIC": "true" if static_native else "false",
         }
         if mode == "native":
-            _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
             builder_image = docker_config.get(
                 "static_native_builder_image" if static_native else "native_builder_image"
             ) or (
@@ -2153,27 +2735,77 @@ def _run_docker_build(
             )
             build_args["PYRONAUT_NATIVE_BUILDER_IMAGE"] = builder_image
             build_args["PYRONAUT_NATIVE_BASE_IMAGE"] = runtime_image
-            custom = _resolve_build_dockerfile(
-                project_dir=project_dir,
-                configured_path=docker_config.get("dockerfile_native"),
-                default_name="DockerfileNative",
-            )
-            if custom is not None:
-                dockerfile = _copy_dockerfile_into_context(custom, context_dir)
-            else:
-                dockerfile = context_dir / "DockerfileNative"
-                _write_native_dockerfile(
+            runner_name = PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else "pyronaut-run"
+            if base_image_build or default_base_image:
+                _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+                base_image = docker_config.get("base_image") or f"{image_name}:{project_version}-native-base"
+                build_args["PYRONAUT_BASE_IMAGE"] = base_image
+                dockerfile = context_dir / "DockerfileNativeBase"
+                _write_crema_base_dockerfile(
                     target=dockerfile,
                     builder_image=builder_image,
                     runtime_image=runtime_image,
-                    project_name=project_name,
-                    main_class=main_class,
+                    runner_name=runner_name,
+                    include_python=_is_python_runtime_project(project_dir),
                     verbose=verbose,
                     static_native=static_native,
                     passthrough_args=_extract_native_build_passthrough_args(args),
+                    bundled_only=default_base_image,
                 )
+                base_command = _build_docker_command(
+                    dockerfile=dockerfile,
+                    image_tag=base_image,
+                    context_dir=context_dir,
+                    verbose=verbose,
+                    build_args=build_args,
+                    target="pyronaut-base",
+                )
+                if _delegation_trace_enabled():
+                    print(shlex.join(base_command), file=sys.stderr)
+                base_exit = runner(base_command, None)
+                if base_exit != SUCCESS:
+                    return base_exit
+                _record_docker_base_image(project_dir, base_image)
+            elif (base_image := _configured_docker_base_image(project_dir, docker_config)) is not None:
+                _prepare_crema_native_docker_context(project_dir=project_dir, context_dir=context_dir)
+                build_args["PYRONAUT_BASE_IMAGE"] = base_image
+                custom = _resolve_build_dockerfile(
+                    project_dir=project_dir,
+                    configured_path=docker_config.get("dockerfile_native"),
+                    default_name="DockerfileNative",
+                )
+                if custom is not None:
+                    dockerfile = _copy_dockerfile_into_context(custom, context_dir)
+                else:
+                    dockerfile = context_dir / "DockerfileNativeCrema"
+                    _write_crema_application_dockerfile(
+                        target=dockerfile,
+                        base_image=base_image,
+                        runner_name=runner_name,
+                    )
+            else:
+                _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+                custom = _resolve_build_dockerfile(
+                    project_dir=project_dir,
+                    configured_path=docker_config.get("dockerfile_native"),
+                    default_name="DockerfileNative",
+                )
+                if custom is not None:
+                    dockerfile = _copy_dockerfile_into_context(custom, context_dir)
+                else:
+                    dockerfile = context_dir / "DockerfileNative"
+                    _write_native_dockerfile(
+                        target=dockerfile,
+                        builder_image=builder_image,
+                        runtime_image=runtime_image,
+                        project_name=project_name,
+                        main_class=main_class,
+                        verbose=verbose,
+                        static_native=static_native,
+                        passthrough_args=[*_extract_native_build_passthrough_args(args), *_native_user_package_args(project_dir)],
+                    )
         else:
-            _prepare_jvm_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+            runner_name = _prepare_jvm_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
             build_args["PYRONAUT_JVM_BASE_IMAGE"] = docker_config.get("jvm_base_image") or _DEFAULT_DOCKER_JVM_BASE_IMAGE
             custom = _resolve_build_dockerfile(
                 project_dir=project_dir,
@@ -2187,6 +2819,7 @@ def _run_docker_build(
                 _write_jvm_dockerfile(
                     target=dockerfile,
                     base_image=build_args["PYRONAUT_JVM_BASE_IMAGE"],
+                    runner_name=runner_name,
                 )
 
         command = _build_docker_command(
@@ -2331,7 +2964,7 @@ def _resolve_build_mode(project_dir: Path, args: Sequence[str]) -> str:
     configured = _read_pyproject_build_mode(project_dir)
     if configured is not None:
         return configured
-    return "jvm"
+    return _read_pyproject_toolchain_type(project_dir)
 
 
 def _extract_build_mode_flag(args: Sequence[str]) -> str | None:
@@ -2834,10 +3467,10 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token == "--":
             passthrough.extend(args[index + 1:])
             break
-        if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate", "--docker", "--static"}:
+        if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate", "--docker", "--static", "--base-image", "--base-image=default"}:
             index += 1
             continue
-        if token in {"--mode", "--main-class", "--project-dir"}:
+        if token in {"--mode", "--main-class", "--project-dir", "--base-image-output"}:
             index += 1
             if index < len(args):
                 index += 1
@@ -2849,6 +3482,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
             or token.startswith("--no-cache=")
             or token.startswith("--docker=")
             or token.startswith("--static=")
+            or token.startswith("--base-image-output=")
         ):
             index += 1
             continue
@@ -4390,6 +5024,37 @@ def _pyronaut_dev_native_command_line(
     return [executable_path, *jvm_args, command, *command_args]
 
 
+def _pyronaut_run_native_command_line(
+    command: str,
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool = False,
+) -> list[str] | None:
+    """Build a production Crema launch command for a native-toolchain project."""
+    if command != "run" or debug_vm:
+        return None
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    try:
+        if not _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=debug_vm):
+            return None
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    executable_name = _delegate_executable_name(command, project_dir)
+    executable_path = _resolve_native_preferred_executable(
+        executable_name,
+        resolver,
+        fallback_to_resolver=False,
+    )
+    if executable_path is None:
+        raise RuntimeError(
+            f"Missing native production runtime for {executable_name}. "
+            f"Build or install {executable_name}, or set tool.pyronaut.toolchain.type = 'jvm'."
+        )
+    classpath = _build_native_application_classpath(command, project_dir, executable_path)
+    return [executable_path, f"-Djava.class.path={classpath}", *args]
+
+
 def _native_dev_java_home_jvm_args(java_home_provider: JavaHomeProvider | None) -> list[str]:
     if java_home_provider is None:
         return []
@@ -4515,6 +5180,27 @@ def _resolve_delegate_executable_path(
                     "Build or install a native pyronaut-processor, or set tool.pyronaut.processor.mode = 'jvm'."
                 )
             return executable_path
+
+    if command == "run":
+        try:
+            if _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=_extract_debug_vm(args)):
+                executable_name = _delegate_executable_name(command, project_dir)
+                executable_path = _resolve_native_preferred_executable(
+                    executable_name,
+                    resolver,
+                    # Tamboui invokes a configured executable itself; when a
+                    # bundled native runtime is unavailable its JVM launcher
+                    # remains a valid delegate for the interactive UI.
+                    fallback_to_resolver=True,
+                )
+                if executable_path is None:
+                    raise RuntimeError(
+                        f"Missing native production runtime for {executable_name}. "
+                        f"Build or install {executable_name}, or set tool.pyronaut.toolchain.type = 'jvm'."
+                    )
+                return executable_path
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
         executable_path = resolver(executable_name)
         if executable_path is None:
             raise RuntimeError(f"Missing delegated executable: {executable_name}")
@@ -4599,7 +5285,7 @@ def _print_build_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut build [--project-dir <dir>] [--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
+        "Usage: pyronaut build [--project-dir <dir>] [--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--base-image|--base-image=default] [--base-image-output <path>] [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
     )
 
 
@@ -5172,7 +5858,7 @@ def _run_tamboui_tui(
         "validate-config": _resolve_delegate_executable_path("validate-config", ["--project-dir", str(project_dir)], resolver),
         "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
         "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
-        "run": resolver("pyronaut-run"),
+        "run": _resolve_delegate_executable_path("run", ["--project-dir", str(project_dir)], resolver),
         "test": _resolve_delegate_executable_path("test", ["--project-dir", str(project_dir)], resolver),
     }
     missing = [name for (name, path) in delegated.items() if path is None]
@@ -5183,7 +5869,7 @@ def _run_tamboui_tui(
     try:
         native_commands = [
             command
-            for command in ("validate-config", "install", "process", "run", "test")
+            for command in ("validate-config", "install", "process", "test")
             if _use_pyronaut_dev_native_toolchain(
                 command,
                 project_dir,

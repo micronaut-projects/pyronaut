@@ -9,6 +9,7 @@ dependencies {
 
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(project(":micronaut-pyronaut-run"))
+    implementation(project(":micronaut-pyronaut-run-python"))
     implementation(mnPicocli.picocli)
     implementation(libs.graalvm.reachability.metadata)
 

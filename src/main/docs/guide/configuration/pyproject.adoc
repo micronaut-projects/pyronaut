@@ -77,6 +77,9 @@ mode = "jvm" # jvm|native
 ----
 
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
+Set `base-image = "default"` there to package native applications against the
+bundled language-specific production runtime. Set a filesystem path instead to
+reuse a custom base created by `pyronaut build --base-image`.
 See the CLI reference for the full build option surface.
 See <<incrementalProcessing,Incremental Processing>> before enabling incremental processing, the compiler daemon, or the optimistic Python dependency policy.
 
