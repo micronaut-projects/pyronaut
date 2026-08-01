@@ -20,6 +20,7 @@ import java.util.Map;
 /** Per-invocation direct-source declaration state. */
 final class DirectSourceDeclarationState {
     private static final ThreadLocal<Map<String, Object>> RUNTIME_PROPERTIES = ThreadLocal.withInitial(Map::of);
+    private static final ThreadLocal<Boolean> TEST_RESOURCES_REQUIRED = ThreadLocal.withInitial(() -> false);
 
     private DirectSourceDeclarationState() {
     }
@@ -37,8 +38,17 @@ final class DirectSourceDeclarationState {
         return RUNTIME_PROPERTIES.get();
     }
 
+    static void setTestResourcesRequired(boolean required) {
+        TEST_RESOURCES_REQUIRED.set(required);
+    }
+
+    static boolean testResourcesRequired() {
+        return TEST_RESOURCES_REQUIRED.get();
+    }
+
     /** Clears state associated with the current thread. */
     static void clear() {
         RUNTIME_PROPERTIES.remove();
+        TEST_RESOURCES_REQUIRED.remove();
     }
 }

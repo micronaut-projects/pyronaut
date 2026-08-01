@@ -36,6 +36,7 @@ import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import io.micronaut.pyronaut.run.PyronautRunMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
+import io.micronaut.pyronaut.testresources.DirectSourceTestResourcesSession;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
 import io.micronaut.pyronaut.validateconfig.PyronautValidateConfigMain;
 import io.micronaut.test.pytest.execution.JUnitReportWriter;
@@ -112,9 +113,11 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
     private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
     private static final String MICRONAUT_TEST_RESOURCES_ENABLED = "micronaut.test.resources.enabled";
+    private static final String TEST_RESOURCES_CLIENT_CLASSPATH = "pyronaut.dev.test.resources.client.classpath";
     private static final String DIRECT_COMPILER_CLASSPATH = "pyronaut.dev.compiler.class.path";
     private static final String DIRECT_APPLICATION_CLASSPATH = "pyronaut.dev.application.class.path";
     private static final String DIRECT_COMPILE_PYTHON_BYTECODE = "pyronaut.dev.compile-python-bytecode";
+    private static final String DIRECT_COMMAND = "pyronaut.dev.direct.command";
     private static final String PROCESSOR_DAEMON_COMMAND_PREFIX = "pyronaut.processor.daemon.command-prefix";
     private static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
     private static final String DEFAULT_TEST_SERVER_PORT = "0";
@@ -138,6 +141,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String MICRONAUT_METADATA_PREFIX = "META-INF/micronaut/";
     private static final String TEST_RESOURCES_PACKAGE = "io.micronaut.testresources.";
     private static final String PYRONAUT_TEST_RESOURCES_PACKAGE = "io.micronaut.pyronaut.testresources.";
+    private static final String MICRONAUT_PYTHON_PACKAGE = "io.micronaut.context.python.";
     private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
     private static final Pattern JAVA_PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([A-Za-z_][\\w.]*)\\s*;");
     private static final Pattern JAVA_TYPE_PATTERN = Pattern.compile("\\b(?:class|interface|record|enum)\\s+([A-Za-z_][\\w]*)");
@@ -465,6 +469,14 @@ public final class PyronautDevMain implements Callable<Integer> {
     private Integer runDirectSources(DirectSourceInvocation invocation) {
         Path stagingRoot = null;
         Map<String, String> previousProperties = new LinkedHashMap<>();
+        DirectSourceTestResourcesSession testResourcesSession = null;
+        String directCommand = System.getProperty(
+            DIRECT_COMMAND,
+            invocation.properties().get(DIRECT_COMMAND)
+        );
+        boolean testResourcesEligible = invocation.setup() == null
+            && (invocation.test() || "dev".equals(directCommand))
+            && !testResourcesDisabled(invocation);
         try {
             SourceType sourceType = sourceType(invocation.sources());
             if (invocation.test()) {
@@ -510,7 +522,28 @@ public final class PyronautDevMain implements Callable<Integer> {
             try {
                 return directSourceRunner.run(invocation, stagingRoot);
             } catch (DirectSourceDeclarationRequest request) {
-                resolveDirectSourceDeclarations(invocation, stagingRoot, request, previousProperties);
+                DirectSourceDependencyResolver.LaunchResult launch = resolveDirectSourceDeclarations(
+                    invocation,
+                    stagingRoot,
+                    request,
+                    previousProperties,
+                    testResourcesEligible
+                );
+                if (launch.testResourcesRequired()) {
+                    Path projectRoot = projectCacheDirectory(invocation, stagingRoot).getParent();
+                    testResourcesSession = DirectSourceTestResourcesSession.open(projectRoot);
+                    applyProperties(testResourcesSession.clientProperties(), previousProperties);
+                    applyProperty(
+                        PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY,
+                        "true",
+                        previousProperties
+                    );
+                    applyProperty(
+                        TEST_RESOURCES_CLIENT_CLASSPATH,
+                        String.join(File.pathSeparator, launch.runtime()),
+                        previousProperties
+                    );
+                }
                 return directSourceRunner.run(invocation, stagingRoot);
             }
         } catch (IllegalArgumentException e) {
@@ -520,6 +553,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             System.err.println("Direct source launch failed: " + e.getMessage());
             return INTERNAL_ERROR;
         } finally {
+            if (testResourcesSession != null) {
+                testResourcesSession.close();
+            }
             restoreProperties(previousProperties, previousProperties.keySet());
             DirectSourceDeclarationState.clear();
         }
@@ -545,21 +581,37 @@ public final class PyronautDevMain implements Callable<Integer> {
         return sourceDirectory.resolve(DEFAULT_PYRONAUT_DIR);
     }
 
-    private static void resolveDirectSourceDeclarations(DirectSourceInvocation invocation, Path stagingRoot,
-                                                        DirectSourceDeclarationRequest request, Map<String, String> previousProperties) throws IOException {
+    private static DirectSourceDependencyResolver.LaunchResult resolveDirectSourceDeclarations(
+        DirectSourceInvocation invocation,
+        Path stagingRoot,
+        DirectSourceDeclarationRequest request,
+        Map<String, String> previousProperties,
+        boolean testResourcesEligible) throws IOException {
         DirectSourceDeclarations declarations = request.declarations();
         List<String> build = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::build).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         List<String> runtime = declarations.dependencies().stream().filter(declaration -> !declaration.build()).map(DirectSourceDeclarations.Dependency::coordinate).toList();
-        DirectSourceDependencyResolver.Result result = new DirectSourceDependencyResolver().resolve(
-            projectCacheDirectory(invocation, stagingRoot), build, runtime, declarations.repositories());
+        DirectSourceDependencyResolver.LaunchResult result = new DirectSourceDependencyResolver().resolveForLaunch(
+            projectCacheDirectory(invocation, stagingRoot),
+            build,
+            runtime,
+            declarations.repositories(),
+            declarations.runtimeProperties(),
+            testResourcesEligible
+        );
         System.out.println("Direct source dependency resolution " + (result.cacheHit() ? "cache hit" : "completed")
             + ": " + declarations.dependencies() + (declarations.repositories().isEmpty() ? "" : ", repositories=" + declarations.repositories()));
         io.micronaut.pyronaut.dev.DirectSourceDeclarationState.setRuntimeProperties(declarations.runtimeProperties());
+        io.micronaut.pyronaut.dev.DirectSourceDeclarationState.setTestResourcesRequired(result.testResourcesRequired());
         String resolvedProperty = io.micronaut.pyronaut.directsource.DirectSourceDeclarationState.RESOLVED_PROPERTY;
         previousProperties.put(resolvedProperty, System.getProperty(resolvedProperty));
         System.setProperty(resolvedProperty, "true");
-        declarations.runtimeProperties().forEach((name, value) -> { previousProperties.put(name, System.getProperty(name)); System.setProperty(name, value); });
-        declarations.buildProperties().forEach((name, value) -> { String key = "micronaut.processing." + name; previousProperties.put(key, System.getProperty(key)); System.setProperty(key, value); });
+        declarations.runtimeProperties().forEach((name, value) ->
+            applyProperty(name, value, previousProperties)
+        );
+        declarations.buildProperties().forEach((name, value) ->
+            applyProperty("micronaut.processing." + name, value, previousProperties)
+        );
+        return result;
     }
 
     private static int runInMemoryApplication(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
@@ -605,7 +657,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             now = System.currentTimeMillis();
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
-                .properties(DirectSourceDeclarationState.runtimeProperties())
+                .properties(directSourceApplicationProperties(invocation))
                 .beanResolutionTrace(invocation.verbose() ? BeanResolutionTraceMode.STANDARD_OUT : BeanResolutionTraceMode.NONE)
                 .deducePackage(false)
                 .deduceCloudEnvironment(false)
@@ -742,14 +794,17 @@ public final class PyronautDevMain implements Callable<Integer> {
             launcher.execute(request);
             TestExecutionSummary summary = listener.getSummary();
             summary.printTo(new PrintWriter(System.out, true, StandardCharsets.UTF_8));
-            Path reportDirectory = writeReports(invocation.report(), summary, reportResults);
+            Path report = invocation.report() == null
+                ? pyronautDir.resolve("reports").resolve("tests")
+                : invocation.report();
+            Path reportDirectory = writeReports(report, summary, reportResults);
             if (reportDirectory != null) {
                 System.out.println("Test report: " + terminalLink(reportDirectory.resolve("index.html")));
             }
             if (invocation.verbose()) {
                 System.out.println("Test Execution Time: " + (System.currentTimeMillis() - now) + "ms");
             }
-            return summary.getTotalFailureCount() == 0 ? SUCCESS : TESTS_FAILED;
+            return summary.getFailures().isEmpty() ? SUCCESS : TESTS_FAILED;
         } finally {
             if (pythonSource) {
                 restorePythonContext(previousPythonContext);
@@ -961,6 +1016,14 @@ public final class PyronautDevMain implements Callable<Integer> {
             .anyMatch("dev"::equalsIgnoreCase);
     }
 
+    private static Map<String, Object> directSourceApplicationProperties(DirectSourceInvocation invocation) throws IOException {
+        Map<String, Object> properties = new LinkedHashMap<>(DirectSourceDeclarationState.runtimeProperties());
+        if (sourceType(invocation.sources()) == SourceType.JAVA) {
+            properties.putIfAbsent(MICRONAUT_PYTHON_ENABLED, false);
+        }
+        return Map.copyOf(properties);
+    }
+
     private static ClassLoader directSourceLauncherClassLoader(DirectSourceInvocation invocation) {
         ClassLoader launcherClassLoader = PyronautDevMain.class.getClassLoader();
         if (invocation.setup() != null || controlPanelRequested(invocation)) {
@@ -1040,7 +1103,21 @@ public final class PyronautDevMain implements Callable<Integer> {
             if (invocation.setup() == null && isTestResourcesBeanDefinition(reference)) {
                 continue;
             }
+            if (isDirectJavaInvocation(invocation) && reference.getBeanDefinitionName().startsWith(MICRONAUT_PYTHON_PACKAGE)) {
+                continue;
+            }
             references.put(reference.getBeanDefinitionName(), reference);
+        }
+    }
+
+    private static boolean isDirectJavaInvocation(DirectSourceInvocation invocation) {
+        if (invocation.setup() != null) {
+            return false;
+        }
+        try {
+            return sourceType(invocation.sources()) == SourceType.JAVA;
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -1160,9 +1237,13 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static void applyProperties(Map<String, String> properties, Map<String, String> previousProperties) {
         for (Map.Entry<String, String> entry : properties.entrySet()) {
-            previousProperties.put(entry.getKey(), System.getProperty(entry.getKey()));
-            System.setProperty(entry.getKey(), entry.getValue());
+            applyProperty(entry.getKey(), entry.getValue(), previousProperties);
         }
+    }
+
+    private static void applyProperty(String name, String value, Map<String, String> previousProperties) {
+        previousProperties.putIfAbsent(name, System.getProperty(name));
+        System.setProperty(name, value);
     }
 
     private static void restoreProperties(Map<String, String> previousProperties, Set<String> touched) {
@@ -1345,6 +1426,9 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static boolean testResourcesEnabled(DirectSourceInvocation invocation, boolean developmentMode) {
+        if (invocation.setup() == null) {
+            return DirectSourceDeclarationState.testResourcesRequired() && !testResourcesDisabled(invocation);
+        }
         return (invocation.test() || developmentMode) && !testResourcesDisabled(invocation);
     }
 

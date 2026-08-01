@@ -188,6 +188,15 @@ final class MavenClasspathResolver {
                                              Path localRepositoryPath,
                                              boolean offline,
                                              boolean forceUpdates) {
+        return resolveScopeDetails(model, scope, localRepositoryPath, offline, forceUpdates, false);
+    }
+
+    ResolvedScopeDetails resolveScopeDetails(PyprojectModel model,
+                                             InstallScope scope,
+                                             Path localRepositoryPath,
+                                             boolean offline,
+                                             boolean forceUpdates,
+                                             boolean includeTestResourcesServer) {
         List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates)) {
@@ -201,7 +210,13 @@ final class MavenClasspathResolver {
                 managedVersions.putIfAbsent(artifact.getGroupId() + ":" + artifact.getArtifactId(), artifact.getVersion());
             }
 
-            List<String> coordinates = coordinatesForScope(model, scope, managedVersions);
+            LinkedHashSet<String> coordinates = new LinkedHashSet<>(coordinatesForScope(model, scope, managedVersions));
+            if (scope == InstallScope.TEST_RESOURCES_SERVER && includeTestResourcesServer) {
+                String version = defaultTestResourcesVersion(model.pyronaut().testResources(), managedVersions);
+                if (version != null) {
+                    coordinates.add(TEST_RESOURCES_SERVER_MODULE + ":" + version);
+                }
+            }
             if (coordinates.isEmpty()) {
                 return new ResolvedScopeDetails(List.of(), null, List.of());
             }
@@ -666,7 +681,7 @@ final class MavenClasspathResolver {
         return parts[0] + ":" + parts[1];
     }
 
-    private boolean isTestResourcesDisabledViaEnvironment() {
+    boolean isTestResourcesDisabledViaEnvironment() {
         String value = envReader.apply("PYRONAUT_TEST_RESOURCES_DISABLED");
         if (value == null) {
             return false;

@@ -25,7 +25,7 @@ VS Code's Python pytest support invokes pytest directly and is not suitable for 
 Use the Pyronaut VS Code Test Explorer extension when running these tests from VS Code.
 See xref:configuration/vscodeExtension.adoc[].
 
-`pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts test resources by default, and delegates test discovery to pytest. Use `--disable-test-resources` for direct source tests when test resources are not needed.
+`pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts configured project test resources, and delegates test discovery to pytest. For direct sources, Test Resources starts only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. Use `--disable-test-resources` to disable either form of automatic orchestration.
 
 == Direct JUnit 5 Tests
 
@@ -42,9 +42,10 @@ Direct tests are compiled and executed in-memory through the JUnit Platform. Pyt
 
 Use `--continuous` or `-t` to rerun direct tests when application or test sources change. The console prints execution progress and a final test summary.
 
-Use `--report` to write JUnit XML and HTML reports. The default location is
-`__pyronaut__/reports/tests`; pass a directory after the option to choose another
-location:
+Direct tests write JUnit XML and HTML reports to
+`__pyronaut__/reports/tests` and print a terminal link to the HTML report.
+Container startup failures that prevent tests from starting are included in the
+report. Pass a directory after `--report` to choose another location:
 
 [source,bash]
 ----

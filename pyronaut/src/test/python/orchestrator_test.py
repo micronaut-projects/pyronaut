@@ -953,7 +953,14 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(2, len(started))
         self.assertEqual(
-            [str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=dev", str(source)],
+            [
+                str(native_dev),
+                "-Djava.home=/tmp/java-home",
+                f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}",
+                "-Dmicronaut.environments=dev",
+                "-Dpyronaut.dev.direct.command=dev",
+                str(source),
+            ],
             started[0],
         )
         self.assertTrue(first_process.terminated)
@@ -1312,6 +1319,7 @@ additional-resources = ["views"]
             )
 
         self.assertNotIn("-Dmicronaut.environments=dev", jvm_args)
+        self.assertIn("-Dpyronaut.dev.direct.command=dev", jvm_args)
         self.assertTrue(cli._has_micronaut_environments_property(["-Dmicronaut.environments=custom", str(source)]))  # noqa: SLF001
 
     def test_run_auto_restart_prefers_bundled_pyronaut_dev_native_executable_with_application_classpath(self):

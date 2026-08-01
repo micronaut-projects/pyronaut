@@ -275,7 +275,7 @@ Common options:
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 - `--control-panel`: enables the development Control Panel, overriding project configuration
-- `--disable-test-resources`: disables test resources for direct source execution; enabled by default
+- `--disable-test-resources`: disables configured project orchestration and conditional direct-source Test Resources inference
 
 Behavior:
 
@@ -297,7 +297,6 @@ Common options:
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
 - `--no-validate`: explicitly bypasses lifecycle config validation
-- `--disable-test-resources`: disables test resources for direct source execution; enabled by default
 
 Behavior:
 
@@ -305,6 +304,7 @@ Behavior:
 - Automatically performs install/process preflight before launching.
 - Does not start test resources by default.
 - Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS` when an external project-local server is configured.
+- Direct source execution is production-only and never infers, starts, or consumes Test Resources.
 - Uses the runtime classpath manifest plus processed classes.
 - Includes the configured resources directory and any `additional-resources` directories on the classpath when present.
 
@@ -318,6 +318,7 @@ Common options:
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
 - `--tests <selector>`: repeatable Gradle-like test selector filter
 - `--no-validate`: explicitly bypasses lifecycle config validation
+- `--disable-test-resources`: disables configured project orchestration and conditional direct-source Test Resources inference
 
 Behavior:
 
@@ -351,12 +352,11 @@ Use `-t` or `--continuous` to rerun direct tests after source changes:
 pyronaut test -t Foo.java -- FooTest.java
 ----
 
-Direct test output includes per-test progress and a final execution summary on the console. Direct mode does not write the project pytest reports.
-
-Pass `--report` to write JUnit XML and HTML reports. The default location is
-`__pyronaut__/reports/tests`; an alternate directory may follow the option. The
-option is also accepted by project-based `pyronaut test` and controls its report
-directory.
+Direct test output includes per-test progress and a final execution summary on the console. Direct mode writes JUnit XML and HTML reports to
+`__pyronaut__/reports/tests` and prints a terminal link to the HTML report. The
+report includes container startup failures that prevent tests from starting.
+Pass a directory after `--report` to choose another location. The option is also
+accepted by project-based `pyronaut test` and controls its report directory.
 
 [source,bash]
 ----
@@ -544,15 +544,15 @@ When omitted, the default is `.micronaut/test-resources/logs`.
 
 Lifecycle behavior:
 
-- `pyronaut dev`, `pyronaut run`, and `pyronaut test` automatically orchestrate test resources when enabled, but only `dev` enables auto-restart and development defaults.
-- Owned servers are started on demand and stopped when the owning run/test session exits.
+- `pyronaut dev` and `pyronaut test` automatically orchestrate test resources when enabled.
+- Owned servers are started on demand and stopped when the owning development/test session exits.
 - Shared servers (`shared-server = true`) are intentionally left running across command invocations.
-- Externally started servers are attached to when project-local settings already exist, but are not claimed or stopped by `run`/`test`.
+- Externally started servers are attached to when project-local settings already exist, but are not claimed or stopped by `dev`/`test`.
 - `pyronaut test-resources-server start` remains the way to keep a reusable server running until you explicitly stop it.
 
 Integration behavior:
 
-- `run`/`test` propagate `micronaut.test.resources.*` client settings to delegated JVMs via dedicated environment variables.
+- `dev`/`test` propagate `micronaut.test.resources.*` client settings to delegated JVMs via dedicated environment variables.
 - `validate-config`, `install`, `process`, and JVM `build` do not start or own test-resources orchestration.
 - `validate-config` removes stale inherited test-resources client settings for non-run/test scenarios to avoid pointing at dead servers.
 
@@ -693,7 +693,7 @@ In smoke/non-interactive paths, the TUI delegates through the same orchestrator 
 == Environment variables
 
 - `PYRONAUT_TRACE_DELEGATION=true`: prints delegated command lines.
-- `PYRONAUT_TEST_RESOURCES_DISABLED=true`: disables automatic test-resources orchestration for `run` and `test`.
+- `PYRONAUT_TEST_RESOURCES_DISABLED=true`: disables automatic test-resources orchestration for `dev` and `test`.
 - `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.
 - `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_VALIDATE_CONFIG_EXECUTABLE`, `PYRONAUT_TEST_RESOURCES_SERVER_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.

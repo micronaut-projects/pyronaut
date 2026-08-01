@@ -21,6 +21,7 @@ dependencies {
     implementation(libs.maven.resolver.transport.jdk)
     implementation(libs.maven.resolver.supplier.mvn3)
     implementation(libs.micronaut.test.resources.build.tools)
+    implementation(libs.micronaut.test.resources.core)
     implementation(libs.tomlj)
     implementation(libs.javaparser.core)
 

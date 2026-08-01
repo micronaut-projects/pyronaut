@@ -403,6 +403,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
@@ -415,6 +416,10 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     environment("PYRONAUT_E2E_FULL", "false")
     environment("PYRONAUT_E2E_MYSQL", "false")
     environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment(
+        "PYRONAUT_DEV_NATIVE_EXECUTABLE",
+        project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
+    )
     environment(
         "PYRONAUT_INSTALL_EXECUTABLE",
         project(":micronaut-pyronaut-install").layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install").get().asFile.absolutePath
@@ -504,6 +509,7 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
@@ -516,6 +522,10 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     environment("PYRONAUT_E2E_FULL", "true")
     environment("PYRONAUT_E2E_MYSQL", "true")
     environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment(
+        "PYRONAUT_DEV_NATIVE_EXECUTABLE",
+        project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
+    )
     environment(
         "PYRONAUT_INSTALL_EXECUTABLE",
         project(":micronaut-pyronaut-install").layout.buildDirectory.file("install/micronaut-pyronaut-install/bin/pyronaut-install").get().asFile.absolutePath

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import json
 import signal
@@ -365,7 +367,7 @@ class E2EFlowTest(unittest.TestCase):
             self.assertFalse(self._http_health_available(server_uri + "/health"))
 
     @unittest.skipUnless(_e2e_full_enabled(), "Set PYRONAUT_E2E_FULL=true to run full e2e flow tests")
-    def test_mysql_test_resources_resolution_during_run_and_test(self):
+    def test_mysql_test_resources_resolution_during_dev_and_test(self):
         self._require_mysql_e2e_environment()
         fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -377,7 +379,7 @@ class E2EFlowTest(unittest.TestCase):
             self._write_mysql_test_resources_config(project_dir)
 
             run_process = self._start_cli(
-                "run",
+                "dev",
                 "--project-dir",
                 str(project_dir),
                 extra_env={"MICRONAUT_SERVER_PORT": str(port), "PYRONAUT_TRACE_DELEGATION": "true"},
@@ -403,6 +405,57 @@ class E2EFlowTest(unittest.TestCase):
             self.assertEqual(0, test_result.returncode, test_result.stdout + test_result.stderr)
             self.assertIn("[test-resources] start owned server", test_result.stdout + test_result.stderr)
             self.assertIn("[test-resources] stop owned server", test_result.stdout + test_result.stderr)
+
+    @unittest.skipUnless(_e2e_full_enabled(), "Set PYRONAUT_E2E_FULL=true to run full e2e flow tests")
+    def test_direct_source_mysql_test_resources_repository_flow(self):
+        self._require_mysql_e2e_environment()
+        fixture = (
+            Path(__file__).resolve().parents[4]
+            / "src/main/docs/examples/direct-source/mysql/App.java"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            shutil.copy2(fixture, project_dir / "App.java")
+            port = self._allocate_port()
+            process = self._start_cli(
+                "dev",
+                "App.java",
+                "--port",
+                str(port),
+                capture_output=True,
+                cwd=project_dir,
+            )
+            server_uri = ""
+            try:
+                self.assertEqual(
+                    "0",
+                    self._wait_for_http(
+                        f"http://localhost:{port}/books/count",
+                        timeout_seconds=180,
+                    ),
+                )
+                server_uri, _ = self._wait_for_test_resources_server(project_dir)
+                request = urllib.request.Request(
+                    f"http://localhost:{port}/books/TheDispossessed",
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    self.assertEqual("1", response.read().decode("utf-8"))
+                self.assertEqual(
+                    "1",
+                    self._wait_for_http(f"http://localhost:{port}/books/count"),
+                )
+            except AssertionError as error:
+                output, _ = process.communicate(timeout=5)
+                raise AssertionError(f"{error}\n{output or ''}") from error
+            finally:
+                self._stop_process(process)
+            deadline = time.time() + 30
+            while time.time() < deadline and self._test_resources_settings_file(project_dir).exists():
+                time.sleep(0.25)
+            self.assertFalse(self._test_resources_settings_file(project_dir).exists())
+            if server_uri:
+                self.assertFalse(self._uri_port_open(server_uri))
 
     def _run_cli(
         self,
@@ -444,6 +497,7 @@ class E2EFlowTest(unittest.TestCase):
         *args: str,
         extra_env: dict[str, str] | None = None,
         capture_output: bool = False,
+        cwd: Path | None = None,
     ) -> subprocess.Popen[str]:
         stdout = subprocess.PIPE if capture_output else subprocess.DEVNULL
         stderr = subprocess.STDOUT if capture_output else subprocess.DEVNULL
@@ -453,6 +507,7 @@ class E2EFlowTest(unittest.TestCase):
             stderr=stderr,
             text=True,
             env=self._env(extra_env),
+            cwd=cwd,
             start_new_session=True,
         )
 

@@ -256,7 +256,7 @@ Trace delegated tool invocations while debugging:
 PYRONAUT_TRACE_DELEGATION=true pyronaut dev --project-dir /path/to/app
 ```
 
-Disable automatic Test Resources orchestration for `run` and `test`:
+Disable automatic Test Resources orchestration for `dev` and `test`:
 
 ```bash
 PYRONAUT_TEST_RESOURCES_DISABLED=true pyronaut test

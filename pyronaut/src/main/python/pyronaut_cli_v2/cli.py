@@ -898,6 +898,8 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}")
     if environment is not None and not _has_micronaut_environments_property(args):
         jvm_args.append(f"-Dmicronaut.environments={environment}")
+    if command == "dev":
+        jvm_args.append("-Dpyronaut.dev.direct.command=dev")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
         jvm_args.append("-Dmicronaut.control-panel.enabled=true")
         jvm_args.append("-Dmicronaut.control-panel.path=/control-panel")
@@ -4641,7 +4643,11 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("--config=<file-or-dir>", "Configuration file or directory for direct source execution"),
             ("--config-dir=<configDir>", "Processed application configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
-            ("--disable-test-resources", "Disable test resources for direct source execution (enabled by default)"),
+            *(
+                [("--disable-test-resources", "Disable configured and conditionally inferred Test Resources")]
+                if command == "dev"
+                else []
+            ),
             ("--verbose[=LOGGER]", "Enable verbose logging, optionally scoped to a logger name."),
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
@@ -4685,7 +4691,7 @@ def _print_test_usage(stream=None) -> None:
             ("--config=<file-or-dir>", "Configuration file or directory for direct source execution"),
             ("--config-dir=<configDir>", "Configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
-            ("--disable-test-resources", "Disable test resources for direct source execution (enabled by default)"),
+            ("--disable-test-resources", "Disable configured and conditionally inferred Test Resources"),
             ("--verbose[=LOGGER]", "Enable verbose logging, optionally scoped to a logger name."),
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
@@ -4696,7 +4702,7 @@ def _print_test_usage(stream=None) -> None:
             ("--property=<name=value>", "Set a Micronaut/system property for direct source execution"),
             ("--select-class=<selectClasses>", "Select class to execute"),
             ("--setup=<pyproject.toml>", "pyproject.toml to stage for direct source execution"),
-            ("--report[=<directory>]", "Write JUnit XML and HTML reports (default: __pyronaut__/reports/tests)"),
+            ("--report[=<directory>]", "Select the report directory (direct tests always report; default: __pyronaut__/reports/tests)"),
             ("--test-classes-dir=<testClassesDir>", "Processed test classes directory"),
             ("--tests=<tests>", "Select tests (Gradle-like). Repeatable."),
             ("--tests-dir=<testsDir>", "Python tests directory"),
