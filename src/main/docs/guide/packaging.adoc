@@ -83,6 +83,10 @@ metadata or explicit native-image configuration. See
 xref:pyronautCliV2.adoc#reachability-metadata-repository-native-mode[] for the
 metadata repository settings.
 
+Pyronaut derives application packages from processed output and preserves them
+in fully closed-world native images, keeping user classes available for runtime
+reflection without widening a reusable production base image.
+
 Use a container-native build to compile for Linux inside the configured native
 builder image:
 
@@ -104,6 +108,20 @@ Build a base image once after declaring the dependencies that should be shared:
 [source,bash]
 ----
 pyronaut build --base-image
+----
+
+Use the bundled language-specific runtime when no dependency needs to be
+included in a custom base:
+
+[source,bash]
+----
+pyronaut build --native --base-image=default
+----
+
+[source,toml]
+----
+[tool.pyronaut.build]
+base-image = "default"
 ----
 
 Later native builds reuse the configured base image:
@@ -151,3 +169,19 @@ base-image = "registry.example.com/acme/pyronaut-runtime:1"
 The final image then adds only the application configuration, processed
 classes, and schemas on top of the shared production runtime layer. For a
 custom layering arrangement, see xref:pyronautCliV2.adoc#custom-dockerfiles-with-a-reusable-base[].
+
+== Direct-source applications
+
+`pyronaut build` packages standalone sources through the same JVM, native,
+Docker, and base-image flows as a regular project:
+
+[source,bash]
+----
+pyronaut build App.java --native --name hello-java --version 1.0.0
+pyronaut build App.py --docker --base-image=default
+----
+
+Sources compile to disk under `__pyronaut__/direct-source-build`. Use
+`--setup pyproject.toml` for project configuration. Inline `@Dependency`
+declarations are resolved before packaging and become part of a custom base
+image's SBOM.

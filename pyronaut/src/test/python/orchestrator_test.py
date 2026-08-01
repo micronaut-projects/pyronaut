@@ -4661,6 +4661,106 @@ additional-test-resources = ["test-fixtures"]
         native_commands = [command for command, _ in executed if command and command[0] == "/tmp/pyronaut-native-build"]
         self.assertEqual(1, len(native_commands))
 
+    def test_native_build_uses_bundled_default_base_and_passes_user_packages(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "default-base"
+            classes = project_dir / "__pyronaut__" / "classes" / "example" / "app"
+            classes.mkdir(parents=True, exist_ok=True)
+            (classes / "Application.class").write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"demo\"\nversion = \"1.0\"\n\n[tool.pyronaut.build]\nmode = \"native\"\n",
+                encoding="utf-8",
+            )
+            base = project_dir / "bundled-pyronaut-run"
+            base.write_text("binary", encoding="utf-8")
+            with patch.object(cli, "_bundled_default_base_image", return_value=base):
+                exit_code = cli.run(
+                    ["build", "--base-image=default", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertFalse(any(command[0] == "/tmp/pyronaut-native-build" for command, _ in executed))
+
+    def test_native_build_passes_processed_user_packages_to_native_builder(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if command_line[0] == "/tmp/pyronaut-native-build":
+                output = Path(command_line[command_line.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("binary", encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "user-packages"
+            classes = project_dir / "__pyronaut__" / "classes" / "example" / "app"
+            classes.mkdir(parents=True, exist_ok=True)
+            (classes / "Application.class").write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text("[tool.pyronaut.build]\nmode = \"native\"\n", encoding="utf-8")
+            exit_code = cli.run(
+                ["build", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, exit_code)
+        native_command = next(command for command, _ in executed if command[0] == "/tmp/pyronaut-native-build")
+        self.assertIn("--user-package", native_command)
+        self.assertIn("example.app", native_command)
+
+    def test_build_direct_source_creates_disk_backed_staging_project(self):
+        captured = {}
+
+        def fake_delegate(command, args, runner, resolver, **kwargs):
+            self.assertEqual("install", command)
+            project_dir = Path(args[args.index("--project-dir") + 1])
+            cache = project_dir / "__pyronaut__"
+            cache.mkdir(parents=True, exist_ok=True)
+            (cache / "resolved-build-dependencies").write_text("/tmp/build.jar\n", encoding="utf-8")
+            (cache / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+            (cache / "resolved-test-dependencies").write_text("/tmp/test.jar\n", encoding="utf-8")
+            return 0
+
+        def fake_build(**kwargs):
+            captured.update(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            source = project_dir / "App.java"
+            source.write_text("package example.app; class App {}\n", encoding="utf-8")
+            with patch.object(cli, "_delegate", side_effect=fake_delegate), patch.object(cli, "_run_build", side_effect=fake_build):
+                exit_code = cli.run(
+                    ["build", "App.java", "--native", "--name", "hello", "--version", "1.2.3", "--project-dir", str(project_dir)],
+                    runner_with_env=lambda command, env: 0,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+
+            staging_project = Path(captured["args"][captured["args"].index("--project-dir") + 1])
+            self.assertEqual(0, exit_code)
+            self.assertEqual(("hello", "1.2.3"), captured["project_metadata"])
+            self.assertFalse(captured["preflight_install"])
+            self.assertTrue((staging_project / "src-java" / "App.java").is_file())
+            self.assertTrue((staging_project / "__pyronaut__" / "resolved-runtime-dependencies").is_file())
+            self.assertTrue((staging_project / "__pyronaut__" / "resolved-test-dependencies").is_file())
+
     def test_build_mode_flag_with_separate_value_uses_native(self):
         executed = []
 

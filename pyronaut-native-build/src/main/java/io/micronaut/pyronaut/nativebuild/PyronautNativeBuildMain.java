@@ -84,8 +84,14 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     @CommandLine.Option(names = "--base-image", description = "Build a reusable Crema runtime image")
     boolean baseImage;
 
+    @CommandLine.Option(names = "--default-base-image", description = "Build the bundled Crema runtime without project dependencies")
+    boolean defaultBaseImage;
+
     @CommandLine.Option(names = "--include-python", description = "Include the Python and Truffle production runtime")
     boolean includePython;
+
+    @CommandLine.Option(names = "--user-package", description = "Application package to preserve in a closed-world native image")
+    List<String> userPackages = new ArrayList<>();
 
     @CommandLine.Unmatched
     List<String> passthroughNativeImageArgs = new ArrayList<>();
@@ -136,8 +142,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             }
 
             List<Path> runtimeClasspath = readManifest(root, runtimeManifest);
-            if (baseImage) {
-                return buildBaseImage(root, runtimeClasspath);
+            if (baseImage || defaultBaseImage) {
+                return buildBaseImage(root, runtimeClasspath, defaultBaseImage);
             }
             List<Path> nativeClasspath = new ArrayList<>(runtimeClasspath);
             nativeClasspath.addAll(pyronautRunClasspathEntries());
@@ -172,7 +178,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             command.add("--no-fallback");
             command.add("--initialize-at-run-time=io.netty");
             command.add("-H:Preserve=package=io.micronaut.http.*");
-            addUserPackagePreservation(command, classesDir);
+            addUserPackagePreservation(command, classesDir, userPackages);
             if (!configurationDirs.isEmpty()) {
                 command.add("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
             }
@@ -201,9 +207,13 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
     }
 
-    private Integer buildBaseImage(Path root, List<Path> runtimeClasspath) throws IOException, InterruptedException {
+    private Integer buildBaseImage(Path root,
+                                   List<Path> runtimeClasspath,
+                                   boolean bundledOnly) throws IOException, InterruptedException {
         List<Path> runnerClasspath = pyronautRunClasspathEntries(includePython);
-        List<Path> baseClasspath = new ArrayList<>(excludeRunnerProvidedModules(runtimeClasspath, runnerClasspath));
+        List<Path> baseClasspath = bundledOnly
+            ? new ArrayList<>()
+            : new ArrayList<>(excludeRunnerProvidedModules(runtimeClasspath, runnerClasspath));
         baseClasspath.addAll(runnerClasspath);
         PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
             root.resolve(output).normalize(),
@@ -465,8 +475,19 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         return generatedDir;
     }
 
-    private static void addUserPackagePreservation(List<String> command, Path classesDir) throws IOException {
+    private static void addUserPackagePreservation(List<String> command,
+                                                   Path classesDir,
+                                                   List<String> configuredPackages) throws IOException {
         Set<String> packages = new TreeSet<>();
+        for (String configuredPackage : configuredPackages) {
+            if (configuredPackage != null && !configuredPackage.isBlank()) {
+                packages.add(configuredPackage.trim());
+            }
+        }
+        if (!packages.isEmpty()) {
+            addPackagePreservation(command, packages);
+            return;
+        }
         try (var stream = Files.walk(classesDir)) {
             stream.filter(Files::isRegularFile)
                 .filter(path -> path.getFileName().toString().endsWith(".class"))
@@ -477,6 +498,10 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 .filter(name -> !name.isBlank())
                 .forEach(packages::add);
         }
+        addPackagePreservation(command, packages);
+    }
+
+    private static void addPackagePreservation(List<String> command, Set<String> packages) {
         for (String packageName : packages) {
             command.add("-H:Preserve=package=" + packageName + ".*");
         }

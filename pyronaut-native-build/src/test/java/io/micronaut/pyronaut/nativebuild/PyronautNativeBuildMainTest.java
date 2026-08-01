@@ -99,6 +99,46 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void usesExplicitUserPackagesForClosedWorldImagesOnly() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        assertEquals(0, new CommandLine(command).execute(
+            "--project-dir", project.toString(),
+            "--user-package", "example.app",
+            "--user-package", "example.app",
+            "--user-package", "example.other"
+        ));
+        List<String> nativeCommand = executed.getFirst();
+        assertEquals(1, nativeCommand.stream().filter("-H:Preserve=package=example.app.*"::equals).count());
+        assertTrue(nativeCommand.contains("-H:Preserve=package=example.other.*"));
+
+        executed.clear();
+        Path runtimeJar = createJar(project.resolve("__pyronaut__/m2-repository/example/runtime.jar"));
+        overwriteRuntimeManifest(project, List.of(runtimeJar.toString()));
+        assertEquals(0, new CommandLine(command).execute(
+            "--project-dir", project.toString(),
+            "--base-image",
+            "--user-package", "example.app"
+        ));
+        assertFalse(executed.getFirst().contains("-H:Preserve=package=example.app.*"));
+    }
+
+    @Test
     void buildsReusableCremaBaseImageWithReportAndSbom() throws Exception {
         Path project = prepareProject("""
             [project]
@@ -136,6 +176,35 @@ class PyronautNativeBuildMainTest {
         assertFalse(nativeCommand.contains("--no-fallback"));
         assertTrue(nativeCommand.contains(PyronautRunMain.class.getName()));
         assertTrue(nativeCommand.get(nativeCommand.indexOf("-cp") + 1).contains(runtimeJar.toString()));
+    }
+
+    @Test
+    void buildsBundledBaseWithoutProjectRuntimeDependencies() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+        Path runtimeJar = createJar(project.resolve("__pyronaut__/m2-repository/example/runtime.jar"));
+        overwriteRuntimeManifest(project, List.of(runtimeJar.toString()));
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        assertEquals(0, new CommandLine(command).execute(
+            "--project-dir", project.toString(),
+            "--default-base-image"
+        ));
+        String classpath = executed.getFirst().get(executed.getFirst().indexOf("-cp") + 1);
+        assertFalse(classpath.contains(runtimeJar.toString()));
     }
 
     @Test

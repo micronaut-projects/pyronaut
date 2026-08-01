@@ -150,7 +150,7 @@ public final class PyprojectConfigSpec {
     );
     public static final FieldSpec PYRONAUT_BUILD_BASE_IMAGE = string(
         "tool.pyronaut.build.base-image",
-        "Local reusable Pyronaut native runtime image path.",
+        "Local reusable Pyronaut native runtime image path, or 'default' for the bundled language-specific production runtime.",
         null,
         List.of(),
         List.of()

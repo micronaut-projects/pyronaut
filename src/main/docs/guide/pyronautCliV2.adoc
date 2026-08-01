@@ -392,7 +392,9 @@ Common options:
 - `--docker`: build a container image instead of a wheel/native binary on the host
 - `--static`: static native container build; only valid with `--native --docker`
 - `--base-image`: build a reusable Crema production runtime image
+- `--base-image=default`: package against the bundled Java or Python Crema runtime
 - `--base-image-output <path>`: choose the local output for `--base-image`
+- `--name <name>` / `--version <version>`: package metadata for direct Java or Python sources
 - `--verbose` (native mode, forwarded to `native-image`)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 
@@ -450,6 +452,12 @@ dependencies declared in `pyproject.toml` are available to subsequent
 application builds. Base-image builds enable the native-image build report and
 SBOM export; inspect the generated report to verify included dependencies.
 
+Use `--base-image=default` when application dependencies do not need to be
+included in a custom base. It selects the bundled `pyronaut-run` image for Java
+applications and `pyronaut-run-python` for Python applications. The equivalent
+`pyproject.toml` setting is `base-image = "default"`. Bare `--base-image`
+continues to create a custom base and export its report and SBOM.
+
 [source,toml]
 ----
 [tool.pyronaut.build]
@@ -465,6 +473,22 @@ pyronaut build
 Without `base-image`, Pyronaut builds an application-specific native binary.
 With it, the later native build packages the configured reusable launcher and
 the processed application classes separately.
+
+==== Direct-source packaging
+
+Package standalone Java or Python source files or directories directly:
+
+[source,bash]
+----
+pyronaut build App.java --native --name example-app --version 1.0.0
+pyronaut build App.py --docker --base-image=default
+----
+
+Sources compile into a disk-backed project under `__pyronaut__/direct-source-build`.
+Without `--name` and `--version`, the source stem and `0.1.0` are used.
+`--setup pyproject.toml` supplies normal Pyronaut configuration. Inline
+`@Dependency` declarations are resolved before packaging and are included in
+a custom base image's SBOM.
 
 For Docker, `pyronaut build --native --docker --base-image` first creates and
 tags `<image-name>:<project-version>-native-base` and then creates the final
