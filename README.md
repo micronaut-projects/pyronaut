@@ -20,7 +20,11 @@ that make Python applications work with Micronaut:
   generates configuration schemas, and creates IDE stubs.
 - `pyronaut-processor`: processes Python and Java sources into Micronaut
   metadata/classes.
+- `pyronaut-dev`: runs applications in development mode with automatic
+  install/process preflight.
 - `pyronaut-run` and `pyronaut-test`: run applications and pytest-backed tests.
+- `pyronaut-create`: generates new Pyronaut applications from project
+  templates.
 - `pyronaut-validate-config`: validates Micronaut configuration for run, test,
   and production scenarios.
 - `pyronaut-test-resources-server`: manages Micronaut Test Resources for local
@@ -38,7 +42,7 @@ The full user guide lives in `src/main/docs/guide`.
 
 ```bash
 pyronaut [--version] [--tui [--smoke|--non-interactive]] \
-  <install|process|run|test|build|validate-config|test-resources-server> [args...]
+  <install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ```
 
 Current platform support is macOS and Linux. Commands that delegate to the JVM
