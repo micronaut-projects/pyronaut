@@ -20,7 +20,7 @@ docker-java = "3.4.1"
 micronaut-test = "5.0.1"
 micronaut-data = "5.1.0"
 javaparser = "3.28.2"
-graalvm-reachability-metadata = "1.1.5"
+graalvm-reachability-metadata = "1.1.6"
 
 [libraries]
 micronaut-serde = { module = "io.micronaut.serde:micronaut-serde-bom", version.ref = "micronaut-serde" }
