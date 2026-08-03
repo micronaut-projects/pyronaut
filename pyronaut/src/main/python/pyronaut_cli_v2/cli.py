@@ -2149,6 +2149,11 @@ def _prepare_build_wheel_staging(
     _copy_layout_dir_if_exists(project_dir, layout.resources_dir, app_dir)
     for resource_dir in layout.additional_resources_dirs:
         _copy_layout_dir_if_exists(project_dir, resource_dir, app_dir)
+    # The packaged launcher resolves runtime configuration relative to its
+    # embedded application directory, so retain the project configuration.
+    project_pyproject = project_dir / "pyproject.toml"
+    if project_pyproject.is_file():
+        shutil.copy2(project_pyproject, app_dir / "pyproject.toml")
 
     if mode == "native":
         binary_name = project_name
