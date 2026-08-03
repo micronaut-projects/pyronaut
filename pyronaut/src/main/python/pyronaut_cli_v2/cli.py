@@ -3491,7 +3491,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate", "--docker", "--static", "--base-image", "--base-image=default"}:
             index += 1
             continue
-        if token in {"--mode", "--main-class", "--project-dir", "--base-image-output"}:
+        if token in {"--mode", "--main-class", "--project-dir", "--base-image-output", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src"}:
             index += 1
             if index < len(args):
                 index += 1
@@ -3504,6 +3504,13 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
             or token.startswith("--docker=")
             or token.startswith("--static=")
             or token.startswith("--base-image-output=")
+            or token.startswith("--local-repository=")
+            or token.startswith("--local-repo=")
+            or token.startswith("--setup=")
+            or token.startswith("--name=")
+            or token.startswith("--version=")
+            or token.startswith("--python-src=")
+            or token.startswith("--java-src=")
         ):
             index += 1
             continue
