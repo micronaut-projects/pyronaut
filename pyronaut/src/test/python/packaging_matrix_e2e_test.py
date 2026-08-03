@@ -14,7 +14,7 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 HELLO_BODY = "Hello World"
 SCENARIOS = (
     "jvm-wheel", "native-wheel", "default-base-wheel", "custom-base-wheel",
@@ -131,7 +131,7 @@ class PackagingMatrixRunner:
         direct = fixture.startswith("direct-")
         language = "python" if fixture.endswith("python") else "java"
         image = f"pyronaut-e2e-{_slug(fixture)}-{_slug(scenario)}"
-        self._configure_docker(project, image)
+        self._configure_docker(project, image, language)
         if scenario in {"custom-base-wheel", "custom-base-docker"}:
             base = project / "__pyronaut__" / "e2e-base" / language
             base_args = self._build_args(project, direct, language, "native", docker=scenario.endswith("docker"), base=True, output=base)
@@ -173,7 +173,7 @@ class PackagingMatrixRunner:
             args.append("--base-image=default")
         if output is not None:
             args += ["--base-image-output", str(output)]
-        args += ["--project-dir", str(project), "--no-validate"]
+        args += ["--project-dir", str(project), "--local-repository", str(project / "__pyronaut__" / "m2-repository"), "--no-validate"]
         setup = project / "pyproject.toml"
         if direct and setup.exists():
             args += ["--setup", str(setup)]
@@ -267,6 +267,7 @@ class PackagingMatrixRunner:
                 "package e2e;\n"
                 "import io.micronaut.http.annotation.Controller;\n"
                 "import io.micronaut.http.annotation.Get;\n"
+                "@pyronaut.build.Dependency(group = \"org.apache.commons\", module = \"commons-lang3\", version = \"3.20.0\")\n"
                 "@Controller public class App {\n"
                 '  @Get("/hello") public String hello() { return "Hello World"; }\n}\n',
                 encoding="utf-8",
@@ -301,13 +302,17 @@ class PackagingMatrixRunner:
             )
 
     @staticmethod
-    def _configure_docker(project: Path, image: str) -> None:
+    def _configure_docker(project: Path, image: str, language: str) -> None:
         pyproject = project / "pyproject.toml"
         text = pyproject.read_text(encoding="utf-8") if pyproject.exists() else ""
         if "[project]" not in text:
             text += f'\n[project]\nname = "{_project_name(project)}"\nversion = "0.1.0"\n'
         if "[tool.pyronaut]" not in text:
             text += "\n[tool.pyronaut]\nrepositories = [\"mavenCentral\"]\n"
+        if "[tool.pyronaut.sources]" not in text:
+            source_key = "python" if language == "python" else "java"
+            source_dir = "src" if language == "python" else "src-java"
+            text += f"\n[tool.pyronaut.sources]\n{source_key} = \"{source_dir}\"\n"
         if "[tool.pyronaut.build.docker]" not in text:
             text += "\n[tool.pyronaut.build.docker]\n"
         if re.search(r"^image-name\s*=", text, re.MULTILINE):

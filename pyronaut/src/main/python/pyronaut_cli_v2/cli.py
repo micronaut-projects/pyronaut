@@ -2280,6 +2280,12 @@ def _read_pyproject_build_base_image(project_dir: Path) -> str | None:
 def _is_python_runtime_project(project_dir: Path) -> bool:
     if not (project_dir / "pyproject.toml").is_file() or _is_external_build_project(project_dir):
         return False
+    # An explicitly configured Java source layout is authoritative. Direct
+    # Java builds may still resolve Micronaut's Python runtime transitively,
+    # which must not make the launcher/base-image selection Python-specific.
+    sources = _read_pyproject_sources(project_dir)
+    if sources.java_source_dir != _DEFAULT_JAVA_SOURCE_DIR and sources.python_source_dir == _DEFAULT_PYTHON_SOURCE_DIR:
+        return False
     runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
     if runtime_manifest.is_file():
         with contextlib.suppress(OSError):
