@@ -146,7 +146,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 return buildBaseImage(root, runtimeClasspath, defaultBaseImage);
             }
             List<Path> nativeClasspath = new ArrayList<>(runtimeClasspath);
-            nativeClasspath.addAll(pyronautRunClasspathEntries());
+            // Keep the Java launcher free of Python/Truffle and logback
+            // artifacts. The Python launcher opts in through --include-python.
+            nativeClasspath.addAll(pyronautRunClasspathEntries(includePython));
             removeDuplicateVirtualFileSystemEntries(nativeClasspath, runtimeClasspath.size());
             nativeClasspath.add(classesDir);
             Path configDir = root.resolve(DEFAULT_CONFIG_DIR).normalize();
