@@ -2722,6 +2722,7 @@ def _run_docker_build(
             "PYRONAUT_BUILD_MODE": mode,
             "PYRONAUT_NATIVE_STATIC": "true" if static_native else "false",
         }
+        build_args.update({name: value for name in ("HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "ftp_proxy", "no_proxy") if (value := os.environ.get(name))})
         if mode == "native":
             builder_image = docker_config.get(
                 "static_native_builder_image" if static_native else "native_builder_image"
