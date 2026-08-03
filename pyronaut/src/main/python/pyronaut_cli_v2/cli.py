@@ -1541,6 +1541,8 @@ def _run_preflight(
             return install_code
 
     process_args = ["--project-dir", project_dir]
+    layout = _read_pyproject_sources(Path(project_dir))
+    process_args.extend(["--python-src", layout.python_source_dir, "--java-src", layout.java_source_dir])
     if process_pass is not None:
         process_args.extend(["--pass", process_pass])
     if no_cache:
@@ -1671,6 +1673,13 @@ def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Pa
         result.append(token)
         index += 1
     result.extend(["--project-dir", str(staging_project)])
+    # Direct-source staging owns the source layout. Pass it explicitly to the
+    # processor so a setup overlay or an older processor cannot fall back to
+    # the Python default (`src`) for Java applications.
+    if language == "java":
+        result.extend(["--java-src", _DEFAULT_JAVA_SOURCE_DIR])
+    else:
+        result.extend(["--python-src", _DEFAULT_PYTHON_SOURCE_DIR])
     if _extract_build_base_image(args) and _extract_build_base_image_output(args) is None:
         launcher = PYTHON_RUN_EXECUTABLE if language == "python" else COMMAND_TO_EXECUTABLE["run"]
         result.extend(["--base-image-output", str(root / "__pyronaut__" / "native" / "base" / launcher)])
@@ -1748,6 +1757,12 @@ def _run_direct_source_build(
         source_dir = layout.python_source_dir if language == "python" else layout.java_source_dir
         destination = staging_project / source_dir
         destination.mkdir(parents=True, exist_ok=True)
+        # The processor accepts both language roots and expects each declared
+        # root to exist. Direct-source staging only has one language, so create
+        # the empty companion root to prevent a misleading missing-`src`
+        # failure during Java-only builds (and vice versa).
+        (staging_project / layout.python_source_dir).mkdir(parents=True, exist_ok=True)
+        (staging_project / layout.java_source_dir).mkdir(parents=True, exist_ok=True)
         for source in source_files:
             shutil.copy2(source, destination / source.name)
 
