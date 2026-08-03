@@ -2924,7 +2924,7 @@ def main() -> None:
     try:
         command_line, env = pyronaut_cli._build_java_delegate_invocation(
             "run",
-            ["--project-dir", str(PROJECT_DIR), "--main-class", MAIN_CLASS, *sys.argv[1:]],
+            ["--project-dir", str(PROJECT_DIR), *sys.argv[1:]],
             pyronaut_cli._resolve_executable,
             java_home_provider=lambda: pyronaut_cli._ensure_graalvm_java_home(PROJECT_DIR),
         )
