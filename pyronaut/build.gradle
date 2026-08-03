@@ -155,6 +155,11 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
 }
 
 tasks.register("prepareWheelSources", Sync) {
+    // The SDK embeds the production launchers. Keep their distributions fresh
+    // whenever the wheel is rebuilt so runtime fixes are not masked by a
+    // stale installDist output.
+    dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-run-python").tasks.named("installDist"))
     from("src/main/python") {
         into("src")
     }
