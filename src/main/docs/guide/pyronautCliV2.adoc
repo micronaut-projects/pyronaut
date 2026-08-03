@@ -517,6 +517,26 @@ runtime image. The base image contains `/opt/pyronaut/bin/pyronaut-run` (or
 `pyronaut-run-python`); the application layer uses it with
 `--project-dir /app`.
 
+==== Production packaging matrix
+
+The installed production wheel can be exercised against direct sources and
+isolated copies of Gradle, Maven, and Python projects with the opt-in matrix:
+
+[source,bash]
+----
+PYRONAUT_PACKAGING_E2E=true \
+  PYRONAUT_PACKAGING_E2E_PYTHON=/path/to/graalpy \
+  PYTHONPATH=pyronaut/src/test/python \
+  python -m unittest packaging_matrix_e2e_test
+----
+
+The matrix runs JVM, native, default-base, custom-base, and Docker packaging
+sequentially. It uses isolated copies under `~/dev/pyronaut-testing` by
+default. Set `PYRONAUT_PACKAGING_E2E_WORKSPACE` to change that location and
+`PYRONAUT_PACKAGING_E2E_CLI` to select the installed `pyronaut` executable.
+Results, command logs, and `follow-up-issues.md` are written to
+`build/packaging-e2e`.
+
 ==== Custom Dockerfiles with a reusable base
 
 Custom Dockerfiles receive `PYRONAUT_BASE_IMAGE` as a build argument. A
