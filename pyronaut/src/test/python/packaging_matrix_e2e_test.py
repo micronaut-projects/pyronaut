@@ -67,16 +67,20 @@ class PackagingMatrixRunner:
         self.results: list[ScenarioResult] = []
         self.port = 19080
         self.last_command = ""
+        self.preflight_error = ""
 
     @property
     def report_path(self) -> Path:
         return self.output / "summary.md"
 
     def run(self) -> list[ScenarioResult]:
-        self._preflight()
         self.output.mkdir(parents=True, exist_ok=True)
         self.logs.mkdir(parents=True, exist_ok=True)
         self.workspace.mkdir(parents=True, exist_ok=True)
+        try:
+            self._preflight()
+        except Exception as exc:  # keep independent non-Docker cases runnable
+            self.preflight_error = f"{type(exc).__name__}: {exc}"
         for fixture, source in self._fixtures().items():
             for scenario in SCENARIOS:
                 self._run_scenario(fixture, source, scenario)
@@ -109,6 +113,8 @@ class PackagingMatrixRunner:
         log = self.logs / f"{fixture}-{scenario}.log"
         result = ScenarioResult(fixture, scenario, "failed", log=str(log))
         try:
+            if self.preflight_error and scenario.endswith("docker"):
+                raise BlockedScenario(f"preflight unavailable: {self.preflight_error}")
             if project.exists():
                 shutil.rmtree(project)
             project.mkdir(parents=True)
