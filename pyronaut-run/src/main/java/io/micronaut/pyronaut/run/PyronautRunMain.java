@@ -165,9 +165,17 @@ public final class PyronautRunMain implements Callable<Integer> {
                 layout = resolveExternalProjectLayout(root, classesDir, external);
                 model = null;
             } else {
-                model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
-                Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
-                layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
+                Path projectFile = root.resolve(PyprojectModelReader.FILE_NAME);
+                if (Files.isRegularFile(projectFile)) {
+                    model = modelReader.readFile(projectFile);
+                    Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
+                    layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
+                } else {
+                    // Packaged wheels and Docker images contain compiled output
+                    // and runtime metadata, not the source project's TOML.
+                    model = null;
+                    layout = resolveProjectLayout(root, classesDir, root.resolve(configDir).normalize(), List.of());
+                }
             }
             applyDevelopmentOpenApiExposure(root, configDir);
             applyConfigurationValidationDefaults();
