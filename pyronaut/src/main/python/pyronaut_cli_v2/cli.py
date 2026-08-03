@@ -2953,7 +2953,7 @@ BINARY = PROJECT_DIR / "__pyronaut__" / "native" / {binary_name!r}
 def main() -> None:
     if not BINARY.exists():
         raise SystemExit(f"Error: binary '{{BINARY.name}}' not found")
-    raise SystemExit(subprocess.run([str(BINARY), *sys.argv[1:]]).returncode)
+    raise SystemExit(subprocess.run([str(BINARY), "--project-dir", str(PROJECT_DIR), *sys.argv[1:]]).returncode)
 """
 
 
