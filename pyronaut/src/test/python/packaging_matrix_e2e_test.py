@@ -202,6 +202,13 @@ class PackagingMatrixRunner:
         python = os.environ.get("PYRONAUT_PACKAGING_E2E_PYTHON", "python3")
         subprocess.run([python, "-m", "venv", str(venv)], check=True, timeout=180)
         pip = venv / "bin" / "pip"
+        sdk_wheel = os.environ.get("PYRONAUT_PACKAGING_E2E_SDK_WHEEL")
+        if sdk_wheel is None:
+            candidates = sorted((ROOT / "pyronaut" / "build" / "wheel" / "dist").glob("pyronaut-*.whl"))
+            sdk_wheel = str(candidates[-1]) if candidates else None
+        if sdk_wheel is None:
+            raise RuntimeError("Pyronaut SDK wheel not found; set PYRONAUT_PACKAGING_E2E_SDK_WHEEL")
+        subprocess.run([str(pip), "install", "--no-deps", sdk_wheel], check=True, timeout=600)
         subprocess.run([str(pip), "install", "--no-deps", str(wheel)], check=True, timeout=600)
         launcher = venv / "bin" / _project_name(project)
         if not launcher.exists():
