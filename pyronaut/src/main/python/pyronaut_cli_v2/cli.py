@@ -3514,6 +3514,12 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         ):
             index += 1
             continue
+        # Direct-source staging can leave the generated project path as a
+        # positional token after option normalization. It is not a native-
+        # image argument and must never be interpreted as the main class.
+        if token.startswith("/") and Path(token).exists():
+            index += 1
+            continue
         passthrough.append(token)
         index += 1
     return passthrough
