@@ -1699,6 +1699,28 @@ def _write_direct_build_pyproject(target: Path, project_name: str, project_versi
     )
 
 
+def _ensure_direct_java_annotation_dependency(path: Path) -> None:
+    """Make inline Java @pyronaut.build declarations compilable."""
+    text = path.read_text(encoding="utf-8")
+    coordinate = '"io.micronaut.pyronaut:micronaut-pyronaut-build-annotations"'
+    if coordinate in text and re.search(r"(?m)^runtime\s*=", text):
+        return
+    section = "[tool.pyronaut.dependencies]"
+    if section not in text:
+        text = text.rstrip() + f"\n\n{section}\nruntime = [{coordinate}]\nbuild = [{coordinate}]\n"
+    else:
+        match = re.search(r"(?ms)^build\s*=\s*\[(.*?)^\]", text)
+        if match:
+            body = match.group(1).rstrip()
+            addition = (",\n  " if body else "\n  ") + coordinate + "\n"
+            text = text[:match.start(1)] + body + addition + text[match.end(1):]
+        else:
+            text = text.rstrip() + f"\nruntime = [{coordinate}]\nbuild = [{coordinate}]\n"
+        if not re.search(r"(?m)^runtime\s*=", text):
+            text = text.replace(section, section + f"\nruntime = [{coordinate}]", 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def _run_direct_source_build(
     *,
     args: Sequence[str],
@@ -1748,6 +1770,8 @@ def _run_direct_source_build(
         project_version = configured_version or (setup_version if setup is not None else "0.1.0")
         if not (staging_project / "pyproject.toml").exists():
             _write_direct_build_pyproject(staging_project / "pyproject.toml", project_name, project_version, language)
+        if language == "java":
+            _ensure_direct_java_annotation_dependency(staging_project / "pyproject.toml")
         layout = _read_pyproject_sources(staging_project)
         if setup is not None:
             for resource_dir in (layout.resources_dir, *layout.additional_resources_dirs):
