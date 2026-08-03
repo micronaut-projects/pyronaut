@@ -124,6 +124,7 @@ class PackagingMatrixRunner:
             result.status, result.detail = "blocked", str(exc)
         except Exception as exc:  # noqa: BLE001 - every matrix case must be reported
             result.detail = f"{type(exc).__name__}: {exc}"
+        result.command = self.last_command
         result.elapsed_seconds = round(time.monotonic() - started, 2)
         self.results.append(result)
 
