@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.run.python;
 
 import io.micronaut.pyronaut.run.PyronautRunConfigurer;
+import io.micronaut.pyronaut.run.PythonPyronautRunConfigurer;
 import org.junit.jupiter.api.Test;
 
 import java.util.ServiceLoader;

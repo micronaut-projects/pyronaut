@@ -13,11 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.pyronaut.run.python;
+package io.micronaut.pyronaut.run;
 
 import io.micronaut.core.annotation.Internal;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
-import io.micronaut.pyronaut.run.PyronautRunConfigurer;
 
 /** Python and Logback integration for {@code pyronaut-run-python}. */
 @Internal
