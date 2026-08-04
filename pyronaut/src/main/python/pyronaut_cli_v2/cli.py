@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+from functools import lru_cache
 import hashlib
 import json
 import shlex
@@ -15,6 +16,8 @@ import platform
 import re
 import tarfile
 import tempfile
+import zipfile
+import xml.etree.ElementTree as ET
 import threading
 import time
 import urllib.parse
@@ -672,7 +675,7 @@ def _delegate(
                 return PRECONDITION_FAILED
             env = _merge_env_overrides(env, env_overrides)
             env = _apply_project_virtualenv(env, project_dir)
-            command_line = [executable_path, *args]
+            command_line = [executable_path, *[value for value in args if value not in {"--jvm", "--native"}]]
             if _delegation_trace_enabled():
                 print(shlex.join(command_line), file=sys.stderr)
             return runner(command_line, env)
@@ -698,9 +701,10 @@ def _delegate(
             return runner(command_line, env)
 
     if command in {"dev", "run", "test"}:
+        launcher_args = [value for value in args if value not in {"--jvm", "--native"}]
         return _delegate_via_java(
             command,
-            args,
+            launcher_args,
             runner,
             resolver,
             debug_vm=debug_vm,
@@ -744,7 +748,7 @@ def _delegate_direct_source(
     *,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    executable_path = _resolve_pyronaut_dev_native_executable(resolver)
+    executable_path = _resolve_direct_source_dev_executable(args, resolver)
     if executable_path is None:
         print("Missing native delegated executable: pyronaut-dev", file=sys.stderr)
         return PRECONDITION_FAILED
@@ -763,6 +767,7 @@ def _delegate_direct_source(
     forwarded_args = [
         "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
         for value in args
+        if value not in {"--jvm", "--native"}
     ]
     command_line = [executable_path, *jvm_args, *forwarded_args]
     if _delegation_trace_enabled():
@@ -792,7 +797,7 @@ def _run_direct_source(
             java_home_provider=java_home_provider,
         )
     try:
-        executable_path = _resolve_pyronaut_dev_native_executable(resolver)
+        executable_path = _resolve_direct_source_dev_executable(args, resolver)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -826,6 +831,17 @@ def _run_direct_source(
     )
 
 
+def _resolve_direct_source_dev_executable(args: Sequence[str], resolver: Callable[[str], str | None]) -> str | None:
+    """Select the direct-source launcher, honoring the command-line override."""
+    mode = _extract_build_mode_flag(args)
+    if mode is None and (Path.cwd() / "pyproject.toml").is_file():
+        mode = _read_pyproject_toolchain_type(Path.cwd())
+    if mode == TOOLCHAIN_TYPE_JVM:
+        bundled = _bundled_executable(DEV_NATIVE_EXECUTABLE)
+        return str(bundled) if bundled is not None and bundled.exists() else resolver(DEV_NATIVE_EXECUTABLE)
+    return _resolve_pyronaut_dev_native_executable(resolver)
+
+
 def _run_direct_source_with_auto_restart(
     executable_path: str,
     command: str,
@@ -849,6 +865,7 @@ def _run_direct_source_with_auto_restart(
     forwarded_args = [
         "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
         for value in args
+        if value not in {"--jvm", "--native"}
     ]
     command_line = [
         executable_path,
@@ -939,6 +956,9 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append("-Dmicronaut.control-panel.path=/control-panel")
         jvm_args.append("-Dmicronaut.control-panel.security.access=ANONYMOUS")
     compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
+    if not compiler_classpath and Path(executable_path).name == DEV_NATIVE_EXECUTABLE:
+        with contextlib.suppress(RuntimeError):
+            compiler_classpath = os.pathsep.join(_delegate_lib_entries(executable_path))
     if compiler_classpath:
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
         if command == "process":
@@ -1126,11 +1146,25 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
     # Micronaut/Test Resources services are resolved against the same versions
     # Gradle or Maven selected; the Pyronaut delegate only supplies its command
     # entry point and launcher support.
+    # The application runtime is authoritative when it already contains a
+    # module supplied by the delegate. This is particularly important for
+    # Python VFS jars: loading two versions of context-python or pyronaut-
+    # logback creates separate VFS roots and duplicate resource diagnostics.
+    application_artifact_ids = {
+        coordinate.rsplit(":", 1)[-1]
+        for entry in application_entries
+        if (coordinate := _artifact_coordinate(entry)) is not None
+    }
+    delegate_entries = [
+        entry for entry in delegate_entries
+        if _versioned_jar_artifact_id(Path(entry).name) not in application_artifact_ids
+    ]
     entries = [*application_entries, *delegate_entries]
 
     deduped: list[str] = []
     seen_paths: set[str] = set()
     seen_file_names: set[str] = set()
+    seen_coordinates: set[str] = set()
     for entry in entries:
         normalized = str(Path(entry).expanduser().resolve())
         file_name = Path(entry).name
@@ -1138,10 +1172,15 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             continue
         if file_name and file_name in seen_file_names:
             continue
+        coordinate = _artifact_coordinate(entry)
+        if coordinate is not None and coordinate in seen_coordinates:
+            continue
         deduped.append(entry)
         seen_paths.add(normalized)
         if file_name:
             seen_file_names.add(file_name)
+        if coordinate is not None:
+            seen_coordinates.add(coordinate)
     return os.pathsep.join(deduped)
 
 
@@ -1173,6 +1212,8 @@ def _read_test_delegate_dependency_entries(cache_dir: Path) -> list[str]:
 
 def _build_native_application_classpath(command: str, project_dir: Path, launcher_executable: str | None = None) -> str:
     entries = _build_native_application_classpath_entries(command, project_dir)
+    if launcher_executable and "pyronaut-run-python" in Path(launcher_executable).name:
+        entries = _replace_embedded_python_vfs_classes(entries, project_dir, launcher_executable)
     if command == "dev" and not _control_panel_enabled_for_project(project_dir):
         entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
     return os.pathsep.join(
@@ -1184,6 +1225,68 @@ def _build_native_application_classpath(command: str, project_dir: Path, launche
             )
         )
     )
+
+
+def _replace_embedded_python_vfs_classes(
+    entries: Sequence[str], project_dir: Path, launcher_executable: str,
+) -> list[str]:
+    """Remove VFS resources from app classes when the native runner embeds them."""
+    classes = project_dir / "__pyronaut__" / "classes"
+    if not classes.is_dir():
+        return list(entries)
+    embedded: set[str] = set()
+    for jar in _native_launcher_provided_jar_entries(launcher_executable):
+        try:
+            with zipfile.ZipFile(jar) as archive:
+                prefix = "META-INF/GRAALPY-VFS/micronaut-application/"
+                embedded.update(name[len(prefix):] for name in archive.namelist() if name.startswith(prefix))
+        except (OSError, zipfile.BadZipFile):
+            continue
+    if not embedded:
+        return list(entries)
+    signature = hashlib.sha256(("fileslist-v4\n" + "\n".join(sorted(embedded))).encode()).hexdigest()
+    filtered = project_dir / "__pyronaut__" / f"classes-native-runtime-{signature[:12]}"
+    marker = filtered / ".native-vfs-filter"
+    if marker.is_file() and marker.read_text(encoding="utf-8").strip() == signature and filtered.is_dir():
+        return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
+    if filtered.is_dir():
+        return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
+    shutil.copytree(classes, filtered)
+    fileslist = filtered / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / "fileslist.txt"
+    removed = {f"/META-INF/GRAALPY-VFS/micronaut-application/{name}" for name in embedded}
+    if fileslist.is_file():
+        framework_roots = {"io", "jakarta", "micronaut", "logback"}
+        framework_prefix = "/META-INF/GRAALPY-VFS/micronaut-application/src/"
+        framework_files = set()
+        for line in fileslist.read_text(encoding="utf-8").splitlines():
+            relative = line.strip()
+            if not relative.startswith(framework_prefix):
+                continue
+            source_path = relative[len(framework_prefix):]
+            if source_path.split("/", 1)[0] in framework_roots or source_path.startswith("micronaut_asyncio"):
+                framework_files.add(relative)
+        removed.update(framework_files)
+        fileslist.write_text(
+            "".join(line for line in fileslist.read_text(encoding="utf-8").splitlines(keepends=True)
+                    if line.strip() not in removed),
+            encoding="utf-8",
+        )
+    for relative in removed:
+        if relative == "fileslist.txt":
+            continue
+        if relative.startswith("/META-INF/GRAALPY-VFS/micronaut-application/"):
+            relative = relative[len("/META-INF/GRAALPY-VFS/micronaut-application/"):]
+        candidate = filtered / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / relative
+        if candidate.is_file():
+            candidate.unlink()
+    for relative in embedded:
+        if relative == "fileslist.txt":
+            continue
+        candidate = filtered / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / relative
+        if candidate.is_file():
+            candidate.unlink()
+    marker.write_text(signature, encoding="utf-8")
+    return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
 
 
 def _build_native_application_classpath_entries(command: str, project_dir: Path) -> list[str]:
@@ -1458,6 +1561,7 @@ def _is_native_launcher_provided_artifact(
     return artifact_id in launcher_provided_artifact_ids
 
 
+@lru_cache(maxsize=4096)
 def _artifact_coordinate(entry: str) -> str | None:
     if ":" in entry and "/" not in entry and "\\" not in entry:
         parts = entry.split(":")
@@ -1468,6 +1572,10 @@ def _artifact_coordinate(entry: str) -> str | None:
     if name is None:
         return None
     parts = path.parts
+    for pom in _classpath_pom_candidates(path, name):
+        coordinate = _pom_coordinate(pom)
+        if coordinate is not None:
+            return coordinate
     try:
         artifact_index = len(parts) - 3
         if parts[artifact_index] != name:
@@ -1476,6 +1584,30 @@ def _artifact_coordinate(entry: str) -> str | None:
         group = ".".join(parts[repository_index + 1:artifact_index])
         return f"{group}:{name}" if group else None
     except (ValueError, IndexError):
+        return None
+
+
+def _classpath_pom_candidates(path: Path, artifact: str) -> tuple[Path, ...]:
+    stem_pom = path.with_suffix(".pom")
+    candidates = [stem_pom, path.parent.parent / f"{artifact}-{path.parent.parent.name}.pom"]
+    # Gradle's files-2.1 layout stores the POM in a sibling hash directory.
+    if path.parent.parent.parent.name == artifact:
+        version_dir = path.parent.parent
+        candidates.extend(version_dir.glob("*/" + artifact + "-*.pom"))
+    return tuple(dict.fromkeys(candidates))
+
+
+@lru_cache(maxsize=4096)
+def _pom_coordinate(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    try:
+        root = ET.parse(path).getroot()
+        ns = "{http://maven.apache.org/POM/4.0.0}"
+        group = root.findtext(f"{ns}groupId") or root.findtext("groupId")
+        artifact = root.findtext(f"{ns}artifactId") or root.findtext("artifactId")
+        return f"{group}:{artifact}" if group and artifact else None
+    except (ET.ParseError, OSError):
         return None
 
 
@@ -4179,7 +4311,10 @@ def _build_dev_delegate_invocation(
         dev_jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     # Convenience options are consumed by the Python orchestrator and must not
     # leak into the native pyronaut-dev command line.
-    launch_args = delegate_args
+    # Keep the original arguments for toolchain selection so --jvm/--native
+    # can override the project configuration. Remove those orchestration-only
+    # flags from the native launcher command after selection.
+    launch_args = args
     dev_command_line = _pyronaut_dev_native_command_line(
         "run",
         launch_args,
@@ -4191,6 +4326,7 @@ def _build_dev_delegate_invocation(
         java_home_provider=java_home_provider,
     )
     if dev_command_line is not None:
+        dev_command_line = [value for value in dev_command_line if value not in {"--jvm", "--native"}]
         # The native launcher accepts only its subcommand and source selectors;
         # convenience JVM properties are applied by the Python/fallback path.
         # Do not leak them into native picocli parsing.
@@ -5247,7 +5383,7 @@ def _pyronaut_dev_native_command_line(
         return None
     project_dir = Path(_extract_project_dir(args)).resolve()
     try:
-        if not _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=debug_vm):
+        if not _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=debug_vm, args=args):
             return None
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
@@ -5271,7 +5407,8 @@ def _pyronaut_dev_native_command_line(
     )
     if selected_environment is not None:
         jvm_args.append(f"-Dmicronaut.environments={selected_environment}")
-    compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
+    direct_source = _looks_like_direct_source_invocation(args)
+    compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path)) if direct_source else ""
     if compiler_classpath:
         # External Java sources need Pyronaut's Python annotation types and
         # processor support to compile, but those jars must not become part
@@ -5295,7 +5432,7 @@ def _pyronaut_dev_native_command_line(
         if test_resources_client_classpath:
             jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
-    command_args = list(args)
+    command_args = [value for value in args if value not in {"--jvm", "--native"}]
     if command == "test" and _is_external_build_project(project_dir) and not any(
         value == "--select-class" or value.startswith("--select-class=") for value in command_args
     ):
@@ -5306,17 +5443,24 @@ def _pyronaut_dev_native_command_line(
                     continue
                 class_name = ".".join(class_file.relative_to(test_classes_root).with_suffix("").parts)
                 command_args.extend(["--select-class", class_name])
-    if command == "process" and _is_external_build_project(project_dir) and compiler_classpath:
+    if command == "process" and _is_external_build_project(project_dir):
         # Pass the compiler support jars through the processor's explicit
-        # compile classpath as well as the JVM property. Native images do not
-        # expose their launcher classpath to javac automatically.
+        # compile classpath. Native images do not expose their launcher
+        # classpath to javac automatically. For configured external projects
+        # this is deliberately an explicit compiler-only classpath; the
+        # application runtime classpath remains free of Python/compiler jars.
+        process_compiler_classpath = compiler_classpath or os.pathsep.join(
+            _native_launcher_compile_classpath_entries(executable_path)
+        )
+        if not process_compiler_classpath:
+            return [executable_path, *jvm_args, command, *command_args]
         selected_pass = "all"
         for index, value in enumerate(command_args):
             if value == "--pass" and index + 1 < len(command_args):
                 selected_pass = command_args[index + 1]
             elif value.startswith("--pass="):
                 selected_pass = value.split("=", 1)[1]
-        compiler_entries = compiler_classpath.split(os.pathsep)
+        compiler_entries = process_compiler_classpath.split(os.pathsep)
         if selected_pass in {"all", "main"}:
             main_entries = _build_native_application_classpath_entries("process", project_dir)
             command_args.extend(["--classpath", os.pathsep.join(dict.fromkeys([*main_entries, *compiler_entries]))])
@@ -5338,7 +5482,7 @@ def _pyronaut_run_native_command_line(
         return None
     project_dir = Path(_extract_project_dir(args)).resolve()
     try:
-        if not _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=debug_vm):
+        if not _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=debug_vm, args=args):
             return None
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
@@ -5354,7 +5498,11 @@ def _pyronaut_run_native_command_line(
             f"Build or install {executable_name}, or set tool.pyronaut.toolchain.type = 'jvm'."
         )
     classpath = _build_native_application_classpath(command, project_dir, executable_path)
-    return [executable_path, f"-Djava.class.path={classpath}", *args]
+    return [
+        executable_path,
+        f"-Djava.class.path={classpath}",
+        *[value for value in args if value not in {"--jvm", "--native"}],
+    ]
 
 
 def _native_dev_java_home_jvm_args(java_home_provider: JavaHomeProvider | None) -> list[str]:
@@ -5374,6 +5522,7 @@ def _use_pyronaut_dev_native_toolchain(
     project_dir: Path,
     *,
     debug_vm: bool = False,
+    args: Sequence[str] = (),
     pyronaut_table: dict[str, object] | None | object = _UNSET_PYPROJECT_TABLE,
 ) -> bool:
     # Callers that make several decisions for the same project can provide the
@@ -5383,7 +5532,10 @@ def _use_pyronaut_dev_native_toolchain(
         if pyronaut_table is _UNSET_PYPROJECT_TABLE
         else pyronaut_table
     )
-    if _is_external_build_project(project_dir) and pyronaut is None:
+    override = _extract_build_mode_flag(args)
+    if override is not None:
+        toolchain_type = override
+    elif _is_external_build_project(project_dir) and pyronaut is None:
         toolchain_type = TOOLCHAIN_TYPE_NATIVE
     else:
         toolchain_type = _toolchain_type_from_pyronaut_table(pyronaut)
@@ -5485,7 +5637,7 @@ def _resolve_delegate_executable_path(
 
     if command == "run":
         try:
-            if _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=_extract_debug_vm(args)):
+            if _use_pyronaut_dev_native_toolchain(command, project_dir, debug_vm=_extract_debug_vm(args), args=args):
                 executable_name = _delegate_executable_name(command, project_dir)
                 executable_path = _resolve_native_preferred_executable(
                     executable_name,

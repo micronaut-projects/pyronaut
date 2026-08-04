@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -152,17 +153,19 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             if (baseImage || defaultBaseImage) {
                 return buildBaseImage(root, runtimeClasspath, defaultBaseImage);
             }
-            List<Path> nativeClasspath = runtimeClasspath.stream()
+            List<Path> runnerClasspath = pyronautRunClasspathEntries(includePython);
+            List<Path> runnerFilteredRuntimeClasspath = excludeRunnerProvidedModules(runtimeClasspath, runnerClasspath);
+            List<Path> applicationRuntimeClasspath = runnerFilteredRuntimeClasspath.stream()
                 .filter(path -> isProductionRunnerClasspathEntry(path, includePython))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
             // Keep the Java launcher free of Python/Truffle and logback
             // artifacts. The Python launcher opts in through --include-python.
-            nativeClasspath.addAll(pyronautRunClasspathEntries(includePython));
+            List<Path> nativeClasspath = new ArrayList<>(runnerClasspath);
+            nativeClasspath.addAll(applicationRuntimeClasspath);
             if (!includePython) {
                 nativeClasspath.removeIf(PyronautNativeBuildMain::isPythonOnlyClasspathEntry);
             }
-            int runtimeClasspathEntries = nativeClasspath.size();
-            removeDuplicateVirtualFileSystemEntries(nativeClasspath, runtimeClasspathEntries);
+            removeDuplicateVirtualFileSystemEntries(nativeClasspath, runnerClasspath.size());
             nativeClasspath.add(classesDir);
             Path configDir = root.resolve(DEFAULT_CONFIG_DIR).normalize();
             if (Files.isDirectory(configDir)) {
@@ -279,13 +282,17 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         if (classpath.isBlank()) {
             throw new IllegalStateException("Unable to locate the bundled Pyronaut runner classpath");
         }
-        return java.util.Arrays.stream(classpath.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+        LinkedHashMap<String, Path> unique = new LinkedHashMap<>();
+        java.util.Arrays.stream(classpath.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
             .map(Path::of)
             .map(path -> path.toAbsolutePath().normalize())
             .filter(Files::exists)
             .filter(path -> isProductionRunnerClasspathEntry(path, includePython))
-            .distinct()
-            .toList();
+            .forEach(path -> {
+                String gav = gavFromClasspathEntry(path);
+                unique.putIfAbsent(gav == null ? path.toString() : gav, path);
+            });
+        return unique.values().stream().toList();
     }
 
     private static boolean isProductionRunnerClasspathEntry(Path path, boolean includePython) {
