@@ -208,7 +208,10 @@ public final class LogbackConfigurer {
 
         Appender<ILoggingEvent> appender = null;
         if (clazz.contains("StreamHandler")) {
-            appender = createConsoleAppender(lc, pattern);
+            String target = "ext://sys.stderr".equals(config.get("stream"))
+                ? "System.err"
+                : "System.out";
+            appender = createConsoleAppender(lc, pattern, target);
         } else if (clazz.contains("FileHandler")) {
             String filename = (String) config.get("filename");
             if (filename == null) {
@@ -274,12 +277,17 @@ public final class LogbackConfigurer {
      * Create a console appender.
      */
     private static ConsoleAppender<ILoggingEvent> createConsoleAppender(LoggerContext lc, String pattern) {
+        return createConsoleAppender(lc, pattern, "System.out");
+    }
+
+    private static ConsoleAppender<ILoggingEvent> createConsoleAppender(LoggerContext lc, String pattern, String target) {
         PatternLayoutEncoder ple = new PatternLayoutEncoder();
         ple.setPattern(pattern);
         ple.setContext(lc);
         ple.start();
 
         ConsoleAppender<ILoggingEvent> consoleAppender = new ConsoleAppender<>();
+        consoleAppender.setTarget(target);
         consoleAppender.setEncoder(ple);
         consoleAppender.setContext(lc);
         consoleAppender.start();

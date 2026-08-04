@@ -2635,6 +2635,7 @@ def _write_native_dockerfile(
 FROM {builder_image} AS builder
 WORKDIR /workspace
 COPY app/ /workspace/app/
+COPY app/config/ /workspace/app/__pyronaut__/classes/
 RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
 RUN {shlex.join(build_command)}
 
@@ -2767,6 +2768,9 @@ def _run_docker_build(
             "PYRONAUT_BUILD_MODE": mode,
             "PYRONAUT_NATIVE_STATIC": "true" if static_native else "false",
         }
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "ftp_proxy", "no_proxy"):
+            if value := os.environ.get(name):
+                build_args[name] = value
         if mode == "native":
             builder_image = docker_config.get(
                 "static_native_builder_image" if static_native else "native_builder_image"

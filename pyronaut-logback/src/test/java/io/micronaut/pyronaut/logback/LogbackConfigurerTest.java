@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.logback;
 
+import ch.qos.logback.core.ConsoleAppender;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,6 +66,24 @@ class LogbackConfigurerTest {
         // Verify loggers can be created
         Logger logger = LoggerFactory.getLogger("test.handlers");
         assertNotNull(logger);
+    }
+
+    @Test
+    void testStreamHandlerCanTargetSystemErr() {
+        Map<String, Object> consoleHandler = new HashMap<>();
+        consoleHandler.put("class", "logging.StreamHandler");
+        consoleHandler.put("stream", "ext://sys.stderr");
+
+        Map<String, Object> config = new HashMap<>();
+        config.put("handlers", Map.of("console", consoleHandler));
+        config.put("root", Map.of("level", "INFO", "handlers", java.util.List.of("console")));
+
+        LogbackConfigurer.configure(config);
+
+        ch.qos.logback.classic.Logger root =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        ConsoleAppender<?> appender = assertInstanceOf(ConsoleAppender.class, root.iteratorForAppenders().next());
+        assertEquals("System.err", appender.getTarget());
     }
 
     @Test

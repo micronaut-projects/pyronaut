@@ -4056,6 +4056,8 @@ additional-test-resources = ["test-fixtures"]
                 + "\n",
                 encoding="utf-8",
             )
+            (project_dir / "config").mkdir()
+            (project_dir / "config" / "application.toml").write_text("greeting = 'hello'\n", encoding="utf-8")
             native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
 
             def resolver(command_name):
@@ -4063,7 +4065,7 @@ additional-test-resources = ["test-fixtures"]
                     return native_executable
                 return f"/tmp/{command_name}"
 
-            with redirect_stdout(stdout):
+            with redirect_stdout(stdout), patch.dict(os.environ, {"HTTP_PROXY": "http://proxy.example"}, clear=False):
                 exit_code = cli.run(
                     [
                         "build",
@@ -4095,6 +4097,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("--progress=plain", docker_command)
         self.assertIn("PYRONAUT_BUILD_MODE=native", docker_command)
         self.assertIn("PYRONAUT_NATIVE_STATIC=true", docker_command)
+        self.assertIn("HTTP_PROXY=http://proxy.example", docker_command)
         self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=example/static-builder:1", docker_command)
         self.assertIn("PYRONAUT_NATIVE_BASE_IMAGE=example/static-base:1", docker_command)
         self.assertIn("example/demo:1.2.3-native", docker_command)
@@ -4102,6 +4105,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("FROM example/static-base:1", captured["dockerfile"])
         self.assertIn("--static --libc=musl", captured["dockerfile"])
         self.assertIn("--initialize-at-run-time=example.Foo", captured["dockerfile"])
+        self.assertIn("COPY app/config/ /workspace/app/__pyronaut__/classes/", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build", captured["context_files"])
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
         self.assertIn("Docker image build complete: example/demo:1.2.3-native", stdout.getvalue())
