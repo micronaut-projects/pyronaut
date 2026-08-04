@@ -271,7 +271,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         + ProcessorSourceCache.countSources(resolvedMainJavaSrc, ".java");
                     progressReporter.startPass("main", mainSourceCount);
 
-                    String mainFingerprint = ProcessorSourceCache.fingerprint(
+                    String mainFingerprint = noCache ? null : ProcessorSourceCache.fingerprint(
                         resolvedMainPythonSrc,
                         resolvedMainJavaSrc,
                         effectiveProcessorPath,
@@ -279,7 +279,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         compilePythonBytecode,
                         incrementalCompilation,
                         configuredPythonIncrementalMode,
-                        mainOptions
+                        mainOptions,
+                        resolvedCacheDir.resolve("processor-main.inputs")
                     );
                     if (!noCache
                         && ProcessorSourceCache.cacheHit(
@@ -376,7 +377,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         progressReporter.noSources("test");
                         testStatus = "no sources";
                     } else {
-                        String testFingerprint = ProcessorSourceCache.fingerprint(
+                        String testFingerprint = noCache ? null : ProcessorSourceCache.fingerprint(
                             mergedTestPythonSrc,
                             mergedTestJavaSrc,
                             effectiveProcessorPath,
@@ -384,7 +385,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             compilePythonBytecode,
                             incrementalCompilation,
                             configuredPythonIncrementalMode,
-                            testOptions
+                            testOptions,
+                            resolvedCacheDir.resolve("processor-test.inputs")
                         );
                         if (!noCache
                             && ProcessorSourceCache.cacheHit(

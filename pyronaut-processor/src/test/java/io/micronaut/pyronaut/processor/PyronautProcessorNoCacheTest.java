@@ -115,6 +115,54 @@ final class PyronautProcessorNoCacheTest {
     }
 
     @Test
+    void persistsContentDigestsForUnchangedInputs(@TempDir Path tempDir) throws Exception {
+        Path python = Files.createDirectories(tempDir.resolve("src"));
+        Path java = Files.createDirectories(tempDir.resolve("src-java"));
+        Path classpath = Files.createDirectories(tempDir.resolve("classpath"));
+        Files.writeString(python.resolve("controller.py"), "VALUE = 1\n");
+        Path dependency = classpath.resolve("dependency.version");
+        Files.writeString(dependency, "one");
+        Path contentCache = tempDir.resolve("processor.inputs");
+
+        String first = ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(),
+            List.of(classpath),
+            false,
+            true,
+            "conservative",
+            List.of(),
+            contentCache
+        );
+        assertTrue(Files.isRegularFile(contentCache));
+        assertTrue(first.equals(ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(),
+            List.of(classpath),
+            false,
+            true,
+            "conservative",
+            List.of(),
+            contentCache
+        )));
+
+        Files.writeString(dependency, "two");
+        assertFalse(first.equals(ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(),
+            List.of(classpath),
+            false,
+            true,
+            "conservative",
+            List.of(),
+            contentCache
+        )));
+    }
+
+    @Test
     void noCacheSkipsCacheWrite(@TempDir Path tempDir) throws Exception {
         Path projectDir = tempDir.resolve("app");
         Files.createDirectories(projectDir);
