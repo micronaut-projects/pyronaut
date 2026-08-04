@@ -69,6 +69,7 @@ micronautBuild {
     importMicronautCatalog("micronaut-serde")
     importMicronautCatalog("micronaut-logging")
     importMicronautCatalog("micronaut-test")
+    importMicronautCatalog("micronaut-openapi")
     importMicronautCatalog("micronaut-views")
     importMicronautCatalog("micronaut-validation")
 }

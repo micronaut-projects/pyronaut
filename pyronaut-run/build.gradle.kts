@@ -17,7 +17,7 @@ dependencies {
 
     api(mn.micronaut.context)
     api(mnPicocli.picocli)
-    api("io.micronaut.openapi:micronaut-openapi-annotations")
+    api(mnOpenapi.micronaut.openapi.annotations)
     api("io.micronaut.data:micronaut-data-model")
     api("io.micronaut.data:micronaut-data-runtime")
     api("io.micronaut.data:micronaut-data-connection")

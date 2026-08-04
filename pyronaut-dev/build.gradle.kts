@@ -29,7 +29,7 @@ dependencies {
     implementation("io.micronaut.jaxrs:micronaut-jaxrs-processor")
     implementation("io.micronaut.sourcegen:micronaut-sourcegen-generator-java")
     implementation("io.micronaut.sourcegen:micronaut-sourcegen-model")
-    implementation("io.micronaut.openapi:micronaut-openapi")
+    implementation(mnOpenapi.micronaut.openapi)
 
     // CLI modules
     implementation(project(":micronaut-pyronaut-install"))
@@ -55,7 +55,7 @@ dependencies {
 
 
     // runtime build in modules
-    api("io.micronaut.openapi:micronaut-openapi-annotations")
+    api(mnOpenapi.micronaut.openapi.annotations)
     api("io.micronaut.data:micronaut-data-model")
     api("io.micronaut.data:micronaut-data-runtime")
     api("io.micronaut.data:micronaut-data-connection")
