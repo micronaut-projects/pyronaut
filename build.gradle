@@ -54,6 +54,23 @@ allprojects {
     }
 }
 
+// A native SDK wheel embeds these three launchers. Native-image processes are
+// memory intensive, so order them explicitly without disabling parallelism for
+// the rest of the build.
+def nativeSdkWheelImageTaskPaths = [
+    ":micronaut-pyronaut-dev:nativeCompile",
+    ":micronaut-pyronaut-run:buildCremaNativeImage",
+    ":micronaut-pyronaut-run-python:buildCremaNativeImage"
+]
+allprojects {
+    tasks.configureEach { task ->
+        def taskIndex = nativeSdkWheelImageTaskPaths.indexOf(task.path)
+        if (taskIndex > 0) {
+            task.mustRunAfter(nativeSdkWheelImageTaskPaths[taskIndex - 1])
+        }
+    }
+}
+
 gradle.projectsEvaluated {
     allprojects {
         pluginManager.withPlugin("java") {

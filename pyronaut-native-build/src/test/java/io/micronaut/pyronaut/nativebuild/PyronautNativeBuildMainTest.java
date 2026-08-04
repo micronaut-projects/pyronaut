@@ -96,6 +96,36 @@ class PyronautNativeBuildMainTest {
         int classpathIndex = nativeCommand.indexOf("-cp");
         assertTrue(classpathIndex >= 0);
         assertTrue(nativeCommand.get(classpathIndex + 1).contains(PyronautRunMain.class.getProtectionDomain().getCodeSource().getLocation().getPath()));
+        assertTrue(nativeCommand.contains("-H:+RuntimeClassLoading"));
+        assertTrue(nativeCommand.contains("-H:+AllowJRTFileSystem"));
+    }
+
+    @Test
+    void excludesPythonOnlyRuntimeArtifactsFromJavaImages() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+        Path pythonRuntime = createJar(project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-context-python-5.2.0.jar"));
+        Path javaRuntime = createJar(project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-context-5.2.0.jar"));
+        overwriteRuntimeManifest(project, List.of(pythonRuntime.toString(), javaRuntime.toString()));
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        assertEquals(0, new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image"));
+        String classpath = executed.getFirst().get(executed.getFirst().indexOf("-cp") + 1);
+        assertTrue(classpath.contains(javaRuntime.toAbsolutePath().toString()));
+        assertFalse(classpath.contains(pythonRuntime.toAbsolutePath().toString()));
     }
 
     @Test

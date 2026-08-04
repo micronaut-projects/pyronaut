@@ -142,6 +142,9 @@ public final class PyronautNativeImageBuilder {
         "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
         "--initialize-at-run-time=io.netty",
         "--initialize-at-run-time=io.micronaut.core.io.socket.SocketUtils",
+        // GraalVM 25 can reach JShell's JLine/FFM code through JDK module
+        // analysis even for production launchers; defer these classes to
+        // runtime instead of including compiler initialization in the image.
         "--initialize-at-run-time=jdk.jshell",
         "--initialize-at-run-time=jdk.internal.jshell.tool",
         "--initialize-at-run-time=jdk.internal.shellsupport.doc",
@@ -292,6 +295,48 @@ public final class PyronautNativeImageBuilder {
     }
 
     /**
+     * Preserve all classes in the supplied application package for reflective
+     * access in a closed-world native image.
+     *
+     * @param packageName application package
+     * @return this builder
+     */
+    public PyronautNativeImageBuilder preservePackage(String packageName) {
+        String value = Objects.requireNonNull(packageName, "packageName").trim();
+        if (!value.isEmpty()) {
+            addNativeImageArgument("-H:Preserve=package=" + value + ".*");
+        }
+        return this;
+    }
+
+    /**
+     * Preserve all classes in the supplied application packages.
+     *
+     * @param packageNames application packages
+     * @return this builder
+     */
+    public PyronautNativeImageBuilder preservePackages(Collection<String> packageNames) {
+        Objects.requireNonNull(packageNames, "packageNames").stream()
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .distinct()
+            .forEach(this::preservePackage);
+        return this;
+    }
+
+    /**
+     * Add native-image arguments after the curated production arguments.
+     *
+     * @param arguments native-image arguments
+     * @return this builder
+     */
+    public PyronautNativeImageBuilder addNativeImageArguments(Collection<String> arguments) {
+        Objects.requireNonNull(arguments, "arguments").forEach(this::addNativeImageArgument);
+        return this;
+    }
+
+    /**
      * Override the fixed launcher main class for a specialized image.
      *
      * @param value main class
@@ -350,9 +395,6 @@ public final class PyronautNativeImageBuilder {
 
     private static Path normalizeExisting(Path entry) {
         Path normalized = Objects.requireNonNull(entry, "entry").toAbsolutePath().normalize();
-        if (!Files.exists(normalized)) {
-            throw new IllegalArgumentException("Missing native image classpath entry: " + normalized);
-        }
         return normalized;
     }
 
@@ -374,11 +416,15 @@ public final class PyronautNativeImageBuilder {
     private static final class ProcessNativeImageCommandExecutor implements NativeImageCommandExecutor {
         @Override
         public int execute(List<String> command, Path workingDirectory) throws IOException, InterruptedException {
-            return new ProcessBuilder(command)
+            ProcessBuilder processBuilder = new ProcessBuilder(command)
                 .directory(workingDirectory.toFile())
-                .inheritIO()
-                .start()
-                .waitFor();
+                .inheritIO();
+            // The native-build distribution launcher exports its own
+            // CLASSPATH (including both production runners). It must not leak
+            // into an application image whose explicit -cp is language
+            // specific.
+            processBuilder.environment().remove("CLASSPATH");
+            return processBuilder.start().waitFor();
         }
     }
 }

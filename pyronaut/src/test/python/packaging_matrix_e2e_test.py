@@ -81,10 +81,14 @@ class PackagingMatrixRunner:
             self._preflight()
         except Exception as exc:  # keep independent non-Docker cases runnable
             self.preflight_error = f"{type(exc).__name__}: {exc}"
-        for fixture, source in self._fixtures().items():
-            for scenario in SCENARIOS:
-                self._run_scenario(fixture, source, scenario)
-        self._write_reports()
+        try:
+            for fixture, source in self._fixtures().items():
+                for scenario in SCENARIOS:
+                    self._run_scenario(fixture, source, scenario)
+        finally:
+            # Preserve partial evidence and the follow-up issue list even if
+            # a long native-image invocation is interrupted externally.
+            self._write_reports()
         return self.results
 
     def _preflight(self) -> None:
@@ -205,7 +209,12 @@ class PackagingMatrixRunner:
 
     def _install_and_probe(self, wheel: Path, project: Path, log: Path) -> str:
         venv = project / "__pyronaut__" / "e2e-venv"
-        python = os.environ.get("PYRONAUT_PACKAGING_E2E_PYTHON", "python3")
+        # Native application wheels are tagged for GraalPy. Prefer it when it
+        # is installed, while retaining CPython as the fallback for JVM-only
+        # environments and py3-none wheels.
+        python = os.environ.get("PYRONAUT_PACKAGING_E2E_PYTHON")
+        if python is None:
+            python = shutil.which("graalpy") or "python3"
         subprocess.run([python, "-m", "venv", str(venv)], check=True, timeout=180)
         pip = venv / "bin" / "pip"
         sdk_wheel = os.environ.get("PYRONAUT_PACKAGING_E2E_SDK_WHEEL")
@@ -220,13 +229,13 @@ class PackagingMatrixRunner:
         if not launcher.exists():
             candidates = sorted(venv.glob("bin/*"))
             launcher = next((path for path in candidates if path.name.startswith(_slug(project.name))), launcher)
-        return self._process([str(launcher)], project, log)
+        return self._process([str(launcher)], project, log, timeout=300 if wheel.name.endswith("_native-macosx_11_0_arm64.whl") or "-graalpy" in wheel.name else 180)
 
-    def _process(self, command: list[str], project: Path, log: Path) -> str:
+    def _process(self, command: list[str], project: Path, log: Path, *, timeout: int = 180) -> str:
         port = self._allocate_port()
         process = subprocess.Popen(command, cwd=project, env=dict(os.environ, MICRONAUT_SERVER_PORT=str(port)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         try:
-            body = self._wait_http(port)
+            body = self._wait_http(port, timeout=timeout)
             if HELLO_BODY not in body:
                 raise RuntimeError(f"unexpected response: {body!r}")
             return body
@@ -237,9 +246,13 @@ class PackagingMatrixRunner:
         port = self._allocate_port()
         name = f"pyronaut-e2e-{os.getpid()}-{port}"
         command = ["docker", "run", "--rm", "--name", name, "-e", "MICRONAUT_SERVER_PORT=8080", "-p", f"127.0.0.1:{port}:8080", image]
-        process = subprocess.Popen(command, cwd=project, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        # Docker Desktop/Rancher Desktop may reject setsid from a delegated
+        # test process even though the Docker daemon itself is available.
+        # The container is explicitly removed in the finally block below, so
+        # a separate process session is unnecessary here.
+        process = subprocess.Popen(command, cwd=project, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
-            body = self._wait_http(port, timeout=180)
+            body = self._wait_http(port, timeout=300)
             if HELLO_BODY not in body:
                 raise RuntimeError(f"unexpected response: {body!r}")
             return body

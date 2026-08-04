@@ -42,12 +42,17 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 
 /**
  * Native build entrypoint that resolves reachability metadata before running native-image.
@@ -65,6 +70,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private static final String DEFAULT_RUNTIME_MANIFEST = "__pyronaut__/resolved-runtime-dependencies";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String GENERATED_NATIVE_IMAGE_CONFIG_DIR = "__pyronaut__/native-image-config";
+    private static final Map<Path, String> GAV_CACHE = new ConcurrentHashMap<>();
+    private static final Map<Path, List<Path>> POM_CACHE = new ConcurrentHashMap<>();
     private static final String DEFAULT_METADATA_VERSION = loadDefaultMetadataVersion();
     private static final String DEFAULT_METADATA_URL = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/" + DEFAULT_METADATA_VERSION + "/graalvm-reachability-metadata-" + DEFAULT_METADATA_VERSION + "-repository.zip";
     private static final String VERSIONED_METADATA_URL_TEMPLATE = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/%s/graalvm-reachability-metadata-%s-repository.zip";
@@ -145,11 +152,17 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             if (baseImage || defaultBaseImage) {
                 return buildBaseImage(root, runtimeClasspath, defaultBaseImage);
             }
-            List<Path> nativeClasspath = new ArrayList<>(runtimeClasspath);
+            List<Path> nativeClasspath = runtimeClasspath.stream()
+                .filter(path -> isProductionRunnerClasspathEntry(path, includePython))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
             // Keep the Java launcher free of Python/Truffle and logback
             // artifacts. The Python launcher opts in through --include-python.
             nativeClasspath.addAll(pyronautRunClasspathEntries(includePython));
-            removeDuplicateVirtualFileSystemEntries(nativeClasspath, runtimeClasspath.size());
+            if (!includePython) {
+                nativeClasspath.removeIf(PyronautNativeBuildMain::isPythonOnlyClasspathEntry);
+            }
+            int runtimeClasspathEntries = nativeClasspath.size();
+            removeDuplicateVirtualFileSystemEntries(nativeClasspath, runtimeClasspathEntries);
             nativeClasspath.add(classesDir);
             Path configDir = root.resolve(DEFAULT_CONFIG_DIR).normalize();
             if (Files.isDirectory(configDir)) {
@@ -172,29 +185,35 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             }
             configurationDirs.addAll(metadataSelection.directories());
 
-            List<String> command = new ArrayList<>();
-            command.add(nativeImageExecutable);
-            addBundledConfigurationExclusions(command, nativeClasspath, metadataSelection.modules(), verbose);
-            command.add("-cp");
-            command.add(joinClasspath(nativeClasspath));
-            command.add("--no-fallback");
-            command.add("--initialize-at-run-time=io.netty");
-            command.add("-H:Preserve=package=io.micronaut.http.*");
-            addUserPackagePreservation(command, classesDir, userPackages);
+            PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
+                outputPath,
+                (command, workingDirectory) -> runNativeImage(command, workingDirectory)
+            )
+                .nativeImageExecutable(Path.of(nativeImageExecutable))
+                .workingDirectory(root)
+                .includePython(includePython)
+                .emitBuildReport(false)
+                .includeSbom(true)
+                .addClasspath(nativeClasspath)
+            .mainClass(APPLICATION_MAIN_CLASS)
+            .preservePackages(userPackages);
+            if (userPackages.isEmpty()) {
+                // Keep package discovery as a compatibility fallback for callers
+                // invoking this executable directly. The builder remains the sole
+                // owner of how preservation is rendered as native-image options.
+                builder.preservePackages(discoverUserPackages(classesDir, userPackages));
+            }
+            List<String> configurationArguments = new ArrayList<>();
+            addBundledConfigurationExclusions(configurationArguments, nativeClasspath, metadataSelection.modules(), verbose);
+            builder.addNativeImageArguments(configurationArguments);
             if (!configurationDirs.isEmpty()) {
-                command.add("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
+                builder.addNativeImageArgument("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
             }
             if (verbose) {
-                command.add("--verbose");
+                builder.addNativeImageArgument("--verbose");
             }
-            command.addAll(passthroughNativeImageArgs);
-            command.add(APPLICATION_MAIN_CLASS);
-            command.add(outputPath.toString());
-
-            if (verbose) {
-                System.out.println("Native-image command: " + String.join(" ", command));
-            }
-            int exitCode = nativeImageInvoker.run(command, root);
+            builder.addNativeImageArguments(passthroughNativeImageArgs);
+            int exitCode = builder.build().exitCode();
             if (exitCode == SUCCESS) {
                 System.out.println("Native build complete: " + outputPath);
                 System.out.println("Run it with: " + outputPath);
@@ -255,10 +274,6 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
     }
 
-    private static List<Path> pyronautRunClasspathEntries() {
-        return pyronautRunClasspathEntries(true);
-    }
-
     private static List<Path> pyronautRunClasspathEntries(boolean includePython) {
         String classpath = System.getProperty("java.class.path", "");
         if (classpath.isBlank()) {
@@ -275,6 +290,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
     private static boolean isProductionRunnerClasspathEntry(Path path, boolean includePython) {
         String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        String location = path.toString().toLowerCase(Locale.ROOT);
         if (name.contains("pyronaut-native-build")
             || name.contains("graalvm-reachability-metadata")
             || name.contains("picocli-codegen")
@@ -286,13 +302,27 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         if (includePython) {
             return true;
         }
-        return !name.contains("pyronaut-run-python")
+        return !location.contains("pyronaut-run-python")
             && !name.contains("pyronaut-logback")
+            && !location.contains("pyronaut-logback")
             && !name.contains("graalpy")
             && !name.contains("python")
             && !name.contains("truffle")
             && !name.contains("polyglot")
             && !name.contains("logback");
+    }
+
+    private static boolean isPythonOnlyClasspathEntry(Path path) {
+        String location = path.toString().toLowerCase(Locale.ROOT);
+        return location.contains("pyronaut-run-python")
+            || location.contains("pyronaut-logback")
+            || location.contains("context-python")
+            || location.contains("inject-python")
+            || location.contains("graalpy")
+            || location.contains("python-")
+            || location.contains("truffle-")
+            || location.contains("polyglot-")
+            || location.contains("logback-");
     }
 
     private static List<Path> excludeRunnerProvidedModules(List<Path> runtimeClasspath, List<Path> runnerClasspath) {
@@ -477,9 +507,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         return generatedDir;
     }
 
-    private static void addUserPackagePreservation(List<String> command,
-                                                   Path classesDir,
-                                                   List<String> configuredPackages) throws IOException {
+    private static Set<String> discoverUserPackages(Path classesDir,
+                                                    List<String> configuredPackages) throws IOException {
         Set<String> packages = new TreeSet<>();
         for (String configuredPackage : configuredPackages) {
             if (configuredPackage != null && !configuredPackage.isBlank()) {
@@ -487,8 +516,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             }
         }
         if (!packages.isEmpty()) {
-            addPackagePreservation(command, packages);
-            return;
+            return packages;
         }
         try (var stream = Files.walk(classesDir)) {
             stream.filter(Files::isRegularFile)
@@ -500,13 +528,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 .filter(name -> !name.isBlank())
                 .forEach(packages::add);
         }
-        addPackagePreservation(command, packages);
-    }
-
-    private static void addPackagePreservation(List<String> command, Set<String> packages) {
-        for (String packageName : packages) {
-            command.add("-H:Preserve=package=" + packageName + ".*");
-        }
+        return packages;
     }
 
     private static void collectClasspathResources(Set<String> resources, Path root, boolean excludeCompiledArtifacts) throws IOException {
@@ -683,58 +705,114 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             return null;
         }
         Path normalized = entry.toAbsolutePath().normalize();
-        if (normalized.getNameCount() < 4) {
-            return null;
-        }
+        return GAV_CACHE.computeIfAbsent(normalized, PyronautNativeBuildMain::readGavFromPom);
+    }
 
-        int nameCount = normalized.getNameCount();
-        for (int i = 0; i + 6 < nameCount; i++) {
-            if ("modules-2".equals(normalized.getName(i).toString())
-                && "files-2.1".equals(normalized.getName(i + 1).toString())) {
-                String group = normalized.getName(i + 2).toString();
-                String artifact = normalized.getName(i + 3).toString();
-                String version = normalized.getName(i + 4).toString();
-                String fileName = normalized.getFileName().toString();
-                if (fileName.startsWith(artifact + "-" + version) && fileName.endsWith(".jar")) {
-                    return group + ":" + artifact + ":" + version;
+    private static String readGavFromPom(Path artifact) {
+        for (Path pom : pomCandidates(artifact)) {
+            try {
+                Document document = DocumentBuilderFactory.newInstance()
+                    .newDocumentBuilder()
+                    .parse(pom.toFile());
+                Element project = document.getDocumentElement();
+                String group = childText(project, "groupId");
+                String artifactId = childText(project, "artifactId");
+                String version = childText(project, "version");
+                if (group != null && artifactId != null && version != null) {
+                    return group + ":" + artifactId + ":" + version;
                 }
+            } catch (Exception ignored) {
+                // A malformed or unrelated POM must not prevent native-image
+                // construction; callers can still use the classpath entry.
             }
         }
-        String artifact = normalized.getName(nameCount - 3).toString();
-        String version = normalized.getName(nameCount - 2).toString();
+        // Compatibility for manifests produced by older tooling which did not
+        // stage the corresponding POM. POM metadata always wins when present.
+        return legacyMavenCoordinate(artifact);
+    }
+
+    private static String legacyMavenCoordinate(Path artifact) {
+        Path normalized = artifact.toAbsolutePath().normalize();
+        int repository = -1;
+        for (int i = 0; i < normalized.getNameCount(); i++) {
+            if ("m2-repository".equals(normalized.getName(i).toString())) {
+                repository = i;
+            }
+        }
+        if (repository < 0 || normalized.getNameCount() - repository < 5) {
+            return null;
+        }
+        int versionIndex = normalized.getNameCount() - 2;
+        int artifactIndex = versionIndex - 1;
+        int groupEnd = artifactIndex - 1;
         String fileName = normalized.getFileName().toString();
-        if (!fileName.startsWith(artifact + "-" + version) || !(fileName.endsWith(".jar") || fileName.endsWith(".pom"))) {
+        String artifactId = normalized.getName(artifactIndex).toString();
+        String version = normalized.getName(versionIndex).toString();
+        if (!fileName.startsWith(artifactId + "-" + version + ".")) {
             return null;
         }
+        String group = java.util.stream.IntStream.range(repository + 1, groupEnd + 1)
+            .mapToObj(index -> normalized.getName(index).toString())
+            .collect(java.util.stream.Collectors.joining("."));
+        return group.isBlank() ? null : group + ":" + artifactId + ":" + version;
+    }
 
-        int repoRootIndex = -1;
-        for (int i = 0; i < nameCount; i++) {
-            String segment = normalized.getName(i).toString();
-            if ("m2-repository".equals(segment)) {
-                repoRootIndex = i;
-            }
-        }
-        if (repoRootIndex < 0) {
-            for (int i = 0; i < nameCount; i++) {
-                String segment = normalized.getName(i).toString();
-                if ("repository".equals(segment)) {
-                    repoRootIndex = i;
-                }
-            }
-        }
-        if (repoRootIndex >= 0 && repoRootIndex + 3 < nameCount) {
-            StringBuilder group = new StringBuilder();
-            for (int i = repoRootIndex + 1; i < nameCount - 3; i++) {
-                if (!group.isEmpty()) {
-                    group.append('.');
-                }
-                group.append(normalized.getName(i));
-            }
-            if (!group.isEmpty()) {
-                return group + ":" + artifact + ":" + version;
+    private static String childText(Element parent, String name) {
+        for (var child = parent.getFirstChild(); child != null; child = child.getNextSibling()) {
+            if (child instanceof Element element && name.equals(element.getLocalName() == null ? element.getTagName() : element.getLocalName())) {
+                String value = element.getTextContent();
+                return value == null || value.isBlank() ? null : value.trim();
             }
         }
         return null;
+    }
+
+    private static List<Path> pomCandidates(Path artifact) {
+        Path normalized = artifact.toAbsolutePath().normalize();
+        Path parent = normalized.getParent();
+        if (parent == null) {
+            return List.of();
+        }
+        return POM_CACHE.computeIfAbsent(parent, ignored -> findPomCandidates(normalized, parent));
+    }
+
+    private static List<Path> findPomCandidates(Path artifact, Path parent) {
+        List<Path> candidates = new ArrayList<>();
+        try (var files = Files.list(parent)) {
+            files.filter(path -> path.getFileName().toString().endsWith(".pom"))
+                .forEach(candidates::add);
+        } catch (IOException ignored) {
+            // Continue with Gradle cache discovery below.
+        }
+        if (!candidates.isEmpty()) {
+            return List.copyOf(candidates);
+        }
+
+        // Gradle stores JARs and POMs under different hash directories below
+        // .../modules-2/files-2.1/group/artifact/version/. Search only that
+        // version directory, avoiding an unbounded repository walk.
+        Path versionDirectory = parent.getParent();
+        if (versionDirectory == null || !isGradleVersionDirectory(versionDirectory)) {
+            return List.of();
+        }
+        try (var files = Files.walk(versionDirectory, 3)) {
+            files.filter(path -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(".pom"))
+                .forEach(candidates::add);
+        } catch (IOException ignored) {
+            // No POM metadata available for this entry.
+        }
+        return List.copyOf(candidates);
+    }
+
+    private static boolean isGradleVersionDirectory(Path versionDirectory) {
+        Path artifactDirectory = versionDirectory.getParent();
+        Path groupDirectory = artifactDirectory == null ? null : artifactDirectory.getParent();
+        Path filesDirectory = groupDirectory == null ? null : groupDirectory.getParent();
+        Path modulesDirectory = filesDirectory == null ? null : filesDirectory.getParent();
+        return filesDirectory != null
+            && "files-2.1".equals(filesDirectory.getFileName().toString())
+            && modulesDirectory != null
+            && "modules-2".equals(modulesDirectory.getFileName().toString());
     }
 
     private static List<Path> readManifest(Path root, Path file) {
@@ -784,10 +862,14 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     static final class ProcessNativeImageInvoker implements NativeImageInvoker {
         @Override
         public int run(List<String> command, Path workingDirectory) throws Exception {
-            Process process = new ProcessBuilder(command)
+            ProcessBuilder processBuilder = new ProcessBuilder(command)
                 .directory(workingDirectory.toFile())
-                .inheritIO()
-                .start();
+                .inheritIO();
+            // The distribution launcher exports a broad CLASSPATH containing
+            // both production runners. Native images must use only the
+            // explicit language-specific -cp assembled above.
+            processBuilder.environment().remove("CLASSPATH");
+            Process process = processBuilder.start();
             return process.waitFor();
         }
     }

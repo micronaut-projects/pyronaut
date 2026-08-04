@@ -39,7 +39,7 @@ dependencies {
     api(mn.micronaut.json.core)
     api(mnSerde.micronaut.serde.jackson)
     api("io.micronaut.serde:micronaut-serde-api")
-
+    api(project(":micronaut-pyronaut-logback"))
     implementation(project(":micronaut-pyronaut-config-model"))
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

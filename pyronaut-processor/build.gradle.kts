@@ -9,6 +9,9 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
 
     implementation(project(":micronaut-pyronaut-config-model"))
+    // Direct-source processing must resolve the public @pyronaut.build.Dependency
+    // annotation from the installed processor distribution.
+    implementation(project(":micronaut-pyronaut-build-annotations"))
     implementation(libs.micronaut.toml)
     implementation(mnPicocli.picocli)
     implementation(mn.micronaut.context.python)

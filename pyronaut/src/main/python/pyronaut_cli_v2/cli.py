@@ -57,7 +57,7 @@ JAVA_DELEGATE_JAR_ENV = {
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
 PYTHON_RUN_EXECUTABLE = "pyronaut-run-python"
-_DEFAULT_DOCKER_JVM_BASE_IMAGE = "container-registry.oracle.com/graalvm/jdk:25"
+_DEFAULT_DOCKER_JVM_BASE_IMAGE = "container-registry.oracle.com/graalvm/jdk:25i1"
 _DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25i1"
 _DEFAULT_DOCKER_NATIVE_BASE_IMAGE = "gcr.io/distroless/base"
 _DEFAULT_DOCKER_STATIC_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25-muslib"
@@ -1533,6 +1533,11 @@ def _run_preflight(
     process_pass: str | None = None,
 ) -> int:
     if install:
+        _seed_bundled_pyronaut_maven_repository(
+            Path(project_dir),
+            local_repository,
+            resolver("pyronaut-install"),
+        )
         install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
         if no_cache:
             install_args.append("--no-cache")
@@ -1555,6 +1560,51 @@ def _local_repository_install_args(local_repository: str | None = None) -> list[
     if repository is None:
         return []
     return ["--local-repository", repository]
+
+
+def _seed_bundled_pyronaut_maven_repository(
+    project_dir: Path,
+    local_repository: str | None,
+    install_executable: str | None,
+) -> None:
+    """Expose Pyronaut snapshot modules shipped in the SDK wheel to Maven.
+
+    The delegated installer intentionally resolves through Maven rather than
+    the CLI's Java classpath. Copying the wheel's Pyronaut module JARs into the
+    selected local repository gives those modules normal Maven coordinates and
+    avoids requiring a snapshot publication for every SDK wheel build.
+    """
+    if install_executable is None:
+        return
+    repository = local_repository
+    if repository is None:
+        return
+    lib_dir = Path(install_executable).resolve().parent.parent / "lib"
+    if not lib_dir.is_dir():
+        return
+    target_root = Path(repository).expanduser().resolve()
+    for jar in sorted(lib_dir.glob("micronaut-pyronaut-*.jar")):
+        match = re.match(r"^(micronaut-pyronaut-[^-].*)-(\d+[^/]*)\.jar$", jar.name)
+        if match is None:
+            continue
+        artifact, version = match.groups()
+        # The wheel is produced from this repository, whose published group
+        # is stable across modules.
+        artifact_dir = target_root / "io" / "micronaut" / "pyronaut" / artifact / version
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        staged_jar = artifact_dir / jar.name
+        if not staged_jar.exists() or staged_jar.stat().st_size != jar.stat().st_size:
+            shutil.copy2(jar, staged_jar)
+        pom = artifact_dir / f"{artifact}-{version}.pom"
+        if not pom.exists():
+            pom.write_text(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
+                "<modelVersion>4.0.0</modelVersion>"
+                f"<groupId>io.micronaut.pyronaut</groupId><artifactId>{artifact}</artifactId>"
+                f"<version>{version}</version></project>",
+                encoding="utf-8",
+            )
 
 
 def _has_direct_install_sources(args: Sequence[str]) -> bool:
@@ -2016,6 +2066,8 @@ def _run_build(
                 "--output",
                 str(output_binary),
             ]
+            if _is_python_runtime_project(project_dir):
+                native_command.append("--include-python")
             native_command.extend(_native_user_package_args(project_dir))
             if verbose:
                 native_command.append("--verbose")
@@ -2037,6 +2089,7 @@ def _run_build(
                 project_version=project_version,
                 mode="native",
                 main_class=main_class,
+                runner_executable=None,
             )
             wheel_command = [
                 python_exec,
@@ -2066,6 +2119,7 @@ def _run_build(
             project_version=project_version,
             mode="jvm",
             main_class=main_class,
+            runner_executable=resolver(PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]),
         )
         wheel_command = [
             python_exec,
@@ -2125,6 +2179,7 @@ def _prepare_build_wheel_staging(
     project_version: str,
     mode: str,
     main_class: str,
+    runner_executable: str | None = None,
 ) -> None:
     if mode not in {"jvm", "native"}:
         raise ValueError(f"Unsupported build wheel staging mode: {mode}")
@@ -2169,6 +2224,7 @@ def _prepare_build_wheel_staging(
                 target=pyronaut_dir / "resolved-runtime-dependencies",
                 project_dir=project_dir,
                 pyronaut_dir=pyronaut_dir,
+                exclude_python=not _is_python_runtime_project(project_dir),
             )
         launcher_code = _native_build_launcher_code(binary_name)
     else:
@@ -2184,8 +2240,11 @@ def _prepare_build_wheel_staging(
             target=pyronaut_dir / "resolved-runtime-dependencies",
             project_dir=project_dir,
             pyronaut_dir=pyronaut_dir,
+            exclude_python=not _is_python_runtime_project(project_dir),
         )
-        launcher_code = _jvm_build_launcher_code(main_class)
+        if runner_executable is not None:
+            _stage_runner_runtime_dependencies(pyronaut_dir, runner_executable)
+        launcher_code = _jvm_build_launcher_code("io.micronaut.pyronaut.run.PyronautRunMain")
 
     (launcher_dir / "launcher.py").write_text(launcher_code, encoding="utf-8")
 
@@ -2244,12 +2303,17 @@ def _copytree_if_exists(source: Path, target: Path) -> None:
         shutil.copytree(source, target, dirs_exist_ok=True)
 
 
-def _stage_manifest_artifacts(*, source: Path, target: Path, project_dir: Path, pyronaut_dir: Path) -> None:
+def _stage_manifest_artifacts(
+    *, source: Path, target: Path, project_dir: Path, pyronaut_dir: Path,
+    exclude_python: bool = False,
+) -> None:
     project_root = project_dir.resolve()
     artifact_root = pyronaut_dir / "m2-repository"
     rewritten: list[str] = []
     for entry in _read_manifest_entries(source):
         path = Path(entry)
+        if exclude_python and _is_python_runtime_artifact(path.name):
+            continue
         resolved = path.resolve() if path.is_absolute() else (project_root / path).resolve()
         if resolved.is_file():
             artifact_relative = _staged_artifact_relative_path(resolved, project_root)
@@ -2264,6 +2328,19 @@ def _stage_manifest_artifacts(*, source: Path, target: Path, project_dir: Path, 
             continue
         rewritten.append(entry)
     target.write_text("".join(f"{entry}\n" for entry in rewritten), encoding="utf-8")
+
+
+def _is_python_runtime_artifact(file_name: str) -> bool:
+    name = file_name.lower()
+    return (
+        "context-python" in name
+        or "inject-python" in name
+        or "graalpy" in name
+        or "truffle" in name
+        or "polyglot" in name
+        or name.startswith("python-")
+        or "-python-" in name
+    )
 
 
 def _staged_artifact_relative_path(resolved: Path, project_root: Path) -> Path:
@@ -2325,6 +2402,13 @@ def _is_python_runtime_project(project_dir: Path) -> bool:
     sources = _read_pyproject_sources(project_dir)
     if sources.java_source_dir != _DEFAULT_JAVA_SOURCE_DIR and sources.python_source_dir == _DEFAULT_PYTHON_SOURCE_DIR:
         return False
+    python_root = project_dir / sources.python_source_dir
+    java_root = project_dir / sources.java_source_dir
+    if any(project_dir.glob("*.py")) and not any(project_dir.glob("*.java")):
+        return True
+    if python_root.is_dir() and any(p.suffix == ".py" for p in python_root.rglob("*.py")):
+        if not java_root.is_dir() or not any(p.suffix == ".java" for p in java_root.rglob("*.java")):
+            return True
     runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
     if runtime_manifest.is_file():
         with contextlib.suppress(OSError):
@@ -2548,6 +2632,7 @@ def _prepare_jvm_docker_context(
         target=pyronaut_dir / "resolved-runtime-dependencies",
         project_dir=project_dir,
         pyronaut_dir=pyronaut_dir,
+        exclude_python=not _is_python_runtime_project(project_dir),
     )
     runner_name = _delegate_executable_name("run", project_dir)
     delegate_executable = resolver(runner_name)
@@ -2579,11 +2664,72 @@ def _prepare_native_docker_context(
         target=pyronaut_dir / "resolved-runtime-dependencies",
         project_dir=project_dir,
         pyronaut_dir=pyronaut_dir,
+        exclude_python=not _is_python_runtime_project(project_dir),
     )
+    if _is_python_runtime_project(project_dir):
+        _stage_python_runner_runtime_dependencies(pyronaut_dir, resolver)
     delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
     if delegate_executable is None:
         raise RuntimeError(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}")
     _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / "pyronaut-native-build")
+
+
+def _prepare_bundled_docker_context(*, project_dir: Path, context_dir: Path) -> None:
+    """Stage only application material for a prebuilt default runner image."""
+    app_dir = _prepare_common_docker_app_context(project_dir, context_dir)
+    pyronaut_dir = app_dir / "__pyronaut__"
+    classes_dir = project_dir / "__pyronaut__" / "classes"
+    if not classes_dir.is_dir():
+        raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+    _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
+    (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
+
+
+def _stage_python_runner_runtime_dependencies(
+    pyronaut_dir: Path,
+    resolver: Callable[[str], str | None],
+) -> None:
+    """Keep Python runner support libraries available to PyronautRunMain."""
+    runner = resolver(PYTHON_RUN_EXECUTABLE)
+    if runner is None:
+        raise RuntimeError(f"Missing delegated executable: {PYTHON_RUN_EXECUTABLE}")
+    # Test and embedding callers may provide a logical delegate path without
+    # an installed distribution. In that case there is nothing to stage; the
+    # normal installed-wheel path supplies a real executable and is staged.
+    if not Path(runner).exists():
+        return
+    manifest = pyronaut_dir / "resolved-runtime-dependencies"
+    entries = manifest.read_text(encoding="utf-8").splitlines() if manifest.exists() else []
+    for source in _delegate_lib_entries(runner):
+        jar = Path(source)
+        if jar.suffix != ".jar":
+            continue
+        target = pyronaut_dir / "m2-repository" / jar.name
+        shutil.copy2(jar, target)
+        relative = Path("__pyronaut__") / "m2-repository" / jar.name
+        if str(relative) not in entries:
+            entries.append(str(relative))
+    manifest.write_text("".join(f"{entry}\n" for entry in entries), encoding="utf-8")
+
+
+def _stage_runner_runtime_dependencies(pyronaut_dir: Path, runner: str) -> None:
+    """Stage the selected production runner jars for JVM wheel execution."""
+    if not Path(runner).exists():
+        return
+    manifest = pyronaut_dir / "resolved-runtime-dependencies"
+    entries = manifest.read_text(encoding="utf-8").splitlines() if manifest.exists() else []
+    for source in _delegate_lib_entries(runner):
+        jar = Path(source)
+        if jar.suffix != ".jar":
+            continue
+        target = pyronaut_dir / "m2-repository" / jar.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(jar, target)
+        relative = Path("__pyronaut__") / "m2-repository" / jar.name
+        if str(relative) not in entries:
+            entries.append(str(relative))
+    manifest.write_text("".join(f"{entry}\n" for entry in entries), encoding="utf-8")
 
 
 def _prepare_crema_native_docker_context(*, project_dir: Path, context_dir: Path) -> None:
@@ -2597,11 +2743,32 @@ def _prepare_crema_native_docker_context(*, project_dir: Path, context_dir: Path
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
 
 
-def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str) -> None:
+def _manifest_docker_copy_lines(context_dir: Path, *, destination_root: str = "/app") -> list[str]:
+    manifest = context_dir / "app" / "__pyronaut__" / "resolved-runtime-dependencies"
+    lines = [
+        f"COPY app/__pyronaut__/resolved-runtime-dependencies {destination_root}/__pyronaut__/resolved-runtime-dependencies",
+    ]
+    if not manifest.is_file():
+        return lines
+    for entry in manifest.read_text(encoding="utf-8").splitlines():
+        value = entry.strip()
+        if not value or Path(value).is_absolute():
+            continue
+        source = context_dir / "app" / value
+        if source.is_file():
+            lines.append(f"COPY app/{value} {destination_root}/{value}")
+    return lines
+
+
+def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str,
+                          runtime_copies: Sequence[str]) -> None:
     dockerfile = f"""\
 FROM {base_image}
 WORKDIR /app
-COPY app/ /app/
+COPY app/config /app/config
+COPY app/__pyronaut__/classes /app/__pyronaut__/classes
+COPY app/__pyronaut__/tools/{runner_name} /app/__pyronaut__/tools/{runner_name}
+{chr(10).join(runtime_copies)}
 ENTRYPOINT ["/app/__pyronaut__/tools/{runner_name}/bin/{runner_name}", "--project-dir", "/app"]
 """
     target.write_text(dockerfile, encoding="utf-8")
@@ -2614,9 +2781,11 @@ def _write_native_dockerfile(
     runtime_image: str,
     project_name: str,
     main_class: str,
+    include_python: bool,
     verbose: bool,
     static_native: bool,
     passthrough_args: Sequence[str],
+    runtime_copies: Sequence[str],
 ) -> None:
     output_binary = f"/workspace/app/__pyronaut__/native/{project_name}"
     build_command = [
@@ -2628,13 +2797,21 @@ def _write_native_dockerfile(
     ]
     if verbose:
         build_command.append("--verbose")
+    if include_python:
+        build_command.append("--include-python")
     build_command.extend(passthrough_args)
     if static_native:
         build_command.extend(["--static", "--libc=musl"])
+    builder_runtime_copies = "\n".join(line.replace(" /app/", " /workspace/app/") for line in runtime_copies)
     dockerfile = f"""\
 FROM {builder_image} AS builder
 WORKDIR /workspace
-COPY app/ /workspace/app/
+COPY app/pyproject.toml /workspace/app/pyproject.toml
+COPY app/config /workspace/app/config
+COPY app/__pyronaut__/classes /workspace/app/__pyronaut__/classes
+COPY app/__pyronaut__/schemas /workspace/app/__pyronaut__/schemas
+COPY app/__pyronaut__/tools/pyronaut-native-build /workspace/app/__pyronaut__/tools/pyronaut-native-build
+{builder_runtime_copies}
 RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
 RUN {shlex.join(build_command)}
 
@@ -2645,7 +2822,7 @@ COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config /app/config
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
-ENTRYPOINT ["/app/{project_name}"]
+ENTRYPOINT ["/app/{project_name}", "--project-dir", "/app"]
 """
     target.write_text(dockerfile, encoding="utf-8")
 
@@ -2699,10 +2876,34 @@ ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
     target.write_text(dockerfile, encoding="utf-8")
 
 
+def _write_bundled_application_dockerfile(
+    *, target: Path, runtime_image: str, runner_name: str,
+) -> None:
+    """Build the application layer directly on top of a bundled runner."""
+    target.write_text(
+        f"""FROM {runtime_image} AS pyronaut-base
+WORKDIR /opt/pyronaut
+COPY bundled-base/{runner_name} /opt/pyronaut/bin/{runner_name}
+
+FROM pyronaut-base
+WORKDIR /app
+COPY app/config /app/config
+COPY app/__pyronaut__/classes /app/__pyronaut__/classes
+COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
+ENTRYPOINT [\"/opt/pyronaut/bin/{runner_name}\", \"--project-dir\", \"/app\"]
+""",
+        encoding="utf-8",
+    )
+
+
 def _write_crema_application_dockerfile(*, target: Path, base_image: str, runner_name: str) -> None:
     dockerfile = f"""\\
 FROM {base_image}
 WORKDIR /app
+# Older Crema base images may contain the native-build distribution under the
+# application directory. It is only needed while producing the image, never
+# at runtime, so remove it from the final application layer.
+RUN rm -rf /app/__pyronaut__/tools
 COPY app/config /app/config
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
@@ -2781,11 +2982,11 @@ def _run_docker_build(
             build_args["PYRONAUT_NATIVE_BUILDER_IMAGE"] = builder_image
             build_args["PYRONAUT_NATIVE_BASE_IMAGE"] = runtime_image
             runner_name = PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else "pyronaut-run"
-            if base_image_build or default_base_image:
-                _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+            if base_image_build:
                 base_image = docker_config.get("base_image") or f"{image_name}:{project_version}-native-base"
                 build_args["PYRONAUT_BASE_IMAGE"] = base_image
                 dockerfile = context_dir / "DockerfileNativeBase"
+                _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
                 _write_crema_base_dockerfile(
                     target=dockerfile,
                     builder_image=builder_image,
@@ -2795,7 +2996,7 @@ def _run_docker_build(
                     verbose=verbose,
                     static_native=static_native,
                     passthrough_args=_extract_native_build_passthrough_args(args),
-                    bundled_only=default_base_image,
+                    bundled_only=False,
                 )
                 base_command = _build_docker_command(
                     dockerfile=dockerfile,
@@ -2811,6 +3012,22 @@ def _run_docker_build(
                 if base_exit != SUCCESS:
                     return base_exit
                 _record_docker_base_image(project_dir, base_image)
+            elif default_base_image:
+                bundled = _bundled_default_base_image(project_dir)
+                if bundled is None or not bundled.is_file():
+                    print("The bundled default native base image is not installed for this platform.", file=sys.stderr)
+                    return PRECONDITION_FAILED
+                _prepare_bundled_docker_context(project_dir=project_dir, context_dir=context_dir)
+                bundled_dir = context_dir / "bundled-base"
+                bundled_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(bundled, bundled_dir / runner_name)
+                (bundled_dir / runner_name).chmod(0o755)
+                dockerfile = context_dir / "DockerfileNativeDefault"
+                _write_bundled_application_dockerfile(
+                    target=dockerfile,
+                    runtime_image=runtime_image,
+                    runner_name=runner_name,
+                )
             elif (base_image := _configured_docker_base_image(project_dir, docker_config)) is not None:
                 _prepare_crema_native_docker_context(project_dir=project_dir, context_dir=context_dir)
                 build_args["PYRONAUT_BASE_IMAGE"] = base_image
@@ -2845,9 +3062,11 @@ def _run_docker_build(
                         runtime_image=runtime_image,
                         project_name=project_name,
                         main_class=main_class,
+                        include_python=_is_python_runtime_project(project_dir),
                         verbose=verbose,
                         static_native=static_native,
                         passthrough_args=[*_extract_native_build_passthrough_args(args), *_native_user_package_args(project_dir)],
+                        runtime_copies=_manifest_docker_copy_lines(context_dir),
                     )
         else:
             runner_name = _prepare_jvm_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
@@ -2865,6 +3084,7 @@ def _run_docker_build(
                     target=dockerfile,
                     base_image=build_args["PYRONAUT_JVM_BASE_IMAGE"],
                     runner_name=runner_name,
+                    runtime_copies=_manifest_docker_copy_lines(context_dir),
                 )
 
         command = _build_docker_command(
@@ -2912,6 +3132,8 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent / "app"
 MAIN_CLASS = {main_class!r}
+RUNTIME_MANIFEST = PROJECT_DIR / "__pyronaut__" / "resolved-runtime-dependencies"
+CLASSES_DIR = PROJECT_DIR / "__pyronaut__" / "classes"
 
 
 def main() -> None:
@@ -2920,21 +3142,28 @@ def main() -> None:
     except Exception as exc:
         raise SystemExit("Pyronaut runtime is required to launch this JVM build: " + str(exc))
 
-    os.chdir(PROJECT_DIR)
-    try:
-        command_line, env = pyronaut_cli._build_java_delegate_invocation(
-            "run",
-            ["--project-dir", str(PROJECT_DIR), *sys.argv[1:]],
-            pyronaut_cli._resolve_executable,
-            java_home_provider=lambda: pyronaut_cli._ensure_graalvm_java_home(PROJECT_DIR),
-        )
-    except RuntimeError as exc:
-        raise SystemExit(str(exc))
-
-    merged_env = pyronaut_cli._strip_test_resources_java_tool_options(dict(os.environ)) or dict(os.environ)
-    if env:
-        merged_env.update(env)
-    raise SystemExit(subprocess.run(command_line, env=merged_env).returncode)
+    if not CLASSES_DIR.is_dir():
+        raise SystemExit(f"Missing compiled application classes: {{CLASSES_DIR}}")
+    if not RUNTIME_MANIFEST.is_file():
+        raise SystemExit(f"Missing runtime classpath manifest: {{RUNTIME_MANIFEST}}")
+    entries = [str(CLASSES_DIR)]
+    for value in RUNTIME_MANIFEST.read_text(encoding="utf-8").splitlines():
+        value = value.strip()
+        if not value:
+            continue
+        path = Path(value)
+        resolved = path if path.is_absolute() else PROJECT_DIR / path
+        if resolved.exists():
+            entries.append(str(resolved))
+    java_home = pyronaut_cli._ensure_graalvm_java_home(PROJECT_DIR)
+    env = dict(os.environ)
+    if java_home:
+        env["JAVA_HOME"] = java_home
+        env["PATH"] = str(Path(java_home) / "bin") + os.pathsep + env.get("PATH", "")
+    java = pyronaut_cli._resolve_java_executable(env)
+    command_line = [java, "-cp", os.pathsep.join(dict.fromkeys(entries)), MAIN_CLASS,
+                    "--project-dir", str(PROJECT_DIR), *sys.argv[1:]]
+    raise SystemExit(subprocess.run(command_line, env=env).returncode)
 """
 
 
