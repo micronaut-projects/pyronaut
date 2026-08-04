@@ -22,8 +22,13 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 final class ProcessorSourceCache {
@@ -116,18 +121,42 @@ final class ProcessorSourceCache {
                               boolean incremental,
                               String pythonIncrementalMode,
                               List<String> options) {
+        return fingerprint(
+            pythonSources,
+            javaSources,
+            annotationProcessorPath,
+            classpath,
+            compilePythonBytecode,
+            incremental,
+            pythonIncrementalMode,
+            options,
+            null
+        );
+    }
+
+    static String fingerprint(Path pythonSources,
+                              Path javaSources,
+                              List<Path> annotationProcessorPath,
+                              List<Path> classpath,
+                              boolean compilePythonBytecode,
+                              boolean incremental,
+                              String pythonIncrementalMode,
+                              List<String> options,
+                              Path contentCacheFile) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            DigestCache contentCache = DigestCache.load(contentCacheFile);
             updateString(digest, "python\n");
             updateDirectory(digest, pythonSources, ".py");
             updateString(digest, "java\n");
             updateDirectory(digest, javaSources, ".java");
-            updatePathList(digest, "processor-path", annotationProcessorPath);
-            updatePathList(digest, "classpath", classpath);
+            updatePathList(digest, "processor-path", annotationProcessorPath, contentCache);
+            updatePathList(digest, "classpath", classpath, contentCache);
             updateString(digest, "compile-python-bytecode=" + compilePythonBytecode + "\n");
             updateString(digest, "incremental=" + incremental + "\n");
             updateString(digest, "python-incremental-mode=" + pythonIncrementalMode + "\n");
             updateStringList(digest, "options", options);
+            contentCache.store(contentCacheFile);
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
@@ -221,23 +250,26 @@ final class ProcessorSourceCache {
         }
     }
 
-    private static void updatePathList(MessageDigest digest, String key, List<Path> values) {
+    private static void updatePathList(MessageDigest digest,
+                                       String key,
+                                       List<Path> values,
+                                       DigestCache contentCache) {
         updateString(digest, key + "\n");
         for (Path value : values) {
             Path normalized = value.toAbsolutePath().normalize();
             updateString(digest, normalized.toString());
             updateString(digest, "\n");
-            updatePathContents(digest, normalized);
+            updatePathContents(digest, normalized, contentCache);
         }
     }
 
-    private static void updatePathContents(MessageDigest digest, Path path) {
+    private static void updatePathContents(MessageDigest digest, Path path, DigestCache contentCache) {
         if (!Files.exists(path)) {
             updateString(digest, "missing\n");
             return;
         }
         if (Files.isRegularFile(path)) {
-            updateBytes(digest, readFile(path));
+            updateFileDigest(digest, path, contentCache);
             return;
         }
         if (!Files.isDirectory(path)) {
@@ -249,7 +281,7 @@ final class ProcessorSourceCache {
                 .sorted(Comparator.comparing(entry -> path.relativize(entry).toString()))
                 .forEach(entry -> {
                     updateString(digest, path.relativize(entry).toString());
-                    updateBytes(digest, readFile(entry));
+                    updateFileDigest(digest, entry, contentCache);
                 });
         } catch (Exception e) {
             throw new PyronautProcessorException("Failed to hash classpath entry: " + path, e);
@@ -273,6 +305,10 @@ final class ProcessorSourceCache {
         digest.update((byte) 0);
     }
 
+    private static void updateFileDigest(MessageDigest digest, Path file, DigestCache contentCache) {
+        updateString(digest, contentCache.digest(file));
+    }
+
     private static String encodePath(Path path) {
         String value = path.toString().replace(path.getFileSystem().getSeparator(), "/");
         return Base64.getUrlEncoder().withoutPadding()
@@ -281,5 +317,94 @@ final class ProcessorSourceCache {
 
     private static String decodePath(String value) {
         return new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8);
+    }
+
+    private static final class DigestCache {
+        private final Map<String, Entry> entries;
+        private final Set<String> seen = new HashSet<>();
+        private boolean dirty;
+
+        private DigestCache(Map<String, Entry> entries) {
+            this.entries = entries;
+        }
+
+        static DigestCache load(Path cacheFile) {
+            if (cacheFile == null || !Files.isRegularFile(cacheFile)) {
+                return new DigestCache(new HashMap<>());
+            }
+            Map<String, Entry> entries = new HashMap<>();
+            try {
+                for (String line : Files.readAllLines(cacheFile, StandardCharsets.UTF_8)) {
+                    String[] fields = line.split("\\t", -1);
+                    if (fields.length == 4) {
+                        entries.put(
+                            new String(Base64.getUrlDecoder().decode(fields[0]), StandardCharsets.UTF_8),
+                            new Entry(Long.parseLong(fields[1]), Long.parseLong(fields[2]), fields[3])
+                        );
+                    }
+                }
+            } catch (Exception ignored) {
+                entries.clear();
+            }
+            return new DigestCache(entries);
+        }
+
+        String digest(Path file) {
+            Path normalized = file.toAbsolutePath().normalize();
+            String key = normalized.toString();
+            seen.add(key);
+            try {
+                long size = Files.size(normalized);
+                long modified = Files.getLastModifiedTime(normalized).to(TimeUnit.NANOSECONDS);
+                Entry cached = entries.get(key);
+                if (cached != null && cached.size == size && cached.modified == modified) {
+                    return cached.digest;
+                }
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                digest.update(Files.readAllBytes(normalized));
+                String value = HexFormat.of().formatHex(digest.digest());
+                entries.put(key, new Entry(size, modified, value));
+                dirty = true;
+                return value;
+            } catch (NoSuchAlgorithmException e) {
+                throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
+            } catch (Exception e) {
+                throw new PyronautProcessorException("Failed to read source file for hash: " + file, e);
+            }
+        }
+
+        void store(Path cacheFile) {
+            if (cacheFile == null) {
+                return;
+            }
+            try {
+                if (entries.size() != seen.size()) {
+                    entries.keySet().retainAll(seen);
+                    dirty = true;
+                }
+                if (!dirty) {
+                    return;
+                }
+                Path parent = cacheFile.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+                StringBuilder contents = new StringBuilder();
+                entries.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> contents.append(Base64.getUrlEncoder().withoutPadding()
+                            .encodeToString(entry.getKey().getBytes(StandardCharsets.UTF_8)))
+                        .append('\t').append(entry.getValue().size)
+                        .append('\t').append(entry.getValue().modified)
+                        .append('\t').append(entry.getValue().digest)
+                        .append(System.lineSeparator()));
+                Files.writeString(cacheFile, contents, StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                throw new PyronautProcessorException("Failed to write processor content cache: " + cacheFile, e);
+            }
+        }
+
+        private record Entry(long size, long modified, String digest) {
+        }
     }
 }

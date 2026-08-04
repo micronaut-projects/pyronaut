@@ -86,6 +86,7 @@ final class MavenClasspathResolver {
     private static final String JUNIT_JUPITER_ENGINE_MODULE = "org.junit.jupiter:junit-jupiter-engine";
     private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
     private static final String PYRONAUT_BOM_ARTIFACT = "micronaut-pyronaut-bom";
+    private static final String SONATYPE_SNAPSHOTS_REPOSITORY = "https://s01.oss.sonatype.org/content/repositories/snapshots/";
     private static final Set<String> EXTRA_FORBIDDEN_SERVER_MODULES = Set.of(
         "io.micronaut.testresources:micronaut-test-resources-build-tools",
         "io.micronaut.testresources:micronaut-test-resources-client",
@@ -655,7 +656,6 @@ final class MavenClasspathResolver {
             coordinates.add(coordinate);
         }
     }
-
     private static void addDefaultCacheImplementationIfMissing(Set<String> coordinates, Map<String, String> managedVersions) {
         if (!hasCacheImplementation(coordinates)) {
             addDefaultCoordinate(coordinates, MICRONAUT_CACHE_CAFFEINE_MODULE, managedVersions);
@@ -899,15 +899,33 @@ final class MavenClasspathResolver {
             return List.of();
         }
         List<String> repositories = model.pyronaut().repositories() == null ? List.of() : model.pyronaut().repositories();
-        if (model.pyronaut().coreVersion() != null
-            && model.pyronaut().coreVersion().endsWith("-SNAPSHOT")
-            && repositories.stream().noneMatch(repository -> repository != null && "mavenlocal".equals(repository.trim().toLowerCase(Locale.ROOT)))) {
-            List<String> withMavenLocal = new ArrayList<>(repositories.size() + 1);
-            withMavenLocal.add("mavenLocal");
-            withMavenLocal.addAll(repositories);
-            return withMavenLocal;
+        if (model.pyronaut().coreVersion() == null
+            || !model.pyronaut().coreVersion().endsWith("-SNAPSHOT")
+            || !snapshotRepositoryEnabled()) {
+            return repositories;
         }
-        return repositories;
+        List<String> withSnapshots = new ArrayList<>(repositories.size() + 2);
+        boolean localConfigured = repositories.stream()
+            .anyMatch(repository -> repository != null && "mavenlocal".equals(repository.trim().toLowerCase(Locale.ROOT)));
+        if (!localConfigured) {
+            withSnapshots.add("mavenLocal");
+        }
+        withSnapshots.add(SONATYPE_SNAPSHOTS_REPOSITORY);
+        withSnapshots.addAll(repositories);
+        return withSnapshots;
+    }
+
+    /**
+     * Automatic Sonatype snapshot lookup can be disabled for air-gapped or
+     * strictly reproducible builds with either a JVM property or environment
+     * variable. It remains enabled by default for Micronaut snapshot builds.
+     */
+    private static boolean snapshotRepositoryEnabled() {
+        String configured = System.getProperty("pyronaut.sonatype.snapshots.enabled");
+        if (configured == null) {
+            configured = System.getenv("PYRONAUT_SONATYPE_SNAPSHOTS");
+        }
+        return configured == null || Boolean.parseBoolean(configured);
     }
 
     private static RemoteRepository newRemoteRepository(String id, String url, boolean forceUpdates) {

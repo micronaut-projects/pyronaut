@@ -59,22 +59,25 @@ final class AnnotationProcessorOptionDiscovery {
             URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
             try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
                 Class<?> visitorType = Class.forName("io.micronaut.inject.visitor.TypeElementVisitor", true, loader);
-                for (Object visitor : ServiceLoader.load(visitorType, loader)) {
-                    try {
-                        Object supported = visitorType.getMethod("getSupportedOptions").invoke(visitor);
-                        if (!(supported instanceof java.util.Collection<?> collection)) {
-                            continue;
+                ServiceLoader.load(visitorType, loader).stream().forEach(provider -> {
+                    // skip micronaut data since it uses Micronaut's service loader which causes issues and doesn't define any options anyway
+                    if (provider.type().getName().equals("io.micronaut.data.processor.visitors.RepositoryTypeElementVisitor")) {
+                        Object visitor = provider.get();
+                        try {
+                            Object supported = visitorType.getMethod("getSupportedOptions").invoke(visitor);
+                            if (supported instanceof java.util.Collection<?> collection) {
+                                collection.stream()
+                                        .filter(option -> option instanceof String)
+                                        .map(String.class::cast)
+                                        .filter(option -> option != null && !option.isBlank())
+                                        .map(String::trim)
+                                        .forEach(options::add);
+                            }
+                        } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
+                            // A processor with optional dependencies must not make installation fail.
                         }
-                        collection.stream()
-                            .filter(option -> option instanceof String)
-                            .map(String.class::cast)
-                            .filter(option -> option != null && !option.isBlank())
-                            .map(String::trim)
-                            .forEach(options::add);
-                    } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
-                        // A processor with optional dependencies must not make installation fail.
                     }
-                }
+                });
             } catch (ClassNotFoundException | LinkageError | RuntimeException | java.util.ServiceConfigurationError ignored) {
                 // Keep an empty option set when the processor classpath cannot be loaded.
             }
