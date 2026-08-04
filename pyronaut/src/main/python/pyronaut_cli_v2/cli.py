@@ -41,7 +41,7 @@ COMMAND_TO_EXECUTABLE = {
     "test-resources-server": "pyronaut-test-resources-server",
 }
 DEV_NATIVE_EXECUTABLE = "pyronaut-dev"
-DEV_NATIVE_COMMANDS = {"install", "process", "test", "validate-config"}
+DEV_NATIVE_COMMANDS = {"install", "process", "run", "test", "validate-config"}
 TOOLCHAIN_TYPE_JVM = "jvm"
 TOOLCHAIN_TYPE_NATIVE = "native"
 
@@ -4215,6 +4215,11 @@ def _build_dev_delegate_invocation(
         env = _merge_env_overrides(env, env_overrides)
         env = _apply_project_virtualenv(env, project_dir)
         return dev_command_line, env
+    if _read_pyproject_toolchain_type(project_dir) == TOOLCHAIN_TYPE_NATIVE:
+        raise RuntimeError(
+            "The project requests the native toolchain, but pyronaut dev produced no native launcher invocation. "
+            "Refusing to fall back to the JVM launcher."
+        )
     # The JVM fallback uses pyronaut-run, which does not understand dev-only
     # convenience options. Convert those options into JVM properties before
     # constructing its invocation.
@@ -4228,9 +4233,14 @@ def _build_dev_delegate_invocation(
     )
     classpath_index = command_line.index("-cp") + 1
     classpath = _build_delegate_classpath("dev", project_dir, resolver)
-    dev_executable = resolver("pyronaut-dev")
-    if dev_executable is not None:
-        classpath = os.pathsep.join([classpath, *_delegate_lib_entries(dev_executable)])
+    # The JVM fallback is executed by the production runner. Do not append the
+    # pyronaut-dev distribution: it contains compiler, test, GraalPy and
+    # tooling artifacts which can make the application classpath enormous and
+    # accidentally expose Python runtime classes to Java projects.
+    runner_name = PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]
+    runner_executable = resolver(runner_name)
+    if runner_executable is not None:
+        classpath = os.pathsep.join([classpath, *_delegate_lib_entries(runner_executable)])
     command_line[classpath_index] = classpath
     test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
     if test_resources_client_classpath:
@@ -5243,6 +5253,11 @@ def _pyronaut_dev_native_command_line(
         raise RuntimeError(str(exc)) from exc
     executable_path = _resolve_pyronaut_dev_native_executable(resolver)
     if executable_path is None:
+        if _read_pyproject_toolchain_type(project_dir) == TOOLCHAIN_TYPE_NATIVE:
+            raise RuntimeError(
+                "The project requests the native toolchain, but the native pyronaut-dev executable is not installed. "
+                "Build or install pyronaut-dev instead of falling back to the JVM launcher."
+            )
         if _is_external_build_project(project_dir):
             # SDK wheels can be installed without the optional native dev
             # executable. External JVM builds still have a complete delegated
