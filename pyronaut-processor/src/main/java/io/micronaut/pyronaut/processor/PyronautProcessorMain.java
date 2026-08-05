@@ -26,10 +26,14 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -57,6 +61,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_TEST_PYTHON_SRC = "tests";
     private static final String DEFAULT_TEST_JAVA_SRC = "test-java";
     private static final String VERBOSE_HINT = "Re-run with --verbose for full diagnostics.";
+    private static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory containing pyproject.toml")
     Path projectDir = Path.of(".");
@@ -198,6 +203,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             if (externalLayout != null) {
                 effectiveProcessorPath = appendDistinct(effectiveProcessorPath, pyronautProcessorSupport);
             }
+            effectiveProcessorPath = filterNativeProvidedArtifacts(effectiveProcessorPath);
 
             Path resolvedMainPythonSrc = externalLayout == null
                 ? resolveConfiguredPath(root, pythonSrc, DEFAULT_PYTHON_SRC, model.pyronaut().sources().python(), "--python-src")
@@ -471,6 +477,34 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         } finally {
             cleanupTemporaryDirectory(mergedTestRoot);
         }
+    }
+
+    static List<Path> filterNativeProvidedArtifacts(List<Path> paths) {
+        String configured = System.getProperty(NATIVE_PROVIDED_ARTIFACTS, "");
+        if (configured.isBlank()) {
+            return paths;
+        }
+        Set<String> artifactIds = new HashSet<>();
+        Arrays.stream(configured.split(Pattern.quote(",")))
+            .map(String::trim)
+            .filter(value -> !value.isEmpty())
+            .map(value -> value.substring(value.lastIndexOf(':') + 1))
+            .forEach(artifactIds::add);
+        if (artifactIds.isEmpty()) {
+            return paths;
+        }
+        return paths.stream()
+            .filter(path -> artifactIds.stream().noneMatch(artifactId -> isArtifact(path, artifactId)))
+            .toList();
+    }
+
+    private static boolean isArtifact(Path path, String artifactId) {
+        Path fileName = path.getFileName();
+        if (fileName == null) {
+            return false;
+        }
+        String name = fileName.toString();
+        return name.startsWith(artifactId + "-") && name.endsWith(".jar");
     }
 
     public static void main(String[] args) {

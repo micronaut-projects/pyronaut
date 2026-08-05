@@ -84,6 +84,29 @@ class PyronautProcessorMainTest {
     }
 
     @Test
+    void filtersNativeProvidedProcessorArtifacts() {
+        String previous = System.getProperty("pyronaut.dev.native.provided.artifacts");
+        try {
+            System.setProperty(
+                "pyronaut.dev.native.provided.artifacts",
+                "io.micronaut.openapi:micronaut-openapi,io.micronaut.openapi:micronaut-openapi-common"
+            );
+            List<Path> filtered = PyronautProcessorMain.filterNativeProvidedArtifacts(List.of(
+                Path.of("/tmp/micronaut-openapi-7.0.0.jar"),
+                Path.of("/tmp/micronaut-openapi-common-7.0.0.jar"),
+                Path.of("/tmp/custom-processor-1.0.jar")
+            ));
+            assertEquals(List.of(Path.of("/tmp/custom-processor-1.0.jar")), filtered);
+        } finally {
+            if (previous == null) {
+                System.clearProperty("pyronaut.dev.native.provided.artifacts");
+            } else {
+                System.setProperty("pyronaut.dev.native.provided.artifacts", previous);
+            }
+        }
+    }
+
+    @Test
     void enablesIncrementalCompilationFromConfigurationAndAllowsCliOverride() throws Exception {
         Path project = tempDir.resolve("project-incremental");
         prepareCachedProject(project);
