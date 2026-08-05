@@ -94,9 +94,13 @@ class PyronautProcessorMainTest {
             List<Path> filtered = PyronautProcessorMain.filterNativeProvidedArtifacts(List.of(
                 Path.of("/tmp/micronaut-openapi-7.0.0.jar"),
                 Path.of("/tmp/micronaut-openapi-common-7.0.0.jar"),
+                Path.of("/tmp/jakarta.inject-api-2.0.1.jar"),
                 Path.of("/tmp/custom-processor-1.0.jar")
             ));
-            assertEquals(List.of(Path.of("/tmp/custom-processor-1.0.jar")), filtered);
+            assertEquals(List.of(
+                Path.of("/tmp/jakarta.inject-api-2.0.1.jar"),
+                Path.of("/tmp/custom-processor-1.0.jar")
+            ), filtered);
         } finally {
             if (previous == null) {
                 System.clearProperty("pyronaut.dev.native.provided.artifacts");

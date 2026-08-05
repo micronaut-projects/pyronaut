@@ -1024,11 +1024,6 @@ def _build_direct_source_native_jvm_args(
             # expose the compiler support jars as the native JVM classpath so
             # generated Python annotations are visible during compilation.
             jvm_args.append(f"-Djava.class.path={compiler_classpath}")
-    # Coordinates contain ':', so use a delimiter that is independent of the
-    # host path separator when passing the list through a system property.
-    provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
-    if provided_artifacts:
-        jvm_args.append(f"-Dpyronaut.dev.native.provided.artifacts={provided_artifacts}")
     # A direct source launch may be run from a project which has already been
     # installed. Preserve that project's command-specific class path, but keep
     # standalone source execution compatible with older wheels/projects.
@@ -5464,7 +5459,9 @@ def _pyronaut_dev_native_command_line(
             return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider)
-    provided_artifacts = os.pathsep.join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
+    # Coordinates contain ':', so use a delimiter independent of the host
+    # path separator when passing the list through a system property.
+    provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
     if provided_artifacts:
         # The native pyronaut-dev image embeds the compiler and annotation
         # processors. Tell the in-process processor to remove matching

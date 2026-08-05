@@ -499,6 +499,12 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     }
 
     private static boolean isArtifact(Path path, String artifactId) {
+        // API jars are compile-time contracts for generated sources. Even if
+        // a native launcher embeds an implementation, removing an API jar can
+        // make ordinary source imports (for example jakarta.inject) vanish.
+        if (artifactId.endsWith("-api")) {
+            return false;
+        }
         Path fileName = path.getFileName();
         if (fileName == null) {
             return false;
