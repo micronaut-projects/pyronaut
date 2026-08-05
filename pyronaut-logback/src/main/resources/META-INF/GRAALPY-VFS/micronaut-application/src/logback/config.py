@@ -115,8 +115,13 @@ def dictConfig(config):
     }
     """
     # Configure logback via Java with the full config
-    if LogbackConfigurer:
-        LogbackConfigurer.configure(config)
+    if not LogbackConfigurer:
+        # Native images may not expose the Java Logback bridge. Keep Python
+        # logging fully functional instead of silently dropping INFO records.
+        logging.config.dictConfig(config)
+        return
+
+    LogbackConfigurer.configure(config)
     
     # Set the logger class to use our custom LogbackLogger
     # This ensures all loggers created go through SLF4J/logback

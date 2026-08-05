@@ -24,7 +24,10 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * ILoggerFactory implementation that creates Python-backed loggers.
  * This factory creates loggers that delegate to Python's logging module
- * when a GraalPy context is available, otherwise falls back to System.out/err.
+ * when a GraalPy context is available, otherwise falls back to the configured
+ * console stream (stdout by default, or stderr when
+ * {@code pyronaut.logging.fallback-stream=stderr} or
+ * {@code PYRONAUT_LOGGING_FALLBACK_STREAM=stderr} is set).
  *
  * @author Micronaut Team
  * @since 1.0.0

@@ -26,13 +26,16 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 
 /**
- * Console-based SLF4J Logger implementation that writes to System.out/err.
+ * Console-based SLF4J Logger implementation that writes to a configurable console stream.
  * This logger is used when Python logging is not available.
  *
  * @author Micronaut Team
  * @since 1.0.0
  */
 final class DelayedConsoleLogger implements Logger {
+
+    private static final String FALLBACK_STREAM_PROPERTY = "pyronaut.logging.fallback-stream";
+    private static final String FALLBACK_STREAM_ENVIRONMENT = "PYRONAUT_LOGGING_FALLBACK_STREAM";
 
     private final String name;
     private volatile boolean traceEnabled = false;
@@ -79,7 +82,7 @@ final class DelayedConsoleLogger implements Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (traceEnabled) {
-                log(System.out, "TRACE", name, msg, null);
+                log(output(), "TRACE", name, msg, null);
             }
         } else {
             d.trace(msg);
@@ -113,7 +116,7 @@ final class DelayedConsoleLogger implements Logger {
     @Override
     public void trace(String msg, Throwable t) {
         if (traceEnabled) {
-            log(System.out, "TRACE", name, msg, t);
+            log(output(), "TRACE", name, msg, t);
         }
     }
 
@@ -170,7 +173,7 @@ final class DelayedConsoleLogger implements Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (debugEnabled) {
-                log(System.out, "DEBUG", name, msg, null);
+                log(output(), "DEBUG", name, msg, null);
             }
         } else {
             d.debug(msg);
@@ -221,7 +224,7 @@ final class DelayedConsoleLogger implements Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (debugEnabled) {
-                log(System.out, "DEBUG", name, msg, t);
+                log(output(), "DEBUG", name, msg, t);
             }
         } else {
             d.debug(msg, t);
@@ -268,7 +271,7 @@ final class DelayedConsoleLogger implements Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (infoEnabled) {
-                log(System.out, "INFO", name, msg, null);
+                log(output(), "INFO", name, msg, null);
             }
         } else {
             d.info(msg);
@@ -319,7 +322,7 @@ final class DelayedConsoleLogger implements Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (infoEnabled) {
-                log(System.out, "INFO", name, msg, t);
+                log(output(), "INFO", name, msg, t);
             }
         } else {
             d.info(msg, t);
@@ -366,7 +369,7 @@ final class DelayedConsoleLogger implements Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (warnEnabled) {
-                log(System.out, "WARN", name, msg, null);
+                log(output(), "WARN", name, msg, null);
             }
         } else {
             d.warn(msg);
@@ -417,7 +420,7 @@ final class DelayedConsoleLogger implements Logger {
         PythonLogger d = getDelegate();
         if (d == null) {
             if (warnEnabled) {
-                log(System.out, "WARN", name, msg, t);
+                log(output(), "WARN", name, msg, t);
             }
         } else {
             d.warn(msg, t);
@@ -560,6 +563,14 @@ final class DelayedConsoleLogger implements Logger {
             throwable.printStackTrace(pw);
             stream.println(sw);
         }
+    }
+
+    private PrintStream output() {
+        String stream = System.getProperty(FALLBACK_STREAM_PROPERTY);
+        if (stream == null) {
+            stream = System.getenv(FALLBACK_STREAM_ENVIRONMENT);
+        }
+        return "stderr".equalsIgnoreCase(stream) ? System.err : System.out;
     }
 
     private String formatTuple(FormattingTuple t) {
