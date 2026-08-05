@@ -1,3 +1,5 @@
+![Pyronaut Logo](media/pyronaut.png)
+
 # Pyronaut
 
 Pyronaut brings Micronaut application development to Python code running on
