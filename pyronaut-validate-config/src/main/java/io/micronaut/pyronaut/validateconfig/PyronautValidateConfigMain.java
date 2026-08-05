@@ -368,6 +368,8 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         merged.add("micronaut.config");
         merged.add("micronaut.openapi");
         merged.add("micronaut.processing");
+        merged.add("endpoints.*");
+        merged.add("logger.levels.*");
         addNonBlank(merged, validation.suppressions());
         addNonBlank(merged, suppressions);
         addNonBlank(merged, suppress);

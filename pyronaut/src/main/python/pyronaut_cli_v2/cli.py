@@ -1384,7 +1384,12 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
                 if _is_native_test_resources_client_artifact(Path(entry).name)
             )
         return [entry for entry in entries if Path(entry).exists()]
-    if command == "dev":
+    if command == "process":
+        # The project runtime dependencies provide application APIs (such as
+        # jakarta.inject); native-compile-classpath is added by the delegate
+        # command builder for the embedded compiler APIs.
+        entries.extend(_read_manifest_entries(cache_dir / "resolved-runtime-dependencies"))
+    elif command == "dev":
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
@@ -5510,12 +5515,11 @@ def _pyronaut_dev_native_command_line(
                     continue
                 class_name = ".".join(class_file.relative_to(test_classes_root).with_suffix("").parts)
                 command_args.extend(["--select-class", class_name])
-    if command == "process" and _is_external_build_project(project_dir):
-        # Pass the compiler support jars through the processor's explicit
-        # compile classpath. Native images do not expose their launcher
-        # classpath to javac automatically. For configured external projects
-        # this is deliberately an explicit compiler-only classpath; the
-        # application runtime classpath remains free of Python/compiler jars.
+    if command == "process":
+        # Native images do not expose their launcher classpath to javac
+        # automatically. Pass the API/compiler jars explicitly for processing;
+        # they are recorded in native-compile-classpath.txt and are not runtime
+        # application dependencies.
         process_compiler_classpath = compiler_classpath or os.pathsep.join(
             _native_launcher_compile_classpath_entries(executable_path)
         )

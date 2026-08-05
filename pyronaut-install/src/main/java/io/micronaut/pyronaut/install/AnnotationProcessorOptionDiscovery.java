@@ -15,6 +15,10 @@
  */
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.annotation.processing.BeanDefinitionInjectProcessor;
+import io.micronaut.inject.visitor.VisitorContext;
+
+import javax.annotation.processing.SupportedOptions;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -23,11 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Properties;
-import java.util.ServiceLoader;
-import java.util.TreeSet;
+import java.util.*;
 
 /** Discovers annotation processor options without embedding processor-specific names. */
 final class AnnotationProcessorOptionDiscovery {
@@ -55,15 +55,41 @@ final class AnnotationProcessorOptionDiscovery {
             return;
         }
         TreeSet<String> options = new TreeSet<>();
-        if (!entries.isEmpty()) {
+        // Native executables must not instantiate arbitrary processors at
+        // runtime. Their service implementations may call SoftServiceLoader,
+        // which reaches ImageSingletons and is not necessarily compiled into
+        // the image. The processors embedded in the native image contribute
+        // their known options below; JVM execution retains dynamic discovery.
+        boolean nativeImage = System.getProperty("org.graalvm.nativeimage.imagecode") != null;
+        options.add("micronaut.openapi.views.spec");
+        options.add("micronaut.processing.incremental");
+        options.add(VisitorContext.MICRONAUT_PROCESSING_MODULE);
+        options.add(VisitorContext.MICRONAUT_PROCESSING_GROUP);
+        options.add(VisitorContext.MICRONAUT_PROCESSING_PROJECT_DIR);
+        if (nativeImage) {
             URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
             try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
                 Class<?> visitorType = Class.forName("io.micronaut.inject.visitor.TypeElementVisitor", true, loader);
                 ServiceLoader.load(visitorType, loader).stream().forEach(provider -> {
                     // skip micronaut data since it uses Micronaut's service loader which causes issues and doesn't define any options anyway
-                    if (provider.type().getName().equals("io.micronaut.data.processor.visitors.RepositoryTypeElementVisitor")) {
-                        Object visitor = provider.get();
+                    SupportedOptions opts = provider.type().getAnnotation(SupportedOptions.class);
+                    if (opts != null) {
+                        options.addAll(Arrays.asList(opts.value()));
+                    }
+                });
+            } catch (ClassNotFoundException | LinkageError | RuntimeException | java.util.ServiceConfigurationError ignored) {
+                // Keep an empty option set when the processor classpath cannot be loaded.
+            }
+        } else if (!entries.isEmpty()) {
+            URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
+            try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
+                Class<?> visitorType = Class.forName("io.micronaut.inject.visitor.TypeElementVisitor", true, loader);
+                ServiceLoader.load(visitorType, loader).stream().forEach(provider -> {
+                    // skip micronaut data since it uses Micronaut's service loader which causes issues and doesn't define any options anyway
+                    String processorName = provider.type().getName();
+                    if (!processorName.startsWith("io.micronaut.data") && !processorName.startsWith("io.micronaut.python.processing")) {
                         try {
+                            Object visitor = provider.get();
                             Object supported = visitorType.getMethod("getSupportedOptions").invoke(visitor);
                             if (supported instanceof java.util.Collection<?> collection) {
                                 collection.stream()
