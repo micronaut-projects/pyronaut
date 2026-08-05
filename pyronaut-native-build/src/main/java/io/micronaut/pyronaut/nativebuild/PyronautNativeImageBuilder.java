@@ -44,65 +44,124 @@ public final class PyronautNativeImageBuilder {
         "-H:+SharedArenaSupport",
         "-H:-SupportCompileInIsolates",
         "--add-modules=java.net.http,java.naming,java.rmi,java.xml",
-        "-H:Preserve=package=io.micronaut.http.netty.*",
         "--enable-http",
         "--enable-https",
-        "-H:Preserve=module=java.base,package=java.*,package=jdk.internal.misc.*,package=jdk.internal.access.*,package=sun.*,module=java.sql,package=java.sql,package=java.sql.*,package=javax.sql,package=io.micronaut.*,package=jakarta.annotation,package=jakarta.annotation.*,package=jakarta.inject,package=jakarta.inject.*",
+        // "-Os", optimize for size and quick build
+        "-H:-PrintRestrictHeapAccessWarnings",
+        "-H:IncludeResources=templates/.*",
+
+        /*
+         * -H:Preserve
+         */
+
+        /* Modules */
+        "-H:Preserve=module=java.base,module=java.sql",
+
+        /* java.* */
+        "-H:Preserve=package=java.applet.*",
+        // "-H:Preserve=package=java.awt.*",
+        "-H:Preserve=package=java.beans.*",
+        "-H:Preserve=package=java.io.*",
         "-H:Preserve=package=java.lang.*",
-        "-H:Preserve=package=java.lang.invoke.*",
+        "-H:Preserve=package=java.math.*",
+        "-H:Preserve=package=java.net.*",
+        "-H:Preserve=package=java.nio.*",
+        "-H:Preserve=package=java.rmi.*",
+        "-H:Preserve=package=java.security.*",
+        "-H:Preserve=package=java.sql.*",
         "-H:Preserve=package=java.text.*",
         "-H:Preserve=package=java.time.*",
         "-H:Preserve=package=java.util.*",
-        "-H:Preserve=package=java.net.http",
-        "-H:Preserve=package=java.rmi.server",
+
+        /* sun.* */
+        // "-H:Preserve=package=sun.awt.*",
+        // "-H:Preserve=package=sun.datatransfer.*",
+        // "-H:Preserve=package=sun.font.*",
+        "-H:Preserve=package=sun.instrument.*",
+        "-H:Preserve=package=sun.invoke.*",
+        // "-H:Preserve=package=sun.java2d.*",
+        // "-H:Preserve=package=sun.launcher.*",
+        // "-H:Preserve=package=sun.lwawt.*",
+        "-H:Preserve=package=sun.management.*",
+        "-H:Preserve=package=sun.misc.*",
+        "-H:Preserve=package=sun.net.*",
+        "-H:Preserve=package=sun.nio.*",
+        "-H:Preserve=package=sun.print.*",
+        "-H:Preserve=package=sun.reflect.*",
+        "-H:Preserve=package=sun.rmi.*",
+        "-H:Preserve=package=sun.security.*",
+        // "-H:Preserve=package=sun.swing.*",
+        "-H:Preserve=package=sun.text.*",
+        // "-H:Preserve=package=sun.tools.*",
+        "-H:Preserve=package=sun.usagetracker.*",
+        "-H:Preserve=package=sun.util.*",
+
+        /* javax.* */
+        "-H:Preserve=package=javax.sql",
+        "-H:Preserve=package=javax.xml.parsers",
+        "-H:Preserve=package=javax.xml.transform.dom",
+        "-H:Preserve=package=javax.xml.transform.sax",
+        "-H:Preserve=package=javax.xml.transform",
+        "-H:Preserve=package=javax.xml.validation",
+        "-H:Preserve=package=javax.xml.xpath",
+        "-H:Preserve=package=javax.xml",
+
+        /* jakarta.* */
+        "-H:Preserve=package=jakarta.*",
+        "-H:Preserve=package=jakarta.annotation,package=jakarta.annotation.*,package=jakarta.inject,package=jakarta.inject.*",
+
+        /* jdk.internal.* */
         "-H:Preserve=package=jdk.internal.misc.*",
         "-H:Preserve=package=jdk.internal.access.*",
+        
+        /* io.micronaut.* */
+        "-H:Preserve=package=io.micronaut.*",
+        "-H:Preserve=package=io.micronaut.aop.*",
+        "-H:Preserve=package=io.micronaut.buffer.netty.*",
+        "-H:Preserve=package=io.micronaut.context.*",
         "-H:Preserve=package=io.micronaut.core.annotation.*",
         "-H:Preserve=package=io.micronaut.core.beans.*",
+        "-H:Preserve=package=io.micronaut.core.io.service.*",
         "-H:Preserve=package=io.micronaut.core.naming.*",
         "-H:Preserve=package=io.micronaut.core.reflect.*",
         "-H:Preserve=package=io.micronaut.core.type.*",
         "-H:Preserve=package=io.micronaut.core.util.*",
-        "-H:Preserve=package=io.micronaut.core.io.service.*",
-        "-H:Preserve=package=io.micronaut.buffer.netty.*",
-        "-H:Preserve=package=io.micronaut.aop.*",
-        "-H:Preserve=package=io.micronaut.inject.*",
-        "-H:Preserve=package=io.micronaut.context.*",
-        "-H:Preserve=package=io.micronaut.scheduling.*",
-        "-H:Preserve=package=io.micronaut.runtime.*",
         "-H:Preserve=package=io.micronaut.http.*",
-        "-H:Preserve=package=io.netty.channel",
+        "-H:Preserve=package=io.micronaut.http.netty.*",
+        "-H:Preserve=package=io.micronaut.inject.*",
+        "-H:Preserve=package=io.micronaut.jackson.*",
+        "-H:Preserve=package=io.micronaut.json.*",
+        "-H:Preserve=package=io.micronaut.runtime.*",
+        "-H:Preserve=package=io.micronaut.scheduling.*",
+        "-H:Preserve=package=io.micronaut.serde.*",
+        "-H:Preserve=package=io.micronaut.toml.*",
+        "-H:Preserve=package=io.micronaut.web.router.*",
+
+        /* netty.* */
         "-H:Preserve=package=io.netty.channel.nio",
-        "-H:Preserve=package=io.netty.resolver.*",
+        "-H:Preserve=package=io.netty.channel",
         "-H:Preserve=package=io.netty.handler.codec.http.*",
         "-H:Preserve=package=io.netty.handler.ssl",
-        "-H:Preserve=package=io.netty.util",
+        "-H:Preserve=package=io.netty.resolver.*",
         "-H:Preserve=package=io.netty.util.concurrent",
-        "-H:Preserve=package=io.micronaut.json.*",
-        "-H:Preserve=package=io.micronaut.jackson.*",
-        "-H:Preserve=package=io.micronaut.toml.*",
-        "-H:Preserve=package=io.micronaut.serde.*",
-        "-H:Preserve=package=io.micronaut.web.router.*",
-        "-H:Preserve=package=tools.jackson.core.*",
-        "-H:IncludeResources=templates/.*",
+        "-H:Preserve=package=io.netty.util", 
+
+        /* other */
         "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
-        "-H:Preserve=package=jakarta.*",
         "-H:Preserve=package=org.slf4j.*",
-        "-H:Preserve=package=org.xml.sax",
-        "-H:Preserve=package=org.xml.sax.helpers",
-        "-H:Preserve=package=org.xml.sax.ext",
-        "-H:Preserve=package=org.w3c.dom",
         "-H:Preserve=package=org.w3c.dom.bootstrap",
         "-H:Preserve=package=org.w3c.dom.events",
         "-H:Preserve=package=org.w3c.dom.ls",
-        "-H:Preserve=package=javax.xml",
-        "-H:Preserve=package=javax.xml.parsers",
-        "-H:Preserve=package=javax.xml.transform",
-        "-H:Preserve=package=javax.xml.transform.dom",
-        "-H:Preserve=package=javax.xml.transform.sax",
-        "-H:Preserve=package=javax.xml.validation",
-        "-H:Preserve=package=javax.xml.xpath",
-        "-H:-PrintRestrictHeapAccessWarnings",
+        "-H:Preserve=package=org.w3c.dom",
+        "-H:Preserve=package=org.xml.sax.ext",
+        "-H:Preserve=package=org.xml.sax.helpers",
+        "-H:Preserve=package=org.xml.sax",
+        "-H:Preserve=package=tools.jackson.core.*",
+
+        /*
+         * --initialize-at-(build|run)-time
+         */
+
         "--initialize-at-build-time=jakarta.annotation,jakarta.inject",
         "--initialize-at-build-time=io.micronaut.core.io",
         "--initialize-at-build-time=io.micronaut.core.optim",
@@ -147,6 +206,13 @@ public final class PyronautNativeImageBuilder {
         "--initialize-at-run-time=jdk.internal.shellsupport.doc",
         "--initialize-at-run-time=com.sun.tools.javac.api",
         "--initialize-at-run-time=jdk.internal.org.jline",
+
+        /*
+         * Debug
+         */
+        // "-H:AbortOnTypeReachable=java.awt.*",
+        // "--debug-attach",
+
         "-H:-UnlockExperimentalVMOptions"
     );
 
