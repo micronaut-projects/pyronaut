@@ -73,6 +73,26 @@ final class DirectSourceTestResourcesSessionTest {
     }
 
     @Test
+    void keepsOwnedServerForDirectSourceRestart(@TempDir Path projectRoot) throws Exception {
+        RecordingServerManager manager = new RecordingServerManager();
+        String previous = System.getProperty("pyronaut.dev.direct.restartable");
+        System.setProperty("pyronaut.dev.direct.restartable", "true");
+        try {
+            DirectSourceTestResourcesSession session =
+                DirectSourceTestResourcesSession.open(projectRoot, manager, line -> { });
+            session.close();
+            assertEquals(0, manager.stopCalls);
+            assertTrue(Files.exists(projectRoot.resolve(".micronaut/test-resources/test-resources.properties")));
+        } finally {
+            if (previous == null) {
+                System.clearProperty("pyronaut.dev.direct.restartable");
+            } else {
+                System.setProperty("pyronaut.dev.direct.restartable", previous);
+            }
+        }
+    }
+
+    @Test
     void attachesWithoutStoppingAnExternalServer(@TempDir Path projectRoot) throws Exception {
         RecordingServerManager manager = new RecordingServerManager();
         manager.running = true;

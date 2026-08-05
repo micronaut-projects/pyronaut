@@ -562,7 +562,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=test", "test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=test", "-Dpyronaut.dev.direct.restartable=true", "test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
             executed,
         )
 
@@ -959,6 +959,7 @@ class OrchestratorTest(unittest.TestCase):
                 f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}",
                 "-Dmicronaut.environments=dev",
                 "-Dpyronaut.dev.direct.command=dev",
+                "-Dpyronaut.dev.direct.restartable=true",
                 str(source),
             ],
             started[0],
