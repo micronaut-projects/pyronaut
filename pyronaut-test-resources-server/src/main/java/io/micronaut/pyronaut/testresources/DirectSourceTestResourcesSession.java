@@ -43,6 +43,7 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
     private static final String LOGS_DIRECTORY = "logs";
     private static final String SERVER_LOG_FILE = "test-resources.log";
     private static final String STDIO_LOG_FILE = "launcher-stdio.log";
+    private static final String RESTARTABLE_PROPERTY = "pyronaut.dev.direct.restartable";
     private static final String SERVER_CLASSPATH_MANIFEST =
         "__pyronaut__/resolved-test-resources-server-dependencies";
 
@@ -192,6 +193,10 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
             logMirror.close();
         }
         if (!owned) {
+            return;
+        }
+        if (Boolean.getBoolean(RESTARTABLE_PROPERTY)) {
+            statusSink.accept("[test-resources] keeping owned server for direct-source restart");
             return;
         }
         statusSink.accept("[test-resources] stop owned server");

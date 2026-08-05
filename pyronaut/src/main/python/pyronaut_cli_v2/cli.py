@@ -778,6 +778,8 @@ def _run_direct_source(
         command,
         args,
         env,
+        runner,
+        resolver,
         process_runner,
         snapshot,
         monotonic=monotonic,
@@ -792,11 +794,55 @@ def _run_direct_source(
     )
 
 
+def _stop_direct_source_test_resources_server(
+    *,
+    project_dir: Path,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    env: dict[str, str] | None,
+) -> None:
+    """Stop a server retained while replacing a direct-source child process."""
+    restart_marker = project_dir / "__pyronaut__" / "direct-test-resources-restart"
+    if not restart_marker.exists():
+        return
+    session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+    try:
+        data = _json_loads(session_file.read_text(encoding="utf-8"))
+    except Exception:
+        restart_marker.unlink(missing_ok=True)
+        return
+    if not isinstance(data, dict) or not isinstance(data.get("ownerToken"), str):
+        restart_marker.unlink(missing_ok=True)
+        return
+    executable_path = _resolve_native_preferred_executable(
+        COMMAND_TO_EXECUTABLE["test-resources-server"], resolver
+    )
+    if executable_path is None:
+        restart_marker.unlink(missing_ok=True)
+        return
+    command_line = [
+        executable_path,
+        "stop",
+        "--project-dir",
+        str(project_dir),
+        "--owner-token",
+        data["ownerToken"],
+    ]
+    try:
+        runner(command_line, env)
+    except Exception:
+        return
+    finally:
+        restart_marker.unlink(missing_ok=True)
+
+
 def _run_direct_source_with_auto_restart(
     executable_path: str,
     command: str,
     args: Sequence[str],
     env: dict[str, str] | None,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
     process_runner: ProcessRunner,
     snapshot: tuple[tuple[str, int, int], ...],
     *,
@@ -827,6 +873,17 @@ def _run_direct_source_with_auto_restart(
         ),
         *forwarded_args,
     ]
+
+    cleanup = lambda: _stop_direct_source_test_resources_server(
+        project_dir=Path.cwd().resolve(),
+        runner=runner,
+        resolver=resolver,
+        env=env,
+    )
+    marker = Path.cwd().resolve() / "__pyronaut__" / "direct-test-resources-restart"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    atexit.register(cleanup)
 
     while True:
         if _delegation_trace_enabled():
@@ -900,6 +957,8 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
+    if command in {"dev", "test"}:
+        jvm_args.append("-Dpyronaut.dev.direct.restartable=true")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
         jvm_args.append("-Dmicronaut.control-panel.enabled=true")
         jvm_args.append("-Dmicronaut.control-panel.path=/control-panel")
