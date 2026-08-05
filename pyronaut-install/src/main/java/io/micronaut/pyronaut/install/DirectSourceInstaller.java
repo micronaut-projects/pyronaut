@@ -37,6 +37,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Installs dependencies and editor metadata for direct source selections.
@@ -241,18 +243,26 @@ final class DirectSourceInstaller {
         LinkedHashSet<Path> roots = new LinkedHashSet<>();
         for (Path file : files) {
             Path parent = file.getParent();
-            String packageName;
-            try {
-                packageName = StaticJavaParser.parse(file)
-                    .getPackageDeclaration()
-                    .map(declaration -> declaration.getNameAsString())
-                    .orElse("");
-            } catch (RuntimeException e) {
-                throw new IllegalArgumentException("Cannot parse Java source package declaration: " + file, e);
-            }
+            String packageName = javaPackageName(file);
             roots.add(packageRoot(parent, packageName));
         }
         return minimalRoots(roots);
+    }
+
+    private static String javaPackageName(Path file) throws IOException {
+        try {
+            return StaticJavaParser.parse(file)
+                .getPackageDeclaration()
+                .map(declaration -> declaration.getNameAsString())
+                .orElse("");
+        } catch (RuntimeException ignored) {
+            String source = Files.readString(file);
+            Matcher matcher = Pattern.compile("(?m)^\\s*package\\s+([A-Za-z_$][\\w$]*(?:\\s*\\.\\s*[A-Za-z_$][\\w$]*)*)\\s*;").matcher(source);
+            if (matcher.find()) {
+                return matcher.group(1).replaceAll("\\s+", "");
+            }
+            throw new IllegalArgumentException("Cannot parse Java source package declaration: " + file, ignored);
+        }
     }
 
     private static Path packageRoot(Path sourceDirectory, String packageName) {
