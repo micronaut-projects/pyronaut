@@ -36,6 +36,8 @@ final class DelayedConsoleLogger implements Logger {
 
     private static final String FALLBACK_STREAM_PROPERTY = "pyronaut.logging.fallback-stream";
     private static final String FALLBACK_STREAM_ENVIRONMENT = "PYRONAUT_LOGGING_FALLBACK_STREAM";
+    private static final String APPLICATION_DEFAULTS_MARKER = "pyronaut.application.logging.defaults";
+    private static final String PYTHON_LOGGING_CONFIGURED = "pyronaut.python.logging.configured";
 
     private final String name;
     private volatile boolean traceEnabled = false;
@@ -65,7 +67,7 @@ final class DelayedConsoleLogger implements Logger {
     }
 
     PythonLogger getDelegate() {
-        if (PythonContextRuntime.isInitialized()) {
+        if (PythonContextRuntime.isInitialized() && shouldDelegateToPython()) {
             if (delegate == null) {
                 synchronized (this) {
                     if (delegate == null) {
@@ -75,6 +77,11 @@ final class DelayedConsoleLogger implements Logger {
             }
         }
         return delegate;
+    }
+
+    private static boolean shouldDelegateToPython() {
+        return !Boolean.getBoolean(APPLICATION_DEFAULTS_MARKER)
+            || Boolean.getBoolean(PYTHON_LOGGING_CONFIGURED);
     }
 
     @Override

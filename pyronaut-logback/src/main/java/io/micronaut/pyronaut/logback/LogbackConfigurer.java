@@ -45,6 +45,8 @@ import java.util.logging.Handler;
  */
 public final class LogbackConfigurer {
 
+    private static final String PYTHON_LOGGING_CONFIGURED = "pyronaut.python.logging.configured";
+
     private static final Map<String, Appender<ILoggingEvent>> APPENDERS = new HashMap<>();
     private static final Map<String, String> FORMATTERS = new HashMap<>();
     private static final Map<String, Logger> CONFIGURED_LOGGERS = new HashMap<>();
@@ -118,6 +120,7 @@ public final class LogbackConfigurer {
                 configureLogger(logger, loggerConfig);
             }
         }
+        System.setProperty(PYTHON_LOGGING_CONFIGURED, Boolean.TRUE.toString());
     }
 
     /**
@@ -126,6 +129,7 @@ public final class LogbackConfigurer {
      * @return The logback context.
      */
     public static @NonNull LoggerContext initialize() {
+        System.clearProperty(PYTHON_LOGGING_CONFIGURED);
         LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
         lc.reset(); // Reset existing configuration
         installJulBridge();

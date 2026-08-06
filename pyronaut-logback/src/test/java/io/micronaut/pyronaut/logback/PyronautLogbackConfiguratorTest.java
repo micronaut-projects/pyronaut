@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PyronautLogbackConfiguratorTest {
     private static final String CONFIGURATION_FILE = "logback.configurationFile";
     private static final String LOGGER_CONFIG = "logger.config";
+    private static final String FALLBACK_STREAM = "pyronaut.logging.fallback-stream";
 
     private final LoggerContext context = new LoggerContext();
     private final PyronautLogbackConfigurator configurator = new PyronautLogbackConfigurator();
@@ -48,6 +49,8 @@ class PyronautLogbackConfiguratorTest {
         context.stop();
         System.clearProperty(CONFIGURATION_FILE);
         System.clearProperty(LOGGER_CONFIG);
+        System.clearProperty(FALLBACK_STREAM);
+        System.clearProperty(PyronautLauncherLogging.PYTHON_LOGGING_CONFIGURED);
         System.clearProperty(PyronautLauncherLogging.APPLICATION_DEFAULTS_MARKER);
     }
 
@@ -91,6 +94,19 @@ class PyronautLogbackConfiguratorTest {
             "%cyan(%d{yyyy-MM-dd HH:mm:ss.SSS}) %gray([%level]) %magenta(%logger{36}): %msg%n",
             encoder.getPattern()
         );
+    }
+
+    @Test
+    void usesConfiguredFallbackStream() {
+        System.setProperty(FALLBACK_STREAM, "stderr");
+
+        PyronautLauncherLogging.initializeApplicationDefaults(context, null);
+
+        ConsoleAppender<?> appender = (ConsoleAppender<?>) context
+            .getLogger(Logger.ROOT_LOGGER_NAME)
+            .iteratorForAppenders()
+            .next();
+        assertEquals("System.err", appender.getTarget());
     }
 
     @Test
