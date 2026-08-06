@@ -36,6 +36,9 @@ public final class PyronautLauncherLogging {
     private static final String LOGBACK_CONFIGURATION_FILE_PROPERTY = "logback.configurationFile";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     static final String APPLICATION_DEFAULTS_MARKER = "pyronaut.application.logging.defaults";
+    static final String PYTHON_LOGGING_CONFIGURED = "pyronaut.python.logging.configured";
+    private static final String FALLBACK_STREAM_PROPERTY = "pyronaut.logging.fallback-stream";
+    private static final String FALLBACK_STREAM_ENVIRONMENT = "PYRONAUT_LOGGING_FALLBACK_STREAM";
     private static final String CONSOLE_APPENDER_NAME = "PYRONAUT_LAUNCHER_CONSOLE";
     private static final String CONSOLE_PATTERN = "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
     private static final String APPLICATION_CONSOLE_PATTERN = "%cyan(%d{yyyy-MM-dd HH:mm:ss.SSS}) %gray([%level]) %magenta(%logger{36}): %msg%n";
@@ -129,9 +132,18 @@ public final class PyronautLauncherLogging {
         ConsoleAppender<ILoggingEvent> appender = new ConsoleAppender<>();
         appender.setContext(loggerContext);
         appender.setName(CONSOLE_APPENDER_NAME);
+        appender.setTarget(consoleTarget());
         appender.setEncoder(encoder);
         appender.start();
         return appender;
+    }
+
+    private static String consoleTarget() {
+        String stream = System.getProperty(FALLBACK_STREAM_PROPERTY);
+        if (stream == null) {
+            stream = System.getenv(FALLBACK_STREAM_ENVIRONMENT);
+        }
+        return "stderr".equalsIgnoreCase(stream) ? "System.err" : "System.out";
     }
 
     private static void setDefaultProperty(String name, String value) {

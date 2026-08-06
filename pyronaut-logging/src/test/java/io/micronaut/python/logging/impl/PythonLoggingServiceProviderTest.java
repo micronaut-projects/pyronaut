@@ -24,6 +24,10 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -195,6 +199,31 @@ class PythonLoggingServiceProviderTest {
         assertTrue(delayedLogger.isInfoEnabled(), "INFO should be enabled by default");
         assertTrue(delayedLogger.isWarnEnabled(), "WARN should be enabled by default");
         assertTrue(delayedLogger.isErrorEnabled(), "ERROR should be enabled by default");
+
+        PrintStream originalOut = System.out;
+        PrintStream originalErr = System.err;
+        String originalStream = System.getProperty("pyronaut.logging.fallback-stream");
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(stdout, true, StandardCharsets.UTF_8));
+            System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
+            delayedLogger.info("fallback stdout");
+            assertTrue(stdout.toString(StandardCharsets.UTF_8).contains("fallback stdout"));
+            assertEquals("", stderr.toString(StandardCharsets.UTF_8));
+
+            System.setProperty("pyronaut.logging.fallback-stream", "stderr");
+            delayedLogger.info("fallback stderr");
+            assertTrue(stderr.toString(StandardCharsets.UTF_8).contains("fallback stderr"));
+        } finally {
+            if (originalStream == null) {
+                System.clearProperty("pyronaut.logging.fallback-stream");
+            } else {
+                System.setProperty("pyronaut.logging.fallback-stream", originalStream);
+            }
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
 
         // After setting context, it should delegate to PythonLogger
         PythonContextRuntime.setContext(graalContext);
