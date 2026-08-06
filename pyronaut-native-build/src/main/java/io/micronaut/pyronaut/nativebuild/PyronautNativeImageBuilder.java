@@ -520,7 +520,6 @@ public final class PyronautNativeImageBuilder {
         command.add(mainClass);
         command.add(normalizedOutput.toString());
         List<String> nativeImageCmd = List.copyOf(command);
-        System.out.println("nativeImageCmd = " + nativeImageCmd);
         int exitCode = commandExecutor.execute(nativeImageCmd, normalizedWorkingDirectory);
         return new BuildResult(exitCode, normalizedOutput, normalizedWorkingDirectory);
     }
