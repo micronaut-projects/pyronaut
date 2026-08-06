@@ -21,7 +21,7 @@ micronaut-test = "5.0.1"
 micronaut-openapi = "7.1.2"
 micronaut-data = "5.1.0"
 javaparser = "3.28.2"
-graalvm-reachability-metadata = "1.1.6"
+graalvm-reachability-metadata = "1.1.7"
 
 [libraries]
 micronaut-serde = { module = "io.micronaut.serde:micronaut-serde-bom", version.ref = "micronaut-serde" }
