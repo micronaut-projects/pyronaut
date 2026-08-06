@@ -37,6 +37,7 @@ public final class PyronautNativeImageBuilder {
     public static final String DEFAULT_MAIN_CLASS = "io.micronaut.pyronaut.run.PyronautRunMain";
 
     private static final List<String> COMMON_ARGUMENTS = List.of(
+        "--verbose",
         "-H:+UnlockExperimentalVMOptions",
         "-H:EnableURLProtocols=jar",
         "-H:+RuntimeClassLoading",
@@ -55,7 +56,7 @@ public final class PyronautNativeImageBuilder {
          */
 
         /* Modules */
-        "-H:Preserve=module=java.base,module=java.sql",
+        "-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management",
 
         /* java.* */
         "-H:Preserve=package=java.applet.*",
