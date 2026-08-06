@@ -13,8 +13,13 @@ val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.plat
 dependencies {
     api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
     api(project(":micronaut-pyronaut-run"))
-    api(mn.micronaut.context.python)
-    api(mn.micronaut.context.python.netty)
+    // GraalPy only needs this optional support module for legacy private-key formats.
+    api(mn.micronaut.context.python) {
+        exclude(group = "org.graalvm.python", module = "python-bouncycastle-support")
+    }
+    api(mn.micronaut.context.python.netty) {
+        exclude(group = "org.graalvm.python", module = "python-bouncycastle-support")
+    }
     api(project(":micronaut-pyronaut-logback"))
 
     testImplementation(mnTest.junit.jupiter.api)

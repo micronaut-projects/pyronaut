@@ -102,6 +102,8 @@ val bundleControlPanelJars by tasks.registering(Sync::class) {
 
 configurations.configureEach {
     exclude(group = "org.slf4j", module = "slf4j-simple")
+    // GraalPy only needs this optional support module for legacy private-key formats.
+    exclude(group = "org.graalvm.python", module = "python-bouncycastle-support")
 }
 
 configurations.named("nativeImageClasspath") {
