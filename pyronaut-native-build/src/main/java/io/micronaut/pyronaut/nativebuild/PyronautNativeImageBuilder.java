@@ -23,6 +23,8 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * Builds a Crema native image capable of loading an already compiled Pyronaut
@@ -37,201 +39,247 @@ public final class PyronautNativeImageBuilder {
     public static final String DEFAULT_MAIN_CLASS = "io.micronaut.pyronaut.run.PyronautRunMain";
 
     private static final List<String> COMMON_ARGUMENTS = List.of(
-        "--verbose",
-        "-H:+UnlockExperimentalVMOptions",
-        "-H:EnableURLProtocols=jar",
-        "-H:+RuntimeClassLoading",
-        "-H:+AllowJRTFileSystem",
-        "-H:+SharedArenaSupport",
-        "-H:-SupportCompileInIsolates",
-        "--add-modules=java.net.http,java.naming,java.rmi,java.xml",
-        "--enable-http",
-        "--enable-https",
-        // "-Os", optimize for size and quick build
-        "-H:-PrintRestrictHeapAccessWarnings",
-        "-H:IncludeResources=templates/.*",
+            "-Os",
+            "--add-modules=java.net.http,java.naming,java.rmi",
+            "-H:+UnlockExperimentalVMOptions",
+            "-H:EnableURLProtocols=jar",
+            "-H:+RuntimeClassLoading",
+            "-H:+AllowJRTFileSystem",
+            "-H:+SharedArenaSupport",
+            "-H:-SupportCompileInIsolates",
+            "--enable-http",
+            "--enable-https",
+            // Modules
+            "-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management,module=java.naming,module=java.rmi",
 
-        /*
-         * -H:Preserve
-         */
+            /* java.* */
+            "-H:Preserve=package=java.applet.*",
+            // "-H:Preserve=package=java.awt.*",
+            "-H:Preserve=package=java.beans.*",
+            "-H:Preserve=package=java.io.*",
+            "-H:Preserve=package=java.lang.*",
+            "-H:Preserve=package=java.math.*",
+            "-H:Preserve=package=java.net.*",
+            "-H:Preserve=package=java.nio.*",
+            "-H:Preserve=package=java.rmi.*",
+            "-H:Preserve=package=java.security.*",
+            "-H:Preserve=package=java.sql.*",
+            "-H:Preserve=package=java.text.*",
+            "-H:Preserve=package=java.time.*",
+            "-H:Preserve=package=java.util.*",
 
-        /* Modules */
-        "-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management",
+            /* sun.* */
+            // "-H:Preserve=package=sun.awt.*",
+            // "-H:Preserve=package=sun.datatransfer.*",
+            // "-H:Preserve=package=sun.font.*",
+            "-H:Preserve=package=sun.instrument.*",
+            "-H:Preserve=package=sun.invoke.*",
+            // "-H:Preserve=package=sun.java2d.*",
+            // "-H:Preserve=package=sun.launcher.*",
+            // "-H:Preserve=package=sun.lwawt.*",
+            "-H:Preserve=package=sun.management.*",
+            "-H:Preserve=package=sun.misc.*",
+            "-H:Preserve=package=sun.net.*",
+            "-H:Preserve=package=sun.nio.*",
+            "-H:Preserve=package=sun.print.*",
+            "-H:Preserve=package=sun.reflect.*",
+            "-H:Preserve=package=sun.rmi.*",
+            "-H:Preserve=package=sun.security.*",
+            // "-H:Preserve=package=sun.swing.*",
+            "-H:Preserve=package=sun.text.*",
+            // "-H:Preserve=package=sun.tools.*",
+            "-H:Preserve=package=sun.usagetracker.*",
+            "-H:Preserve=package=sun.util.*",
 
-        /* java.* */
-        "-H:Preserve=package=java.applet.*",
-        // "-H:Preserve=package=java.awt.*",
-        "-H:Preserve=package=java.beans.*",
-        "-H:Preserve=package=java.io.*",
-        "-H:Preserve=package=java.lang.*",
-        "-H:Preserve=package=java.math.*",
-        "-H:Preserve=package=java.net.*",
-        "-H:Preserve=package=java.nio.*",
-        "-H:Preserve=package=java.rmi.*",
-        "-H:Preserve=package=java.security.*",
-        "-H:Preserve=package=java.sql.*",
-        "-H:Preserve=package=java.text.*",
-        "-H:Preserve=package=java.time.*",
-        "-H:Preserve=package=java.util.*",
+            /* javax.* */
+            "-H:Preserve=package=javax.management.*",
+            "-H:Preserve=package=javax.sql",
+            "-H:Preserve=package=javax.xml.parsers",
+            "-H:Preserve=package=javax.xml.transform.dom",
+            "-H:Preserve=package=javax.xml.transform.sax",
+            "-H:Preserve=package=javax.xml.transform",
+            "-H:Preserve=package=javax.xml.validation",
+            "-H:Preserve=package=javax.xml.xpath",
+            "-H:Preserve=package=javax.xml",
 
-        /* sun.* */
-        // "-H:Preserve=package=sun.awt.*",
-        // "-H:Preserve=package=sun.datatransfer.*",
-        // "-H:Preserve=package=sun.font.*",
-        "-H:Preserve=package=sun.instrument.*",
-        "-H:Preserve=package=sun.invoke.*",
-        // "-H:Preserve=package=sun.java2d.*",
-        // "-H:Preserve=package=sun.launcher.*",
-        // "-H:Preserve=package=sun.lwawt.*",
-        "-H:Preserve=package=sun.management.*",
-        "-H:Preserve=package=sun.misc.*",
-        "-H:Preserve=package=sun.net.*",
-        "-H:Preserve=package=sun.nio.*",
-        "-H:Preserve=package=sun.print.*",
-        "-H:Preserve=package=sun.reflect.*",
-        "-H:Preserve=package=sun.rmi.*",
-        "-H:Preserve=package=sun.security.*",
-        // "-H:Preserve=package=sun.swing.*",
-        "-H:Preserve=package=sun.text.*",
-        // "-H:Preserve=package=sun.tools.*",
-        "-H:Preserve=package=sun.usagetracker.*",
-        "-H:Preserve=package=sun.util.*",
+            /* jakarta.* */
+            "-H:Preserve=package=jakarta.*",
+            "-H:Preserve=package=jakarta.annotation.*",
+            "-H:Preserve=package=jakarta.inject.*",
+            "-H:Preserve=package=jakarta.validation.*",
+            "-H:Preserve=package=jakarta.persistence.*",
+            "-H:Preserve=package=jakarta.transaction.*",
 
-        /* javax.* */
-        "-H:Preserve=package=javax.management.*",
-        "-H:Preserve=package=javax.sql",
-        "-H:Preserve=package=javax.xml.parsers",
-        "-H:Preserve=package=javax.xml.transform.dom",
-        "-H:Preserve=package=javax.xml.transform.sax",
-        "-H:Preserve=package=javax.xml.transform",
-        "-H:Preserve=package=javax.xml.validation",
-        "-H:Preserve=package=javax.xml.xpath",
-        "-H:Preserve=package=javax.xml",
+            /* jdk.internal.* */
+            "-H:Preserve=package=jdk.internal.misc.*",
+            "-H:Preserve=package=jdk.internal.access.*",
 
-        /* jakarta.* */
-        "-H:Preserve=package=jakarta.*",
-        "-H:Preserve=package=jakarta.annotation,package=jakarta.annotation.*,package=jakarta.inject,package=jakarta.inject.*",
+            /* io.micronaut.* */
+            "-H:Preserve=package=io.micronaut.cache.*",
+            "-H:Preserve=package=io.micronaut.data.*",
+            "-H:Preserve=package=io.micronaut.discovery.*",
+            "-H:Preserve=package=io.micronaut.transaction.*",
+            "-H:Preserve=package=io.micronaut.jdbc.*",
+            "-H:Preserve=package=io.micronaut.management.*",
+            "-H:Preserve=package=io.micronaut.messaging.*",
+            "-H:Preserve=package=io.micronaut.reactor.*",
+            "-H:Preserve=package=io.micronaut.core.annotation.*",
+            "-H:Preserve=package=io.micronaut.core.beans.*",
+            "-H:Preserve=package=io.micronaut.validation.*",
+            "-H:Preserve=package=io.micronaut.core.naming.*",
+            "-H:Preserve=package=io.micronaut.core.reflect.*",
+            "-H:Preserve=package=io.micronaut.core.type.*",
+            "-H:Preserve=package=io.micronaut.core.util.*",
+            "-H:Preserve=package=io.micronaut.core.io.service.*",
+            "-H:Preserve=package=io.micronaut.buffer.netty.*",
+            "-H:Preserve=package=io.micronaut.inject.*",
+            "-H:Preserve=package=io.micronaut.context.*",
+            "-H:Preserve=package=io.micronaut.scheduling.*",
+            "-H:Preserve=package=io.micronaut.security.annotation.*",
+            "-H:Preserve=package=io.micronaut.runtime.*",
+            "-H:Preserve=package=io.micronaut.http.*",
+            "-H:Preserve=package=io.micronaut.websocket.*",
+            "-H:Preserve=package=io.micronaut.http.netty.*",
+            "-H:Preserve=package=io.micronaut.aop.*",
+            "-H:Preserve=package=io.micronaut.jackson.*",
+            "-H:Preserve=package=io.micronaut.json.*",
+            "-H:Preserve=package=io.micronaut.serde.*",
+            "-H:Preserve=package=io.micronaut.toml.*",
+            "-H:Preserve=package=io.micronaut.views.*",
+            "-H:Preserve=package=io.micronaut.web.router.*",
 
-        /* jdk.internal.* */
-        "-H:Preserve=package=jdk.internal.misc.*",
-        "-H:Preserve=package=jdk.internal.access.*",
-        
-        /* io.micronaut.* */
-        "-H:Preserve=package=io.micronaut.cache.*",
-        "-H:Preserve=package=io.micronaut.data.*",
-        "-H:Preserve=package=io.micronaut.discovery.*",
-        "-H:Preserve=package=io.micronaut.transaction.*",
-        "-H:Preserve=package=io.micronaut.jdbc.*",
-        "-H:Preserve=package=io.micronaut.management.*",
-        "-H:Preserve=package=io.micronaut.messaging.*",
-        "-H:Preserve=package=io.micronaut.reactor.*",
-        "-H:Preserve=package=io.micronaut.core.annotation.*",
-        "-H:Preserve=package=io.micronaut.core.beans.*",
-        "-H:Preserve=package=io.micronaut.expressions.*",
-        "-H:Preserve=package=io.micronaut.context.visitor.*",
-        "-H:Preserve=package=io.micronaut.validation.*",
-        "-H:Preserve=package=io.micronaut.core.naming.*",
-        "-H:Preserve=package=io.micronaut.core.reflect.*",
-        "-H:Preserve=package=io.micronaut.core.type.*",
-        "-H:Preserve=package=io.micronaut.core.util.*",
-        "-H:Preserve=package=io.micronaut.core.io.service.*",
-        "-H:Preserve=package=io.micronaut.buffer.netty.*",
-        "-H:Preserve=package=io.micronaut.inject.*",
-        "-H:Preserve=package=io.micronaut.context.*",
-        "-H:Preserve=package=io.micronaut.scheduling.*",
-        "-H:Preserve=package=io.micronaut.security.annotation.*",
-        "-H:Preserve=package=io.micronaut.runtime.*",
-        "-H:Preserve=package=io.micronaut.http.*",
-        "-H:Preserve=package=io.micronaut.websocket.*",
-        "-H:Preserve=package=io.micronaut.http.netty.*",
-        "-H:Preserve=package=io.micronaut.aop.*",
-        "-H:Preserve=package=io.micronaut.jackson.*",
-        "-H:Preserve=package=io.micronaut.json.*",
-        "-H:Preserve=package=io.micronaut.serde.*",
-        "-H:Preserve=package=io.micronaut.toml.*",
-        "-H:Preserve=package=io.micronaut.views.*",
-        "-H:Preserve=package=io.micronaut.web.router.*",
 
-        /* netty.* */
-        "-H:Preserve=package=io.netty.channel.nio",
-        "-H:Preserve=package=io.netty.channel",
-        "-H:Preserve=package=io.netty.handler.codec.http.*",
-        "-H:Preserve=package=io.netty.handler.ssl",
-        "-H:Preserve=package=io.netty.resolver.*",
-        "-H:Preserve=package=io.netty.util.concurrent",
-        "-H:Preserve=package=io.netty.util", 
+            /* netty.* */
+            "-H:Preserve=package=io.netty.channel.nio",
+            "-H:Preserve=package=io.netty.channel",
+            "-H:Preserve=package=io.netty.handler.codec.http.*",
+            "-H:Preserve=package=io.netty.handler.ssl",
+            "-H:Preserve=package=io.netty.resolver.*",
+            "-H:Preserve=package=io.netty.util.concurrent",
+            "-H:Preserve=package=io.netty.util",
 
-        /* other */
-        "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
-        "-H:Preserve=package=org.slf4j.*",
-        "-H:Preserve=package=org.w3c.dom.bootstrap",
-        "-H:Preserve=package=org.w3c.dom.events",
-        "-H:Preserve=package=org.w3c.dom.ls",
-        "-H:Preserve=package=org.w3c.dom",
-        "-H:Preserve=package=org.xml.sax.ext",
-        "-H:Preserve=package=org.xml.sax.helpers",
-        "-H:Preserve=package=org.xml.sax",
-        "-H:Preserve=package=tools.jackson.core.*",
+            /* other */
+            "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
+            "-H:Preserve=package=org.slf4j.*",
+            "-H:Preserve=package=org.w3c.dom.bootstrap",
+            "-H:Preserve=package=org.w3c.dom.events",
+            "-H:Preserve=package=org.w3c.dom.ls",
+            "-H:Preserve=package=org.w3c.dom",
+            "-H:Preserve=package=org.xml.sax.ext",
+            "-H:Preserve=package=org.xml.sax.helpers",
+            "-H:Preserve=package=org.xml.sax",
+            "-H:Preserve=package=tools.jackson.core.*",
+            "-H:Preserve=package=ch.qos.logback.*",
+            "-H:-PrintRestrictHeapAccessWarnings",
 
-        /*
-         * --initialize-at-(build|run)-time
-         */
+// Jakarta
 
-        "--initialize-at-build-time=jakarta.annotation,jakarta.inject",
-        "--initialize-at-build-time=io.micronaut.core.io",
-        "--initialize-at-build-time=io.micronaut.core.optim",
-        "--initialize-at-build-time=io.micronaut.core.async.publisher.PublishersOptimizations",
-        "--initialize-at-build-time=io.micronaut.core.util",
-        "--initialize-at-build-time=io.micronaut.core.bind",
-        "--initialize-at-build-time=io.micronaut.core.convert",
-        "--initialize-at-build-time=io.micronaut.core.convert.ConversionContext",
-        "--initialize-at-build-time=io.micronaut.core.convert.ImmutableArgumentConversionContext",
-        "--initialize-at-build-time=io.micronaut.core.type",
-        "--initialize-at-build-time=io.micronaut.core.annotation",
-        "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValue",
-        "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValueResolver",
-        "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
-        "--initialize-at-build-time=io.micronaut.core.reflect.ClassUtils$Optimizations",
-        "--initialize-at-build-time=io.micronaut.scheduling.LoomSupport",
-        "--initialize-at-build-time=io.micronaut.http.netty.channel.loom.PrivateLoomSupport",
-        "--initialize-at-build-time=io.micronaut.http.netty.channel.loom.PrivateLoomSupport$PrivateLoomCondition",
-        "--initialize-at-build-time=io.micronaut.http.MediaType",
-        "--initialize-at-build-time=io.micronaut.http.annotation",
-        "--initialize-at-build-time=io.micronaut.json",
-        "--initialize-at-build-time=io.micronaut.json.bind",
-        "--initialize-at-build-time=io.micronaut.json.body",
-        "--initialize-at-build-time=io.micronaut.json.convert",
-        "--initialize-at-build-time=io.micronaut.json.codec",
-        "--initialize-at-build-time=io.micronaut.json.tree",
-        "--initialize-at-build-time=io.micronaut.messaging",
-        "--initialize-at-build-time=io.micronaut.messaging.annotation",
-        "--initialize-at-build-time=io.micronaut.messaging.exceptions",
-        "--initialize-at-build-time=io.micronaut.management.endpoint",
-        "--initialize-at-build-time=io.micronaut.management.endpoint.annotation",
-        "--initialize-at-build-time=io.micronaut.management.endpoint.health",
-        "--initialize-at-build-time=io.micronaut.management.endpoint.indicator.annotation",
-        "--initialize-at-build-time=io.micronaut.retry.annotation",
-        "--initialize-at-build-time=io.micronaut.retry.event",
-        "--initialize-at-build-time=io.micronaut.retry.exception",
-        "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
-        "--initialize-at-run-time=io.netty",
-        "--initialize-at-run-time=io.micronaut.core.io.socket.SocketUtils",
-        // GraalVM 25 can reach JShell's JLine/FFM code through JDK module
-        // analysis even for production launchers; defer these classes to
-        // runtime instead of including compiler initialization in the image.
-        "--initialize-at-run-time=jdk.jshell",
-        "--initialize-at-run-time=jdk.internal.jshell.tool",
-        "--initialize-at-run-time=jdk.internal.shellsupport.doc",
-        "--initialize-at-run-time=com.sun.tools.javac.api",
-        "--initialize-at-run-time=jdk.internal.org.jline",
+// Processor
+            "--initialize-at-build-time=jakarta.annotation",
+            "--initialize-at-build-time=jakarta.inject",
+            "--initialize-at-build-time=jakarta.validation",
+            "--initialize-at-build-time=jakarta.persistence",
+            "--initialize-at-build-time=jakarta.transaction",
+            "--initialize-at-build-time=io.micronaut.inject.annotation",
+            "--initialize-at-build-time=io.micronaut.inject.beans",
 
-        /*
-         * Debug
-         */
-        // "-H:AbortOnTypeReachable=java.awt.*",
-        // "--debug-attach",
+// Core
+            "--initialize-at-build-time=io.micronaut.core.io",
+            "--initialize-at-build-time=io.micronaut.core.optim",
+            "--initialize-at-build-time=io.micronaut.core.async.publisher.PublishersOptimizations",
+            "--initialize-at-build-time=io.micronaut.core.util",
+            "--initialize-at-build-time=io.micronaut.core.bind",
+            "--initialize-at-build-time=io.micronaut.core.convert",
+            "--initialize-at-build-time=io.micronaut.core.convert.ConversionContext",
+            "--initialize-at-build-time=io.micronaut.core.convert.ImmutableArgumentConversionContext",
+            "--initialize-at-build-time=io.micronaut.core.type",
+            "--initialize-at-build-time=io.micronaut.core.annotation",
+            "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValue",
+            "--initialize-at-build-time=io.micronaut.core.annotation.AnnotationValueResolver",
+            "--initialize-at-build-time=io.micronaut.core.reflect.ReflectionUtils",
+            "--initialize-at-build-time=io.micronaut.core.reflect.ClassUtils$Optimizations",
+            "--initialize-at-build-time=io.micronaut.scheduling.LoomSupport",
+            "--initialize-at-build-time=io.micronaut.http.netty.channel.loom.PrivateLoomSupport",
+            "--initialize-at-build-time=io.micronaut.http.netty.channel.loom.PrivateLoomSupport$PrivateLoomCondition",
+            "--initialize-at-build-time=io.micronaut.http.MediaType",
+            "--initialize-at-build-time=io.micronaut.http.annotation",
+            "--initialize-at-build-time=io.micronaut.messaging",
+            "--initialize-at-build-time=io.micronaut.messaging.annotation",
+            "--initialize-at-build-time=io.micronaut.messaging.exceptions",
+            "--initialize-at-build-time=io.micronaut.management.endpoint",
+            "--initialize-at-build-time=io.micronaut.management.endpoint.annotation",
+            "--initialize-at-build-time=io.micronaut.management.endpoint.health",
+            "--initialize-at-build-time=io.micronaut.management.endpoint.indicator.annotation",
+            "--initialize-at-build-time=io.micronaut.retry.annotation",
+            "--initialize-at-build-time=io.micronaut.retry.event",
+            "--initialize-at-build-time=io.micronaut.retry.exception",
+//    Pyronaut
+            "--initialize-at-build-time=io.micronaut.pyronaut.config.classloader",
+            "--initialize-at-build-time=io.micronaut.pyronaut.config.model",
 
-        "-H:-UnlockExperimentalVMOptions"
+// Serde
+            "--initialize-at-build-time=tools.jackson.core.io",
+            "--initialize-at-build-time=tools.jackson.core.sym",
+            "--initialize-at-build-time=tools.jackson.core.util",
+            "--initialize-at-build-time=tools.jackson.core.json",
+            "--initialize-at-build-time=tools.jackson.core.Version",
+            "--initialize-at-build-time=tools.jackson.core.json.JsonFactory",
+            "--initialize-at-build-time=tools.jackson.core",
+            "--initialize-at-build-time=io.micronaut.json",
+            "--initialize-at-build-time=io.micronaut.json.bind",
+            "--initialize-at-build-time=io.micronaut.json.body",
+            "--initialize-at-build-time=io.micronaut.json.convert",
+            "--initialize-at-build-time=io.micronaut.json.codec",
+            "--initialize-at-build-time=io.micronaut.json.tree",
+            "--initialize-at-build-time=io.micronaut.serde.annotation",
+            "--initialize-at-build-time=io.micronaut.serde.configuration",
+            "--initialize-at-build-time=io.micronaut.serde",
+            "--initialize-at-build-time=io.micronaut.serde.exceptions",
+            "--initialize-at-build-time=io.micronaut.serde.reference",
+            "--initialize-at-build-time=io.micronaut.serde.util",
+            "--initialize-at-run-time=io.micronaut.serde.support.util",
+
+
+// Validation
+            "--initialize-at-build-time=io.micronaut.validation",
+            "--initialize-at-build-time=io.micronaut.validation.validator",
+            "--initialize-at-build-time=io.micronaut.validation.annotation",
+            "--initialize-at-build-time=io.micronaut.validation.exceptions",
+            "--initialize-at-build-time=io.micronaut.validation.validator",
+            "--initialize-at-build-time=io.micronaut.validation.validator.constraints",
+            "--initialize-at-build-time=io.micronaut.validation.validator.extractors",
+            "--initialize-at-build-time=io.micronaut.validation.validator.messages",
+            "--initialize-at-build-time=io.micronaut.validation.validator.resolver",
+
+// Data
+            "--initialize-at-build-time=io.micronaut.data.annotation",
+            "--initialize-at-build-time=io.micronaut.data.exceptions",
+            "--initialize-at-build-time=io.micronaut.data.event",
+            "--initialize-at-build-time=io.micronaut.data.intercept",
+            "--initialize-at-build-time=io.micronaut.data.intercept.annotation",
+            "--initialize-at-build-time=io.micronaut.data.intercept.async",
+            "--initialize-at-build-time=io.micronaut.data.intercept.reactive",
+            "--initialize-at-build-time=io.micronaut.data.runtime.intercept",
+            "--initialize-at-build-time=io.micronaut.data.runtime.intercept.async",
+            "--initialize-at-build-time=io.micronaut.data.runtime.intercept.reactive",
+            "--initialize-at-build-time=io.micronaut.data.runtime.intercept.criteria",
+            "--initialize-at-build-time=io.micronaut.data.runtime.convert",
+
+
+//    Runtime Init
+            "--initialize-at-run-time=io.micronaut",
+            "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
+            "--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm",
+            "--initialize-at-run-time=ch.qos.logback.classic.Logger",
+            "--initialize-at-run-time=io.netty",
+            "--initialize-at-run-time=ch.qos.logback",
+            "--initialize-at-run-time=io.micronaut.core.beans.BeanIntrospector,io.micronaut.core.beans.DefaultBeanIntrospector",
+            "--initialize-at-run-time=io.micronaut.core.io.socket.SocketUtils",
+            "--initialize-at-run-time=io.micronaut.core.util.KotlinUtils",
+            "--initialize-at-run-time=io.micronaut.core.type.RuntimeTypeInformation$LazyTypeInfo",
+            "--initialize-at-run-time=io.micronaut.retry.intercept.CircuitBreakerRetry",
+            "--initialize-at-run-time=io.micronaut.core.async.subscriber.CompletionAwareSubscriber",
+            "-H:-UnlockExperimentalVMOptions"
     );
 
     private static final List<String> PYTHON_ARGUMENTS = List.of(
@@ -454,9 +502,10 @@ public final class PyronautNativeImageBuilder {
 
         List<String> command = new ArrayList<>();
         command.add(nativeImageExecutable.toString());
+        command.add("--verbose");
         command.add("-cp");
         command.add(effectiveClasspath.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(java.io.File.pathSeparator)));
-        command.addAll(COMMON_ARGUMENTS);
+        command.addAll(effectiveCommonArguments(effectiveClasspath));
         if (emitBuildReport) {
             command.add("--emit");
             command.add("build-report");
@@ -470,13 +519,81 @@ public final class PyronautNativeImageBuilder {
         command.addAll(nativeImageArguments);
         command.add(mainClass);
         command.add(normalizedOutput.toString());
-        int exitCode = commandExecutor.execute(List.copyOf(command), normalizedWorkingDirectory);
+        List<String> nativeImageCmd = List.copyOf(command);
+        System.out.println("nativeImageCmd = " + nativeImageCmd);
+        int exitCode = commandExecutor.execute(nativeImageCmd, normalizedWorkingDirectory);
         return new BuildResult(exitCode, normalizedOutput, normalizedWorkingDirectory);
     }
 
     private static Path normalizeExisting(Path entry) {
-        Path normalized = Objects.requireNonNull(entry, "entry").toAbsolutePath().normalize();
-        return normalized;
+        return Objects.requireNonNull(entry, "entry").toAbsolutePath().normalize();
+    }
+
+    private static List<String> effectiveCommonArguments(Collection<Path> classpath) {
+        List<String> arguments = new ArrayList<>();
+        for (String argument : COMMON_ARGUMENTS) {
+            if (!argument.startsWith("-H:Preserve=package=")) {
+                arguments.add(argument);
+                continue;
+            }
+            String selectors = argument.substring("-H:Preserve=".length());
+            for (String selector : selectors.split(",")) {
+                if (!selector.startsWith("package=")) {
+                    continue;
+                }
+                String packageName = selector.substring("package=".length());
+                if (isJdkPackage(packageName)) {
+                    continue;
+                }
+                String packagePrefix = packageName.endsWith(".*")
+                    ? packageName.substring(0, packageName.length() - 2)
+                    : packageName;
+                if (containsPackage(classpath, packagePrefix)) {
+                    arguments.add("-H:Preserve=" + selector);
+                }
+            }
+        }
+        return arguments;
+    }
+
+    private static boolean isJdkPackage(String packageName) {
+        return packageName.startsWith("java.")
+            || packageName.startsWith("javax.")
+            || packageName.startsWith("sun.")
+            || packageName.startsWith("jdk.internal.")
+            || packageName.startsWith("org.w3c.")
+            || packageName.startsWith("org.xml.");
+    }
+
+    private static boolean containsPackage(Collection<Path> classpath, String packageName) {
+        String prefix = packageName.replace('.', '/') + "/";
+        for (Path entry : classpath) {
+            if (Files.isDirectory(entry)) {
+                Path packageDirectory = entry.resolve(prefix);
+                if (Files.isDirectory(packageDirectory)) {
+                    try (var files = Files.walk(packageDirectory, 1)) {
+                        if (files.anyMatch(path -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(".class"))) {
+                            return true;
+                        }
+                    } catch (IOException ignored) {
+                        // Native-image will report unreadable classpath entries itself.
+                    }
+                }
+            } else if (Files.isRegularFile(entry) && entry.getFileName().toString().endsWith(".jar")) {
+                try (ZipInputStream input = new ZipInputStream(Files.newInputStream(entry))) {
+                    ZipEntry zipEntry;
+                    while ((zipEntry = input.getNextEntry()) != null) {
+                        if (!zipEntry.isDirectory() && zipEntry.getName().startsWith(prefix)
+                            && zipEntry.getName().endsWith(".class")) {
+                            return true;
+                        }
+                    }
+                } catch (IOException ignored) {
+                    // Native-image will report unreadable classpath entries itself.
+                }
+            }
+        }
+        return false;
     }
 
     /**

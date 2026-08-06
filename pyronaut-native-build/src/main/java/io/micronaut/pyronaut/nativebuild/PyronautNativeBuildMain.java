@@ -207,7 +207,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 builder.preservePackages(discoverUserPackages(classesDir, userPackages));
             }
             List<String> configurationArguments = new ArrayList<>();
-            addBundledConfigurationExclusions(configurationArguments, nativeClasspath, metadataSelection.modules(), verbose);
+            NativeImageConfigurationSupport.addBundledConfigurationExclusions(
+                configurationArguments, nativeClasspath, metadataSelection.modules(), PyronautNativeBuildMain::gavFromClasspathEntry, verbose
+            );
             builder.addNativeImageArguments(configurationArguments);
             if (!configurationDirs.isEmpty()) {
                 builder.addNativeImageArgument("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
@@ -239,6 +241,18 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             ? new ArrayList<>()
             : new ArrayList<>(excludeRunnerProvidedModules(runtimeClasspath, runnerClasspath));
         baseClasspath.addAll(runnerClasspath);
+        List<String> configurationArguments = new ArrayList<>();
+        if (!bundledOnly) {
+            Path pyproject = root.resolve("pyproject.toml");
+            PyprojectModel model = Files.isRegularFile(pyproject) ? modelReader.readProjectDirectory(root) : null;
+            MetadataOptions metadataOptions = model == null
+                ? new MetadataOptions(true, null, null, List.of())
+                : metadataOptions(model);
+            MetadataSelection metadataSelection = resolveMetadataDirectories(root, model, runtimeClasspath, metadataOptions);
+            NativeImageConfigurationSupport.addBundledConfigurationExclusions(
+                configurationArguments, baseClasspath, metadataSelection.modules(), PyronautNativeBuildMain::gavFromClasspathEntry, verbose
+            );
+        }
         PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
             root.resolve(output).normalize(),
             (command, workingDirectory) -> runNativeImage(command, workingDirectory)
@@ -248,7 +262,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .includePython(includePython)
             .emitBuildReport(true)
             .includeSbom(true)
-            .addClasspath(baseClasspath);
+            .addClasspath(baseClasspath)
+            .addNativeImageArguments(configurationArguments);
         if (verbose) {
             builder.addNativeImageArgument("--verbose");
         }
@@ -430,55 +445,6 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         System.err.println("Reachability metadata repository: source=" + source + ", uri=" + sourceUri + ", version=" + versionText);
         System.err.println("Reachability metadata directories applied: " + selected.size());
         return new MetadataSelection(List.copyOf(selected), Set.copyOf(selectedModules));
-    }
-
-    private static void addBundledConfigurationExclusions(List<String> command,
-                                                          List<Path> runtimeClasspath,
-                                                          Set<String> selectedModules,
-                                                          boolean verbose) {
-        int exclusions = 0;
-        for (Path entry : runtimeClasspath) {
-            String gav = gavFromClasspathEntry(entry);
-            if (gav == null) {
-                continue;
-            }
-            String module = gav.substring(0, gav.lastIndexOf(':'));
-            if (!selectedModules.contains(module)) {
-                continue;
-            }
-            if (!hasBundledNativeImageConfiguration(entry)) {
-                continue;
-            }
-            Path normalized = entry.toAbsolutePath().normalize();
-            command.add("--exclude-config");
-            command.add(".*\\Q" + normalized.getFileName() + "\\E.*");
-            command.add("^/META-INF/native-image/.*");
-            exclusions++;
-        }
-        if (verbose) {
-            System.err.println("Bundled native-image configurations excluded: " + exclusions + ", metadata modules: " + selectedModules);
-        }
-    }
-
-    private static boolean hasBundledNativeImageConfiguration(Path entry) {
-        if (entry == null) {
-            return false;
-        }
-        Path normalized = entry.toAbsolutePath().normalize();
-        if (!Files.isRegularFile(normalized) || !normalized.getFileName().toString().endsWith(".jar")) {
-            return false;
-        }
-        try (var zip = new ZipInputStream(Files.newInputStream(normalized))) {
-            ZipEntry zipEntry;
-            while ((zipEntry = zip.getNextEntry()) != null) {
-                if (!zipEntry.isDirectory() && zipEntry.getName().startsWith("META-INF/native-image/")) {
-                    return true;
-                }
-            }
-        } catch (IOException ignored) {
-            return false;
-        }
-        return false;
     }
 
     private static String moduleFromMetadataDirectory(Path repositoryRoot, Path metadataDir) {
@@ -690,6 +656,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             }
             artifacts.add(gav);
         }
+        if (model == null) {
+            return artifacts;
+        }
         for (String coordinate : model.pyronaut().dependencies().runtime()) {
             if (coordinate == null || coordinate.isBlank()) {
                 continue;
@@ -733,9 +702,43 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 // construction; callers can still use the classpath entry.
             }
         }
+        String gradleCoordinate = gradleCacheCoordinate(artifact);
+        if (gradleCoordinate != null) {
+            return gradleCoordinate;
+        }
         // Compatibility for manifests produced by older tooling which did not
         // stage the corresponding POM. POM metadata always wins when present.
         return legacyMavenCoordinate(artifact);
+    }
+
+    private static String gradleCacheCoordinate(Path artifact) {
+        Path normalized = artifact.toAbsolutePath().normalize();
+        int filesDirectory = -1;
+        for (int i = 0; i < normalized.getNameCount(); i++) {
+            if ("files-2.1".equals(normalized.getName(i).toString())) {
+                filesDirectory = i;
+                break;
+            }
+        }
+        if (filesDirectory < 0 || normalized.getNameCount() <= filesDirectory + 4) {
+            return null;
+        }
+        int groupEnd = filesDirectory + 1;
+        int artifactIndex = normalized.getNameCount() - 4;
+        int versionIndex = normalized.getNameCount() - 3;
+        if (artifactIndex <= groupEnd || versionIndex <= artifactIndex) {
+            return null;
+        }
+        String artifactId = normalized.getName(artifactIndex).toString();
+        String version = normalized.getName(versionIndex).toString();
+        String fileName = normalized.getFileName().toString();
+        if (!fileName.startsWith(artifactId + "-" + version + ".")) {
+            return null;
+        }
+        String group = java.util.stream.IntStream.range(groupEnd, artifactIndex)
+            .mapToObj(index -> normalized.getName(index).toString())
+            .collect(java.util.stream.Collectors.joining("."));
+        return group.isBlank() ? null : group + ":" + artifactId + ":" + version;
     }
 
     private static String legacyMavenCoordinate(Path artifact) {

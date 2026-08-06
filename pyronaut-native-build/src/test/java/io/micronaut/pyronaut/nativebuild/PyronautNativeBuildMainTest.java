@@ -294,9 +294,57 @@ class PyronautNativeBuildMainTest {
 
         assertEquals(0, exit);
         List<String> nativeCommand = executed.getFirst();
-        int excludeIndex = nativeCommand.indexOf("--exclude-config");
+        int excludeIndex = java.util.stream.IntStream.range(0, nativeCommand.size())
+            .filter(index -> nativeCommand.get(index).startsWith(".*\\Q")
+                && nativeCommand.get(index).contains("netty-handler-"))
+            .findFirst()
+            .orElse(-1) - 1;
         assertTrue(excludeIndex >= 0);
-        assertEquals(".*\\Q" + nettyJar.getFileName() + "\\E.*", nativeCommand.get(excludeIndex + 1));
+        assertTrue(nativeCommand.get(excludeIndex + 1).contains("netty-handler-"));
+        assertEquals("^/META-INF/native-image/.*", nativeCommand.get(excludeIndex + 2));
+    }
+
+    @Test
+    void excludesBundledNativeImageConfigWhenBuildingReusableBaseImage() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.netty:netty-handler:4.2.10.Final"]
+            """);
+        Path nettyJar = createJar(
+            project.resolve("__pyronaut__/m2-repository/io/netty/netty-handler/4.2.10.Final/netty-handler-4.2.10.Final.jar"),
+            "META-INF/native-image/io.netty/netty-handler/native-image.properties"
+        );
+        overwriteRuntimeManifest(project, List.of(nettyJar.toString()));
+
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            createRequiredSchemas(extractedRoot);
+            createModuleMetadata(extractedRoot, "io.netty", "netty-handler", "4.1.80.Final", Set.of("4.2.10.Final"), true);
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        int exit = new CommandLine(command).execute(
+            "--project-dir", project.toString(),
+            "--native-image-executable", "/tmp/native-image",
+            "--base-image"
+        );
+
+        assertEquals(0, exit);
+        List<String> nativeCommand = executed.getFirst();
+        int excludeIndex = java.util.stream.IntStream.range(0, nativeCommand.size())
+            .filter(index -> nativeCommand.get(index).startsWith(".*\\Q")
+                && nativeCommand.get(index).contains("netty-handler-"))
+            .findFirst()
+            .orElse(-1) - 1;
+        assertTrue(excludeIndex >= 0);
+        assertTrue(nativeCommand.get(excludeIndex + 1).contains("netty-handler-"));
         assertEquals("^/META-INF/native-image/.*", nativeCommand.get(excludeIndex + 2));
     }
 

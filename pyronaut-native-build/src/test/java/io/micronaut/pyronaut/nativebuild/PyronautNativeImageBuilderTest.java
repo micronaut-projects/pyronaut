@@ -22,6 +22,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,11 +43,27 @@ class PyronautNativeImageBuilderTest {
         assertFalse(defaultCommand.contains("-H:IncludeSBOM=embed,export"));
         assertFalse(defaultCommand.contains("--no-fallback"));
         assertFalse(defaultCommand.contains("-H:Preserve=package=org.graalvm.*"));
-        assertTrue(defaultCommand.contains("-H:Preserve=package=org.xml.sax"));
+        assertTrue(defaultCommand.contains("-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management,module=java.naming,module=java.rmi"));
+        assertFalse(defaultCommand.contains("-H:Preserve=package=org.xml.sax"));
         assertTrue(defaultCommand.contains("--initialize-at-build-time=io.micronaut.core.io"));
         assertTrue(reportingCommand.contains("--emit"));
         assertTrue(reportingCommand.contains("build-report"));
         assertTrue(reportingCommand.contains("-H:IncludeSBOM=embed,export"));
+    }
+
+    @Test
+    void preservesOnlyPackagesPresentOnTheEffectiveClasspath() throws Exception {
+        Path classpathEntry = tempDir.resolve("jackson-core.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {
+            output.putNextEntry(new ZipEntry("tools/jackson/core/JsonFactory.class"));
+            output.write(0);
+            output.closeEntry();
+        }
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=tools.jackson.core.*"));
+        assertFalse(command.contains("-H:Preserve=package=io.micronaut.expressions.*"));
     }
 
     @Test
