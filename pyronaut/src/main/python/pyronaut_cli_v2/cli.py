@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import fnmatch
 from functools import lru_cache
 import hashlib
 import json
@@ -60,10 +61,13 @@ JAVA_DELEGATE_JAR_ENV = {
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
 PYTHON_RUN_EXECUTABLE = "pyronaut-run-python"
-_DEFAULT_DOCKER_JVM_BASE_IMAGE = "container-registry.oracle.com/graalvm/jdk:25i1"
-_DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25i1"
+_DEFAULT_JDK_VERSION = "25"
+_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i2"
+_GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
+_DEFAULT_DOCKER_JVM_BASE_IMAGE = f"container-registry.oracle.com/graalvm/jdk:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
+_DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = f"container-registry.oracle.com/graalvm/native-image:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
 _DEFAULT_DOCKER_NATIVE_BASE_IMAGE = "gcr.io/distroless/base"
-_DEFAULT_DOCKER_STATIC_NATIVE_BUILDER_IMAGE = "container-registry.oracle.com/graalvm/native-image:25-muslib"
+_DEFAULT_DOCKER_STATIC_NATIVE_BUILDER_IMAGE = f"container-registry.oracle.com/graalvm/native-image:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}-muslib-ol8"
 _DEFAULT_DOCKER_STATIC_NATIVE_BASE_IMAGE = "scratch"
 
 _DELEGATE_JVM_FLAGS = [
@@ -129,8 +133,7 @@ JavaHomeProvider = Callable[[], str | None]
 
 _provisioned_graalvm_home: str | None = None
 _GRAALVM_MIN_JDK_MAJOR = 25
-_DEFAULT_GRAALVM_DOWNLOAD_VERSION = "25.0.2"
-_DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION = "ce"
+_DEFAULT_GRAALVM_DOWNLOAD_DISTRIBUTION = "ee"
 _PACKAGED_TOOLCHAIN_DEFAULTS = "toolchain-defaults.properties"
 _GRAALVM_CE_DEV_BUILDS_REPOSITORY = "graalvm/graalvm-ce-dev-builds"
 _ORACLE_GRAALVM_EA_BUILDS_REPOSITORY = "graalvm/oracle-graalvm-ea-builds"
@@ -536,6 +539,14 @@ def run(
             return test_exit_code
 
         if command in {"install", "process", "create", "validate-config"}:
+            return _delegate(
+                command,
+                forwarded_args,
+                execute,
+                locate,
+                java_home_provider=effective_java_home_provider,
+            )
+        if command == "test-resources-server":
             return _delegate(
                 command,
                 forwarded_args,
@@ -3886,7 +3897,7 @@ def _prepend_path_entry(path_value: str, entry: str) -> str:
 def _resolve_virtualenv_python(venv_bin: Path) -> Path | None:
     for name in ("python", "python3"):
         candidate = venv_bin / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
+        if candidate.is_file():
             return candidate
     return None
 
@@ -4994,6 +5005,124 @@ def _find_with_gradle_jdks(toolchain: _ToolchainSpec) -> Path | None:
     return _find_matching_home(Path.home() / ".gradle" / "jdks", toolchain)
 
 
+def _download_proxy(url: str) -> tuple[str | None, str | None]:
+    """Return the configured proxy and its bypass list for a download URL."""
+    environment = os.environ
+    proxy = next(
+        (
+            environment.get(name)
+            for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+            if environment.get(name)
+        ),
+        None,
+    )
+    no_proxy = next((environment.get(name) for name in ("NO_PROXY", "no_proxy") if environment.get(name)), None)
+    if proxy:
+        return _normalize_proxy_url(proxy), no_proxy
+
+    settings_path = Path.home() / ".pyronaut" / "settings.toml"
+    try:
+        import tomllib
+
+        with settings_path.open("rb") as settings_file:
+            proxy_config = tomllib.load(settings_file).get("proxy", {})
+        if isinstance(proxy_config, dict):
+            configured_url = proxy_config.get("url")
+            if isinstance(configured_url, str) and configured_url.strip():
+                return _normalize_proxy_url(configured_url), _proxy_bypass_value(proxy_config)
+            host = proxy_config.get("host")
+            port = proxy_config.get("port")
+            if isinstance(host, str) and host.strip() and port is not None:
+                protocol = proxy_config.get("protocol", "http")
+                credentials = ""
+                username = proxy_config.get("username")
+                password = proxy_config.get("password")
+                if username is not None:
+                    credentials = urllib.parse.quote(str(username), safe="")
+                    if password is not None:
+                        credentials += ":" + urllib.parse.quote(str(password), safe="")
+                    credentials += "@"
+                configured_url = f"{protocol}://{credentials}{host.strip()}:{int(port)}"
+                return configured_url, _proxy_bypass_value(proxy_config)
+    except (OSError, ValueError, TypeError, ImportError):
+        pass
+
+    maven_settings = Path.home() / ".m2" / "settings.xml"
+    try:
+        root = ET.parse(maven_settings).getroot()
+        proxies = root.findall("./proxies/proxy")
+        proxy_element = next(
+            (element for element in proxies if (element.findtext("active") or "").strip().lower() == "true"),
+            None,
+        )
+        if proxy_element is None and proxies:
+            proxy_element = proxies[0]
+        if proxy_element is not None:
+            protocol = (proxy_element.findtext("protocol") or "http").strip()
+            host = (proxy_element.findtext("host") or "").strip()
+            port = (proxy_element.findtext("port") or "").strip()
+            if host and port:
+                credentials = ""
+                username = proxy_element.findtext("username")
+                password = proxy_element.findtext("password")
+                if username:
+                    credentials = urllib.parse.quote(username, safe="")
+                    if password:
+                        credentials += ":" + urllib.parse.quote(password, safe="")
+                    credentials += "@"
+                return f"{protocol}://{credentials}{host}:{int(port)}", proxy_element.findtext("nonProxyHosts")
+    except (OSError, ET.ParseError, ValueError, TypeError):
+        pass
+    return None, None
+
+
+def _normalize_proxy_url(value: str) -> str:
+    value = value.strip()
+    return value if "://" in value else f"http://{value}"
+
+
+def _proxy_bypass_value(proxy_config: dict[str, object]) -> str | None:
+    value = proxy_config.get("nonProxyHosts") or proxy_config.get("noProxyHosts")
+    return str(value) if value is not None else None
+
+
+def _proxy_bypasses_host(host: str, bypass: str | None) -> bool:
+    if not bypass:
+        return False
+    patterns = [pattern.strip().lower() for pattern in re.split(r"[,|]", bypass) if pattern.strip()]
+    host = host.lower()
+    return any(
+        fnmatch.fnmatch(host, pattern) or fnmatch.fnmatch(host.split(":", 1)[0], pattern)
+        for pattern in patterns
+    )
+
+
+def _download_graalvm_archive(url: str, destination: Path) -> None:
+    proxy, bypass = _download_proxy(url)
+    parsed_url = urllib.parse.urlparse(url)
+    host = parsed_url.hostname or ""
+    host_with_port = parsed_url.netloc.rsplit("@", 1)[-1]
+    bypassed = _proxy_bypasses_host(host, bypass) or _proxy_bypasses_host(host_with_port, bypass)
+    proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+    print("Downloading GraalVM SDK...", file=sys.stderr)
+    with opener.open(url) as response, destination.open("wb") as output:
+        total = int(response.headers.get("Content-Length", "0"))
+        downloaded = 0
+        while chunk := response.read(1024 * 1024):
+            output.write(chunk)
+            downloaded += len(chunk)
+            if total:
+                print(
+                    f"\rDownloading GraalVM SDK... {downloaded * 100 // total}%",
+                    end="",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        if total:
+            print(file=sys.stderr)
+
+
 def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
     spec = toolchain or _ToolchainSpec(None, None, _GRAALVM_MIN_JDK_MAJOR)
     archive_url = _resolve_graalvm_archive_url(spec)
@@ -5005,7 +5134,7 @@ def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | N
         archive_name = archive_url.rsplit("/", 1)[-1]
         archive_file = temp_path / archive_name
         try:
-            urllib.request.urlretrieve(archive_url, archive_file)
+            _download_graalvm_archive(archive_url, archive_file)
         except Exception:
             return None
 
@@ -5099,8 +5228,8 @@ def _resolve_graalvm_archive_url(toolchain: _ToolchainSpec) -> str | None:
         base = f"graalvm-community-jdk-{version}_{os_segment}-{arch}_bin.{ext}"
         return f"https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-{version}/{base}"
     if distribution == "ee":
-        base = f"graalvm-jdk-{version}_{os_segment}-{arch}_bin.{ext}"
-        return f"https://download.oracle.com/graalvm/{version}/latest/{base}"
+        base = f"graalvm-jdk-{version}-{_DEFAULT_JDK_VERSION}_{os_segment}-{arch}_bin.{ext}"
+        return f"{_GDS_DOWNLOAD_URL}/{version}/latest/{base}"
     return None
 
 

@@ -4099,7 +4099,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("PYRONAUT_BUILD_MODE=jvm", docker_command)
         self.assertIn("PYRONAUT_PROJECT_NAME=demo-app", docker_command)
         self.assertIn("PYRONAUT_PROJECT_VERSION=1.2.3", docker_command)
-        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i1", docker_command)
+        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i2", docker_command)
         self.assertIn("-t", docker_command)
         self.assertIn("demo-app:1.2.3", docker_command)
         self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
@@ -4327,7 +4327,7 @@ additional-test-resources = ["test-fixtures"]
             self.assertEqual(0, exit_code_jvm)
             self.assertEqual("Dockerfile.jvm", captured["dockerfile_name"])
             self.assertIn("ARG PYRONAUT_PROJECT_NAME", captured["dockerfile"])
-            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i1", captured["docker_command"])
+            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i2", captured["docker_command"])
 
             captured.clear()
             executed.clear()
@@ -4341,7 +4341,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code_native)
         self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
         self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
-        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i1", captured["docker_command"])
+        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i2", captured["docker_command"])
 
     def test_build_docker_reuses_configured_base_with_custom_runtime_dockerfile(self):
         captured: dict[str, object] = {}
