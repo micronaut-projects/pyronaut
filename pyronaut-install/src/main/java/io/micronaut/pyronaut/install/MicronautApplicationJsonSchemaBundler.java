@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.install;
 
 import io.micronaut.json.JsonMapper;
+import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -49,6 +50,7 @@ final class MicronautApplicationJsonSchemaBundler {
     private static final String ROOT_SCHEMA = "https://json-schema.org/draft/2020-12/schema";
 
     private final JsonMapper jsonMapper;
+    private final NativeProvidedJarResolver nativeProvidedJarResolver;
 
     MicronautApplicationJsonSchemaBundler() {
         this(JsonMapper.createDefault());
@@ -56,6 +58,7 @@ final class MicronautApplicationJsonSchemaBundler {
 
     MicronautApplicationJsonSchemaBundler(JsonMapper jsonMapper) {
         this.jsonMapper = jsonMapper;
+        this.nativeProvidedJarResolver = new NativeProvidedJarResolver();
     }
 
     SchemaWriteResult writeFromManifest(Path manifestFile, Path schemaFile) throws IOException {
@@ -75,7 +78,10 @@ final class MicronautApplicationJsonSchemaBundler {
             .distinct()
             .sorted()
             .toList();
-        String classpathHash = hashClasspath(normalizedClasspath);
+        List<Path> nativeProvidedJars = nativeProvidedJarResolver.resolve().stream()
+            .map(NativeProvidedJarResolver.JarPair::binary)
+            .toList();
+        String classpathHash = hashClasspath(mergeClasspath(normalizedClasspath, nativeProvidedJars));
         Path stateFile = schemaFile.resolveSibling(STATE_FILE_NAME);
         String optionState = String.join("\n", new TreeSet<>(processorOptions == null ? List.of() : processorOptions));
         String presentState = "present:" + classpathHash + "\n" + optionState;
@@ -107,6 +113,15 @@ final class MicronautApplicationJsonSchemaBundler {
             } catch (ZipException ignored) {
                 // Not every test fixture jar is a real zip; ignore classpath entries that
                 // do not expose Micronaut schema resources.
+            }
+        }
+        for (Path jar : nativeProvidedJars) {
+            if (!normalizedClasspath.contains(jar.toString())) {
+                try {
+                    merged += mergeJarSchemas(root, jar);
+                } catch (ZipException ignored) {
+                    // Ignore an unreadable optional native-provided archive.
+                }
             }
         }
         @SuppressWarnings("unchecked")
@@ -163,11 +178,28 @@ final class MicronautApplicationJsonSchemaBundler {
             for (String entry : runtimeClasspath) {
                 digest.update(entry.getBytes(StandardCharsets.UTF_8));
                 digest.update((byte) '\n');
+                Path path = Path.of(entry);
+                if (Files.isRegularFile(path)) {
+                    try (InputStream input = Files.newInputStream(path)) {
+                        byte[] buffer = new byte[8192];
+                        int read;
+                        while ((read = input.read(buffer)) != -1) {
+                            digest.update(buffer, 0, read);
+                        }
+                    }
+                }
+                digest.update((byte) '\n');
             }
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("SHA-256 algorithm is unavailable", e);
         }
+    }
+
+    private static List<String> mergeClasspath(List<String> runtimeClasspath, List<Path> nativeProvidedJars) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>(runtimeClasspath);
+        nativeProvidedJars.forEach(jar -> merged.add(jar.toString()));
+        return List.copyOf(merged);
     }
 
     @SuppressWarnings("unchecked")

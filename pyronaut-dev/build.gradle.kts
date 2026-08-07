@@ -59,6 +59,7 @@ dependencies {
     api("io.micronaut.data:micronaut-data-model")
     api("io.micronaut.data:micronaut-data-runtime")
     api("io.micronaut.data:micronaut-data-connection")
+    api("io.micronaut.data:micronaut-data-jdbc")
     api("io.micronaut.sql:micronaut-jdbc")
     api("io.micronaut.cache:micronaut-cache-core")
     api("io.micronaut.sourcegen:micronaut-sourcegen-annotations")
@@ -130,11 +131,36 @@ val nativeCompileClasspath by configurations.creating {
     extendsFrom(configurations.api.get())
 }
 
+val nativeProvidedSourcesDirectory = layout.buildDirectory.dir("generated/native-provided-sources")
+val copyNativeProvidedSources by tasks.registering {
+    val outputDirectory = nativeProvidedSourcesDirectory
+    outputs.dir(outputDirectory)
+    inputs.files(configurations.nativeImageClasspath)
+    doLast {
+        val output = outputDirectory.get().asFile
+        output.deleteRecursively()
+        output.mkdirs()
+        configurations.nativeImageClasspath.get().resolvedConfiguration.resolvedArtifacts.forEach { artifact ->
+            val dependency = dependencies.create(
+                "${artifact.moduleVersion.id.group}:${artifact.name}:${artifact.moduleVersion.id.version}:sources@jar"
+            )
+            val source = configurations.detachedConfiguration(dependency).apply {
+                isTransitive = false
+            }
+            runCatching { source.singleFile }
+                .getOrNull()
+                ?.takeIf { it.isFile }
+                ?.let { sourceFile -> sourceFile.copyTo(output.resolve(sourceFile.name), overwrite = true) }
+        }
+    }
+}
+
 val writeNativeClasspathManifests by tasks.registering {
     val outputDirectory = layout.buildDirectory.dir("generated/native-classpaths")
     outputs.dir(outputDirectory)
     inputs.files(nativeCompileClasspath)
-    inputs.files(configurations.nativeImageClasspath)
+    // Do not declare nativeImageClasspath as a task input: it contains this
+    // project's JAR and would make processResources depend on jar.
     doLast {
         val directory = outputDirectory.get().asFile
         directory.mkdirs()
@@ -570,6 +596,7 @@ tasks {
 
     named("installDist") {
         dependsOn(writeNativeClasspathManifests)
+        dependsOn(copyNativeProvidedSources)
     }
 
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")

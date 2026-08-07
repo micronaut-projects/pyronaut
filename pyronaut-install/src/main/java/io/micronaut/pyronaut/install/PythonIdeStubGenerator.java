@@ -21,6 +21,15 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.ClassModel;
+import java.lang.classfile.FieldModel;
+import java.lang.classfile.MethodModel;
+import java.lang.classfile.Attributes;
+import java.lang.classfile.MethodSignature;
+import java.lang.classfile.Signature;
+import java.lang.classfile.attribute.SignatureAttribute;
+import java.lang.constant.ClassDesc;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.GenericArrayType;
@@ -31,9 +40,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.security.CodeSource;
+import java.lang.reflect.AccessFlag;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -66,7 +73,7 @@ import java.util.zip.ZipException;
 final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
-    private static final String GENERATOR_VERSION = "7";
+    private static final String GENERATOR_VERSION = "9";
     private static final String SHARED_CACHE_DIR_PROPERTY = "pyronaut.ide-stubs.cache-dir";
     private static final String SHARED_CACHE_DIR_NAME = "ide-stubs";
     private static final String VFS_PYTHON_SOURCE_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/src/";
@@ -78,9 +85,6 @@ final class PythonIdeStubGenerator {
     private static final Set<String> EXCLUDED_PACKAGE_SEGMENTS = Set.of(".internal.", ".impl.");
     private static final String INTERNAL_ANNOTATION_NAME = "io.micronaut.core.annotation.Internal";
     private static final Pattern TRIPLE_QUOTES = Pattern.compile("\"\"\"");
-    private static final List<String> OPTIONAL_SUPPORT_CLASS_NAMES = List.of(
-        "org.slf4j.Logger"
-    );
 
     WriteResult write(Path projectDir,
                       PyprojectModel.IdeStubs ideStubs,
@@ -240,93 +244,63 @@ final class PythonIdeStubGenerator {
                                                                             List<PackageMapping> packageMappings,
                                                                             List<Pattern> excludePatterns,
                                                                             List<WarningDetail> warnings) throws IOException {
-        List<LoadedType> loadedTypes = new ArrayList<>();
-        List<URL> urls = new ArrayList<>(jars.size() + OPTIONAL_SUPPORT_CLASS_NAMES.size());
-        for (ResolvedArtifact jar : jars) {
-            urls.add(jar.binaryJar().toUri().toURL());
-        }
-        urls.addAll(optionalSupportUrls());
-        try (URLClassLoader classLoader = new ChildFirstUrlClassLoader(
-            urls.toArray(URL[]::new),
-            PythonIdeStubGenerator.class.getClassLoader()
-        )) {
-            Set<String> seen = new HashSet<>();
-            for (ResolvedArtifact artifact : jars) {
-                ZipFile sourceZip = null;
-                try (ZipFile zipFile = new ZipFile(artifact.binaryJar().toFile())) {
-                    Map<String, List<String>> nestedClassNamesByOuter = nestedClassNamesByOuter(zipFile, packageMappings);
-                    if (artifact.sourceJar() != null) {
-                        try {
-                            sourceZip = new ZipFile(artifact.sourceJar().toFile());
-                        } catch (ZipException ignored) {
-                            warnings.add(WarningDetail.of(
-                                "Skipped source documentation for non-zip artifact " + artifact.sourceJar().getFileName()
-                            ));
-                        }
-                    }
-                    List<String> classNames = zipFile.stream()
-                        .map(ZipEntry::getName)
-                        .filter(name -> name.endsWith(".class"))
-                        .filter(name -> !name.equals("module-info.class"))
-                        .filter(name -> !name.contains("$"))
-                        .filter(name -> matchesMappedPackage(name, packageMappings))
-                        .map(PythonIdeStubGenerator::classNameFromEntry)
-                        .sorted()
-                        .toList();
-                    for (String className : classNames) {
-                        if (!seen.add(className) || isExcludedPackage(className) || isExcludedTypeName(className, excludePatterns)) {
-                            continue;
-                        }
-                        try {
-                            Class<?> type = Class.forName(className, false, classLoader);
-                            preloadNestedTypes(className, nestedClassNamesByOuter, classLoader);
-                            String moduleName = mappedPackage(type, packageMappings);
-                            SourceDocumentationParser.ParsedSourceDocumentation documentation =
-                                sourceDocumentation(sourceZip, className, type.getSimpleName(), warnings);
-                            if (moduleName == null || !Modifier.isPublic(type.getModifiers()) || type.isSynthetic() || isInternalType(type, documentation)) {
-                                continue;
-                            }
-                            loadedTypes.add(new LoadedType(
-                                type,
-                                moduleName,
-                                documentation
-                            ));
-                        } catch (Throwable e) {
-                            if (!isIgnoredLinkageFailure(e)) {
-                                warnings.add(WarningDetail.fromThrowable("Skipped stub generation for " + className, e));
-                            }
-                        }
-                    }
-                } catch (ZipException ignored) {
-                    warnings.add(WarningDetail.of(
-                        "Skipped stub generation for non-zip artifact " + artifact.binaryJar().getFileName()
-                    ));
-                } finally {
-                    if (sourceZip != null) {
-                        sourceZip.close();
-                    }
-                }
-            }
-        }
-
-        Map<String, SymbolRef> symbolRegistry = buildSymbolRegistry(loadedTypes);
         Map<String, Map<String, TypeDescriptor>> packages = new TreeMap<>();
-        for (LoadedType loadedType : loadedTypes) {
-            try {
-                TypeDescriptor descriptor = describeType(loadedType, symbolRegistry);
-                if (descriptor == null) {
-                    continue;
-                }
-                packages.computeIfAbsent(descriptor.moduleName(), ignored -> new TreeMap<>())
-                    .putIfAbsent(descriptor.symbolName(), descriptor);
-            } catch (Throwable e) {
-                if (!isIgnoredLinkageFailure(e)) {
-                    warnings.add(WarningDetail.fromThrowable("Skipped stub rendering for " + loadedType.type().getName(), e));
-                }
-            }
+        Set<String> seen = new HashSet<>();
+        for (ResolvedArtifact artifact : jars) {
+            collectJarClassModels(artifact, packageMappings, excludePatterns, seen, packages, warnings);
         }
         return packages;
     }
+
+    private static void collectJarClassModels(ResolvedArtifact artifact,
+                                              List<PackageMapping> packageMappings,
+                                              List<Pattern> excludePatterns,
+                                              Set<String> seen,
+                                              Map<String, Map<String, TypeDescriptor>> packages,
+                                              List<WarningDetail> warnings) throws IOException {
+        try (ZipFile binary = new ZipFile(artifact.binaryJar().toFile());
+             ZipFile source = openSourceZip(artifact, warnings)) {
+            for (ZipEntry entry : binary.stream().filter(e -> e.getName().endsWith(".class")).sorted(Comparator.comparing(ZipEntry::getName)).toList()) {
+                String className = classNameFromEntry(entry.getName());
+                if (entry.getName().equals("module-info.class") || !seen.add(className)
+                    || !matchesMappedPackage(entry.getName(), packageMappings) || isExcludedPackage(className)
+                    || isExcludedTypeName(className, excludePatterns)) {
+                    continue;
+                }
+                try (InputStream input = binary.getInputStream(entry)) {
+                    ClassModel model = ClassFile.of().parse(input.readAllBytes());
+                    if (!model.flags().has(AccessFlag.PUBLIC) || model.flags().has(AccessFlag.SYNTHETIC)) {
+                        continue;
+                    }
+                    String module = mapPackage(packageName(className), packageMappings);
+                    String simpleName = simpleName(className);
+                    SourceDocumentationParser.ParsedSourceDocumentation documentation = sourceDocumentation(source, className, simpleName, warnings);
+                    if (module == null || isInternalType(model, documentation)) {
+                        continue;
+                    }
+                    TypeDescriptor descriptor = describeClassModel(model, className, module, documentation);
+                    packages.computeIfAbsent(module, ignored -> new TreeMap<>()).putIfAbsent(simpleName, descriptor);
+                } catch (RuntimeException e) {
+                    warnings.add(WarningDetail.fromThrowable("Skipped stub generation for " + className, e));
+                }
+            }
+        } catch (ZipException ignored) {
+            warnings.add(WarningDetail.of("Skipped stub generation for non-zip artifact " + artifact.binaryJar().getFileName()));
+        }
+    }
+
+    private static ZipFile openSourceZip(ResolvedArtifact artifact, List<WarningDetail> warnings) throws IOException {
+        if (artifact.sourceJar() == null) {
+            return null;
+        }
+        try {
+            return new ZipFile(artifact.sourceJar().toFile());
+        } catch (IOException ignored) {
+            warnings.add(WarningDetail.of("Skipped source documentation for non-zip artifact " + artifact.sourceJar().getFileName()));
+            return null;
+        }
+    }
+
 
     private static boolean hasPythonVfsSources(List<ResolvedArtifact> jars) throws IOException {
         for (ResolvedArtifact artifact : jars) {
@@ -464,94 +438,6 @@ final class PythonIdeStubGenerator {
             """;
     }
 
-    private static List<URL> optionalSupportUrls() {
-        LinkedHashSet<URL> urls = new LinkedHashSet<>();
-        ClassLoader supportClassLoader = PythonIdeStubGenerator.class.getClassLoader();
-        for (String className : OPTIONAL_SUPPORT_CLASS_NAMES) {
-            try {
-                Class<?> supportType = Class.forName(className, false, supportClassLoader);
-                CodeSource codeSource = supportType.getProtectionDomain().getCodeSource();
-                if (codeSource != null && codeSource.getLocation() != null) {
-                    urls.add(codeSource.getLocation());
-                }
-            } catch (Throwable ignored) {
-                // Optional support bridge only.
-            }
-        }
-        return List.copyOf(urls);
-    }
-
-    private static final class ChildFirstUrlClassLoader extends URLClassLoader {
-        private ChildFirstUrlClassLoader(URL[] urls, ClassLoader parent) {
-            super(urls, parent);
-        }
-
-        @Override
-        protected synchronized Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-            Class<?> loaded = findLoadedClass(name);
-            if (loaded == null && shouldPreferLocal(name)) {
-                try {
-                    loaded = findClass(name);
-                } catch (ClassNotFoundException ignored) {
-                    loaded = super.loadClass(name, false);
-                }
-            } else if (loaded == null) {
-                loaded = super.loadClass(name, false);
-            }
-            if (resolve) {
-                resolveClass(loaded);
-            }
-            return loaded;
-        }
-
-        private static boolean shouldPreferLocal(String className) {
-            return !(className.startsWith("java.")
-                || className.startsWith("javax.")
-                || className.startsWith("jdk.")
-                || className.startsWith("sun.")
-                || className.startsWith("com.sun."));
-        }
-    }
-
-    private static Map<String, List<String>> nestedClassNamesByOuter(ZipFile zipFile,
-                                                                     List<PackageMapping> packageMappings) {
-        Map<String, List<String>> nestedClassNames = new HashMap<>();
-        zipFile.stream()
-            .map(ZipEntry::getName)
-            .filter(name -> name.endsWith(".class"))
-            .filter(name -> !name.equals("module-info.class"))
-            .filter(name -> name.contains("$"))
-            .filter(name -> matchesMappedPackage(name, packageMappings))
-            .map(PythonIdeStubGenerator::classNameFromEntry)
-            .sorted()
-            .forEach(className -> {
-                int nestedSeparator = className.indexOf('$');
-                if (nestedSeparator < 0) {
-                    return;
-                }
-                String outerClassName = className.substring(0, nestedSeparator);
-                nestedClassNames.computeIfAbsent(outerClassName, ignored -> new ArrayList<>())
-                    .add(className);
-            });
-        return nestedClassNames;
-    }
-
-    private static void preloadNestedTypes(String outerClassName,
-                                           Map<String, List<String>> nestedClassNamesByOuter,
-                                           ClassLoader classLoader) {
-        List<String> nestedClassNames = nestedClassNamesByOuter.get(outerClassName);
-        if (nestedClassNames == null || nestedClassNames.isEmpty()) {
-            return;
-        }
-        for (String nestedClassName : nestedClassNames) {
-            try {
-                Class.forName(nestedClassName, false, classLoader);
-            } catch (Throwable ignored) {
-                // Best effort only. Rendering may still succeed without every nested type.
-            }
-        }
-    }
-
     private static Map<String, SymbolRef> buildSymbolRegistry(List<LoadedType> loadedTypes) {
         Map<String, SymbolRef> symbolRegistry = new HashMap<>();
         for (LoadedType loadedType : loadedTypes) {
@@ -601,6 +487,17 @@ final class PythonIdeStubGenerator {
         return false;
     }
 
+    private static boolean isInternalType(ClassModel type,
+                                          SourceDocumentationParser.ParsedSourceDocumentation documentation) {
+        if (documentation != null && documentation.isAnnotatedWith("Internal")) {
+            return true;
+        }
+        return type.findAttribute(Attributes.runtimeVisibleAnnotations())
+            .stream()
+            .flatMap(attribute -> attribute.annotations().stream())
+            .anyMatch(annotation -> INTERNAL_ANNOTATION_NAME.replace('.', '/').equals(annotation.className().stringValue()));
+    }
+
     private static boolean isInternalType(Class<?> type,
                                           SourceDocumentationParser.ParsedSourceDocumentation documentation) {
         if (documentation != null && documentation.isAnnotatedWith("Internal")) {
@@ -608,6 +505,387 @@ final class PythonIdeStubGenerator {
         }
         return Arrays.stream(type.getAnnotations())
             .anyMatch(annotation -> INTERNAL_ANNOTATION_NAME.equals(annotation.annotationType().getName()));
+    }
+
+    private static TypeDescriptor describeClassModel(ClassModel model,
+                                                     String className,
+                                                     String module,
+                                                     SourceDocumentationParser.ParsedSourceDocumentation documentation) {
+        String simpleName = simpleName(className);
+        if (model.flags().has(AccessFlag.ANNOTATION)) {
+            String invocation = renderAnnotationInvocation(model);
+            String overload = invocation.isEmpty()
+                ? "@overload\ndef " + simpleName + "() -> Callable[[_T], _T]: ...\n"
+                : "@overload\ndef " + simpleName + "(" + invocation + ") -> Callable[[_T], _T]: ...\n";
+            StringBuilder annotationStub = new StringBuilder(overload)
+                .append("@overload\ndef ").append(simpleName).append("(target: _T, /) -> _T: ...\n")
+                .append("def ").append(simpleName).append("(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n");
+            appendDocstring(annotationStub, documentation.classDocumentation(), "    ");
+            annotationStub.append("    ...\n");
+            return new TypeDescriptor(module, simpleName, annotationStub.toString(),
+                Set.of(), Set.of(), true, false);
+        }
+        if (model.flags().has(AccessFlag.ENUM)) {
+            StringBuilder enumStub = new StringBuilder("class ").append(simpleName).append("(Enum):\n");
+            appendDocstring(enumStub, documentation.classDocumentation(), "    ");
+            model.fields().stream().filter(field -> field.flags().has(AccessFlag.ENUM)).forEach(field ->
+                enumStub.append("    ").append(field.fieldName().stringValue()).append(" = ...\n"));
+            if (model.fields().stream().noneMatch(field -> field.flags().has(AccessFlag.ENUM))) {
+                enumStub.append("    ...\n");
+            }
+            return new TypeDescriptor(module, simpleName, enumStub.toString(), Set.of(), Set.of(), false, true);
+        }
+        java.lang.classfile.ClassSignature classSignature = model.findAttribute(Attributes.signature())
+            .map(SignatureAttribute::asClassSignature).orElse(null);
+        Map<String, String> classTypeVariables = typeVariables(
+            classSignature == null ? List.of() : classSignature.typeParameters(), "_" + simpleName
+        );
+        List<Signature.TypeParam> classTypeParameters = classSignature == null ? List.of() : classSignature.typeParameters();
+        Set<TypeVarBinding> typeVarBindings = typeVarBindings(classTypeParameters, classTypeVariables, Map.of());
+        StringBuilder stub = new StringBuilder("class ").append(simpleName);
+        if (model.flags().has(AccessFlag.INTERFACE)) {
+            List<String> bases = new ArrayList<>();
+            bases.add(classTypeVariables.isEmpty() ? "Protocol" : "Protocol[" + String.join(", ", classTypeVariables.values()) + "]");
+            bases.addAll(classBases(model, classSignature, classTypeVariables));
+            stub.append("(").append(String.join(", ", bases)).append(")");
+        } else {
+            List<String> bases = classBases(model, classSignature, classTypeVariables);
+            if (!bases.isEmpty()) {
+                stub.append("(").append(String.join(", ", bases)).append(")");
+            } else if (!classTypeVariables.isEmpty()) {
+                stub.append("(Generic[").append(String.join(", ", classTypeVariables.values())).append("])");
+            }
+        }
+        stub.append(":\n");
+        appendDocstring(stub, documentation.classDocumentation(), "    ");
+        boolean members = false;
+        for (FieldModel field : model.fields().stream().sorted(Comparator.comparing(f -> f.fieldName().stringValue())).toList()) {
+            if (!field.flags().has(AccessFlag.PUBLIC) || field.flags().has(AccessFlag.SYNTHETIC)) {
+                continue;
+            }
+            appendIndentedComment(stub, documentation.fieldDocumentation(field.fieldName().stringValue()), "    ");
+            stub.append("    ").append(field.fieldName().stringValue()).append(": ");
+            if (field.flags().has(AccessFlag.STATIC)) {
+                stub.append("ClassVar[");
+            }
+            Signature fieldSignature = field.findAttribute(Attributes.signature()).map(SignatureAttribute::asTypeSignature).orElse(null);
+            stub.append(fieldSignature == null ? renderClassDesc(field.fieldTypeSymbol()) : renderSignature(fieldSignature, classTypeVariables));
+            if (field.flags().has(AccessFlag.STATIC)) {
+                stub.append("]");
+            }
+            stub.append("\n");
+            members = true;
+        }
+        List<MethodModel> constructors = model.methods().stream()
+            .filter(method -> method.methodName().equalsString("<init>") && method.flags().has(AccessFlag.PUBLIC))
+            .sorted(Comparator.comparingInt(method -> method.methodTypeSymbol().parameterCount())).toList();
+        if (!model.flags().has(AccessFlag.INTERFACE) && !constructors.isEmpty()) {
+            boolean overloadedConstructors = constructors.size() > 1;
+            List<RenderedMethod> renderedConstructors = new ArrayList<>(constructors.size());
+            for (MethodModel constructor : constructors) {
+                String parameters = renderParameters(constructor, classTypeVariables, documentation, simpleName);
+                String constructorDocumentation = documentation.constructorDocumentation(
+                    simpleName, constructor.methodTypeSymbol().parameterCount(), parameterTypeSignature(constructor));
+                renderedConstructors.add(new RenderedMethod(parameters, "None", constructorDocumentation));
+                if (overloadedConstructors) {
+                    stub.append("    @overload\n");
+                }
+                stub.append("    def __init__(self");
+                if (!parameters.isEmpty()) {
+                    stub.append(", ").append(parameters);
+                }
+                stub.append(") -> None");
+                if (overloadedConstructors) {
+                    stub.append(": ...\n");
+                } else {
+                    appendCallableBody(stub, constructorDocumentation, "    ");
+                }
+            }
+            if (overloadedConstructors) {
+                stub.append("    def __init__(self, *args: Any, **kwargs: Any) -> None");
+                appendCallableBody(stub, mergeOverloadDocumentation("__init__", renderedConstructors), "    ");
+            }
+            members = true;
+        }
+        Map<MethodGroupKey, List<MethodModel>> methodGroups = new LinkedHashMap<>();
+        model.methods().stream()
+            .filter(method -> !method.methodName().equalsString("<init>") && !method.methodName().equalsString("<clinit>"))
+            .filter(method -> method.flags().has(AccessFlag.PUBLIC) && !method.flags().has(AccessFlag.SYNTHETIC) && !method.flags().has(AccessFlag.BRIDGE))
+            .sorted(Comparator.comparing((MethodModel method) -> method.methodName().stringValue()).thenComparing(method -> method.methodType().stringValue()))
+            .forEach(method -> methodGroups.computeIfAbsent(
+                new MethodGroupKey(method.methodName().stringValue(), method.flags().has(AccessFlag.STATIC)),
+                ignored -> new ArrayList<>()).add(method));
+        for (Map.Entry<MethodGroupKey, List<MethodModel>> entry : methodGroups.entrySet()) {
+            MethodGroupKey key = entry.getKey();
+            List<MethodModel> overloads = entry.getValue();
+            boolean overloaded = overloads.size() > 1;
+            List<RenderedMethod> renderedOverloads = new ArrayList<>(overloads.size());
+            for (MethodModel method : overloads) {
+                Map<String, String> methodTypeVariables = new LinkedHashMap<>(classTypeVariables);
+                MethodSignature methodSignature = method.findAttribute(Attributes.signature()).map(SignatureAttribute::asMethodSignature).orElse(null);
+                if (methodSignature != null) {
+                    methodTypeVariables.putAll(typeVariables(methodSignature.typeParameters(), "_" + simpleName + "_" + key.name()));
+                }
+                typeVarBindings.addAll(typeVarBindings(
+                    methodSignature == null ? List.of() : methodSignature.typeParameters(), methodTypeVariables, classTypeVariables));
+                String parameters = renderParameters(method, methodTypeVariables, documentation, simpleName);
+                String returnType = methodSignature == null
+                    ? renderClassDesc(method.methodTypeSymbol().returnType())
+                    : renderSignature(methodSignature.result(), methodTypeVariables);
+                String methodDocumentation = documentation.methodDocumentation(
+                    key.name(), method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method));
+                renderedOverloads.add(new RenderedMethod(parameters, returnType, methodDocumentation));
+                if (overloaded) {
+                    stub.append("    @overload\n");
+                }
+                if (key.isStatic()) {
+                    stub.append("    @staticmethod\n    def ").append(key.name()).append("(").append(parameters).append(") -> ").append(returnType);
+                } else {
+                    stub.append("    def ").append(key.name()).append("(self");
+                    if (!parameters.isEmpty()) {
+                        stub.append(", ").append(parameters);
+                    }
+                    stub.append(") -> ").append(returnType);
+                }
+                if (overloaded) {
+                    stub.append(": ...\n");
+                } else {
+                    appendCallableBody(stub, methodDocumentation, "    ");
+                }
+                members = true;
+            }
+            if (overloaded) {
+                appendOverloadImplementation(stub, key, renderedOverloads);
+            }
+        }
+        if (!members) {
+            stub.append("    ...\n");
+        }
+        return new TypeDescriptor(module, simpleName, stub.toString(), classModelImports(model, module), Set.copyOf(typeVarBindings), false, false);
+    }
+
+    private static Set<ImportRef> classModelImports(ClassModel model, String module) {
+        Set<ImportRef> imports = new LinkedHashSet<>();
+        model.superclass().ifPresent(type -> addClassNameImport(type.asInternalName(), module, imports));
+        model.interfaces().forEach(type -> addClassNameImport(type.asInternalName(), module, imports));
+        model.fields().forEach(field -> addClassDescImport(field.fieldTypeSymbol(), module, imports));
+        model.methods().forEach(method -> {
+            method.methodTypeSymbol().parameterList().forEach(type -> addClassDescImport(type, module, imports));
+            addClassDescImport(method.methodTypeSymbol().returnType(), module, imports);
+        });
+        return Set.copyOf(imports);
+    }
+
+    private static void addClassDescImport(ClassDesc type, String module, Set<ImportRef> imports) {
+        if (type.isArray()) {
+            addClassDescImport(type.componentType(), module, imports);
+            return;
+        }
+        addClassNameImport(type.packageName() + "." + simpleName(type.displayName()), module, imports);
+    }
+
+    private static void addClassNameImport(String className, String module, Set<ImportRef> imports) {
+        String dottedName = className.replace('/', '.');
+        int separator = dottedName.lastIndexOf('.');
+        if (separator < 0) {
+            return;
+        }
+        String packageName = dottedName.substring(0, separator);
+        String symbolName = simpleName(dottedName.substring(separator + 1));
+        if (!(packageName.startsWith("io.micronaut") || packageName.startsWith("jakarta"))) {
+            return;
+        }
+        String mappedPackage = packageName.startsWith("io.micronaut")
+            ? "micronaut" + packageName.substring("io.micronaut".length())
+            : packageName;
+        if (!mappedPackage.equals(module)) {
+            imports.add(new ImportRef(mappedPackage, symbolName));
+        }
+    }
+
+    private static List<String> classBases(ClassModel model,
+                                           java.lang.classfile.ClassSignature signature,
+                                           Map<String, String> typeVariables) {
+        List<String> bases = new ArrayList<>();
+        if (signature != null) {
+            Signature.ClassTypeSig superclass = signature.superclassSignature();
+            if (superclass != null && !"java/lang/Object".equals(superclass.className())) {
+                bases.add(renderSignature(superclass, typeVariables));
+            }
+            signature.superinterfaceSignatures().stream()
+                .map(value -> renderSignature(value, typeVariables))
+                .forEach(bases::add);
+        } else {
+            model.superclass().map(entry -> entry.asInternalName())
+                .filter(name -> !"java/lang/Object".equals(name))
+                .map(name -> simpleName(name.replace('/', '.')))
+                .ifPresent(bases::add);
+            model.interfaces().stream()
+                .map(entry -> simpleName(entry.asInternalName().replace('/', '.')))
+                .forEach(bases::add);
+        }
+        return List.copyOf(bases);
+    }
+
+    private static String renderAnnotationInvocation(ClassModel model) {
+        String positional = null;
+        List<String> keywordMembers = new ArrayList<>();
+        for (MethodModel method : model.methods().stream()
+            .filter(candidate -> candidate.flags().has(AccessFlag.PUBLIC))
+            .filter(candidate -> candidate.methodTypeSymbol().parameterCount() == 0)
+            .filter(candidate -> !candidate.methodName().equalsString("<init>") && !candidate.methodName().equalsString("<clinit>"))
+            .sorted(Comparator
+                .comparing((MethodModel candidate) -> !candidate.methodName().equalsString("value"))
+                .thenComparing(candidate -> candidate.methodName().stringValue()))
+            .toList()) {
+            MethodSignature signature = method.findAttribute(Attributes.signature()).map(SignatureAttribute::asMethodSignature).orElse(null);
+            String type = signature == null
+                ? renderAnnotationMemberType(method.methodTypeSymbol().returnType())
+                : renderSignature(signature.result(), Map.of());
+            String member = sanitizeParameterName(method.methodName().stringValue(), keywordMembers.size()) + ": " + type + " = ...";
+            if (method.methodName().equalsString("value")) {
+                positional = member;
+            } else {
+                keywordMembers.add(member);
+            }
+        }
+        StringBuilder invocation = new StringBuilder();
+        if (positional != null) {
+            invocation.append(positional);
+            if (!keywordMembers.isEmpty()) {
+                invocation.append(", *, ");
+            }
+        } else if (!keywordMembers.isEmpty()) {
+            invocation.append("*, ");
+        }
+        invocation.append(String.join(", ", keywordMembers));
+        return invocation.toString();
+    }
+
+    private static String renderAnnotationMemberType(ClassDesc type) {
+        String rendered = renderClassDesc(type);
+        if (!type.isArray()) {
+            return rendered;
+        }
+        return renderClassDesc(type.componentType()) + " | " + rendered;
+    }
+
+    private static String renderParameters(MethodModel method,
+                                           Map<String, String> typeVariables,
+                                           SourceDocumentationParser.ParsedSourceDocumentation documentation,
+                                           String ownerName) {
+        MethodSignature signature = method.findAttribute(Attributes.signature()).map(SignatureAttribute::asMethodSignature).orElse(null);
+        StringBuilder parameters = new StringBuilder();
+        for (int index = 0; index < method.methodTypeSymbol().parameterCount(); index++) {
+            if (!parameters.isEmpty()) {
+                parameters.append(", ");
+            }
+            List<String> documentationNames = method.methodName().equalsString("<init>")
+                ? documentation.constructorParameterNames(ownerName, method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method))
+                : documentation.methodParameterNames(
+                    method.methodName().stringValue(), method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method));
+            String name = index < documentationNames.size() ? documentationNames.get(index) : "arg" + index;
+            String type = signature == null ? renderClassDesc(method.methodTypeSymbol().parameterType(index))
+                : renderSignature(signature.arguments().get(index), typeVariables);
+            parameters.append(sanitizeParameterName(name, index)).append(": ").append(type);
+        }
+        return parameters.toString();
+    }
+
+    private static List<String> parameterTypeSignature(MethodModel method) {
+        return method.methodTypeSymbol().parameterList().stream().map(ClassDesc::displayName).toList();
+    }
+
+    private static Map<String, String> typeVariables(List<Signature.TypeParam> parameters, String prefix) {
+        Map<String, String> variables = new LinkedHashMap<>();
+        for (Signature.TypeParam parameter : parameters) {
+            variables.put(parameter.identifier(), prefix + "_" + sanitizeTypeVarSegment(parameter.identifier()));
+        }
+        return variables;
+    }
+
+    private static Set<TypeVarBinding> typeVarBindings(List<Signature.TypeParam> parameters,
+                                                        Map<String, String> variables,
+                                                        Map<String, String> inherited) {
+        Set<TypeVarBinding> bindings = new LinkedHashSet<>();
+        for (Signature.TypeParam parameter : parameters) {
+            String identifier = parameter.identifier();
+            String alias = variables.get(identifier);
+            if (!inherited.containsKey(identifier) || !Objects.equals(inherited.get(identifier), alias)) {
+                String bound = parameter.classBound().map(value -> renderSignature(value, variables)).orElse("Any");
+                String declaration = "Any".equals(bound)
+                    ? alias + " = TypeVar(\"" + alias + "\")"
+                    : alias + " = TypeVar(\"" + alias + "\", bound=" + bound + ")";
+                bindings.add(new TypeVarBinding(alias, declaration, Set.of()));
+            }
+        }
+        return bindings;
+    }
+
+    private static String renderSignature(Signature signature, Map<String, String> typeVariables) {
+        if (signature instanceof Signature.TypeVarSig variable) {
+            return typeVariables.getOrDefault(variable.identifier(), "Any");
+        }
+        if (signature instanceof Signature.ArrayTypeSig array) {
+            return "list[" + renderSignature(array.componentSignature(), typeVariables) + "]";
+        }
+        if (signature instanceof Signature.BaseTypeSig primitive) {
+            return renderClassDesc(ClassDesc.ofDescriptor(String.valueOf(primitive.baseType())));
+        }
+        if (signature instanceof Signature.ClassTypeSig type) {
+            String raw = switch (type.className()) {
+                case "java/util/List", "java/util/Collection", "java/util/Set", "java/lang/Iterable" -> "list";
+                case "java/util/Map" -> "dict";
+                case "java/lang/String", "java/lang/CharSequence" -> "str";
+                default -> simpleName(type.className().replace('/', '.'));
+            };
+            if (type.typeArgs().isEmpty()) {
+                return raw;
+            }
+            return raw + "[" + type.typeArgs().stream().map(argument -> renderTypeArgument(argument, typeVariables)).collect(java.util.stream.Collectors.joining(", ")) + "]";
+        }
+        return "Any";
+    }
+
+    private static String renderTypeArgument(Signature.TypeArg argument, Map<String, String> typeVariables) {
+        if (argument instanceof Signature.TypeArg.Bounded bounded) {
+            return renderSignature(bounded.boundType(), typeVariables);
+        }
+        return "Any";
+    }
+
+    private static String renderClassDesc(ClassDesc type) {
+        if (type.isArray()) {
+            return "list[" + renderClassDesc(type.componentType()) + "]";
+        }
+        return switch (type.descriptorString()) {
+            case "V" -> "None";
+            case "Z" -> "bool";
+            case "B", "S", "I", "J" -> "int";
+            case "F", "D" -> "float";
+            case "C", "Ljava/lang/String;", "Ljava/lang/CharSequence;" -> "str";
+            case "Ljava/lang/Object;" -> "Any";
+            default -> mappedClassDescriptorName(type);
+        };
+    }
+
+    private static String mappedClassDescriptorName(ClassDesc type) {
+        String packageName = type.packageName();
+        return packageName.equals("io.micronaut") || packageName.startsWith("io.micronaut.")
+            || packageName.equals("jakarta") || packageName.startsWith("jakarta.")
+            ? simpleName(type.displayName())
+            : "Any";
+    }
+
+    private static String packageName(String className) {
+        int separator = className.lastIndexOf('.');
+        return separator < 0 ? "" : className.substring(0, separator);
+    }
+
+    private static String simpleName(String className) {
+        className = className.replace('$', '.');
+        int separator = className.lastIndexOf('.');
+        return separator < 0 ? className : className.substring(separator + 1);
     }
 
     private static String classNameFromEntry(String entry) {

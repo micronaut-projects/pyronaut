@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -32,24 +33,28 @@ final class PythonEditorSupport {
     private final EditorSettingsWriter vsCodeSettingsWriter;
     private final EditorSettingsWriter pyCharmSettingsWriter;
     private final EditorArtifactManifest editorArtifactManifest;
+    private final NativeProvidedJarResolver nativeProvidedJarResolver;
 
     PythonEditorSupport() {
         this(
             new PythonIdeStubGenerator(),
             new VsCodeSettingsWriter(),
             new PyCharmSettingsWriter(),
-            new EditorArtifactManifest()
+            new EditorArtifactManifest(),
+            new NativeProvidedJarResolver()
         );
     }
 
     PythonEditorSupport(PythonIdeStubGenerator stubGenerator,
                         EditorSettingsWriter vsCodeSettingsWriter,
                         EditorSettingsWriter pyCharmSettingsWriter,
-                        EditorArtifactManifest editorArtifactManifest) {
+                        EditorArtifactManifest editorArtifactManifest,
+                        NativeProvidedJarResolver nativeProvidedJarResolver) {
         this.stubGenerator = stubGenerator;
         this.vsCodeSettingsWriter = vsCodeSettingsWriter;
         this.pyCharmSettingsWriter = pyCharmSettingsWriter;
         this.editorArtifactManifest = editorArtifactManifest;
+        this.nativeProvidedJarResolver = nativeProvidedJarResolver;
     }
 
     EditorSupportResult ensureWritten(Path projectDir,
@@ -63,6 +68,7 @@ final class PythonEditorSupport {
         List<EditorArtifactManifest.Entry> artifacts = new ArrayList<>();
         artifacts.addAll(editorArtifactManifest.entriesForClasspath(InstallScope.RUNTIME, runtimeClasspath));
         artifacts.addAll(editorArtifactManifest.entriesForClasspath(InstallScope.TEST, testClasspath));
+        artifacts = mergeNativeProvidedArtifacts(artifacts);
         editorArtifactManifest.write(cacheDir, artifacts);
         PythonIdeStubGenerator.WriteResult stubs = stubGenerator.write(projectDir, ideStubs, artifacts);
         return applySettings(projectDir, cacheDir, ideStubs, stubs);
@@ -79,6 +85,7 @@ final class PythonEditorSupport {
         List<EditorArtifactManifest.Entry> artifacts = new ArrayList<>();
         artifacts.addAll(editorArtifactManifest.entriesForResolvedArtifacts(InstallScope.RUNTIME, runtimeArtifacts));
         artifacts.addAll(editorArtifactManifest.entriesForResolvedArtifacts(InstallScope.TEST, testArtifacts));
+        artifacts = mergeNativeProvidedArtifacts(artifacts);
         editorArtifactManifest.write(cacheDir, artifacts);
         PythonIdeStubGenerator.WriteResult stubs = stubGenerator.write(projectDir, ideStubs, artifacts);
         return applySettings(projectDir, cacheDir, ideStubs, stubs);
@@ -98,8 +105,37 @@ final class PythonEditorSupport {
             artifacts.addAll(editorArtifactManifest.entriesForClasspath(InstallScope.RUNTIME, runtimeClasspath));
             artifacts.addAll(editorArtifactManifest.entriesForClasspath(InstallScope.TEST, testClasspath));
         }
+        artifacts = mergeNativeProvidedArtifacts(artifacts);
         PythonIdeStubGenerator.WriteResult stubs = stubGenerator.write(projectDir, ideStubs, artifacts);
         return applySettings(projectDir, cacheDir, ideStubs, stubs);
+    }
+
+    private List<EditorArtifactManifest.Entry> mergeNativeProvidedArtifacts(List<EditorArtifactManifest.Entry> projectArtifacts) {
+        List<EditorArtifactManifest.Entry> merged = new ArrayList<>(projectArtifacts);
+        for (NativeProvidedJarResolver.JarPair nativeJar : nativeProvidedJarResolver.resolve()) {
+            int existingIndex = -1;
+            for (int index = 0; index < merged.size(); index++) {
+                if (nativeJar.artifactId().equals(merged.get(index).artifactId())) {
+                    existingIndex = index;
+                    break;
+                }
+            }
+            if (existingIndex < 0) {
+                merged.add(new EditorArtifactManifest.Entry(
+                    "native-provided", null, nativeJar.artifactId(), null, nativeJar.binary().toString(),
+                    nativeJar.source() == null ? null : nativeJar.source().toString()
+                ));
+                continue;
+            }
+            EditorArtifactManifest.Entry projectArtifact = merged.get(existingIndex);
+            if (projectArtifact.sourceJar() == null && nativeJar.source() != null) {
+                merged.set(existingIndex, new EditorArtifactManifest.Entry(
+                    projectArtifact.scope(), projectArtifact.groupId(), projectArtifact.artifactId(), projectArtifact.version(),
+                    projectArtifact.binaryJar(), nativeJar.source().toString()
+                ));
+            }
+        }
+        return merged;
     }
 
     private EditorSupportResult applySettings(Path projectDir,

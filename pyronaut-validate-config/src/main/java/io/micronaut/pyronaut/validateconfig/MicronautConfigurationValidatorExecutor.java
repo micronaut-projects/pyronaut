@@ -20,16 +20,20 @@ import io.micronaut.jsonschema.configuration.validator.ConfigurationError;
 import io.micronaut.jsonschema.configuration.validator.ConfigurationJsonSchemaValidator;
 import io.micronaut.jsonschema.configuration.validator.DependencyInjectionError;
 import io.micronaut.jsonschema.configuration.validator.DependencyInjectionValidationStrategy;
+import io.micronaut.jsonschema.configuration.validator.DefaultDependencyInjectionValidator;
 import io.micronaut.jsonschema.configuration.validator.cli.DependencyInjectionConfigurationValidator;
 import io.micronaut.jsonschema.configuration.validator.cli.JsonSchemaConfigurationValidator;
 import io.micronaut.jsonschema.configuration.validator.report.HtmlConfigurationErrorReporter;
 import io.micronaut.jsonschema.configuration.validator.report.JsonConfigurationErrorReporter;
 import io.micronaut.jsonschema.configuration.validator.report.SystemErrConfigurationErrorReporter;
+import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -61,8 +65,9 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
             validator.setSuppressionPatterns(settings.suppressions());
         }
 
-        JsonSchemaConfigurationValidator facade = JsonSchemaConfigurationValidator.forClasspath(
-            settings.classpath(),
+        List<URL> validationClasspath = validationClasspath(settings.classpath());
+        JsonSchemaConfigurationValidator facade = new JsonSchemaConfigurationValidator(
+            validationClasspath,
             settings.environments(),
             settings.deduceEnvironments(),
             validator
@@ -72,12 +77,14 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
         Set<DependencyInjectionError> dependencyInjectionErrors = Set.of();
 
         if (settings.validateDependencyInjection()) {
-            dependencyInjectionErrors = DependencyInjectionConfigurationValidator.forClasspath(
-                settings.classpath(),
+            dependencyInjectionErrors = new DependencyInjectionConfigurationValidator(
+                validationClasspath,
                 settings.environments(),
                 settings.deduceEnvironments(),
-                settings.suppressedInjectErrors(),
-                strategy(settings.dependencyInjectionValidationStrategy())
+                new DefaultDependencyInjectionValidator(
+                    settings.suppressedInjectErrors(),
+                    strategy(settings.dependencyInjectionValidationStrategy())
+                )
             ).validate();
         }
 
@@ -104,6 +111,23 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
             printSuppressionSnippet(System.err, suppressionPatterns(errors));
         }
         return new PyronautValidateConfigMain.ValidationExecutionResult(hasErrors);
+    }
+
+    private static List<URL> validationClasspath(String classpath) throws java.net.MalformedURLException {
+        LinkedHashSet<Path> entries = new LinkedHashSet<>();
+        for (String entry : classpath.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator))) {
+            if (!entry.isBlank()) {
+                entries.add(Path.of(entry).toAbsolutePath().normalize());
+            }
+        }
+        new NativeProvidedJarResolver().resolve().stream()
+            .map(NativeProvidedJarResolver.JarPair::binary)
+            .forEach(entries::add);
+        List<URL> urls = new ArrayList<>(entries.size());
+        for (Path entry : entries) {
+            urls.add(entry.toUri().toURL());
+        }
+        return List.copyOf(urls);
     }
 
     private static void suppressDefaultEnvironmentLogging() {

@@ -1005,6 +1005,28 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("micronaut-context-python-5.1.0.jar", compiler_arg)
         self.assertIn("micronaut-inject-python-5.1.0.jar", compiler_arg)
 
+    def test_native_provided_jars_resolve_from_packaged_native_lib(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dir = Path(temp_dir) / "tools" / "pyronaut-dev" / "native"
+            native_dir.mkdir(parents=True)
+            native_dev = native_dir / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            (native_dir / "native-provided-classpath.txt").write_text(
+                "io.micronaut:micronaut-jdbc\n", encoding="utf-8"
+            )
+            native_lib = native_dir / "lib"
+            native_lib.mkdir()
+            binary = native_lib / "micronaut-jdbc-7.1.0.jar"
+            source = native_lib / "micronaut-jdbc-7.1.0-sources.jar"
+            binary.write_text("", encoding="utf-8")
+            source.write_text("", encoding="utf-8")
+
+            jars = cli._native_launcher_provided_jar_entries(str(native_dev))  # noqa: SLF001
+            coordinates = cli._native_launcher_provided_artifact_coordinates(str(native_dev))  # noqa: SLF001
+
+        self.assertEqual([str(binary.resolve())], jars)
+        self.assertEqual({"io.micronaut:micronaut-jdbc"}, coordinates)
+
     def test_run_prefers_bundled_production_native_executable_with_application_classpath(self):
         executed = []
         original_test_resources_disabled = os.environ.get("PYRONAUT_TEST_RESOURCES_DISABLED")

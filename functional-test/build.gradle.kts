@@ -219,7 +219,6 @@ val includedCoreArtifacts = listOf(
     IncludedBuildPublishedArtifact("inject-kotlin", "micronaut-inject-kotlin"),
     IncludedBuildPublishedArtifact("inject-python", "micronaut-inject-python"),
     IncludedBuildPublishedArtifact("jackson-core", "micronaut-jackson-core"),
-    IncludedBuildPublishedArtifact("jackson-databind", "micronaut-jackson-databind"),
     IncludedBuildPublishedArtifact("json-core", "micronaut-json-core"),
     IncludedBuildPublishedArtifact("management", "micronaut-management"),
     IncludedBuildPublishedArtifact("messaging", "micronaut-messaging"),
@@ -494,11 +493,11 @@ fun pyronautTestExecutableFile(): java.io.File {
 }
 
 fun pyronautCommand(command: String, executable: java.io.File, vararg args: String): List<String> {
-    return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + listOf(command, *args)
+    return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + nativeProvidedJarJvmArgs() + listOf(command, *args)
 }
 
 fun pyronautCommand(command: String, executable: java.io.File, jvmArgs: List<String>, vararg args: String): List<String> {
-    return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + jvmArgs + listOf(command, *args)
+    return listOf(executable.absolutePath) + nativeJavaHomeJvmArgs() + nativeProvidedJarJvmArgs() + jvmArgs + listOf(command, *args)
 }
 
 fun testResourcesServerCommand(executable: java.io.File, vararg args: String): List<String> {
@@ -519,9 +518,41 @@ fun nativeJavaHomeJvmArgs(): List<String> {
     }
 }
 
+fun nativeProvidedJarJvmArgs(): List<String> {
+    if (!useNativeExecutables.get()) {
+        return emptyList()
+    }
+    val libDir = pyronautDevExecutable.get().asFile.parentFile.parentFile.resolve("lib")
+    val sourcesDir = project(":micronaut-pyronaut-dev")
+        .layout.buildDirectory.dir("generated/native-provided-sources").get().asFile
+    val manifest = pyronautDevExecutable.get().asFile.parentFile.resolve("native-provided-classpath.txt")
+    val artifacts = if (manifest.isFile) {
+        manifest.readLines().filter(String::isNotBlank).sorted().joinToString(",")
+    } else {
+        ""
+    }
+    return buildList {
+        val metadataJarDirectories = listOf(libDir, sourcesDir)
+            .filter(java.io.File::isDirectory)
+            .joinToString(java.io.File.pathSeparator) { it.absolutePath }
+        if (metadataJarDirectories.isNotBlank()) {
+            add("-Dpyronaut.dev.native.provided.jars=$metadataJarDirectories")
+        }
+        if (artifacts.isNotBlank()) {
+            add("-Dpyronaut.dev.native.provided.artifacts=$artifacts")
+        }
+    }
+}
+
 fun resolveProvisionedGraalVmDevBuildHome(): java.io.File {
     val configuredTag = graalVmDevBuildTag.orNull?.trim()
-        ?: throw GradleException("Native functional-test requires pyronautGraalVmDevTag to resolve the matching java.home")
+    if (configuredTag.isNullOrBlank()) {
+        val javaHome = System.getenv("JAVA_HOME")?.takeIf(String::isNotBlank)?.let { java.io.File(it) }
+        if (javaHome != null && javaHome.resolve("bin/java").isFile) {
+            return javaHome
+        }
+        throw GradleException("Native functional-test requires JAVA_HOME when pyronautGraalVmDevTag is not configured")
+    }
     val tag = normalizeGraalVmDevBuildTag(configuredTag)
     val tagDir = rootProject.layout.projectDirectory
         .dir(".gradle/pyronaut/graalvm-dev-builds")
@@ -1563,6 +1594,7 @@ val verifyEditorSupport by tasks.registering {
         fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi"),
         fixtureIdeStubsDir.file("logback/config.py"),
         fixtureIdeStubsDir.file("pyronaut/test/__init__.pyi"),
+        fixtureSchemasDir.file("micronaut-application.schema.json"),
         fixtureAppDir.file(".vscode/settings.json"),
     )
     doLast {
@@ -1621,6 +1653,11 @@ val verifyEditorSupport by tasks.registering {
             "def micronaut_test_fixture(request: Any, micronaut_test: MicronautTest | None = ...)",
             "Pyronaut pytest support stubs"
         )
+        requireFixtureFileContains(
+            fixtureSchemasDir.file("micronaut-application.schema.json").asFile,
+            "\"schema-generate\"",
+            "Datasource schema from the native-provided Micronaut Data JDBC dependency"
+        )
     }
 }
 
@@ -1673,8 +1710,8 @@ val validateInvalidConfig by tasks.registering {
         fixtureAppDir.file("pyproject.toml"),
         fixtureResolvedRuntimeDependencies,
     )
-    inputs.property("invalidConfigProperty", "test.config.enabled")
-    inputs.property("invalidConfigValue", "not-a-bool")
+    inputs.property("invalidConfigProperty", "datasources.default.maximum-pool-size")
+    inputs.property("invalidConfigValue", "not-a-number")
     inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jvm" })
     inputs.file(providers.provider {
         if (useNativeExecutables.get()) {
@@ -1693,40 +1730,21 @@ val validateInvalidConfig by tasks.registering {
             throw GradleException("Missing pyronaut-validate-config executable: ${validateConfigExecutable.absolutePath}")
         }
         val classesDir = fixtureAppDir.dir("__pyronaut__/classes").asFile
-        val invalidConfig = classesDir.resolve("application.properties")
-        val schemaFile = classesDir.resolve("META-INF/micronaut-configuration-schemas/functional-test.TestConfig.json")
+        val invalidConfig = fixtureAppDir.file("config/application.properties").asFile
         val previousInvalidConfig = invalidConfig.takeIf { it.isFile }?.readText()
-        val previousSchema = schemaFile.takeIf { it.isFile }?.readText()
         try {
             invalidConfig.parentFile.mkdirs()
-            invalidConfig.writeText("test.config.enabled=not-a-bool\n")
-            schemaFile.parentFile.mkdirs()
-            schemaFile.writeText(
-                """
-                {
-                  "${'$'}schema": "https://json-schema.org/draft/2020-12/schema",
-                  "title": "FunctionalTestConfig",
-                  "type": "object",
-                  "x-micronaut": {
-                    "prefix": "test.config"
-                  },
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean",
-                      "x-micronaut-javaType": "java.lang.Boolean",
-                      "x-micronaut-path": "test.config.enabled"
-                    }
-                  }
-                }
-                """.trimIndent() + "\n"
-            )
+            invalidConfig.writeText("datasources.default.maximum-pool-size=not-a-number\n")
+            val validationClasspath = (readManifestEntries(fixtureResolvedRuntimeDependencies.asFile) + classesDir.absolutePath)
+                .distinct()
+                .joinToString(java.io.File.pathSeparator)
             val validateArgs = arrayOf(
                 "--project-dir",
                 fixtureAppDir.asFile.absolutePath,
                 "--scenario",
                 "production",
                 "--classpath",
-                classesDir.absolutePath,
+                validationClasspath,
                 "--no-cache",
             )
             val command = if (useNativeExecutables.get()) {
@@ -1741,9 +1759,9 @@ val validateInvalidConfig by tasks.registering {
             val output = project.runFixtureCommandExpectingFailure(command)
             val report = fixtureAppDir.file("__pyronaut__/reports/config-validation/production/configuration-errors.json").asFile
             val reportContent = report.takeIf { it.isFile }?.readText().orEmpty()
-            if (!output.contains("Configuration validation failed") || !reportContent.contains("test.config.enabled")) {
+            if (!output.contains("Configuration validation failed") || !reportContent.contains("datasources.default.maximum-pool-size")) {
                 throw GradleException(
-                    "Expected invalid fixture configuration to fail schema validation for test.config.enabled."
+                    "Expected invalid fixture configuration to fail schema validation for datasources.default.maximum-pool-size."
                 )
             }
         } finally {
@@ -1751,11 +1769,6 @@ val validateInvalidConfig by tasks.registering {
                 invalidConfig.delete()
             } else {
                 invalidConfig.writeText(previousInvalidConfig)
-            }
-            if (previousSchema == null) {
-                schemaFile.delete()
-            } else {
-                schemaFile.writeText(previousSchema)
             }
         }
     }

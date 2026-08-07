@@ -181,6 +181,9 @@ tasks.register("prepareWheelSources", Sync) {
         delegatedNativeCliProjects.each { cliProject ->
             def nativeCompileTask = project(cliProject.path).tasks.named("nativeCompile")
             dependsOn(nativeCompileTask)
+            // installDist produces the coordinate manifest and source JARs used
+            // to populate the native tool's metadata-only lib directory.
+            dependsOn(project(cliProject.path).tasks.named("installDist"))
             from(nativeCompileTask.map { it.outputFile.get().asFile }) {
                 into("src/pyronaut_cli_v2/tools/${cliProject.command}/native")
             }
@@ -222,6 +225,31 @@ tasks.register("prepareWheelSources", Sync) {
                 if (nativeProvidedClasspathSource.isFile()) {
                     nativeProvidedClasspathTarget.parentFile.mkdirs()
                     nativeProvidedClasspathTarget.text = nativeProvidedClasspathSource.text
+
+                    // The native executable does not expose its hosted class
+                    // path. Package the listed artifacts beside it so native
+                    // metadata readers can inspect their bytecode and schema
+                    // resources without adding them to an application classpath.
+                    def nativeArtifactIds = nativeProvidedClasspathSource.readLines()
+                        .collect { it.trim() }
+                        .findAll { it && it.contains(":") }
+                        .collect { it.substring(it.indexOf(":") + 1) }
+                        .toSet()
+                    def nativeLibTarget = new File(nativeProvidedClasspathTarget.parentFile, "lib")
+                    nativeLibTarget.mkdirs()
+                    def installDirName = cliProject.containsKey("installDir") ? cliProject.installDir : project(cliProject.path).name
+                    def binaryLibSource = project(cliProject.path).layout.buildDirectory.dir("install/${installDirName}/lib").get().asFile
+                    def sourcesLibSource = project(cliProject.path).layout.buildDirectory.dir("generated/native-provided-sources").get().asFile
+                    [binaryLibSource, sourcesLibSource].findAll { it.isDirectory() }.each { sourceDir ->
+                        fileTree(sourceDir).matching { include("*.jar") }.files.each { artifact ->
+                            if (nativeArtifactIds.any { artifact.name.matches(Pattern.quote(it) + "-\\d.*\\.jar") }) {
+                                copy {
+                                    from(artifact)
+                                    into(nativeLibTarget)
+                                }
+                            }
+                        }
+                    }
                 }
                 def compileClasspathSource = project(cliProject.path).layout.buildDirectory.file("generated/native-classpaths/native-compile-classpath.txt").get().asFile
                 def compileClasspathTarget = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-compile-classpath.txt").asFile

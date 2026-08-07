@@ -1061,6 +1061,38 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void applicationSchemaIncludesNativeProvidedJarOutsideProjectRuntimeClasspath() throws Exception {
+        Path repository = tempDir.resolve("repo-native-provided-schema");
+        writeArtifactWithEntries(repository, "com.example", "native-datasource", "1.0.0", Map.of(
+            "META-INF/micronaut-configuration-schemas/example.NativeDatasource.json", """
+                {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "x-micronaut": { "prefix": "datasources" },
+                  "properties": { "url": { "type": "string" } }
+                }
+                """
+        ));
+        Path nativeJar = repository.resolve("com/example/native-datasource/1.0.0/native-datasource-1.0.0.jar");
+        String previousArtifacts = System.getProperty(io.micronaut.pyronaut.config.model.NativeProvidedJarResolver.ARTIFACTS_PROPERTY);
+        String previousJars = System.getProperty(io.micronaut.pyronaut.config.model.NativeProvidedJarResolver.JARS_PROPERTY);
+        try {
+            System.setProperty(io.micronaut.pyronaut.config.model.NativeProvidedJarResolver.ARTIFACTS_PROPERTY, "com.example:native-datasource");
+            System.setProperty(io.micronaut.pyronaut.config.model.NativeProvidedJarResolver.JARS_PROPERTY, nativeJar.toString());
+
+            Path schemaFile = tempDir.resolve("native-provided-schema.json");
+            MicronautApplicationJsonSchemaBundler.SchemaWriteResult result = new MicronautApplicationJsonSchemaBundler()
+                .write(List.of(), schemaFile);
+
+            assertEquals(MicronautApplicationJsonSchemaBundler.Status.GENERATED, result.status());
+            assertTrue(Files.readString(schemaFile).contains("\"datasources\""));
+        } finally {
+            restoreSystemProperty(io.micronaut.pyronaut.config.model.NativeProvidedJarResolver.ARTIFACTS_PROPERTY, previousArtifacts);
+            restoreSystemProperty(io.micronaut.pyronaut.config.model.NativeProvidedJarResolver.JARS_PROPERTY, previousJars);
+        }
+    }
+
+    @Test
     void installPreservesUserManagedTaploConfig() throws Exception {
         Path repository = tempDir.resolve("repo-user-taplo");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
@@ -3409,7 +3441,7 @@ class PyronautInstallMainTest {
     }
 
     @Test
-    void kotlinLinkageFailuresAreSilentlySkipped() throws Exception {
+    void classFileStubGenerationDoesNotRequireKotlinLinkage() throws Exception {
         Path repository = tempDir.resolve("repo-python-ide-kotlin-linkage");
         writeCompiledArtifact(repository, "com.example", "compile-only-dep", "1.0.0", Map.of(
             "kotlinx.pyronaut.missing.Continuation", """
@@ -3464,7 +3496,7 @@ class PyronautInstallMainTest {
             StandardCharsets.UTF_8
         );
         assertTrue(httpStub.contains("class HttpResponse:"));
-        assertFalse(httpStub.contains("class CoroutineBridge:"));
+        assertTrue(httpStub.contains("class CoroutineBridge:"));
         assertFalse(warningReport.contains("CoroutineBridge"));
         assertFalse(warningReport.contains("kotlinx.pyronaut.missing.Continuation"));
     }

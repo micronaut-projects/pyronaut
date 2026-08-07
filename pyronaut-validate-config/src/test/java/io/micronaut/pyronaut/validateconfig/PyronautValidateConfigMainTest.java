@@ -152,6 +152,28 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void validationClasspathIncludesNativeProvidedJarWithoutChangingProjectClasspath() throws Exception {
+        Path projectJar = Files.createFile(tempDir.resolve("project.jar"));
+        Path nativeJar = Files.createFile(tempDir.resolve("native-metadata-1.0.0.jar"));
+        String previousArtifacts = System.getProperty("pyronaut.dev.native.provided.artifacts");
+        String previousJars = System.getProperty("pyronaut.dev.native.provided.jars");
+        try {
+            System.setProperty("pyronaut.dev.native.provided.artifacts", "example:native-metadata");
+            System.setProperty("pyronaut.dev.native.provided.jars", nativeJar.toString());
+            var method = MicronautConfigurationValidatorExecutor.class.getDeclaredMethod("validationClasspath", String.class);
+            method.setAccessible(true);
+
+            @SuppressWarnings("unchecked")
+            List<java.net.URL> urls = (List<java.net.URL>) method.invoke(null, projectJar.toString());
+
+            assertEquals(List.of(projectJar.toUri().toURL(), nativeJar.toUri().toURL()), urls);
+        } finally {
+            restoreProperty("pyronaut.dev.native.provided.artifacts", previousArtifacts);
+            restoreProperty("pyronaut.dev.native.provided.jars", previousJars);
+        }
+    }
+
+    @Test
     void validateConfigUsesCacheOnSecondRunWithSameInputs() throws Exception {
         Path project = prepareProject();
         AtomicInteger calls = new AtomicInteger();
@@ -584,6 +606,14 @@ class PyronautValidateConfigMainTest {
             System.clearProperty("java.home");
         } else {
             System.setProperty("java.home", previousJavaHome);
+        }
+    }
+
+    private static void restoreProperty(String property, String previousValue) {
+        if (previousValue == null) {
+            System.clearProperty(property);
+        } else {
+            System.setProperty(property, previousValue);
         }
     }
 }

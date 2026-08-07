@@ -27,14 +27,7 @@ suppressions = [
 
 [tool.pyronaut.dependencies]
 runtime = [ 
-    "io.micronaut:micronaut-http-server-netty", 
-    "io.micronaut:micronaut-json-core",
-    "io.micronaut.serde:micronaut-serde-jackson",
-    "io.micronaut.serde:micronaut-serde-api",
-    "io.micronaut.validation:micronaut-validation",
-    "io.micronaut.data:micronaut-data-jdbc",
     "io.micronaut.sql:micronaut-jdbc-hikari",
-    "io.micronaut.pyronaut:micronaut-pyronaut-logback",
     "io.micronaut.jsonschema:micronaut-json-schema-annotations",
     "org.apache.commons:commons-lang3:3.20.0",
     "com.mysql:mysql-connector-j",
@@ -42,11 +35,6 @@ runtime = [
 ]
 
 build = [
-    "io.micronaut:micronaut-http-validation",
-    "io.micronaut.validation:micronaut-validation-processor",
-    "io.micronaut.data:micronaut-data-processor",
-    "io.micronaut.serde:micronaut-serde-processor",
-    "io.micronaut.jsonschema:micronaut-json-schema-processor"
 ]
 
 test = [ 

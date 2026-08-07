@@ -1564,6 +1564,7 @@ def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> li
         return []
     executable_path = Path(launcher_executable)
     candidate_lib_dirs = [
+        executable_path.parent / "lib",
         executable_path.parent.parent / "lib",
         executable_path.parent.parent.parent / "lib",
     ]
@@ -1572,7 +1573,7 @@ def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> li
             return [
                 str(entry.resolve())
                 for entry in sorted(lib_dir.iterdir())
-                if entry.is_file() and entry.suffix == ".jar"
+                if entry.is_file() and entry.suffix == ".jar" and not entry.name.endswith("-sources.jar")
             ]
     return []
 
@@ -5473,6 +5474,11 @@ def _pyronaut_dev_native_command_line(
         # project artifacts from its annotation-processor path as well as from
         # application classpaths.
         jvm_args.append(f"-Dpyronaut.dev.native.provided.artifacts={provided_artifacts}")
+        provided_jars = _native_launcher_provided_jar_entries(executable_path)
+        if provided_jars:
+            # Metadata consumers inspect these shipped JARs directly; they are
+            # deliberately not part of the application's runtime classpath.
+            jvm_args.append(f"-Dpyronaut.dev.native.provided.jars={os.pathsep.join(provided_jars)}")
     selected_environment = (
         environment if environment is not None and not _has_micronaut_environments_property(args)
         else _default_environment(command, args)
