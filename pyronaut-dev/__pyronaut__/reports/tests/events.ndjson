@@ -1,2 +1,2 @@
-{"runId":"05115ee6-036d-4d47-83a2-30b02f891ad5","seq":1,"eventType":"session_started","testId":null,"status":null,"timestamp":"2026-08-01T06:52:52.214686Z","payload":{}}
-{"runId":"05115ee6-036d-4d47-83a2-30b02f891ad5","seq":2,"eventType":"session_finished","testId":null,"status":"SUCCESSFUL","timestamp":"2026-08-01T06:52:52.214885Z","payload":{"total":"0","passed":"0","failed":"0","skipped":"0"}}
+{"runId":"97fa8290-1e28-4468-a333-36d8d69308cd","seq":1,"eventType":"session_started","testId":null,"status":null,"timestamp":"2026-08-07T11:46:03.062251Z","payload":{}}
+{"runId":"97fa8290-1e28-4468-a333-36d8d69308cd","seq":2,"eventType":"session_finished","testId":null,"status":"SUCCESSFUL","timestamp":"2026-08-07T11:46:03.063407Z","payload":{"total":"0","passed":"0","failed":"0","skipped":"0"}}
