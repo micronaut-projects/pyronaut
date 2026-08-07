@@ -172,7 +172,8 @@ final class MavenClasspathResolver {
             null,
             null,
             null,
-            null
+            null,
+            false
         );
         return resolveScope(new PyprojectModel(null, null, pyronaut), InstallScope.DEVELOPMENT_RUNTIME, localRepositoryPath, offline);
     }
@@ -360,7 +361,7 @@ final class MavenClasspathResolver {
             }
             addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
             addDefaultCacheImplementationIfMissing(runtime, managedVersions);
-            if (controlPanelEnabled(model)) {
+            if (!model.pyronaut().controlPanelConfigured() || controlPanelEnabled(model)) {
                 runtime.add(controlPanelManagementCoordinate());
                 runtime.add(controlPanelUiCoordinate());
             }
@@ -656,6 +657,7 @@ final class MavenClasspathResolver {
             coordinates.add(coordinate);
         }
     }
+
     private static void addDefaultCacheImplementationIfMissing(Set<String> coordinates, Map<String, String> managedVersions) {
         if (!hasCacheImplementation(coordinates)) {
             addDefaultCoordinate(coordinates, MICRONAUT_CACHE_CAFFEINE_MODULE, managedVersions);

@@ -33,6 +33,9 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    // Both this module and micronaut-context-python contribute application VFS
+    // resources. GraalPy must allow those resources to be registered together.
+    systemProperty("org.graalvm.python.vfs.allow_multiple", "true")
     val pyEnv = providers.environmentVariable("PYENV_VERSION")
     val vEnv = providers.environmentVariable("VIRTUAL_ENV")
     if (pyEnv.isPresent() && vEnv.isPresent()) {

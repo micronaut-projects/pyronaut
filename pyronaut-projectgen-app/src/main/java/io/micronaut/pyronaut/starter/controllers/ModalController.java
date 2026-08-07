@@ -12,6 +12,9 @@ import io.micronaut.projectgen.core.io.PreviewGenerator;
 import io.micronaut.projectgen.core.io.TreeNode;
 import io.micronaut.projectgen.core.io.TreeNodeGenerator;
 import io.micronaut.projectgen.core.options.Options;
+import io.micronaut.projectgen.core.options.GenericOptions;
+import io.micronaut.projectgen.core.options.TestFramework;
+import io.micronaut.projectgen.core.options.Language;
 import io.micronaut.projectgen.core.utils.CodeSample;
 import io.micronaut.projectgen.http.server.OptionsBuilder;
 import io.micronaut.views.ModelAndView;
@@ -44,6 +47,17 @@ class ModalController {
     @Post("/modal/preview")
     HttpResponse<ModelAndView<Map<String, Object>>> preview(@Body Map<String, Object> form) {
         Options options = optionsBuilder.createOptions(form);
+        if (options.template() == null || options.packageName() == null) {
+            options = new GenericOptions(
+                options.name(), options.version(), options.operatingSystem(),
+                options.template() == null ? "default" : options.template(),
+                options.language() == null ? Language.PYTHON : options.language(),
+                options.buildTools(), options.configurationFormat(), options.gradleDsl(), options.group(),
+                options.artifact(), options.java(), options.packageName() == null ? options.name().replace('-', '_') : options.packageName(),
+                options.packaging(), options.features(),
+                options.testFramework() == null ? TestFramework.JUNIT : options.testFramework()
+            );
+        }
         try {
             Map<String, String> project = previewGenerator.generate(options);
             TreeNode treeNode = treeNodeGenerator.generate(project);

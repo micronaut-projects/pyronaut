@@ -254,7 +254,7 @@ class PyronautValidateConfigMainTest {
         );
 
         assertEquals(0, exit);
-        assertEquals(List.of("micronaut.config", "micronaut.openapi", "micronaut.processing", "datasources.*.db-type", "datasources.*.x-protocol-url", "micronaut.http.*"), effectiveSuppressions.get());
+        assertEquals(List.of("micronaut.config", "micronaut.openapi", "micronaut.processing", "endpoints.*", "logger.levels.*", "datasources.*.db-type", "datasources.*.x-protocol-url", "micronaut.http.*"), effectiveSuppressions.get());
     }
 
     @Test

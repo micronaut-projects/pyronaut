@@ -51,6 +51,7 @@ import java.util.regex.Pattern;
  */
 @Singleton
 @CommandLine.Command(name = "pyronaut-create", mixinStandardHelpOptions = true, description = "Create a Pyronaut application")
+@SuppressWarnings("checkstyle:DeclarationOrder")
 public final class PyronautCreateAppMain implements Callable<Integer> {
     /**
      * Default project version used when the caller does not pass {@code --version}.

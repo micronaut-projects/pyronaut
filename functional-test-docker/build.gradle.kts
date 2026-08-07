@@ -48,6 +48,10 @@ val useNativeExecutables = providers
     .gradleProperty("native")
     .map(String::toBoolean)
     .orElse(false)
+val useDocker = providers
+    .gradleProperty("docker")
+    .map(String::toBoolean)
+    .orElse(false)
 val collectPyronautDevPgoProfile = providers
     .gradleProperty("pyronautDevPgoCollect")
     .map(String::toBoolean)
@@ -1653,6 +1657,11 @@ val verifyEditorSupport by tasks.registering {
             "def micronaut_test_fixture(request: Any, micronaut_test: MicronautTest | None = ...)",
             "Pyronaut pytest support stubs"
         )
+        requireFixtureFileContains(
+            fixtureSchemasDir.file("micronaut-application.schema.json").asFile,
+            "\"schema-generate\"",
+            "Datasource schema from the native-provided Micronaut Data JDBC dependency"
+        )
     }
 }
 
@@ -1696,10 +1705,83 @@ val validateConfig by tasks.registering {
     }
 }
 
+val validateInvalidConfig by tasks.registering {
+    group = "verification"
+    description = "Verifies that configuration validation rejects invalid fixture app configuration."
+    dependsOn(installApp)
+    mustRunAfter(validateConfig)
+    inputs.files(
+        fixtureAppDir.file("pyproject.toml"),
+        fixtureResolvedRuntimeDependencies,
+    )
+    inputs.property("invalidConfigProperty", "datasources.default.maximum-pool-size")
+    inputs.property("invalidConfigValue", "not-a-number")
+    inputs.property("pyronautExecutableMode", providers.provider { if (useNativeExecutables.get()) "native" else "jvm" })
+    inputs.file(providers.provider {
+        if (useNativeExecutables.get()) {
+            pyronautDevNativeExecutable.get().asFile
+        } else {
+            pyronautValidateConfigExecutable.get().asFile
+        }
+    })
+    doLast {
+        val validateConfigExecutable = if (useNativeExecutables.get()) {
+            pyronautDevNativeExecutable.get().asFile
+        } else {
+            pyronautValidateConfigExecutable.get().asFile
+        }
+        if (!validateConfigExecutable.isFile) {
+            throw GradleException("Missing pyronaut-validate-config executable: ${validateConfigExecutable.absolutePath}")
+        }
+        val classesDir = fixtureAppDir.dir("__pyronaut__/classes").asFile
+        val invalidConfig = fixtureAppDir.file("config/application.properties").asFile
+        val previousInvalidConfig = invalidConfig.takeIf { it.isFile }?.readText()
+        try {
+            invalidConfig.parentFile.mkdirs()
+            invalidConfig.writeText("datasources.default.maximum-pool-size=not-a-number\n")
+            val validationClasspath = (readManifestEntries(fixtureResolvedRuntimeDependencies.asFile) + classesDir.absolutePath)
+                .distinct()
+                .joinToString(java.io.File.pathSeparator)
+            val validateArgs = arrayOf(
+                "--project-dir",
+                fixtureAppDir.asFile.absolutePath,
+                "--scenario",
+                "production",
+                "--classpath",
+                validationClasspath,
+                "--no-cache",
+            )
+            val command = if (useNativeExecutables.get()) {
+                pyronautCommand(
+                    "validate-config",
+                    validateConfigExecutable,
+                    *validateArgs,
+                )
+            } else {
+                listOf(validateConfigExecutable.absolutePath, *validateArgs)
+            }
+            val output = project.runFixtureCommandExpectingFailure(command)
+            val report = fixtureAppDir.file("__pyronaut__/reports/config-validation/production/configuration-errors.json").asFile
+            val reportContent = report.takeIf { it.isFile }?.readText().orEmpty()
+            if (!output.contains("Configuration validation failed") || !reportContent.contains("datasources.default.maximum-pool-size")) {
+                throw GradleException(
+                    "Expected invalid fixture configuration to fail schema validation for datasources.default.maximum-pool-size."
+                )
+            }
+        } finally {
+            if (previousInvalidConfig == null) {
+                invalidConfig.delete()
+            } else {
+                invalidConfig.writeText(previousInvalidConfig)
+            }
+        }
+    }
+}
+
 val process by tasks.registering {
     group = "verification"
     description = "Processes the functional-test app sources with the local processor."
-    dependsOn(validateConfig)
+    dependsOn(validateConfig, validateInvalidConfig)
     inputs.dir(fixtureAppDir.dir("src"))
     inputs.dir(fixtureAppDir.dir("tests"))
     inputs.property(
@@ -1738,10 +1820,39 @@ val process by tasks.registering {
 tasks.register("test") {
     group = "verification"
     description = "Runs the functional-test app through pyronaut-test using local project launchers."
+    onlyIf {
+        if (!useDocker.get()) {
+            logger.lifecycle("Skipping functional-test: Docker/Test Resources require -Pdocker=true.")
+        }
+        useDocker.get()
+    }
     dependsOn(process, verifyEditorSupport)
     inputs.dir(fixtureAppDir)
     doLast {
-        runFixtureCommand(buildPyronautTestCommand())
+        val testResourcesExecutable = pyronautTestResourcesServerExecutableFile()
+        val startCommand = testResourcesServerCommand(
+            testResourcesExecutable,
+            "start",
+            "--project-dir",
+            fixtureAppDir.asFile.absolutePath,
+        )
+        val stopCommand = testResourcesServerCommand(
+            testResourcesExecutable,
+            "stop",
+            "--project-dir",
+            fixtureAppDir.asFile.absolutePath,
+        )
+        runFixtureCommand(startCommand)
+        try {
+            val testResourcesEnv = readFixtureTestResourcesEnvironment(fixtureTestResourcesSettingsFile.asFile)
+            runFixtureCommand(buildPyronautTestCommand(testResourcesEnv), testResourcesEnv)
+        } finally {
+            try {
+                runFixtureCommand(stopCommand)
+            } catch (e: Exception) {
+                logger.warn("Unable to stop fixture test resources server cleanly: ${e.message}")
+            }
+        }
     }
 }
 

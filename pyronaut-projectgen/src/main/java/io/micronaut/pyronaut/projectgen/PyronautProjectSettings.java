@@ -21,6 +21,9 @@ import java.util.List;
 
 /**
  * Per-invocation Pyronaut project generation settings.
+ *
+ * @param micronautVersion the Micronaut version to use
+ * @param repositories additional dependency repositories
  */
 @Internal
 public record PyronautProjectSettings(String micronautVersion, List<String> repositories) {

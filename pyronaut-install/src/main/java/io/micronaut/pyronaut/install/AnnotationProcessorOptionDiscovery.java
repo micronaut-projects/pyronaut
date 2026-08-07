@@ -15,8 +15,6 @@
  */
 package io.micronaut.pyronaut.install;
 
-import io.micronaut.annotation.processing.BeanDefinitionInjectProcessor;
-import io.micronaut.inject.visitor.VisitorContext;
 
 import javax.annotation.processing.SupportedOptions;
 import java.io.IOException;
@@ -61,11 +59,6 @@ final class AnnotationProcessorOptionDiscovery {
         // the image. The processors embedded in the native image contribute
         // their known options below; JVM execution retains dynamic discovery.
         boolean nativeImage = System.getProperty("org.graalvm.nativeimage.imagecode") != null;
-        options.add("micronaut.openapi.views.spec");
-        options.add("micronaut.processing.incremental");
-        options.add(VisitorContext.MICRONAUT_PROCESSING_MODULE);
-        options.add(VisitorContext.MICRONAUT_PROCESSING_GROUP);
-        options.add(VisitorContext.MICRONAUT_PROCESSING_PROJECT_DIR);
         if (nativeImage) {
             URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
             try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {

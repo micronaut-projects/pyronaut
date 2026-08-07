@@ -298,6 +298,9 @@ class PyronautDelegatingTuiCommandTest {
             name = "managed-run"
 
             [tool.pyronaut]
+
+            [tool.pyronaut.control-panel]
+            enabled = true
             """, StandardCharsets.UTF_8);
         Path runtimeJar = project.resolve("deps/runtime-one.jar").toAbsolutePath().normalize();
         Files.createDirectories(runtimeJar.getParent());
@@ -690,6 +693,7 @@ class PyronautDelegatingTuiCommandTest {
             [tool.pyronaut]
 
             [tool.pyronaut.control-panel]
+            enabled = true
             path = "/dev/panel"
             """, StandardCharsets.UTF_8);
 

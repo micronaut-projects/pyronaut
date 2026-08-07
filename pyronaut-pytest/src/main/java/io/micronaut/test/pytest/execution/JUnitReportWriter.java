@@ -128,8 +128,17 @@ public final class JUnitReportWriter {
         }
     }
 
+    /** Result status rendered in the report. */
     public enum Status { PASSED, FAILED, SKIPPED }
 
+    /** One test result rendered in the report.
+     *
+     * @param name the test name
+     * @param status the test status
+     * @param details diagnostic details
+     * @param stdout captured standard output
+     * @param stderr captured standard error
+     */
     public record TestResult(String name, Status status, String details, String stdout, String stderr) {
         public TestResult {
             Objects.requireNonNull(name);

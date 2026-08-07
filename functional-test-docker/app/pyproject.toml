@@ -18,20 +18,27 @@ repositories = [
 ]
 
 
+[tool.pyronaut.validation]
+suppressions = [
+  "datasources.default.db-type",
+  "datasources.default.x-protocol-url",
+  "micronaut.home"
+]
+
 [tool.pyronaut.dependencies]
-runtime = [ 
-    "io.micronaut:micronaut-http-server-netty",
-    "io.micronaut.validation:micronaut-validation",
-    "io.micronaut.serde:micronaut-serde-jackson",
+runtime = [
+    "io.micronaut.sql:micronaut-jdbc-hikari",
     "io.micronaut.jsonschema:micronaut-json-schema-annotations",
     "org.apache.commons:commons-lang3:3.20.0",
+    "com.mysql:mysql-connector-j",
+    "jakarta.data:jakarta.data-api"
 ]
 
 build = [
 ]
 
-test = [ 
+test = [
    "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
    "io.micronaut.test:micronaut-test-junit5",
-   "io.micronaut.pyronaut:micronaut-pyronaut-requests",
+    "io.micronaut.pyronaut:micronaut-pyronaut-requests",
  ]

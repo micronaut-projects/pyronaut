@@ -32,7 +32,11 @@ LOGGING = {
         "level": "INFO",
         "handlers": ["console", "file"]
     },
-    "loggers": {}
+    "loggers": {
+        "io.micronaut.data.query": {
+            "level": "DEBUG"
+        }
+    }
 }
 
 dictConfig(LOGGING)

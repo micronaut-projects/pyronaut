@@ -34,3 +34,9 @@ tasks.withType<Test>().configureEach {
         enabled = false
     }
 }
+
+// This module contains Python sources only; there is no Java main source set
+// for Checkstyle to inspect.
+tasks.named("checkstyleMain") {
+    enabled = false
+}

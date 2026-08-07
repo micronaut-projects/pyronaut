@@ -68,6 +68,7 @@ public record PyprojectModel(Project project,
      * @param ideStubs IDE stub generation settings
      * @param validation validation settings
      * @param testResources test resources settings
+     * @param controlPanelConfigured whether the control-panel section was explicitly configured
      */
     public record Pyronaut(String coreVersion,
                            String platformVersion,
@@ -82,7 +83,8 @@ public record PyprojectModel(Project project,
                            Toolchain toolchain,
                            IdeStubs ideStubs,
                            Validation validation,
-                           TestResources testResources) {
+                           TestResources testResources,
+                           boolean controlPanelConfigured) {
     }
 
     /**

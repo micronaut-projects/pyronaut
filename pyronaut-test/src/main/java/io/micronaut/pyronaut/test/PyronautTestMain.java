@@ -474,11 +474,27 @@ public final class PyronautTestMain implements Callable<Integer> {
             throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
         }
         LinkedHashSet<URL> urls = new LinkedHashSet<>();
-        for (Path entry : external.testClasspath()) if (Files.exists(entry)) urls.add(entry.toUri().toURL());
-        if (Files.isDirectory(resolvedClassesDir)) urls.add(resolvedClassesDir.toUri().toURL());
-        if (Files.isDirectory(resolvedTestClassesDir)) urls.add(resolvedTestClassesDir.toUri().toURL());
-        for (Path resource : external.mainResources()) if (Files.isDirectory(resource)) urls.add(resource.toUri().toURL());
-        for (Path resource : external.testResources()) if (Files.isDirectory(resource)) urls.add(resource.toUri().toURL());
+        for (Path entry : external.testClasspath()) {
+            if (Files.exists(entry)) {
+                urls.add(entry.toUri().toURL());
+            }
+        }
+        if (Files.isDirectory(resolvedClassesDir)) {
+            urls.add(resolvedClassesDir.toUri().toURL());
+        }
+        if (Files.isDirectory(resolvedTestClassesDir)) {
+            urls.add(resolvedTestClassesDir.toUri().toURL());
+        }
+        for (Path resource : external.mainResources()) {
+            if (Files.isDirectory(resource)) {
+                urls.add(resource.toUri().toURL());
+            }
+        }
+        for (Path resource : external.testResources()) {
+            if (Files.isDirectory(resource)) {
+                urls.add(resource.toUri().toURL());
+            }
+        }
         return new ResolvedProjectLayout(processed, List.copyOf(urls));
     }
 
@@ -506,8 +522,6 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
         return classes;
     }
-
-
 
     static ResolvedProjectLayout resolveProjectLayout(Path root,
                                                       Path classesDir,

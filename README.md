@@ -311,25 +311,53 @@ The wheel artifacts are written to `pyronaut/build/wheel/dist/`.
 
 ## Functional testing
 
-The checked-in fixture application under `functional-test/app` exercises the
-local Pyronaut toolchain end to end:
+Functional coverage is split into a Docker-free fixture and a Docker-backed
+fixture:
 
-```bash
-./gradlew :micronaut-functional-test:test
-```
+- `functional-test/app` is a minimal HTTP application with no MySQL,
+  Micronaut Data, Testcontainers, or Test Resources dependency. It validates
+  installation, configuration validation, source processing, and the native
+  CLI end to end:
 
-This builds the local launcher distributions, creates a fixture virtual
-environment, resolves dependencies, validates configuration, processes sources,
-starts test resources, and runs the pytest-backed test flow.
+  ```bash
+  ./gradlew :micronaut-functional-test:test -Pnative=true
+  ```
 
-Native-capable tools can be exercised with:
+- `functional-test-docker/app` contains the MySQL/Micronaut Data scenarios and
+  requires a running Docker engine. Run it explicitly with:
 
-```bash
-./gradlew :micronaut-functional-test:test -Pnative=true
-```
+  ```bash
+  ./gradlew :micronaut-functional-test-docker:test \
+    -Pnative=true -Pdocker=true
+  ```
 
-Functional tests require a GraalPy interpreter, a compatible JDK/GraalVM, and
-Docker for Micronaut Test Resources.
+  Without `-Pdocker=true`, its `test` task is skipped and does not start
+  Micronaut Test Resources. This means the normal native check is safe to run
+  while Docker is unavailable:
+
+  ```bash
+  ./gradlew check -Pnative=true
+  ```
+
+Both functional projects build the local Pyronaut launchers, create a fixture
+virtual environment, resolve dependencies, validate configuration, process
+sources, and run the pytest-backed flow. The Docker-free project runs its
+pytest flow directly; the Docker-backed project starts and stops the Test
+Resources server around its tests when Docker is enabled.
+
+Requirements:
+
+- An active GraalPy installation must be selected. The Gradle tasks require
+  `PYENV_VERSION` to identify a GraalPy environment, and use its `python`
+  executable to create the fixture virtual environment.
+- A compatible JDK/GraalVM must be available. Native mode uses the configured
+  GraalVM toolchain and requires the native-image toolchain to be installed.
+- The Gradle tasks create `functional-test/build/venv` (or the corresponding
+  `functional-test-docker/build/venv`) and install the pinned `pytest` version
+  into it automatically. No project-local `.venv` is required.
+- Docker is required only for `functional-test-docker` when invoked with
+  `-Pdocker=true`; the Docker-free fixture and the default native check do not
+  require a running container engine.
 
 ### PGO native image build
 

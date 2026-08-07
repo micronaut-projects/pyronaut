@@ -67,6 +67,7 @@ import javax.sql.DataSource;
 /**
  * Micronaut Test extension for Pytest.
  */
+@SuppressWarnings("checkstyle:InnerTypeLast")
 public final class PytestMicronautExtension extends AbstractMicronautExtension<Value> {
 
     public static final String ID = "_micronaut_test_extension";
@@ -95,6 +96,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
      * @param environments The environments.
      * @param packages The packages.
      * @param propertySources The property sources.
+     * @param sqlConfigs The SQL test-resource configurations.
      * @param rollback Whether rollback is enabled.
      * @param transactional Whether transactional tests are enabled.
      * @param rebuildContext Whether the context should be rebuilt between tests.

@@ -60,6 +60,8 @@ include("pyronaut-requests")
 include("test-serialization")
 include("functional-test")
 project(":functional-test").name = "functional-test"
+include("functional-test-docker")
+project(":functional-test-docker").name = "functional-test-docker"
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 

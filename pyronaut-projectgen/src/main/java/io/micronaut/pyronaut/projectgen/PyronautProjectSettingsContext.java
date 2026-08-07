@@ -52,6 +52,10 @@ public final class PyronautProjectSettingsContext {
         }
     }
 
+    /** Supplies a value while allowing checked failures.
+     *
+     * @param <T> the supplied value type
+     */
     @FunctionalInterface
     public interface CheckedSupplier<T> {
         T get() throws Exception;

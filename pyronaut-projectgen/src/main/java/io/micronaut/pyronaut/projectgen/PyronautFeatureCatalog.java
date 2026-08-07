@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+/** Catalog of Pyronaut-supported ProjectGen features. */
 @Internal
 @Singleton
 public final class PyronautFeatureCatalog {

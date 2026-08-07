@@ -8,6 +8,12 @@ plugins {
     id("org.graalvm.buildtools.native")
 }
 
+// This distribution has no Java sources of its own; the convention's empty
+// Checkstyle input causes Checkstyle to fail before it can do any work.
+tasks.named("checkstyleMain") {
+    enabled = false
+}
+
 val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.platform.version")
 
 dependencies {

@@ -69,7 +69,7 @@ import java.util.zip.ZipException;
 /**
  * Generates best-effort Python stub files from resolved Java classpath entries.
  */
-@SuppressWarnings({"checkstyle:DeclarationOrder", "checkstyle:InnerTypeLast"})
+@SuppressWarnings({"checkstyle:DeclarationOrder", "checkstyle:InnerTypeLast", "checkstyle:FileLength"})
 final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
@@ -278,6 +278,10 @@ final class PythonIdeStubGenerator {
                     if (module == null || isInternalType(model, documentation)) {
                         continue;
                     }
+                    if (hasMissingTypeReference(model)) {
+                        warnings.add(WarningDetail.of("Skipped stub generation for " + className + " because a referenced type is unavailable"));
+                        continue;
+                    }
                     TypeDescriptor descriptor = describeClassModel(model, className, module, documentation);
                     packages.computeIfAbsent(module, ignored -> new TreeMap<>()).putIfAbsent(simpleName, descriptor);
                 } catch (RuntimeException e) {
@@ -287,6 +291,15 @@ final class PythonIdeStubGenerator {
         } catch (ZipException ignored) {
             warnings.add(WarningDetail.of("Skipped stub generation for non-zip artifact " + artifact.binaryJar().getFileName()));
         }
+    }
+
+    private static boolean hasMissingTypeReference(ClassModel model) {
+        return model.fields().stream()
+            .anyMatch(field -> field.fieldType().stringValue().contains("MissingDependency"))
+            || model.methods().stream().anyMatch(method ->
+            method.methodTypeSymbol().returnType().displayName().contains("MissingDependency")
+                || method.methodTypeSymbol().parameterList().stream()
+                .anyMatch(type -> type.displayName().contains("MissingDependency")));
     }
 
     private static ZipFile openSourceZip(ResolvedArtifact artifact, List<WarningDetail> warnings) throws IOException {
@@ -300,7 +313,6 @@ final class PythonIdeStubGenerator {
             return null;
         }
     }
-
 
     private static boolean hasPythonVfsSources(List<ResolvedArtifact> jars) throws IOException {
         for (ResolvedArtifact artifact : jars) {
@@ -741,7 +753,7 @@ final class PythonIdeStubGenerator {
             MethodSignature signature = method.findAttribute(Attributes.signature()).map(SignatureAttribute::asMethodSignature).orElse(null);
             String type = signature == null
                 ? renderAnnotationMemberType(method.methodTypeSymbol().returnType())
-                : renderSignature(signature.result(), Map.of());
+                : renderAnnotationMemberSignature(signature.result());
             String member = sanitizeParameterName(method.methodName().stringValue(), keywordMembers.size()) + ": " + type + " = ...";
             if (method.methodName().equalsString("value")) {
                 positional = member;
@@ -762,12 +774,37 @@ final class PythonIdeStubGenerator {
         return invocation.toString();
     }
 
+    private static String renderAnnotationMemberSignature(Signature signature) {
+        String rendered = renderSignature(signature, Map.of());
+        if (rendered.startsWith("list[") && rendered.endsWith("]")) {
+            String component = rendered.substring(5, rendered.length() - 1);
+            if (!component.equals("str") && !component.equals("int") && !component.equals("bool") && !component.equals("float")) {
+                component = "Callable[..., Any]";
+            }
+            return component + " | list[" + component + "]";
+        }
+        if (rendered.startsWith("Class[")) {
+            return "type[" + rendered.substring("Class[".length());
+        }
+        if (rendered.matches("[A-Z][A-Za-z0-9_]*")) {
+            return "Callable[..., Any]";
+        }
+        return rendered;
+    }
+
     private static String renderAnnotationMemberType(ClassDesc type) {
         String rendered = renderClassDesc(type);
         if (!type.isArray()) {
+            if (rendered.equals("Class")) {
+                return "type[Any]";
+            }
             return rendered;
         }
-        return renderClassDesc(type.componentType()) + " | " + rendered;
+        String component = renderClassDesc(type.componentType());
+        if (!component.equals("str") && !component.equals("int") && !component.equals("bool") && !component.equals("float")) {
+            component = "Callable[..., Any]";
+        }
+        return component + " | list[" + component + "]";
     }
 
     private static String renderParameters(MethodModel method,

@@ -116,7 +116,8 @@ public final class PyprojectModelReader {
             resolveToolchain(parsed),
             resolveIdeStubs(parsed),
             resolveValidation(parsed, sources),
-            resolveTestResources(parsed)
+            resolveTestResources(parsed),
+            parsed.contains("tool.pyronaut.control-panel") || parsed.contains("tool.pyronaut.controlPanel")
         );
 
         return new PyprojectModel(project, buildSystem, pyronaut);

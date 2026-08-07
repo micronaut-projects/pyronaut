@@ -68,7 +68,7 @@ abstract class AbstractPyronautRunSmokeTest {
     protected static RunResult runJvm(Path project) throws Exception {
         List<String> classpathEntries = new ArrayList<>();
         classpathEntries.addAll(readManifestEntries(resolveRunManifest(project)));
-        classpathEntries.addAll(currentRuntimeClasspathEntries());
+        classpathEntries.addAll(currentRuntimeClasspathEntries(project));
         return runCommand(
             project,
             List.of(
@@ -242,7 +242,7 @@ abstract class AbstractPyronautRunSmokeTest {
             "config/application.properties",
             "micronaut.server.port=" + port + System.lineSeparator()
         );
-        String manifest = currentRuntimeClasspathManifest();
+        String manifest = currentRuntimeClasspathManifest(false);
         Files.writeString(pyronautDir.resolve("resolved-build-dependencies"), manifest, StandardCharsets.UTF_8);
         Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), manifest, StandardCharsets.UTF_8);
         Files.writeString(pyronautDir.resolve("resolved-test-dependencies"), manifest, StandardCharsets.UTF_8);
@@ -303,11 +303,15 @@ abstract class AbstractPyronautRunSmokeTest {
         }
     }
 
-    private static String currentRuntimeClasspathManifest() {
-        return String.join(System.lineSeparator(), currentRuntimeClasspathEntries()) + System.lineSeparator();
+    private static String currentRuntimeClasspathManifest(boolean includeTestClasses) {
+        return String.join(System.lineSeparator(), currentRuntimeClasspathEntries(includeTestClasses)) + System.lineSeparator();
     }
 
-    private static LinkedHashSet<String> currentRuntimeClasspathEntries() {
+    private static LinkedHashSet<String> currentRuntimeClasspathEntries(Path project) {
+        return currentRuntimeClasspathEntries(project.getFileName().toString().equals("java-app"));
+    }
+
+    private static LinkedHashSet<String> currentRuntimeClasspathEntries(boolean includeTestClasses) {
         LinkedHashSet<String> entries = new LinkedHashSet<>();
         String rawClasspath = System.getProperty("java.class.path", "");
         if (rawClasspath.isBlank()) {
@@ -320,7 +324,12 @@ abstract class AbstractPyronautRunSmokeTest {
             }
             Path path = Path.of(trimmed).toAbsolutePath().normalize();
             if (Files.exists(path)) {
-                entries.add(path.toString());
+                String pathString = path.toString();
+                boolean testClasses = pathString.contains("/classes/java/test")
+                    || pathString.contains("/test-classes");
+                if (includeTestClasses || !testClasses) {
+                    entries.add(path.toString());
+                }
             }
         }
         return entries;

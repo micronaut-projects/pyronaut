@@ -578,7 +578,7 @@ def _delegate(
         command_line = [executable_path, *args]
         if _delegation_trace_enabled():
             print(shlex.join(command_line), file=sys.stderr)
-        return runner(command_line, env)
+        return runner(command_line, env) or SUCCESS
 
     if command == "dev":
         try:
@@ -678,7 +678,7 @@ def _delegate(
             command_line = [executable_path, *[value for value in args if value not in {"--jvm", "--native"}]]
             if _delegation_trace_enabled():
                 print(shlex.join(command_line), file=sys.stderr)
-            return runner(command_line, env)
+            return runner(command_line, env) or SUCCESS
 
     if command == "test" and not debug_vm:
         try:
@@ -698,7 +698,7 @@ def _delegate(
                 return PRECONDITION_FAILED
             env = _merge_env_overrides(env, env_overrides)
             env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
-            return runner(command_line, env)
+            return runner(command_line, env) or SUCCESS
 
     if command in {"dev", "run", "test"}:
         launcher_args = [value for value in args if value not in {"--jvm", "--native"}]
@@ -731,6 +731,7 @@ def _delegate(
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
     env = _merge_env_overrides(env, env_overrides)
+    env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
     if command == "install" and _has_direct_install_sources(args):
         direct_launcher = _resolve_pyronaut_dev_native_executable(resolver)
         direct_classpath = _native_launcher_compile_classpath_entries(direct_launcher)
@@ -1007,7 +1008,7 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
-    if command in {"dev", "test"}:
+    if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.restartable=true")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
         jvm_args.append("-Dmicronaut.control-panel.enabled=true")
@@ -1740,7 +1741,10 @@ def _run_preflight(
 
     process_args = ["--project-dir", project_dir]
     layout = _read_pyproject_sources(Path(project_dir))
-    process_args.extend(["--python-src", layout.python_source_dir, "--java-src", layout.java_source_dir])
+    if layout.python_source_dir != _DEFAULT_PYTHON_SOURCE_DIR:
+        process_args.extend(["--python-src", layout.python_source_dir])
+    if layout.java_source_dir != _DEFAULT_JAVA_SOURCE_DIR:
+        process_args.extend(["--java-src", layout.java_source_dir])
     if process_pass is not None:
         process_args.extend(["--pass", process_pass])
     if no_cache:
@@ -1916,13 +1920,6 @@ def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Pa
         result.append(token)
         index += 1
     result.extend(["--project-dir", str(staging_project)])
-    # Direct-source staging owns the source layout. Pass it explicitly to the
-    # processor so a setup overlay or an older processor cannot fall back to
-    # the Python default (`src`) for Java applications.
-    if language == "java":
-        result.extend(["--java-src", _DEFAULT_JAVA_SOURCE_DIR])
-    else:
-        result.extend(["--python-src", _DEFAULT_PYTHON_SOURCE_DIR])
     if _extract_build_base_image(args) and _extract_build_base_image_output(args) is None:
         launcher = PYTHON_RUN_EXECUTABLE if language == "python" else COMMAND_TO_EXECUTABLE["run"]
         result.extend(["--base-image-output", str(root / "__pyronaut__" / "native" / "base" / launcher)])
@@ -2958,7 +2955,7 @@ def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str,
     dockerfile = f"""\
 FROM {base_image}
 WORKDIR /app
-COPY app/config /app/config
+COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/tools/{runner_name} /app/__pyronaut__/tools/{runner_name}
 {chr(10).join(runtime_copies)}
@@ -3000,7 +2997,7 @@ def _write_native_dockerfile(
 FROM {builder_image} AS builder
 WORKDIR /workspace
 COPY app/pyproject.toml /workspace/app/pyproject.toml
-COPY app/config /workspace/app/config
+COPY app/config/ /workspace/app/config/
 COPY app/__pyronaut__/classes /workspace/app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /workspace/app/__pyronaut__/schemas
 COPY app/__pyronaut__/tools/pyronaut-native-build /workspace/app/__pyronaut__/tools/pyronaut-native-build
@@ -3012,7 +3009,7 @@ FROM {runtime_image}
 WORKDIR /app
 COPY --from=builder {output_binary} /app/{project_name}
 COPY app/pyproject.toml /app/pyproject.toml
-COPY app/config /app/config
+COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT ["/app/{project_name}", "--project-dir", "/app"]
@@ -3061,7 +3058,7 @@ COPY --from=builder {output_binary} /opt/pyronaut/bin/{runner_name}
 
 FROM pyronaut-base
 WORKDIR /app
-COPY app/config /app/config
+COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
@@ -3080,7 +3077,7 @@ COPY bundled-base/{runner_name} /opt/pyronaut/bin/{runner_name}
 
 FROM pyronaut-base
 WORKDIR /app
-COPY app/config /app/config
+COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT [\"/opt/pyronaut/bin/{runner_name}\", \"--project-dir\", \"/app\"]
@@ -3097,7 +3094,7 @@ WORKDIR /app
 # application directory. It is only needed while producing the image, never
 # at runtime, so remove it from the final application layer.
 RUN rm -rf /app/__pyronaut__/tools
-COPY app/config /app/config
+COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
@@ -3836,7 +3833,7 @@ def _apply_project_virtualenv(env: dict[str, str] | None, project_dir: Path) -> 
 
     venv_bin = venv_dir / "bin"
     venv_python = _resolve_virtualenv_python(venv_bin) if venv_bin.is_dir() else None
-    if venv_python is None or not _is_compatible_virtualenv(venv_python):
+    if venv_python is None:
         # Do not poison the delegated process with a stale/broken virtualenv.
         # This commonly occurs when the pyenv installation used to create the
         # venv has since been replaced.
@@ -4660,6 +4657,8 @@ def _default_java_home_provider(
     process_runner: ProcessRunner | None,
     project_dir: Path,
 ) -> JavaHomeProvider | None:
+    if _read_env("PYRONAUT_DISABLE_AUTO_JAVA_HOME") == "true":
+        return None
     return lambda: _ensure_graalvm_java_home(project_dir)
 
 
@@ -5455,7 +5454,8 @@ def _pyronaut_dev_native_command_line(
     if executable_path is None:
         if _read_pyproject_toolchain_type(project_dir) == TOOLCHAIN_TYPE_NATIVE:
             raise RuntimeError(
-                "The project requests the native toolchain, but the native pyronaut-dev executable is not installed. "
+                "Missing native delegated executable for pyronaut-dev: the project requests the native toolchain, "
+                "but the native pyronaut-dev executable is not installed. "
                 "Build or install pyronaut-dev instead of falling back to the JVM launcher."
             )
         if _is_external_build_project(project_dir):

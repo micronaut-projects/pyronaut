@@ -159,15 +159,15 @@ public final class PyronautDevMain implements Callable<Integer> {
         "test-resources-server"
     );
 
-    private final DelegateInvoker delegateInvoker;
-    private final DirectSourceRunner directSourceRunner;
-    private final boolean directTest;
-
     @CommandLine.Spec
     CommandLine.Model.CommandSpec commandSpec;
 
     @CommandLine.Unmatched
     List<String> directArgs = new ArrayList<>();
+
+    private final DelegateInvoker delegateInvoker;
+    private final DirectSourceRunner directSourceRunner;
+    private final boolean directTest;
 
     PyronautDevMain(DelegateInvoker delegateInvoker, DirectSourceRunner directSourceRunner) {
         this(delegateInvoker, directSourceRunner, false);
@@ -212,9 +212,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 System.err.println("System resource not found: " + resource);
                 return PRECONDITION_FAILED;
             }
-            while (input.read() != -1) {
-                // Fully consume the stream to verify the resource is readable.
-            }
+            input.readAllBytes();
             return SUCCESS;
         } catch (IOException e) {
             System.err.println("Unable to read system resource " + resource + ": " + e.getMessage());
@@ -235,9 +233,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 URL resourceUrl = loadedClass.getResource(resource);
                 if (resourceUrl != null) {
                     try (InputStream input = resourceUrl.openStream()) {
-                        while (input.read() != -1) {
-                            // Fully consume the stream to verify the URL is readable.
-                        }
+                        input.readAllBytes();
                     }
                 }
                 try (InputStream input = loadedClass.getResourceAsStream(resource)) {
@@ -245,9 +241,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                         System.err.println("System class resource not found: " + className + " " + resource);
                         return PRECONDITION_FAILED;
                     }
-                    while (input.read() != -1) {
-                        // Fully consume the stream to verify the resource is readable.
-                    }
+                    input.readAllBytes();
                 }
             }
             Class.forName(className, true, systemClassLoader);
@@ -258,7 +252,6 @@ public final class PyronautDevMain implements Callable<Integer> {
             return INTERNAL_ERROR;
         }
     }
-
 
     private static void setDefaultProperty(String name, String value) {
         if (System.getProperty(name) == null) {
@@ -1307,7 +1300,9 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static Optional<Path> findPyronautBuildAnnotationsJar() throws IOException {
         Path repository = Path.of(System.getProperty("user.home"), ".m2", "repository");
-        if (!Files.isDirectory(repository)) return Optional.empty();
+        if (!Files.isDirectory(repository)) {
+            return Optional.empty();
+        }
         try (var paths = Files.walk(repository, 8)) {
             return paths.filter(path -> path.getFileName().toString().startsWith("micronaut-pyronaut-build-annotations-"))
                 .filter(path -> path.toString().endsWith(".jar"))

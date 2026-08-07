@@ -16,6 +16,7 @@ def wheelVersion = providers.provider {
     configuredVersion.replace("-SNAPSHOT", ".dev0")
 }
 def graalVmDevTag = providers.gradleProperty("pyronautGraalVmDevTag")
+def dockerEnabled = providers.gradleProperty("docker").map { it.toBoolean() }.orElse(false)
 def graalVmProvisionTask = graalVmDevTag.present ? PyronautGraalVmDevBuilds.registerProvisionTask(rootProject, graalVmDevTag) : null
 def graalVmToolchainHomeProvider = PyronautGraalVmDevBuilds.javaHomeProvider(project, graalVmDevTag)
     .map { it.absolutePath }
@@ -397,8 +398,21 @@ tasks.register("installSdkWheel", Exec) {
 tasks.register("testPythonOrchestrator", Exec) {
     group = "verification"
     description = "Runs Python tests for pyronaut orchestrator"
+    onlyIf {
+        if (!dockerEnabled.get()) {
+            logger.lifecycle("Skipping Python orchestrator tests: Docker/Test Resources require -Pdocker=true.")
+        }
+        dockerEnabled.get()
+    }
     commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "*_test.py")
     environment("PYTHONPATH", file("src/main/python").absolutePath)
+    // Unit tests must not inherit a developer's active virtual environment or
+    // JAVA_HOME; those values are inputs under test and make results host-dependent.
+    doFirst {
+        environment.remove("VIRTUAL_ENV")
+        environment.remove("JAVA_HOME")
+        environment("PYRONAUT_DISABLE_AUTO_JAVA_HOME", "true")
+    }
 }
 
 tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
@@ -431,6 +445,12 @@ tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
 tasks.register("testPythonOrchestratorE2E", Exec) {
     group = "verification"
     description = "Runs fast smoke orchestrator e2e checks"
+    onlyIf {
+        if (!dockerEnabled.get()) {
+            logger.lifecycle("Skipping orchestrator E2E: Docker/Test Resources require -Pdocker=true.")
+        }
+        dockerEnabled.get()
+    }
 
     if (graalVmProvisionTask != null) {
         dependsOn(graalVmProvisionTask)
@@ -537,6 +557,12 @@ tasks.register("testPythonOrchestratorExternalE2E", Exec) {
 tasks.register("testPythonOrchestratorE2EFull", Exec) {
     group = "verification"
     description = "Runs full Docker-backed orchestrator e2e integration checks"
+    onlyIf {
+        if (!dockerEnabled.get()) {
+            logger.lifecycle("Skipping full orchestrator E2E: Docker/Test Resources require -Pdocker=true.")
+        }
+        dockerEnabled.get()
+    }
 
     if (graalVmProvisionTask != null) {
         dependsOn(graalVmProvisionTask)

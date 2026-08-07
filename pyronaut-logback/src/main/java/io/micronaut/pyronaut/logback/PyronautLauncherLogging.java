@@ -30,6 +30,7 @@ import org.slf4j.LoggerFactory;
  */
 @Internal
 public final class PyronautLauncherLogging {
+    static final String APPLICATION_DEFAULTS_MARKER = "pyronaut.application.logging.defaults";
     private static final String SIMPLE_LOGGER_DEFAULT_LEVEL = "org.slf4j.simpleLogger.defaultLogLevel";
     private static final String LOGBACK_STATUS_LISTENER = "logback.statusListenerClass";
     private static final String LOGBACK_NOP_STATUS_LISTENER = "ch.qos.logback.core.status.NopStatusListener";
@@ -66,6 +67,8 @@ public final class PyronautLauncherLogging {
 
     /**
      * Initialize default application logging for direct source execution.
+     *
+     * @param verbose whether to enable trace logging at the root logger
      */
     public static void initializeApplicationDefaults(boolean verbose) {
         initializeApplicationDefaults(verbose ? "" : null);
@@ -75,6 +78,8 @@ public final class PyronautLauncherLogging {
      * Initialize application logging, optionally enabling trace for one logger.
      * An empty logger name means the root logger; {@code null} leaves the
      * normal INFO root level in place.
+     *
+     * @param verboseLogger the logger to trace, or {@code null} for normal INFO logging
      */
     public static void initializeApplicationDefaults(String verboseLogger) {
         setDefaultProperty(LOGBACK_STATUS_LISTENER, LOGBACK_NOP_STATUS_LISTENER);

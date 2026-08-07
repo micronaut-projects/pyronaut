@@ -1,8 +1,8 @@
 # Functional Test Fixture
 
-This module runs a Docker-free checked-in fixture application in [`app`](/Users/graemerocher/dev/pyronaut/functional-test/app) through the local Pyronaut toolchain.
+This module runs the Docker-backed MySQL/Micronaut Data fixture in [`app`](app) through the local Pyronaut toolchain.
 
-It covers installation, configuration validation, processing, and an end-to-end HTTP/pytest run without MySQL, Micronaut Data, Testcontainers, or Test Resources. The Docker-backed fixture lives in [`functional-test-docker`](../functional-test-docker).
+Run it with `-Pdocker=true`; the task is skipped otherwise because it starts Test Resources and requires a Docker engine.
 
 The main entry point is:
 
@@ -18,7 +18,7 @@ That task does all of the following against the fixture app:
 - runs `pyronaut-install`
 - runs `pyronaut-validate-config`
 - runs `pyronaut-processor`
-- runs the processed application tests directly
+- starts the test-resources server
 - runs `pyronaut-test`
 
 ## Native Tool Mode
@@ -58,12 +58,6 @@ echo "$PYENV_VERSION"
 ```
 
 This module does not create or manage the outer Python interpreter selection for you. It only creates the inner virtual environment in `functional-test/build/venv`.
-
-To run the Docker-backed MySQL/Data/Test Resources fixture, use:
-
-```bash
-./gradlew :micronaut-functional-test-docker:test -Pdocker=true
-```
 
 The repository currently resolves GraalPy artifacts from the version catalog in [`gradle/libs.versions.toml`](/Users/graemerocher/dev/micronaut/pyronaut/gradle/libs.versions.toml), so in practice you should use the same GraalPy line as the rest of the project.
 

@@ -46,6 +46,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Adapter that implements PytestTestListener and forwards events to JUnit EngineExecutionListener.
  */
+@SuppressWarnings("checkstyle:DesignForExtension")
 public class JUnitPytestTestListener implements PytestTestListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(JUnitPytestTestListener.class);

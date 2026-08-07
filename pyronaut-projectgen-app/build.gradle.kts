@@ -6,6 +6,14 @@ version = "0.1"
 group = "io.micronaut.pyronaut.starter"
 repositories {
     mavenCentral()
+    maven("https://central.sonatype.com/repository/maven-snapshots/") {
+        content {
+            excludeGroupByRegex("io\\.micronaut\\.projectgen")
+        }
+        mavenContent {
+            snapshotsOnly()
+        }
+    }
 }
 dependencies {
     implementation(platform(libs.micronaut.projectgen))
@@ -22,6 +30,13 @@ dependencies {
     runtimeOnly(mnLogging.logback.classic)
 
     testImplementation(mn.micronaut.http.client)
+}
+configurations.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "io.micronaut.projectgen") {
+            useVersion("0.0.9")
+        }
+    }
 }
 application {
     mainClass = "io.micronaut.pyronaut.starter.Application"
