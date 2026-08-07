@@ -1,5 +1,7 @@
 import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 import org.gradle.api.GradleException
+import java.nio.file.Files
+import java.util.zip.ZipFile
 import java.util.regex.Pattern
 
 plugins {
@@ -79,6 +81,23 @@ def delegatedNativeCliProjects = [
 def nativeWheelExcludedJars = [
     "**/slf4j-simple-*.jar"
 ]
+def supportedIdeStubPackagePrefixes = ["io/micronaut/", "jakarta/"]
+def nativeSourceJarNeededForIdeStubs = { File sourceJar ->
+    def binaryJar = new File(sourceJar.parentFile, sourceJar.name.replaceFirst(/-sources\.jar$/, ".jar"))
+    if (!binaryJar.isFile()) {
+        return false
+    }
+    try (def archive = new ZipFile(binaryJar)) {
+        def entries = archive.entries()
+        while (entries.hasMoreElements()) {
+            def name = entries.nextElement().name
+            if (name.endsWith(".class") && supportedIdeStubPackagePrefixes.any { name.startsWith(it) }) {
+                return true
+            }
+        }
+    }
+    return false
+}
 def mavenVersionDirReady = { File versionDir, String artifactId ->
     if (!versionDir.isDirectory()) {
         return false
@@ -260,6 +279,67 @@ tasks.register("prepareWheelSources", Sync) {
             }
         }
 
+        // The individual Gradle distributions contain the same dependency
+        // JARs repeatedly. Store one copy in a wheel-level shared directory,
+        // while retaining per-tool manifests and launcher paths. Source JARs
+        // are metadata inputs for IDE stub generation, so retain them when
+        // their binary contains a supported io.micronaut or jakarta package.
+        def toolsRoot = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools").asFile
+        def sharedLib = new File(toolsRoot, "shared/lib")
+        sharedLib.mkdirs()
+        def sharedByName = [:]
+        toolsRoot.listFiles()?.findAll { it.isDirectory() && it.name != "shared" }.each { toolDir ->
+            def classpathEntries = []
+            def toolLib = new File(toolDir, "lib")
+            if (toolLib.isDirectory()) {
+                toolLib.listFiles()?.findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }.each { artifact ->
+                    classpathEntries << artifact.name
+                }
+            }
+            if (!classpathEntries.isEmpty()) {
+                def manifest = new File(toolDir, "bin/pyronaut-classpath.txt")
+                manifest.parentFile.mkdirs()
+                manifest.text = classpathEntries.unique().sort().join(System.lineSeparator()) + System.lineSeparator()
+            }
+
+            [toolLib, new File(toolDir, "native/lib")].each { sourceDir ->
+                if (!sourceDir.isDirectory()) {
+                    return
+                }
+                sourceDir.listFiles()?.findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }.each { artifact ->
+                    if (artifact.name.endsWith("-sources.jar") && sourceDir.parentFile.name == "native" && !nativeSourceJarNeededForIdeStubs(artifact)) {
+                        artifact.delete()
+                        return
+                    }
+                    def existing = sharedByName[artifact.name]
+                    if (existing != null) {
+                        if (Files.mismatch(existing.toPath(), artifact.toPath()) != -1L) {
+                            throw new GradleException("Conflicting wheel artifacts have the same filename: ${artifact.name}")
+                        }
+                    } else {
+                        def target = new File(sharedLib, artifact.name)
+                        copy {
+                            from(artifact)
+                            into(sharedLib)
+                        }
+                        sharedByName[artifact.name] = target
+                    }
+                    artifact.delete()
+                }
+            }
+
+            [new File(toolDir, "bin")].each { scriptDir ->
+                if (scriptDir.isDirectory()) {
+                    scriptDir.listFiles()?.findAll { it.isFile() && (it.name == toolDir.name || it.name == "${toolDir.name}.bat") }.each { script ->
+                        def text = script.getText("UTF-8")
+                        text = text.replace("\$APP_HOME/lib/", "\$APP_HOME/../shared/lib/")
+                            .replace("%APP_HOME%\\lib\\", "%APP_HOME%\\..\\shared\\lib\\")
+                        script.setText(text, "UTF-8")
+                    }
+                }
+            }
+        }
+
         def toolchainDefaultsFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/toolchain-defaults.properties").asFile
         if (graalVmDevTag.present) {
             def configuredTag = graalVmDevTag.get().trim()
@@ -302,7 +382,7 @@ build-backend = "setuptools.build_meta"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-pyronaut_cli_v2 = ["tools/**", "toolchain-defaults.properties", "version.properties"]
+pyronaut_cli_v2 = ["tools/**", "tools/shared/lib/*", "toolchain-defaults.properties", "version.properties"]
 """.trim() + System.lineSeparator()
 
         def setupCfgFile = wheelStagingDir.get().file("setup.cfg").asFile
@@ -329,6 +409,7 @@ pyronaut_cli_v2 =
     tools/*/*
     tools/*/*/*
     tools/*/*/*/*
+    tools/shared/lib/*
 
 [options.entry_points]
 console_scripts =
@@ -337,6 +418,34 @@ console_scripts =
 [bdist_wheel]
 root_is_pure = false
 """.trim() + System.lineSeparator()
+
+        def setupPyFile = wheelStagingDir.get().file("setup.py").asFile
+        if (nativeSdkWheel.get()) {
+            setupPyFile.text = """
+from setuptools import setup
+from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
+import os
+
+class bdist_wheel(_bdist_wheel):
+    def finalize_options(self):
+        super().finalize_options()
+        self.root_is_pure = False
+        configured = os.environ.get("PYRONAUT_WHEEL_PLATFORM_TAG")
+        if configured:
+            self.plat_name = configured
+
+setup(
+    cmdclass={"bdist_wheel": bdist_wheel},
+    package_data={"pyronaut_cli_v2": [
+        "tools/*", "tools/*/*", "tools/*/*/*", "tools/*/*/*/*",
+        "tools/shared/lib/*", "toolchain-defaults.properties", "version.properties",
+    ]},
+    include_package_data=True,
+)
+""".trim() + System.lineSeparator()
+        } else {
+            setupPyFile.delete()
+        }
     }
 }
 
@@ -348,6 +457,10 @@ tasks.register("buildSdkWheel", Exec) {
     inputs.property("native", nativeSdkWheel)
     outputs.dir(wheelDistDir)
     doFirst {
+        // Build with the same pyenv interpreter used by installSdkWheel.
+        // Using the ambient `python3` can produce (for example) a CPython
+        // 3.14 wheel which GraalPy cannot install.
+        environment("PYENV_VERSION", pyenvVersion.get())
         delete(wheelDistDir)
         delete(wheelStagingDir.get().dir("build"))
         delete(fileTree(wheelStagingDir).matching {
@@ -355,7 +468,9 @@ tasks.register("buildSdkWheel", Exec) {
         })
     }
     commandLine(
-        "python3",
+        "pyenv",
+        "exec",
+        "python",
         "-m",
         "pip",
         "wheel",

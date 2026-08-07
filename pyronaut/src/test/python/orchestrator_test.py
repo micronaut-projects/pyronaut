@@ -1027,6 +1027,83 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual([str(binary.resolve())], jars)
         self.assertEqual({"io.micronaut:micronaut-jdbc"}, coordinates)
 
+    def test_delegate_lib_entries_resolve_wheel_shared_classpath_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tools = Path(temp_dir) / "tools"
+            tool_dir = tools / "pyronaut-run"
+            (tool_dir / "bin").mkdir(parents=True)
+            shared_lib = tools / "shared" / "lib"
+            shared_lib.mkdir(parents=True)
+            executable = tool_dir / "bin" / "pyronaut-run"
+            executable.write_text("", encoding="utf-8")
+            first = shared_lib / "first-1.0.jar"
+            second = shared_lib / "second-1.0.jar"
+            first.write_text("first", encoding="utf-8")
+            second.write_text("second", encoding="utf-8")
+            (tool_dir / "bin" / "pyronaut-classpath.txt").write_text(
+                "second-1.0.jar\nfirst-1.0.jar\n", encoding="utf-8"
+            )
+
+            entries = cli._delegate_lib_entries(str(executable))  # noqa: SLF001
+
+        self.assertEqual([str(second.resolve()), str(first.resolve())], entries)
+
+    def test_stage_delegate_distribution_copies_wheel_shared_sibling(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_root = root / "tools" / "pyronaut-run"
+            (install_root / "bin").mkdir(parents=True)
+            executable = install_root / "bin" / "pyronaut-run"
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            shared_jar = root / "tools" / "shared" / "lib" / "runtime.jar"
+            shared_jar.parent.mkdir(parents=True)
+            shared_jar.write_text("shared", encoding="utf-8")
+            target = root / "context" / "tools" / "pyronaut-run"
+
+            cli._stage_delegate_distribution(str(executable), target)  # noqa: SLF001
+
+            self.assertEqual("shared", (target.parent / "shared" / "lib" / "runtime.jar").read_text(encoding="utf-8"))
+
+    def test_native_provided_jars_resolve_from_wheel_shared_lib_with_source_sibling(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tools = Path(temp_dir) / "tools"
+            native_dir = tools / "pyronaut-dev" / "native"
+            native_dir.mkdir(parents=True)
+            native_dev = native_dir / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            (native_dir / "native-provided-classpath.txt").write_text(
+                "io.micronaut:micronaut-jdbc\n", encoding="utf-8"
+            )
+            shared_lib = tools / "shared" / "lib"
+            shared_lib.mkdir(parents=True)
+            binary = shared_lib / "micronaut-jdbc-7.1.0.jar"
+            source = shared_lib / "micronaut-jdbc-7.1.0-sources.jar"
+            binary.write_text("binary", encoding="utf-8")
+            source.write_text("source", encoding="utf-8")
+
+            jars = cli._native_launcher_provided_jar_entries(str(native_dev))  # noqa: SLF001
+
+        self.assertEqual([str(binary.resolve())], jars)
+
+    def test_native_compile_classpath_resolves_wheel_shared_lib(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tools = Path(temp_dir) / "tools"
+            native_dir = tools / "pyronaut-dev" / "native"
+            native_dir.mkdir(parents=True)
+            native_dev = native_dir / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            (native_dir / "native-compile-classpath.txt").write_text(
+                "io.micronaut:micronaut-inject-python\n", encoding="utf-8"
+            )
+            shared_lib = tools / "shared" / "lib"
+            shared_lib.mkdir(parents=True)
+            binary = shared_lib / "micronaut-inject-python-5.2.0.jar"
+            binary.write_text("binary", encoding="utf-8")
+
+            entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
+
+        self.assertEqual([str(binary.resolve())], entries)
+
     def test_run_prefers_bundled_production_native_executable_with_application_classpath(self):
         executed = []
         original_test_resources_disabled = os.environ.get("PYRONAUT_TEST_RESOURCES_DISABLED")
@@ -4026,6 +4103,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("-t", docker_command)
         self.assertIn("demo-app:1.2.3", docker_command)
         self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
+        self.assertIn("COPY app/__pyronaut__/tools/shared /app/__pyronaut__/tools/shared", captured["dockerfile"])
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
         self.assertIn("app/__pyronaut__/m2-repository/example/runtime.jar", captured["context_files"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", captured["context_files"])
@@ -4120,6 +4198,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("--progress=plain", docker_command)
         self.assertIn("PYRONAUT_BUILD_MODE=native", docker_command)
         self.assertIn("PYRONAUT_NATIVE_STATIC=true", docker_command)
+        self.assertIn("COPY app/__pyronaut__/tools/shared /workspace/app/__pyronaut__/tools/shared", captured["dockerfile"])
         self.assertIn("HTTP_PROXY=http://proxy.example", docker_command)
         self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=example/static-builder:1", docker_command)
         self.assertIn("PYRONAUT_NATIVE_BASE_IMAGE=example/static-base:1", docker_command)

@@ -59,7 +59,6 @@ dependencies {
     api("io.micronaut.data:micronaut-data-model")
     api("io.micronaut.data:micronaut-data-runtime")
     api("io.micronaut.data:micronaut-data-connection")
-    api("io.micronaut.data:micronaut-data-jdbc")
     api("io.micronaut.sql:micronaut-jdbc")
     api("io.micronaut.cache:micronaut-cache-core")
     api("io.micronaut.sourcegen:micronaut-sourcegen-annotations")

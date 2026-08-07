@@ -1150,10 +1150,24 @@ def _resolve_run_manifest(cache_dir: Path) -> Path:
     return cache_dir / "resolved-runtime-dependencies"
 
 
+def _launcher_shared_lib_dir(executable_path: str | Path) -> Path:
+    """Resolve the wheel-level shared library directory for a launcher."""
+    path = Path(executable_path).resolve()
+    tool_dir = path.parent.parent
+    return tool_dir.parent / "shared" / "lib"
+
+
 def _delegate_lib_entries(executable_path: str) -> list[str]:
     path = Path(executable_path).resolve()
     if path.suffix == ".jar":
         return [str(path)]
+    manifest = path.parent.parent / "bin" / "pyronaut-classpath.txt"
+    shared_lib = _launcher_shared_lib_dir(path)
+    if manifest.is_file():
+        entries = [line.strip() for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+        resolved = [str(shared_lib / entry) for entry in entries if (shared_lib / entry).is_file()]
+        if resolved:
+            return resolved
     lib_dir = path.parent.parent / "lib"
     jars = sorted(lib_dir.glob("*.jar"))
     if jars:
@@ -1539,21 +1553,25 @@ def _native_launcher_compile_classpath_entries(launcher_executable: str | None) 
     entries = _native_launcher_manifest_entries(launcher_executable, "native-compile-classpath.txt")
     if entries:
         launcher_parent = Path(launcher_executable).parent if launcher_executable else None
-        lib_dir = launcher_parent.parent / "lib" if launcher_parent else None
+        lib_dirs = []
+        if launcher_parent:
+            lib_dirs.extend((launcher_parent.parent / "lib", _launcher_shared_lib_dir(launcher_executable)))
         resolved: list[str] = []
         for entry in entries:
             candidate = Path(entry)
             if candidate.is_file():
                 resolved.append(str(candidate))
-            elif lib_dir is not None:
+            elif lib_dirs:
                 if ":" in entry and "/" not in entry:
                     artifact_id = entry.split(":", 1)[1]
-                    matches = sorted(lib_dir.glob(artifact_id + "-*.jar"))
+                    matches = sorted({path for lib_dir in lib_dirs for path in lib_dir.glob(artifact_id + "-*.jar")})
                     resolved.extend(str(path) for path in matches)
                 else:
-                    bundled = lib_dir / candidate.name
-                    if bundled.is_file():
-                        resolved.append(str(bundled))
+                    for lib_dir in lib_dirs:
+                        bundled = lib_dir / candidate.name
+                        if bundled.is_file():
+                            resolved.append(str(bundled))
+                            break
         return resolved
     # Older distributions do not have a reduced compiler manifest. Their
     # native parent remains sufficient, so do not re-add the whole lib dir.
@@ -1568,6 +1586,7 @@ def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> li
         executable_path.parent / "lib",
         executable_path.parent.parent / "lib",
         executable_path.parent.parent.parent / "lib",
+        _launcher_shared_lib_dir(executable_path),
     ]
     for lib_dir in candidate_lib_dirs:
         if lib_dir.is_dir():
@@ -2785,6 +2804,12 @@ def _stage_delegate_distribution(executable_path: str, target_dir: Path) -> Path
     if not install_root.exists():
         raise RuntimeError(f"Missing delegate distribution for Docker build: {resolved}")
     shutil.copytree(install_root, target_dir, dirs_exist_ok=True)
+    # Wheel distributions place common launcher libraries beside each tool
+    # under ``tools/shared``. Keep that sibling available in Docker contexts
+    # so generated launchers can resolve ``../shared/lib``.
+    shared_root = install_root.parent / "shared"
+    if shared_root.is_dir():
+        shutil.copytree(shared_root, target_dir.parent / "shared", dirs_exist_ok=True)
     return target_dir / "bin" / resolved.name
 
 
@@ -2957,6 +2982,7 @@ FROM {base_image}
 WORKDIR /app
 COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
+COPY app/__pyronaut__/tools/shared /app/__pyronaut__/tools/shared
 COPY app/__pyronaut__/tools/{runner_name} /app/__pyronaut__/tools/{runner_name}
 {chr(10).join(runtime_copies)}
 ENTRYPOINT ["/app/__pyronaut__/tools/{runner_name}/bin/{runner_name}", "--project-dir", "/app"]
@@ -3000,6 +3026,7 @@ COPY app/pyproject.toml /workspace/app/pyproject.toml
 COPY app/config/ /workspace/app/config/
 COPY app/__pyronaut__/classes /workspace/app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /workspace/app/__pyronaut__/schemas
+COPY app/__pyronaut__/tools/shared /workspace/app/__pyronaut__/tools/shared
 COPY app/__pyronaut__/tools/pyronaut-native-build /workspace/app/__pyronaut__/tools/pyronaut-native-build
 {builder_runtime_copies}
 RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
