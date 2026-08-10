@@ -68,12 +68,22 @@ class PyronautProcessorJvmSmokeTest extends AbstractPyronautProcessorSmokeTest {
         ProcessResult second = runJvmProcessor(
             project,
             changedFiles,
-            incrementalPyproject("processor-jvm-incremental")
+            incrementalPyproject("processor-jvm-incremental"),
+            List.of(),
+            "auto"
         );
 
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), second.exitCode(), second.output());
         assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
         assertExists(project, "__pyronaut__/incremental/main/state.properties", second.output());
+        org.junit.jupiter.api.Assertions.assertTrue(
+            second.output().contains("Incrementally compiling main sources"),
+            second.output()
+        );
+        org.junit.jupiter.api.Assertions.assertTrue(
+            second.output().contains("src/main.py"),
+            second.output()
+        );
     }
 
     @Test

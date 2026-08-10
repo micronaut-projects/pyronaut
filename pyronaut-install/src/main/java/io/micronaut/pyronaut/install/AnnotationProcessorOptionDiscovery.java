@@ -15,9 +15,8 @@
  */
 package io.micronaut.pyronaut.install;
 
-
-import javax.annotation.processing.SupportedOptions;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
@@ -25,11 +24,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.*;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Properties;
+import java.util.ServiceLoader;
+import java.util.TreeSet;
 
 /** Discovers annotation processor options without embedding processor-specific names. */
 final class AnnotationProcessorOptionDiscovery {
     static final String CACHE_FILE_NAME = "annotation-processor-options.properties";
+    static final String NATIVE_OPTIONS_RESOURCE = "META-INF/pyronaut/native-annotation-processor-options.txt";
+    private static final String CACHE_FORMAT_VERSION = "2";
+    private static final boolean NATIVE_IMAGE = System.getProperty("org.graalvm.nativeimage.imagecode") != null;
+    private static final List<String> NATIVE_IMAGE_OPTIONS = NATIVE_IMAGE ? readNativeImageOptions() : List.of();
 
     private AnnotationProcessorOptionDiscovery() {
     }
@@ -53,26 +60,8 @@ final class AnnotationProcessorOptionDiscovery {
             return;
         }
         TreeSet<String> options = new TreeSet<>();
-        // Native executables must not instantiate arbitrary processors at
-        // runtime. Their service implementations may call SoftServiceLoader,
-        // which reaches ImageSingletons and is not necessarily compiled into
-        // the image. The processors embedded in the native image contribute
-        // their known options below; JVM execution retains dynamic discovery.
-        boolean nativeImage = System.getProperty("org.graalvm.nativeimage.imagecode") != null;
-        if (nativeImage) {
-            URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
-            try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
-                Class<?> visitorType = Class.forName("io.micronaut.inject.visitor.TypeElementVisitor", true, loader);
-                ServiceLoader.load(visitorType, loader).stream().forEach(provider -> {
-                    // skip micronaut data since it uses Micronaut's service loader which causes issues and doesn't define any options anyway
-                    SupportedOptions opts = provider.type().getAnnotation(SupportedOptions.class);
-                    if (opts != null) {
-                        options.addAll(Arrays.asList(opts.value()));
-                    }
-                });
-            } catch (ClassNotFoundException | LinkageError | RuntimeException | java.util.ServiceConfigurationError ignored) {
-                // Keep an empty option set when the processor classpath cannot be loaded.
-            }
+        if (NATIVE_IMAGE) {
+            options.addAll(NATIVE_IMAGE_OPTIONS);
         } else if (!entries.isEmpty()) {
             URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
             try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
@@ -110,6 +99,23 @@ final class AnnotationProcessorOptionDiscovery {
         }
     }
 
+    private static List<String> readNativeImageOptions() {
+        ClassLoader loader = AnnotationProcessorOptionDiscovery.class.getClassLoader();
+        try (InputStream input = loader.getResourceAsStream(NATIVE_OPTIONS_RESOURCE)) {
+            if (input == null) {
+                return List.of();
+            }
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8).lines()
+                .map(String::trim)
+                .filter(option -> !option.isBlank())
+                .distinct()
+                .sorted()
+                .toList();
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
     static List<String> readOptions(Path cacheDir) throws IOException {
         Path cacheFile = cacheDir.resolve(CACHE_FILE_NAME);
         if (!Files.isRegularFile(cacheFile)) {
@@ -142,6 +148,8 @@ final class AnnotationProcessorOptionDiscovery {
     private static String fingerprint(List<Path> classpath) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(CACHE_FORMAT_VERSION.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) '\n');
             for (Path path : classpath) {
                 digest.update(path.toString().getBytes(StandardCharsets.UTF_8));
                 if (Files.isRegularFile(path)) {

@@ -1342,6 +1342,64 @@ type = "native"
 
         self.assertEqual([str(build_jar.resolve())], entries)
 
+    def test_native_process_test_classpath_excludes_generated_outputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dev = root / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            compiler_jar = root / "compiler.jar"
+            compiler_jar.write_text("compiler", encoding="utf-8")
+            (root / "native-compile-classpath.txt").write_text(
+                f"{compiler_jar}\n",
+                encoding="utf-8",
+            )
+            project_dir = root / "project"
+            cache_dir = project_dir / "__pyronaut__"
+            classes_dir = cache_dir / "classes"
+            test_classes_dir = cache_dir / "test-classes"
+            classes_dir.mkdir(parents=True)
+            test_classes_dir.mkdir(parents=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\n"
+                "type = \"native\"\n",
+                encoding="utf-8",
+            )
+            dependencies = []
+            for scope in ("build", "runtime", "test"):
+                dependency = root / f"{scope}.jar"
+                dependency.write_text(scope, encoding="utf-8")
+                dependencies.append(str(dependency.resolve()))
+                (cache_dir / f"resolved-{scope}-dependencies").write_text(
+                    f"{dependency}\n",
+                    encoding="utf-8",
+                )
+
+            entries = cli._build_native_application_classpath_entries("process-test", project_dir)
+            with patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None,
+            ):
+                command_line = cli._pyronaut_dev_native_command_line(
+                    "process",
+                    ["--project-dir", str(project_dir), "--pass", "test"],
+                    self._resolver(),
+                )
+
+        self.assertEqual(set(dependencies), {str(Path(entry).resolve()) for entry in entries})
+        self.assertNotIn(str(classes_dir.resolve()), entries)
+        self.assertNotIn(str(test_classes_dir.resolve()), entries)
+        self.assertIsNotNone(command_line)
+        assert command_line is not None
+        test_classpath = command_line[command_line.index("--test-classpath") + 1].split(os.pathsep)
+        self.assertEqual(
+            {*dependencies, str(compiler_jar.resolve())},
+            {str(Path(entry).resolve()) for entry in test_classpath},
+        )
+        self.assertNotIn(str(classes_dir.resolve()), test_classpath)
+        self.assertNotIn(str(test_classes_dir.resolve()), test_classpath)
+
     def test_run_native_application_classpath_still_filters_control_panel_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"

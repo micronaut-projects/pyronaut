@@ -256,9 +256,13 @@ final class PyronautDevMainTest {
         Path source = tempDir.resolve("App.java");
         Files.writeString(source, "class App {}\n");
         String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
+        String previousTestResourcesBridge = System.getProperty(
+            PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY
+        );
         AtomicInteger calls = new AtomicInteger();
         try {
             System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
+            System.setProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "true");
             PyronautDevMain.DirectSourceRunner runner = (invocation, stagingRoot) -> {
                 if (calls.incrementAndGet() == 1) {
                     throw new DirectSourceDeclarationRequest(mysqlDeclarations());
@@ -281,8 +285,15 @@ final class PyronautDevMainTest {
             assertFalse(Files.readAllLines(tempDir.resolve(
                 "__pyronaut__/resolved-runtime-dependencies"
             )).stream().anyMatch(path -> path.contains("micronaut-test-resources-client")));
+            assertEquals("true", System.getProperty(
+                PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY
+            ));
         } finally {
             restoreProperty("pyronaut.dev.project.dir", previousProjectDirectory);
+            restoreProperty(
+                PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY,
+                previousTestResourcesBridge
+            );
         }
     }
 
@@ -292,10 +303,14 @@ final class PyronautDevMainTest {
         Files.writeString(source, "class App {}\n");
         String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
         String previousDirectCommand = System.getProperty("pyronaut.dev.direct.command");
+        String previousTestResourcesBridge = System.getProperty(
+            PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY
+        );
         AtomicInteger calls = new AtomicInteger();
         try {
             System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
             System.setProperty("pyronaut.dev.direct.command", "dev");
+            System.setProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "true");
             PyronautDevMain.DirectSourceRunner runner = (invocation, stagingRoot) -> {
                 if (calls.incrementAndGet() == 1) {
                     throw new DirectSourceDeclarationRequest(mysqlDeclarations());
@@ -315,9 +330,16 @@ final class PyronautDevMainTest {
             assertFalse(Files.exists(tempDir.resolve(
                 "__pyronaut__/resolved-test-resources-server-dependencies"
             )));
+            assertEquals("true", System.getProperty(
+                PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY
+            ));
         } finally {
             restoreProperty("pyronaut.dev.project.dir", previousProjectDirectory);
             restoreProperty("pyronaut.dev.direct.command", previousDirectCommand);
+            restoreProperty(
+                PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY,
+                previousTestResourcesBridge
+            );
         }
     }
 

@@ -498,9 +498,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             applyProperties(invocation.properties(), previousProperties);
             applyConfigurationValidationDefaults();
             if (invocation.setup() == null) {
-                previousProperties.put(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY,
-                    System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY));
-                System.setProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "false");
+                applyProperty(
+                    PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY,
+                    "false",
+                    previousProperties
+                );
             }
             if (sourceType == SourceType.JAVA && !invocation.properties().containsKey(MICRONAUT_PYTHON_ENABLED)) {
                 previousProperties.put(MICRONAUT_PYTHON_ENABLED, System.getProperty(MICRONAUT_PYTHON_ENABLED));

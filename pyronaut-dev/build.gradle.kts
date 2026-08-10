@@ -1,6 +1,9 @@
 import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask
 import org.gradle.api.tasks.SourceSetContainer
 import java.io.File
+import java.net.URLClassLoader
+import java.util.ServiceLoader
+import java.util.TreeSet
 
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
@@ -179,6 +182,52 @@ val writeNativeClasspathManifests by tasks.registering {
                 .joinToString("\n", postfix = "\n")
         )
     }
+}
+
+val writeNativeAnnotationProcessorOptions by tasks.registering {
+    val outputDirectory = layout.buildDirectory.dir("generated/native-annotation-processor-options")
+    outputs.dir(outputDirectory)
+    inputs.files(configurations.runtimeClasspath)
+    doLast {
+        val options = TreeSet<String>()
+        val urls = configurations.runtimeClasspath.get().files
+            .map { it.toURI().toURL() }
+            .toTypedArray()
+        URLClassLoader(urls, ClassLoader.getPlatformClassLoader()).use { loader ->
+            val visitorType = Class.forName("io.micronaut.inject.visitor.TypeElementVisitor", true, loader)
+            ServiceLoader.load(visitorType, loader).stream().forEach { provider ->
+                try {
+                    val visitorName = provider.type().name
+                    if (!visitorName.startsWith("io.micronaut.data") &&
+                        !visitorName.startsWith("io.micronaut.python.processing")) {
+                        val visitor = provider.get()
+                        val supported = visitorType.getMethod("getSupportedOptions").invoke(visitor)
+                        if (supported is Collection<*>) {
+                            supported.filterIsInstance<String>()
+                                .map(String::trim)
+                                .filter(String::isNotBlank)
+                                .forEach(options::add)
+                        }
+                    }
+                } catch (_: ReflectiveOperationException) {
+                    // Visitors with optional dependencies do not contribute options.
+                } catch (_: LinkageError) {
+                    // Visitors with optional dependencies do not contribute options.
+                } catch (_: RuntimeException) {
+                    // Visitors with optional dependencies do not contribute options.
+                }
+            }
+        }
+        val resource = outputDirectory.get().file(
+            "META-INF/pyronaut/native-annotation-processor-options.txt"
+        ).asFile
+        resource.parentFile.mkdirs()
+        resource.writeText(options.joinToString("\n", postfix = "\n"))
+    }
+}
+
+tasks.processResources {
+    from(writeNativeAnnotationProcessorOptions)
 }
 
 distributions {

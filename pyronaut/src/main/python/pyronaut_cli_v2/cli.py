@@ -1376,12 +1376,20 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
     layout = _read_pyproject_sources(project_dir)
     entries: list[str] = []
     if external is not None:
-        if command == "process":
+        if command in {"process", "process-test"}:
             # Processing happens before __pyronaut__/classes exists. Use the
             # resolver's compile/build classpath directly rather than asking
             # the application runtime classpath builder to add output dirs.
-            entries.extend(external.get("buildClasspath", []))
-            return [entry for entry in entries if Path(entry).exists()]
+            key = "buildClasspath" if command == "process" else "testClasspath"
+            entries.extend(external.get(key, []))
+            output_dirs = {
+                (cache_dir / "classes").resolve(),
+                (cache_dir / "test-classes").resolve(),
+            }
+            return [
+                entry for entry in entries
+                if Path(entry).exists() and Path(entry).resolve() not in output_dirs
+            ]
         key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
         entries.extend(external.get(key, []))
         if command == "dev" and not _control_panel_enabled_for_project(project_dir):
@@ -1415,6 +1423,18 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
         # jakarta.inject); native-compile-classpath is added by the delegate
         # command builder for the embedded compiler APIs.
         entries.extend(_read_manifest_entries(cache_dir / "resolved-runtime-dependencies"))
+    elif command == "process-test":
+        # Test processing needs all declared dependency scopes, but must not
+        # include either generated output directory. Fingerprinting an output
+        # as an input makes every successful test compilation invalidate the
+        # next invocation.
+        for manifest in (
+            cache_dir / "resolved-test-dependencies",
+            cache_dir / "resolved-runtime-dependencies",
+            cache_dir / "resolved-build-dependencies",
+        ):
+            if manifest.exists():
+                entries.extend(_read_manifest_entries(manifest))
     elif command == "dev":
         classes_dir = cache_dir / "classes"
         if not classes_dir.is_dir():
@@ -5698,7 +5718,7 @@ def _pyronaut_dev_native_command_line(
             main_entries = _build_native_application_classpath_entries("process", project_dir)
             command_args.extend(["--classpath", os.pathsep.join(dict.fromkeys([*main_entries, *compiler_entries]))])
         if selected_pass in {"all", "test"}:
-            test_entries = _build_native_application_classpath_entries("test", project_dir)
+            test_entries = _build_native_application_classpath_entries("process-test", project_dir)
             command_args.extend(["--test-classpath", os.pathsep.join(dict.fromkeys([*test_entries, *compiler_entries]))])
     return [executable_path, *jvm_args, command, *command_args]
 

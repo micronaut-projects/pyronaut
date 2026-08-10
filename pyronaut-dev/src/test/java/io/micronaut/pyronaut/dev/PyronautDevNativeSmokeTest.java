@@ -27,6 +27,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 final class PyronautDevNativeSmokeTest {
@@ -61,6 +62,40 @@ final class PyronautDevNativeSmokeTest {
             .start();
         process.waitFor(30, TimeUnit.SECONDS);
         assertEquals(0, process.exitValue());
+    }
+
+    @Test
+    void nativeInstallUsesBuildTimeAnnotationProcessorOptions(@TempDir Path tempDir) throws Exception {
+        String binary = System.getProperty("pyronaut.dev.native.binary");
+        assumeTrue(binary != null && !binary.isBlank(), "native binary not configured");
+        Path project = Files.createDirectories(tempDir.resolve("project"));
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "native-options-smoke"
+            version = "1.0.0"
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """);
+
+        Process process = new ProcessBuilder(
+            binary,
+            "install",
+            "--project-dir",
+            project.toString(),
+            "--local-repository",
+            tempDir.resolve("maven-local").toString()
+        )
+            .redirectErrorStream(true)
+            .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(process.waitFor(2, TimeUnit.MINUTES), output);
+        assertEquals(0, process.exitValue(), output);
+        String options = Files.readString(
+            project.resolve("__pyronaut__/annotation-processor-options.properties"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(options.contains("micronaut.openapi.enabled"), options);
     }
 
     private static void writeResourceJar(Path jar, String resourceName) throws Exception {

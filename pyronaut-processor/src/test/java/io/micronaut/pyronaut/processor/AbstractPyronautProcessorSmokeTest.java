@@ -33,6 +33,14 @@ abstract class AbstractPyronautProcessorSmokeTest {
                                             Map<String, String> projectFiles,
                                             String pyproject,
                                             List<String> jvmOptions) throws Exception {
+        return runJvmProcessor(project, projectFiles, pyproject, jvmOptions, "off");
+    }
+
+    protected ProcessResult runJvmProcessor(Path project,
+                                            Map<String, String> projectFiles,
+                                            String pyproject,
+                                            List<String> jvmOptions,
+                                            String progress) throws Exception {
         prepareProject(project, projectFiles, pyproject);
         List<String> command = new java.util.ArrayList<>();
         command.add(javaExecutable().toString());
@@ -43,7 +51,7 @@ abstract class AbstractPyronautProcessorSmokeTest {
         command.add("--project-dir");
         command.add(project.toString());
         command.add("--progress");
-        command.add("off");
+        command.add(progress);
         Process process = new ProcessBuilder(command)
             .redirectErrorStream(true)
             .start();

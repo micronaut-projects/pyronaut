@@ -275,7 +275,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
                     long mainSourceCount = ProcessorSourceCache.countSources(resolvedMainPythonSrc, ".py")
                         + ProcessorSourceCache.countSources(resolvedMainJavaSrc, ".java");
-                    progressReporter.startPass("main", mainSourceCount);
+                    progressReporter.startPass("main", mainSourceCount, incrementalCompilation);
 
                     String mainFingerprint = noCache ? null : ProcessorSourceCache.fingerprint(
                         resolvedMainPythonSrc,
@@ -320,7 +320,13 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             incrementalCompilation,
                             pythonIncrementalMode,
                             mainIncrementalCache,
-                            mainOptions
+                            mainOptions,
+                            plan -> progressReporter.incrementalPlan(
+                                "main",
+                                root,
+                                mainSourceCount,
+                                plan
+                            )
                         ));
                         if (!noCache) {
                             ProcessorSourceCache.writeHash(
@@ -371,7 +377,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
                     long testSourceCount = ProcessorSourceCache.countSources(mergedTestPythonSrc, ".py")
                         + ProcessorSourceCache.countSources(mergedTestJavaSrc, ".java");
-                    progressReporter.startPass("test", testSourceCount);
+                    progressReporter.startPass("test", testSourceCount, incrementalCompilation);
                     if (testSourceCount == 0L) {
                         ProcessorSourceCache.invalidate(
                             resolvedCacheDir,
@@ -427,7 +433,13 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                                 incrementalCompilation,
                                 pythonIncrementalMode,
                                 testIncrementalCache,
-                                testOptions
+                                testOptions,
+                                plan -> progressReporter.incrementalPlan(
+                                    "test",
+                                    root,
+                                    testSourceCount,
+                                    plan
+                                )
                             ));
                             if (!noCache) {
                                 ProcessorSourceCache.writeHash(

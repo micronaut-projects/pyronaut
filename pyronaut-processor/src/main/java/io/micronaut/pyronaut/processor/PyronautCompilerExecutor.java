@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Bridge to {@link PyronautCompiler} for testability.
@@ -44,7 +45,9 @@ interface PyronautCompilerExecutor {
                           boolean incremental,
                           PythonIncrementalMode pythonIncrementalMode,
                           Path incrementalCacheDirectory,
-                          List<String> options) {
+                          List<String> options,
+                          Consumer<PyronautCompiler.IncrementalCompilationPlan>
+                              incrementalCompilationPlanCallback) {
     }
 
     final class Default implements PyronautCompilerExecutor {
@@ -78,6 +81,11 @@ interface PyronautCompilerExecutor {
                     .pythonIncrementalMode(request.pythonIncrementalMode())
                     .incrementalCacheDirectory(request.incrementalCacheDirectory().toFile())
                     .options(request.options());
+                if (request.incrementalCompilationPlanCallback() != null) {
+                    builder.incrementalCompilationPlanCallback(
+                        request.incrementalCompilationPlanCallback()
+                    );
+                }
                 if (processingSession != null) {
                     builder.pythonProcessingSession(processingSession);
                 }
