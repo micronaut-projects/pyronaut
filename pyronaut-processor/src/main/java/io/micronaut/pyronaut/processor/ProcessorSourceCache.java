@@ -63,13 +63,17 @@ final class ProcessorSourceCache {
                 return false;
             }
             Path normalizedOutputDirectory = outputDirectory.toAbsolutePath().normalize();
-            for (String line : lines.subList(1, lines.size())) {
-                Path output = normalizedOutputDirectory.resolve(decodePath(line)).normalize();
-                if (!output.startsWith(normalizedOutputDirectory) || !Files.isRegularFile(output)) {
-                    return false;
-                }
+            Set<String> expected = lines.subList(1, lines.size()).stream()
+                .map(ProcessorSourceCache::decodePath)
+                .map(path -> path.replace(outputDirectory.getFileSystem().getSeparator(), "/"))
+                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
+            try (Stream<Path> paths = Files.walk(normalizedOutputDirectory)) {
+                paths.filter(Files::isRegularFile)
+                    .map(normalizedOutputDirectory::relativize)
+                    .map(path -> path.toString().replace(outputDirectory.getFileSystem().getSeparator(), "/"))
+                    .forEach(expected::remove);
+                return expected.isEmpty();
             }
-            return true;
         } catch (Exception e) {
             return false;
         }
@@ -113,6 +117,49 @@ final class ProcessorSourceCache {
         }
     }
 
+    static InputSnapshot snapshot(Path pythonSources,
+                                  Path javaSources,
+                                  List<Path> annotationProcessorPath,
+                                  List<Path> classpath,
+                                  boolean compilePythonBytecode,
+                                  boolean incremental,
+                                  String pythonIncrementalMode,
+                                  List<String> options,
+                                  Path contentCacheFile) {
+        return snapshot(pythonSources, javaSources, annotationProcessorPath, classpath,
+            compilePythonBytecode, incremental, pythonIncrementalMode, options,
+            DigestCache.load(contentCacheFile), contentCacheFile);
+    }
+
+    static InputSnapshot snapshot(Path pythonSources,
+                                  Path javaSources,
+                                  List<Path> annotationProcessorPath,
+                                  List<Path> classpath,
+                                  boolean compilePythonBytecode,
+                                  boolean incremental,
+                                  String pythonIncrementalMode,
+                                  List<String> options,
+                                  DigestCache contentCache,
+                                  Path contentCacheFile) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            updateString(digest, "python\n");
+            long sourceCount = updateDirectory(digest, pythonSources, ".py");
+            updateString(digest, "java\n");
+            sourceCount += updateDirectory(digest, javaSources, ".java");
+            updatePathList(digest, "processor-path", annotationProcessorPath, contentCache);
+            updatePathList(digest, "classpath", classpath, contentCache);
+            updateString(digest, "compile-python-bytecode=" + compilePythonBytecode + "\n");
+            updateString(digest, "incremental=" + incremental + "\n");
+            updateString(digest, "python-incremental-mode=" + pythonIncrementalMode + "\n");
+            updateStringList(digest, "options", options);
+            contentCache.store(contentCacheFile);
+            return new InputSnapshot(HexFormat.of().formatHex(digest.digest()), sourceCount);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
+        }
+    }
+
     static String fingerprint(Path pythonSources,
                               Path javaSources,
                               List<Path> annotationProcessorPath,
@@ -143,24 +190,9 @@ final class ProcessorSourceCache {
                               String pythonIncrementalMode,
                               List<String> options,
                               Path contentCacheFile) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            DigestCache contentCache = DigestCache.load(contentCacheFile);
-            updateString(digest, "python\n");
-            updateDirectory(digest, pythonSources, ".py");
-            updateString(digest, "java\n");
-            updateDirectory(digest, javaSources, ".java");
-            updatePathList(digest, "processor-path", annotationProcessorPath, contentCache);
-            updatePathList(digest, "classpath", classpath, contentCache);
-            updateString(digest, "compile-python-bytecode=" + compilePythonBytecode + "\n");
-            updateString(digest, "incremental=" + incremental + "\n");
-            updateString(digest, "python-incremental-mode=" + pythonIncrementalMode + "\n");
-            updateStringList(digest, "options", options);
-            contentCache.store(contentCacheFile);
-            return HexFormat.of().formatHex(digest.digest());
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
-        }
+        return snapshot(pythonSources, javaSources, annotationProcessorPath, classpath,
+            compilePythonBytecode, incremental, pythonIncrementalMode, options,
+            contentCacheFile).fingerprint();
     }
 
     static String fingerprint(Path pythonSources,
@@ -222,21 +254,23 @@ final class ProcessorSourceCache {
         }
     }
 
-    private static void updateDirectory(MessageDigest digest, Path sourceDirectory, String extension) {
+    private static long updateDirectory(MessageDigest digest, Path sourceDirectory, String extension) {
         if (!Files.isDirectory(sourceDirectory)) {
             updateString(digest, "missing\n");
-            return;
+            return 0L;
         }
         try (Stream<Path> paths = Files.walk(sourceDirectory)) {
-            paths
+            List<Path> files = paths
                 .filter(Files::isRegularFile)
                 .filter(path -> path.getFileName().toString().endsWith(extension))
                 .sorted(Comparator.comparing(path -> sourceDirectory.relativize(path).toString()))
-                .forEach(path -> {
+                .toList();
+            for (Path path : files) {
                     Path relative = sourceDirectory.relativize(path);
                     updateString(digest, relative.toString());
                     updateBytes(digest, readFile(path));
-                });
+            }
+            return files.size();
         } catch (Exception e) {
             throw new PyronautProcessorException("Failed to hash source directory: " + sourceDirectory, e);
         }
@@ -319,7 +353,10 @@ final class ProcessorSourceCache {
         return new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8);
     }
 
-    private static final class DigestCache {
+    static record InputSnapshot(String fingerprint, long sourceCount) {
+    }
+
+    static final class DigestCache {
         private final Map<String, Entry> entries;
         private final Set<String> seen = new HashSet<>();
         private boolean dirty;

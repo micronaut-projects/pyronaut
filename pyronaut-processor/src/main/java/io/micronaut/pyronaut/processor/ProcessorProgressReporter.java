@@ -34,6 +34,10 @@ final class ProcessorProgressReporter implements AutoCloseable {
     private Thread spinnerThread;
     private IncrementalPlan incrementalPlan;
 
+    void startPass(String passName, boolean incremental) {
+        startPass(passName, -1L, incremental);
+    }
+
     ProcessorProgressReporter(PrintStream output, ProgressMode mode, boolean tty) {
         this.output = output;
         this.enabled = mode != ProgressMode.OFF;
@@ -50,7 +54,9 @@ final class ProcessorProgressReporter implements AutoCloseable {
         }
         incrementalPlan = null;
         String action = incremental ? "Checking" : "Processing";
-        String message = action + " " + passName + " sources (" + sourceCount + " files)";
+        String message = sourceCount < 0
+            ? action + " " + passName + " sources"
+            : action + " " + passName + " sources (" + sourceCount + " files)";
         if (!interactive) {
             output.println(message + "...");
             return;

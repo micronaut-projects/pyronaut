@@ -30,6 +30,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 final class PyronautProcessorNoCacheTest {
 
     @Test
+    void sourceSnapshotCountsSourcesWithoutASecondTraversal(@TempDir Path tempDir) throws Exception {
+        Path python = Files.createDirectories(tempDir.resolve("src"));
+        Path java = Files.createDirectories(tempDir.resolve("src-java"));
+        Files.writeString(python.resolve("one.py"), "VALUE = 1\n");
+        Files.writeString(python.resolve("two.py"), "VALUE = 2\n");
+        Files.writeString(java.resolve("One.java"), "class One {}\n");
+
+        ProcessorSourceCache.InputSnapshot snapshot = ProcessorSourceCache.snapshot(
+            python,
+            java,
+            List.of(),
+            List.of(),
+            false,
+            true,
+            "conservative",
+            List.of(),
+            tempDir.resolve("processor.inputs")
+        );
+
+        assertTrue(snapshot.sourceCount() == 3);
+        assertTrue(snapshot.fingerprint().equals(ProcessorSourceCache.fingerprint(
+            python,
+            java,
+            List.of(),
+            List.of(),
+            false,
+            true,
+            "conservative",
+            List.of(),
+            tempDir.resolve("processor.inputs")
+        )));
+    }
+
+    @Test
     void bytecodeSettingParticipatesInCacheFingerprint(@TempDir Path tempDir) throws Exception {
         Path python = tempDir.resolve("src");
         Path java = tempDir.resolve("src-java");
