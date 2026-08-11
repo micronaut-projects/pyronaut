@@ -169,7 +169,7 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
-    void buildsReusableCremaBaseImageWithReportAndSbom() throws Exception {
+    void buildsReusableCremaBaseImageWithSbom() throws Exception {
         Path project = prepareProject("""
             [project]
             name = "demo"
@@ -200,8 +200,6 @@ class PyronautNativeBuildMainTest {
         List<String> nativeCommand = executed.getFirst();
         assertEquals("/tmp/native-image", nativeCommand.getFirst());
         assertTrue(nativeCommand.contains("-H:+RuntimeClassLoading"));
-        assertTrue(nativeCommand.contains("--emit"));
-        assertTrue(nativeCommand.contains("build-report"));
         assertTrue(nativeCommand.contains("-H:IncludeSBOM=embed,export"));
         assertFalse(nativeCommand.contains("--no-fallback"));
         assertTrue(nativeCommand.contains(PyronautRunMain.class.getName()));

@@ -297,8 +297,6 @@ val nativeImageCLibraryPathArgs = providers.provider {
 }
 
 val nativeImageRuntimeArgs = listOf(
-    "--emit",
-    "build-report",
     "-Os",
     "--enable-native-access=org.graalvm.truffle",
     "--add-modules=jdk.compiler,java.net.http,java.naming,java.rmi",
@@ -637,6 +635,12 @@ val nativeImagePgoArgs = providers.provider {
     }
 }
 
+// Build reports are Enterprise-only; opt in with -PpyronautDevEmitBuildReport=true.
+val nativeImageBuildReportArgs = providers.gradleProperty("pyronautDevEmitBuildReport")
+    .map(String::toBoolean)
+    .orElse(false)
+    .map { enabled -> if (enabled) listOf("--emit", "build-report") else emptyList() }
+
 tasks {
     startScripts {
         applicationName = "pyronaut-dev"
@@ -675,6 +679,7 @@ graalvmNative {
             sharedLibrary.set(false)
             buildArgs.addAll(nativeImageCLibraryPathArgs)
             buildArgs.addAll(nativeImageRuntimeArgs)
+            buildArgs.addAll(nativeImageBuildReportArgs)
             buildArgs.addAll(nativeImagePgoArgs)
             buildArgs.addAll(runtimeMetadataExclusion)
         }

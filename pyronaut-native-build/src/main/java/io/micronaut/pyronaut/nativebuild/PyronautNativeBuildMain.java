@@ -260,7 +260,6 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .nativeImageExecutable(Path.of(nativeImageExecutable))
             .workingDirectory(root)
             .includePython(includePython)
-            .emitBuildReport(true)
             .includeSbom(true)
             .addClasspath(baseClasspath)
             .addNativeImageArguments(configurationArguments);
@@ -271,7 +270,6 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         PyronautNativeImageBuilder.BuildResult result = builder.build();
         if (result.exitCode() == SUCCESS) {
             System.out.println("Base image build complete: " + result.executable());
-            System.out.println("Native-image report output: " + result.outputDirectory());
         }
         return result.exitCode();
     }
