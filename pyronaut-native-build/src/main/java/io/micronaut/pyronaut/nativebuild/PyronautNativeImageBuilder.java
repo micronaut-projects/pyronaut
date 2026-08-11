@@ -88,7 +88,6 @@ public final class PyronautNativeImageBuilder {
             // "-H:Preserve=package=sun.swing.*",
             "-H:Preserve=package=sun.text.*",
             // "-H:Preserve=package=sun.tools.*",
-            "-H:Preserve=package=sun.usagetracker.*",
             "-H:Preserve=package=sun.util.*",
 
             /* javax.* */
