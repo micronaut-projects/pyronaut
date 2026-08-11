@@ -456,7 +456,9 @@ def run(
                     execute,
                     locate,
                     install=command != "dev",
-                    process_pass="main",
+                    # External dev must use the normal process entry point;
+                    # the explicit pass can skip Java-only output generation.
+                    process_pass=None,
                 )
                 if preflight_code != SUCCESS:
                     return preflight_code
