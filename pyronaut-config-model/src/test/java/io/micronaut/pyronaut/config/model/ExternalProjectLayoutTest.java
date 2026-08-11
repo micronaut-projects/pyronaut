@@ -30,6 +30,17 @@ class ExternalProjectLayoutTest {
     }
 
     @Test
+    void externalOutputUsesBuildToolDirectory() throws Exception {
+        var gradle = Files.createTempDirectory("pyronaut-gradle");
+        Files.writeString(gradle.resolve("build.gradle"), "plugins { id 'java' }");
+        assertEquals(gradle.resolve("build/pyronaut"), ExternalProjectLayout.outputDirectory(gradle));
+
+        var maven = Files.createTempDirectory("pyronaut-maven");
+        Files.writeString(maven.resolve("pom.xml"), "<project/>");
+        assertEquals(maven.resolve("target/pyronaut"), ExternalProjectLayout.outputDirectory(maven));
+    }
+
+    @Test
     void persistsResolvedSourceAndResourceLayout() throws Exception {
         var root = Files.createTempDirectory("pyronaut-layout");
         var source = Files.createDirectories(root.resolve("custom/java"));

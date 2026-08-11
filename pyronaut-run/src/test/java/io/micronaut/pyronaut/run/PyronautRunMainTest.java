@@ -72,7 +72,7 @@ class PyronautRunMainTest {
     @Test
     void externalLayoutAddsResolvedRuntimeAndMainResources() throws Exception {
         Path project = tempDir.resolve("external-layout");
-        Path classes = Files.createDirectories(project.resolve("__pyronaut__/classes"));
+        Path classes = Files.createDirectories(project.resolve("target/pyronaut/classes"));
         Path resources = Files.createDirectories(project.resolve("src/main/resources"));
         Files.writeString(project.resolve("pom.xml"), "<project/>");
         ExternalProjectLayout layout = new ExternalProjectLayout(
@@ -85,6 +85,25 @@ class PyronautRunMainTest {
             .classpathUrls().stream().map(Object::toString).toList();
         assertTrue(urls.stream().anyMatch(url -> url.contains("main/resources")));
         assertTrue(urls.stream().anyMatch(url -> url.contains(classes.getFileName().toString())));
+    }
+
+    @Test
+    void externalRunUsesRuntimeClasspathInsteadOfDevelopmentRuntimeClasspath() throws Exception {
+        Path project = tempDir.resolve("external-runtime-only");
+        Files.createDirectories(project.resolve("target/pyronaut/classes"));
+        Files.writeString(project.resolve("pom.xml"), "<project/>");
+        Path runtime = Files.createFile(project.resolve("runtime.jar"));
+        Path development = Files.createFile(project.resolve("development-control-panel.jar"));
+        ExternalProjectLayout layout = new ExternalProjectLayout(
+            ExternalProjectLayout.ProjectKind.MAVEN,
+            List.of(), List.of(), List.of(), List.of(),
+            List.of(), List.of(runtime), List.of(development), List.of(), List.of()
+        );
+        layout.write(project);
+        List<String> urls = PyronautRunMain.resolveExternalProjectLayout(project, Path.of("build/pyronaut/classes"), layout)
+            .classpathUrls().stream().map(Object::toString).toList();
+        assertTrue(urls.stream().anyMatch(url -> url.contains("runtime.jar")));
+        assertTrue(urls.stream().noneMatch(url -> url.contains("development-control-panel.jar")));
     }
 
     @Test

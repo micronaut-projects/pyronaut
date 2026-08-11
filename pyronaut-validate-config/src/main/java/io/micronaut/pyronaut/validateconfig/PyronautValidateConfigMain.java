@@ -140,9 +140,12 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             String normalizedScenario = normalizeScenario(scenario);
-            PyprojectModel model = ExternalProjectLayout.isExternal(root) ? null : modelReader.readProjectDirectory(root);
-            ValidationSettings settings = model == null
-                ? resolveExternalSettings(root, normalizedScenario) : resolveSettings(root, model, normalizedScenario);
+            PyprojectModel model = ExternalProjectLayout.isExternal(root)
+                ? (Files.isRegularFile(root.resolve("project.toml"))
+                    ? modelReader.readProjectToml(root.resolve("project.toml")) : null)
+                : modelReader.readProjectDirectory(root);
+            ValidationSettings settings = ExternalProjectLayout.isExternal(root)
+                ? resolveExternalSettings(root, normalizedScenario, model) : resolveSettings(root, model, normalizedScenario);
             if (model != null) {
                 validateProductionControlPanelSecurity(model, settings);
             }
@@ -152,7 +155,8 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             }
 
             Files.createDirectories(settings.outputDir());
-            Path cacheFile = root.resolve("__pyronaut__").resolve(".config-validation-cache.properties");
+            Path cacheFile = (ExternalProjectLayout.isExternal(root) ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__"))
+                .resolve(".config-validation-cache.properties");
             String classpathFingerprint = ConfigurationValidationCache.fingerprintClasspath(settings.classpathElements());
             String resourcesFingerprint = ConfigurationValidationCache.fingerprintResources(settings.resourcesDirs(), DEFAULT_CACHE_IGNORE);
             String inputsFingerprint = settings.inputsFingerprint(classpathFingerprint);
@@ -201,17 +205,18 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         }
     }
 
-    private static ValidationSettings resolveExternalSettings(Path root, String normalizedScenario) throws IOException {
+    private ValidationSettings resolveExternalSettings(Path root, String normalizedScenario, PyprojectModel model) throws IOException {
         ExternalProjectLayout layout = ExternalProjectLayout.read(root);
+        Path output = ExternalProjectLayout.outputDirectory(root);
         LinkedHashSet<String> classpath = new LinkedHashSet<>();
         if ("test".equals(normalizedScenario)) {
             layout.testClasspath().forEach(path -> classpath.add(path.toString()));
-            classpath.add(root.resolve("__pyronaut__/test-classes").toString());
+            classpath.add(output.resolve("test-classes").toString());
         } else {
             ("dev".equals(normalizedScenario) ? layout.developmentRuntimeClasspath() : layout.runtimeClasspath())
                 .forEach(path -> classpath.add(path.toString()));
         }
-        classpath.add(root.resolve("__pyronaut__/classes").toString());
+        classpath.add(output.resolve("classes").toString());
         List<Path> resources = new ArrayList<>(layout.mainResources());
         if ("dev".equals(normalizedScenario) || "test".equals(normalizedScenario)) {
             resources.addAll(layout.testResources());
@@ -220,10 +225,16 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         // them on the validator classpath so application.properties/yaml are actually
         // loaded during configuration validation.
         resources.forEach(path -> classpath.add(path.toString()));
-        return new ValidationSettings(true, true, false, true, "reachable", ReportFormat.BOTH,
-            root.resolve("__pyronaut__/reports/config-validation").resolve(normalizedScenario), root,
-            "dev".equals(normalizedScenario) ? List.of("dev") : "test".equals(normalizedScenario) ? List.of("test") : List.of(),
-            List.copyOf(classpath), List.copyOf(resources), List.of("micronaut.config", "micronaut.openapi", "micronaut.processing"), List.of(), normalizedScenario);
+        ValidationSettings configured = model == null ? null : resolveSettings(root, model, normalizedScenario);
+        return new ValidationSettings(configured == null || configured.enabled(), configured == null || configured.failOnNotPresent(),
+            configured != null && configured.deduceEnvironments(), configured == null || configured.validateDependencyInjection(),
+            configured == null ? "reachable" : configured.dependencyInjectionValidationStrategy(),
+            configured == null ? ReportFormat.BOTH : configured.format(),
+            output.resolve("reports/config-validation").resolve(normalizedScenario), root,
+            configured == null ? ("dev".equals(normalizedScenario) ? List.of("dev") : "test".equals(normalizedScenario) ? List.of("test") : List.of()) : configured.environments(),
+            List.copyOf(classpath), List.copyOf(resources),
+            configured == null ? List.of("micronaut.config", "micronaut.openapi", "micronaut.processing") : configured.suppressions(),
+            configured == null ? List.of() : configured.suppressedInjectErrors(), normalizedScenario);
     }
 
     private static boolean isTraceEnabled() {

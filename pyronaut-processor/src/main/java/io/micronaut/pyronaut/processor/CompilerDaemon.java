@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.processor;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.python.processing.PythonProcessingSession;
 import picocli.CommandLine;
 
@@ -77,7 +78,8 @@ final class CompilerDaemon {
     }
 
     static int execute(Path projectRoot, List<String> arguments) {
-        Path directory = projectRoot.resolve("__pyronaut__/daemon");
+        Path directory = (ExternalProjectLayout.isExternal(projectRoot)
+            ? ExternalProjectLayout.outputDirectory(projectRoot) : projectRoot.resolve("__pyronaut__")).resolve("daemon");
         String launchId = launchId();
         IOException lastFailure = null;
         for (int attempt = 0; attempt < 2; attempt++) {

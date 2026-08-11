@@ -100,7 +100,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             Path settingsDir = resolveSettingsDir(root, config);
             Path logsDir = resolveLogsDir(root, settingsDir, config);
             Path portFile = settingsDir.resolve("server.port");
-            Path sessionFile = root.resolve(OWNED_SESSION_FILE).toAbsolutePath().normalize();
+            Path sessionFile = outputDirectory(root).resolve("test-resources-session.json").toAbsolutePath().normalize();
 
             return switch (normalizeAction(action)) {
                 case START -> start(root, settingsDir, logsDir, portFile, config);
@@ -140,7 +140,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             settingsDir,
             logsDir,
             portFile,
-            root.resolve(SERVER_CLASSPATH_MANIFEST).toAbsolutePath().normalize(),
+            outputDirectory(root).resolve("resolved-test-resources-server-dependencies").toAbsolutePath().normalize(),
             config.explicitPort(),
             accessToken(config),
             optimization.cdsDirectory().orElse(null),
@@ -370,7 +370,9 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
 
     private static OptimizationResolution resolveOptimization(Path root, PyprojectModel.TestResources config) {
         String mode = config.startupOptimization() == null ? "none" : config.startupOptimization().trim().toLowerCase(java.util.Locale.ROOT);
-        Path cdsDir = root.resolve("__pyronaut__/test-resources-cds").normalize();
+        Path cdsDir = (ExternalProjectLayout.isExternal(root)
+            ? ExternalProjectLayout.outputDirectory(root)
+            : root.resolve("__pyronaut__")).resolve("test-resources-cds").normalize();
         List<String> leydenArgs = config.leydenJvmArgs() == null ? List.of() : config.leydenJvmArgs();
         return switch (mode) {
             case "none" -> new OptimizationResolution(Optional.empty(), Optional.empty());
@@ -384,6 +386,10 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             }
             default -> throw new IllegalStateException("Invalid startupOptimization: " + mode);
         };
+    }
+
+    private static Path outputDirectory(Path root) {
+        return ExternalProjectLayout.isExternal(root) ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__");
     }
 
     private static Action normalizeAction(String raw) {

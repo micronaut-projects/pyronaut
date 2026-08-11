@@ -662,11 +662,12 @@ class PyronautProcessorMainTest {
         assertTrue(executor.requests.stream().noneMatch(
             PyronautCompilerExecutor.CompileRequest::incremental
         ));
-        Path classes = project.resolve("__pyronaut__/classes");
-        assertTrue(Files.isRegularFile(project.resolve("__pyronaut__/external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java")));
+        Path output = ExternalProjectLayout.outputDirectory(project);
+        Path classes = output.resolve("classes");
+        assertTrue(Files.isRegularFile(output.resolve("external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java")));
         assertTrue(Files.isRegularFile(classes.resolve("META-INF/services/io.micronaut.context.ApplicationContextConfigurer")));
         assertFalse(Files.exists(classes.resolve("META-INF/pyronaut/python-enabled")));
-        assertTrue(Files.readString(project.resolve("__pyronaut__/external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java"))
+        assertTrue(Files.readString(output.resolve("external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java"))
             .contains("@ContextConfigurer"));
 
         int defaultRequestCount = executor.requests.size();
@@ -687,7 +688,7 @@ class PyronautProcessorMainTest {
         command.projectDir = project;
 
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
-        assertTrue(Files.isRegularFile(project.resolve("__pyronaut__/classes/META-INF/pyronaut/python-enabled")));
+        assertTrue(Files.isRegularFile(ExternalProjectLayout.outputDirectory(project).resolve("classes/META-INF/pyronaut/python-enabled")));
     }
 
     @Test
@@ -701,8 +702,9 @@ class PyronautProcessorMainTest {
         command.projectDir = project;
 
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
-        assertFalse(Files.exists(project.resolve("__pyronaut__/classes/META-INF/pyronaut/python-enabled")));
-        assertTrue(Files.isRegularFile(project.resolve("__pyronaut__/test-classes/META-INF/pyronaut/python-enabled")));
+        Path output = ExternalProjectLayout.outputDirectory(project);
+        assertFalse(Files.exists(output.resolve("classes/META-INF/pyronaut/python-enabled")));
+        assertTrue(Files.isRegularFile(output.resolve("test-classes/META-INF/pyronaut/python-enabled")));
     }
 
     @Test

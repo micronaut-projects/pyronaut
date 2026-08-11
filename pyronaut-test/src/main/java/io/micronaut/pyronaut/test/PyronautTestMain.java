@@ -183,7 +183,8 @@ public final class PyronautTestMain implements Callable<Integer> {
             if (ExternalProjectLayout.isExternal(root)) {
                 ExternalProjectLayout external = ExternalProjectLayout.read(root);
                 layout = resolveExternalProjectLayout(root, classesDir, testClassesDir, external);
-                model = null;
+                Path projectToml = root.resolve("project.toml");
+                model = Files.isRegularFile(projectToml) ? modelReader.readProjectToml(projectToml) : null;
                 resolvedTestsDir = root.resolve(testsDir).normalize();
             } else {
                 model = modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME));
@@ -235,7 +236,9 @@ public final class PyronautTestMain implements Callable<Integer> {
                 // __pyronaut__/test-classes.
                 Thread.currentThread().setContextClassLoader(applicationClassLoader);
                 LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
-                Path reportsDir = root.resolve(DEFAULT_REPORTS_DIR).normalize();
+                Path reportsDir = ExternalProjectLayout.isExternal(root)
+                    ? ExternalProjectLayout.outputDirectory(root).resolve("reports/tests").normalize()
+                    : root.resolve(DEFAULT_REPORTS_DIR).normalize();
                 Path junitReport = reportsDir.resolve(DEFAULT_JUNIT_XML_REPORT);
                 Path htmlReport = reportsDir.resolve(DEFAULT_HTML_REPORT);
                 Path nodeIdReport = reportsDir.resolve(DEFAULT_NODEID_REPORT);
@@ -352,7 +355,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                         }
                     }
                     if (publishReports) {
-                        publishReportLocations(root);
+                        publishReportLocations(reportsDir);
                     }
                 }
                 TestExecutionSummary summary = listener.getSummary();
@@ -467,8 +470,9 @@ public final class PyronautTestMain implements Callable<Integer> {
     }
 
     static ResolvedProjectLayout resolveExternalProjectLayout(Path root, Path classesDir, Path testClassesDir, ExternalProjectLayout external) throws IOException {
-        Path resolvedTestClassesDir = root.resolve(testClassesDir).normalize();
-        Path resolvedClassesDir = root.resolve(classesDir).normalize();
+        Path output = ExternalProjectLayout.outputDirectory(root);
+        Path resolvedTestClassesDir = output.resolve("test-classes").normalize();
+        Path resolvedClassesDir = output.resolve("classes").normalize();
         Path processed = Files.isDirectory(resolvedTestClassesDir) ? resolvedTestClassesDir : resolvedClassesDir;
         if (!Files.isDirectory(processed)) {
             throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
@@ -863,8 +867,8 @@ public final class PyronautTestMain implements Callable<Integer> {
             .orElseGet(() -> throwable.getMessage());
     }
 
-    static void publishReportLocations(Path projectRoot) {
-        Path reportsDir = projectRoot.resolve(DEFAULT_REPORTS_DIR).normalize();
+    static void publishReportLocations(Path reportsDir) {
+        reportsDir = reportsDir.normalize();
         Path html = reportsDir.resolve(DEFAULT_HTML_REPORT);
 
         System.out.println("Test reports directory: " + reportsDir);

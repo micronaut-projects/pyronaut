@@ -63,6 +63,58 @@ final class PyprojectEditorSupport {
         deleteGeneratedTaploFileIfPresent(projectDir.resolve(TAPLO_FILE_NAME));
     }
 
+    void ensureExternalWritten(Path projectDir, Path cacheDir, boolean testResourcesEnabled) throws IOException {
+        Path schema = cacheDir.resolve("schemas").resolve(PyprojectJsonSchemaGenerator.PROJECT_SCHEMA_FILE_NAME);
+        schemaGenerator.writeProject(schema);
+        Path projectToml = projectDir.resolve("project.toml");
+        String directive = "#:schema " + toForwardSlash(projectDir.relativize(schema));
+        if (!Files.exists(projectToml)) {
+            StringBuilder defaults = new StringBuilder(projectManagedDirectiveBlock(directive))
+                .append("[tool.pyronaut.processor]\n")
+                .append("incremental = true\n");
+            if (testResourcesEnabled) {
+                defaults.append("\n[tool.pyronaut.test-resources]\n")
+                    .append("enabled = true\n")
+                    .append("client-timeout = 180\n");
+            }
+            Files.writeString(projectToml, defaults, StandardCharsets.UTF_8);
+        } else {
+            ensureManagedDirective(projectToml, projectManagedDirectiveBlock(directive), directive);
+            String existing = Files.readString(projectToml, StandardCharsets.UTF_8);
+            if (existing.contains(GENERATED_MARKER) && !existing.contains("[tool.pyronaut.processor]")) {
+                StringBuilder defaults = new StringBuilder(existing);
+                if (!existing.endsWith("\n")) {
+                    defaults.append('\n');
+                }
+                defaults.append("\n[tool.pyronaut.processor]\n")
+                    .append("incremental = true\n");
+                if (testResourcesEnabled && !existing.contains("[tool.pyronaut.test-resources]")) {
+                    defaults.append("\n[tool.pyronaut.test-resources]\n")
+                        .append("enabled = true\n")
+                        .append("client-timeout = 180\n");
+                }
+                Files.writeString(projectToml, defaults, StandardCharsets.UTF_8);
+            }
+        }
+    }
+
+    void ensureExternalApplicationSchema(Path cacheDir, List<Path> resourceDirectories, List<String> runtimeClasspath) throws IOException {
+        Path applicationToml = resourceDirectories.stream()
+            .map(path -> path.resolve("application.toml"))
+            .filter(Files::isRegularFile)
+            .findFirst()
+            .orElse(null);
+        if (applicationToml == null) {
+            return;
+        }
+        Path schemaFile = cacheDir.resolve("schemas").resolve(MicronautApplicationJsonSchemaBundler.SCHEMA_FILE_NAME);
+        MicronautApplicationJsonSchemaBundler.SchemaWriteResult result = applicationSchemaBundler.write(
+            runtimeClasspath, schemaFile, AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
+        if (result.available()) {
+            ensureManagedDirective(applicationToml, applicationManagedDirectiveBlock(schemaFile, applicationToml), applicationSchemaDirective(schemaFile, applicationToml));
+        }
+    }
+
     MicronautApplicationJsonSchemaBundler.SchemaWriteResult ensureApplicationSchema(Path projectDir,
                                                                                     Path cacheDir,
                                                                                     PyprojectModel.Sources sources,
@@ -144,6 +196,11 @@ final class PyprojectEditorSupport {
 
     static String pyprojectManagedDirectiveBlock() {
         return PYPROJECT_SCHEMA_DIRECTIVE + "\n"
+            + GENERATED_MARKER + "\n\n";
+    }
+
+    static String projectManagedDirectiveBlock(String directive) {
+        return directive + "\n"
             + GENERATED_MARKER + "\n\n";
     }
 

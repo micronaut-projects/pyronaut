@@ -142,7 +142,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 return InstallExitCode.SUCCESS.code();
             }
             if (ExternalProjectLayout.isExternal(root)) {
-                Path cacheDir = root.resolve(DEFAULT_PYRONAUT_DIR);
+                Path cacheDir = ExternalProjectLayout.outputDirectory(root);
                 Path localRepo = resolveLocalRepository(root);
                 String hash = ResolutionCache.externalInstallHash(root, localRepo);
                 Path hashFile = cacheDir.resolve("external-build.sha256");
@@ -152,8 +152,11 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     && hash.equals(Files.readString(hashFile).trim())) {
                     try {
                         ExternalProjectLayout cachedLayout = ExternalProjectLayout.read(root);
+                        editorSupport.ensureExternalWritten(root, cacheDir, cachedLayout.testResourcesEnabled());
                         AnnotationProcessorOptionDiscovery.refresh(cacheDir,
                             cachedLayout.annotationProcessorClasspath().isEmpty() ? cachedLayout.buildClasspath() : cachedLayout.annotationProcessorClasspath());
+                        editorSupport.ensureExternalApplicationSchema(cacheDir, cachedLayout.mainResources(),
+                            cachedLayout.runtimeClasspath().stream().map(Path::toString).toList());
                     } catch (Exception discoveryFailure) {
                         // Option discovery is best effort; dependency installation remains usable.
                     }
@@ -167,10 +170,14 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 }
                 ExternalProjectLayout layout = externalBuildResolver.resolve(root, offline, localRepo);
                 layout.write(root);
+                editorSupport.ensureExternalWritten(root, cacheDir, layout.testResourcesEnabled());
+                hash = ResolutionCache.externalInstallHash(root, localRepo);
+                editorSupport.ensureExternalApplicationSchema(cacheDir, layout.mainResources(),
+                    layout.runtimeClasspath().stream().map(Path::toString).toList());
                 AnnotationProcessorOptionDiscovery.refresh(cacheDir,
                     layout.annotationProcessorClasspath().isEmpty() ? layout.buildClasspath() : layout.annotationProcessorClasspath());
                 if (layout.testResourcesEnabled()) {
-                    Files.write(root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-resources-server-dependencies"),
+                    Files.write(cacheDir.resolve("resolved-test-resources-server-dependencies"),
                         layout.testResourcesClasspath().stream().map(Path::toString).toList());
                 }
                 Files.createDirectories(cacheDir);

@@ -164,6 +164,19 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void directSourceCacheUsesExternalBuildOutputDirectory(@TempDir Path tempDir) throws IOException {
+        Files.writeString(tempDir.resolve("build.gradle"), "plugins { id 'java' }\n");
+        String previous = System.getProperty("pyronaut.dev.project.dir");
+        try {
+            System.setProperty("pyronaut.dev.project.dir", tempDir.toString());
+            PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectSourceArgs(List.of("App.java"));
+            assertEquals(tempDir.resolve("build/pyronaut"), PyronautDevMain.projectCacheDirectory(invocation, Path.of("/tmp/staging")));
+        } finally {
+            restoreProperty("pyronaut.dev.project.dir", previous);
+        }
+    }
+
+    @Test
     void stagesJavaSourcesUnderConfiguredProjectDirectory(@TempDir Path tempDir) throws IOException {
         Path projectDirectory = Files.createDirectories(tempDir.resolve("project"));
         Path sourceDirectory = Files.createDirectories(projectDirectory.resolve("example"));

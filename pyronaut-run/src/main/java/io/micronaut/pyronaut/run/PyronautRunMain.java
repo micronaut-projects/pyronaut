@@ -163,7 +163,8 @@ public final class PyronautRunMain implements Callable<Integer> {
             if (ExternalProjectLayout.isExternal(root)) {
                 ExternalProjectLayout external = ExternalProjectLayout.read(root);
                 layout = resolveExternalProjectLayout(root, classesDir, external);
-                model = null;
+                Path projectToml = root.resolve("project.toml");
+                model = Files.isRegularFile(projectToml) ? modelReader.readProjectToml(projectToml) : null;
             } else {
                 Path projectFile = root.resolve(PyprojectModelReader.FILE_NAME);
                 if (Files.isRegularFile(projectFile)) {
@@ -321,12 +322,15 @@ public final class PyronautRunMain implements Callable<Integer> {
     }
 
     static ResolvedProjectLayout resolveExternalProjectLayout(Path root, Path classesDir, ExternalProjectLayout external) throws IOException {
-        Path resolvedClassesDir = root.resolve(classesDir).normalize();
+        Path resolvedClassesDir = ExternalProjectLayout.outputDirectory(root).resolve("classes").normalize();
         if (!Files.isDirectory(resolvedClassesDir)) {
             throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
         }
         LinkedHashSet<URL> urls = new LinkedHashSet<>();
-        for (Path entry : external.developmentRuntimeClasspath().isEmpty() ? external.runtimeClasspath() : external.developmentRuntimeClasspath()) {
+        // `run` is a production-style launch. Development-only dependencies
+        // (notably the optional control panel) must never be selected merely
+        // because the external layout contains a development classpath.
+        for (Path entry : external.runtimeClasspath()) {
             if (Files.exists(entry)) {
                 urls.add(entry.toUri().toURL());
             }

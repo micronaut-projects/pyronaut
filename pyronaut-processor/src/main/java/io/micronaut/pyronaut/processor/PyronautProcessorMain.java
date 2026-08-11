@@ -171,7 +171,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         try {
             ExternalProjectLayout externalLayout = ExternalProjectLayout.isExternal(root)
                 ? ExternalProjectLayout.read(root) : null;
-            PyprojectModel model = externalLayout == null ? modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME)) : null;
+            PyprojectModel model = externalLayout == null ? modelReader.readFile(root.resolve(PyprojectModelReader.FILE_NAME)) : readExternalConfiguration(root, modelReader);
             boolean daemonEnabled = daemon != null
                 ? daemon
                 : model != null && Boolean.TRUE.equals(model.pyronaut().processor().daemon());
@@ -207,7 +207,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
             Path resolvedMainPythonSrc = externalLayout == null
                 ? resolveConfiguredPath(root, pythonSrc, DEFAULT_PYTHON_SRC, model.pyronaut().sources().python(), "--python-src")
-                : root.resolve("__pyronaut__/external-python");
+                : ExternalProjectLayout.outputDirectory(root).resolve("external-python");
             if (externalLayout != null) {
                 prepareExternalMergedSourceRoot(root, "external-python");
                 mergePythonSourceTrees(List.of(root.resolve("src/main/python")), externalLayout.mainJavaSources(), resolvedMainPythonSrc);
@@ -223,11 +223,13 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                 }
                 writeExternalContextConfigurer(resolvedMainJavaSrc);
             }
-            Path resolvedMainTargetDir = root.resolve(targetDir).normalize();
+            Path resolvedMainTargetDir = externalLayout == null
+                ? root.resolve(targetDir).normalize()
+                : ExternalProjectLayout.outputDirectory(root).resolve("classes");
 
             Path resolvedTestPythonSrc = externalLayout == null
                 ? resolveConfiguredPath(root, testPythonSrc, DEFAULT_TEST_PYTHON_SRC, model.pyronaut().sources().pythonTest(), "--test-python-src")
-                : root.resolve("__pyronaut__/external-test-python");
+                : ExternalProjectLayout.outputDirectory(root).resolve("external-test-python");
             if (externalLayout != null) {
                 prepareExternalMergedSourceRoot(root, "external-test-python");
                 mergePythonSourceTrees(List.of(root.resolve("src/test/python")), externalLayout.testJavaSources(), resolvedTestPythonSrc);
@@ -242,9 +244,15 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                     mergeSourceTrees(source, mergedExternalTestRoot);
                 }
             }
-            Path resolvedTestTargetDir = root.resolve(testTargetDir).normalize();
-            Path resolvedTestSourcesDir = root.resolve(DEFAULT_TEST_SOURCES_DIR).normalize();
-            Path resolvedCacheDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
+            Path resolvedTestTargetDir = externalLayout == null
+                ? root.resolve(testTargetDir).normalize()
+                : ExternalProjectLayout.outputDirectory(root).resolve("test-classes");
+            Path resolvedTestSourcesDir = externalLayout == null
+                ? root.resolve(DEFAULT_TEST_SOURCES_DIR).normalize()
+                : ExternalProjectLayout.outputDirectory(root).resolve("test-sources").normalize();
+            Path resolvedCacheDir = (externalLayout == null
+                ? root.resolve(DEFAULT_PYRONAUT_DIR)
+                : ExternalProjectLayout.outputDirectory(root)).normalize();
             boolean compilePythonBytecode = model != null
                 && Boolean.TRUE.equals(model.pyronaut().build().pythonBytecodeEnabled());
             boolean incrementalCompilation = !noCache && (incremental != null
@@ -256,8 +264,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             PythonIncrementalMode pythonIncrementalMode = PythonIncrementalMode.valueOf(
                 configuredPythonIncrementalMode.toUpperCase(Locale.ROOT)
             );
-            Path mainIncrementalCache = root.resolve(DEFAULT_INCREMENTAL_DIR).resolve("main").normalize();
-            Path testIncrementalCache = root.resolve(DEFAULT_INCREMENTAL_DIR).resolve("test").normalize();
+            Path incrementalRoot = externalLayout == null ? root.resolve(DEFAULT_INCREMENTAL_DIR) : ExternalProjectLayout.outputDirectory(root).resolve("incremental");
+            Path mainIncrementalCache = incrementalRoot.resolve("main").normalize();
+            Path testIncrementalCache = incrementalRoot.resolve("test").normalize();
             ProcessorSourceCache.DigestCache sharedInputCache = ProcessorSourceCache.DigestCache.load(
                 resolvedCacheDir.resolve("processor.inputs")
             );
@@ -562,7 +571,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     }
 
     private static Path firstOrEmpty(Path root, List<Path> paths) {
-        return paths == null || paths.isEmpty() ? root.resolve("__pyronaut__/external-java") : paths.get(0);
+        return paths == null || paths.isEmpty() ? ExternalProjectLayout.outputDirectory(root).resolve("external-java") : paths.get(0);
     }
 
     private static List<Path> externalTestClasspath(ExternalProjectLayout layout, Path mainClasses) {
@@ -571,6 +580,11 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             classpath.add(mainClasses);
         }
         return classpath;
+    }
+
+    private static PyprojectModel readExternalConfiguration(Path root, PyprojectModelReader reader) {
+        Path projectToml = root.resolve("project.toml");
+        return Files.isRegularFile(projectToml) ? reader.readProjectToml(projectToml) : null;
     }
 
     private static List<Path> externalProcessorSupportClasspath() {
@@ -603,7 +617,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     }
 
     private static Path prepareExternalMergedSourceRoot(Path root, String name) {
-        Path directory = root.resolve(DEFAULT_PYRONAUT_DIR).resolve(name).normalize();
+        Path base = ExternalProjectLayout.isExternal(root) ? ExternalProjectLayout.outputDirectory(root) : root.resolve(DEFAULT_PYRONAUT_DIR);
+        Path directory = base.resolve(name).normalize();
         deleteTree(directory);
         try {
             Files.createDirectories(directory);

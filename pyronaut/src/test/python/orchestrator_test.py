@@ -1292,7 +1292,7 @@ type = "native"
                 "io.micronaut:micronaut-context\n", encoding="utf-8"
             )
             project_dir = root / "external"
-            cache_dir = project_dir / "__pyronaut__"
+            cache_dir = project_dir / "build" / "pyronaut"
             classes_dir = cache_dir / "classes"
             main_resources = project_dir / "src/main/resources"
             test_resources = project_dir / "src/test/resources"
@@ -1326,7 +1326,7 @@ type = "native"
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             project_dir = root / "external"
-            cache_dir = project_dir / "__pyronaut__"
+            cache_dir = project_dir / "target" / "pyronaut"
             build_jar = project_dir / "lib" / "compile.jar"
             build_jar.parent.mkdir(parents=True)
             build_jar.write_text("", encoding="utf-8")

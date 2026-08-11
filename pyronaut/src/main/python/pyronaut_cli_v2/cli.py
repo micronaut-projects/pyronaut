@@ -314,14 +314,15 @@ def run(
             java_home_provider=direct_source_java_home_provider,
         )
 
-    if command == "test":
-        forwarded_args = _normalize_report_argument(forwarded_args)
-
     if not _is_supported_platform(current_platform):
         print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
         return PLATFORM_UNSUPPORTED
 
     project_dir = _extract_project_dir(forwarded_args)
+    if command == "test":
+        forwarded_args = _normalize_report_argument(forwarded_args, Path(project_dir).resolve())
+        if not any(value == "--report-dir" or value.startswith("--report-dir=") for value in forwarded_args):
+            forwarded_args = [*forwarded_args, "--report-dir", str(_pyronaut_output_dir(Path(project_dir).resolve()) / "reports" / "tests")]
     no_cache = _extract_no_cache(forwarded_args)
     local_repository = _extract_local_repository(forwarded_args)
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
@@ -1019,6 +1020,11 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
+        # Micronaut enables the Control Panel when its modules are present.
+        # Direct/external development launches must make the opt-in default
+        # explicit, otherwise developmentRuntimeClasspath can activate it.
+        if not _control_panel_requested(Path.cwd().resolve(), args):
+            jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.restartable=true")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
@@ -1041,7 +1047,7 @@ def _build_direct_source_native_jvm_args(
     # standalone source execution compatible with older wheels/projects.
     if command in {"dev", "run", "test"}:
         project_dir = Path.cwd().resolve()
-        cache_dir = project_dir / "__pyronaut__"
+        cache_dir = _pyronaut_output_dir(project_dir)
         classpath = ""
         if cache_dir.is_dir():
             try:
@@ -1188,7 +1194,7 @@ def _delegate_lib_entries(executable_path: str) -> list[str]:
 
 
 def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
-    cache_dir = project_dir / "__pyronaut__"
+    cache_dir = _pyronaut_output_dir(project_dir)
     external = _read_external_layout(project_dir)
     if external is not None:
         key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
@@ -1297,15 +1303,16 @@ def _build_native_application_classpath(command: str, project_dir: Path, launche
         entries = _replace_embedded_python_vfs_classes(entries, project_dir, launcher_executable)
     if command == "dev" and not _control_panel_enabled_for_project(project_dir):
         entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
-    return os.pathsep.join(
-        _dedupe_classpath_entries(
+    filtered = _dedupe_classpath_entries(
             _filter_native_launcher_provided_entries(
                 entries,
                 launcher_executable,
                 command,
             )
         )
-    )
+    if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+        filtered = [entry for entry in filtered if not _is_control_panel_artifact(Path(entry).name)]
+    return os.pathsep.join(filtered)
 
 
 def _replace_embedded_python_vfs_classes(
@@ -1371,7 +1378,7 @@ def _replace_embedded_python_vfs_classes(
 
 
 def _build_native_application_classpath_entries(command: str, project_dir: Path) -> list[str]:
-    cache_dir = project_dir / "__pyronaut__"
+    cache_dir = _pyronaut_output_dir(project_dir)
     external = _read_external_layout(project_dir)
     layout = _read_pyproject_sources(project_dir)
     entries: list[str] = []
@@ -1486,7 +1493,7 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
 
 
 def _read_external_layout(project_dir: Path) -> dict[str, list[str]] | None:
-    layout_file = project_dir / "__pyronaut__" / "project-layout.properties"
+    layout_file = _pyronaut_output_dir(project_dir) / "project-layout.properties"
     if not layout_file.exists():
         return None
     result: dict[str, list[str]] = {}
@@ -1498,6 +1505,17 @@ def _read_external_layout(project_dir: Path) -> dict[str, list[str]] | None:
             continue
         result[key] = [str(Path(entry).expanduser().resolve()) for entry in value.split(os.pathsep) if entry]
     return result
+
+
+def _pyronaut_output_dir(project_dir: Path) -> Path:
+    """Return the generated-output directory for the project build tool."""
+    if (project_dir / "pom.xml").is_file():
+        return project_dir / "target" / "pyronaut"
+    if any((project_dir / descriptor).is_file() for descriptor in (
+        "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"
+    )):
+        return project_dir / "build" / "pyronaut"
+    return project_dir / "__pyronaut__"
 
 
 def _add_classpath_dir(entries: list[str], directory: Path) -> None:
@@ -4030,8 +4048,9 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
 
 
 def _build_native_classpath(project_dir: Path) -> str:
-    runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
-    classes_dir = project_dir / "__pyronaut__" / "classes"
+    output_dir = _pyronaut_output_dir(project_dir)
+    runtime_manifest = output_dir / "resolved-runtime-dependencies"
+    classes_dir = output_dir / "classes"
     if not classes_dir.is_dir():
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
 
@@ -4217,7 +4236,7 @@ def _run_test_cycle(
             local_repository,
             execute,
             resolver,
-            install=not (project_dir / "__pyronaut__" / "project-layout.properties").exists(),
+            install=not (_pyronaut_output_dir(project_dir) / "project-layout.properties").exists(),
             process_pass="test",
         )
         if preflight_code != SUCCESS:
@@ -5498,7 +5517,7 @@ def _extract_project_dir(args: Sequence[str]) -> str:
 
 
 def _install_required(project_dir: Path) -> bool:
-    cache_dir = project_dir / "__pyronaut__"
+    cache_dir = _pyronaut_output_dir(project_dir)
     if _is_external_build_project(project_dir):
         return not (cache_dir / "project-layout.properties").exists()
     required_manifests = (
@@ -5510,9 +5529,10 @@ def _install_required(project_dir: Path) -> bool:
 
 
 def _process_required(project_dir: Path, command: str) -> bool:
-    classes_ready = (project_dir / "__pyronaut__" / "classes").is_dir()
+    output_dir = _pyronaut_output_dir(project_dir)
+    classes_ready = (output_dir / "classes").is_dir()
     if command == "test":
-        test_classes_ready = (project_dir / "__pyronaut__" / "test-classes").is_dir()
+        test_classes_ready = (output_dir / "test-classes").is_dir()
         return not (classes_ready and test_classes_ready)
     return not classes_ready
 
@@ -5690,7 +5710,7 @@ def _pyronaut_dev_native_command_line(
     if command == "test" and _is_external_build_project(project_dir) and not any(
         value == "--select-class" or value.startswith("--select-class=") for value in command_args
     ):
-        test_classes_root = project_dir / "__pyronaut__" / "test-classes"
+        test_classes_root = _pyronaut_output_dir(project_dir) / "test-classes"
         if test_classes_root.is_dir():
             for class_file in sorted(test_classes_root.rglob("*.class")):
                 if "$" in class_file.name or class_file.name in {"module-info.class", "package-info.class"}:
@@ -5835,7 +5855,7 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     return False
 
 
-def _normalize_report_argument(args: Sequence[str]) -> list[str]:
+def _normalize_report_argument(args: Sequence[str], project_dir: Path | None = None) -> list[str]:
     normalized: list[str] = []
     index = 0
     while index < len(args):
@@ -5845,7 +5865,7 @@ def _normalize_report_argument(args: Sequence[str]) -> list[str]:
                 normalized.extend(("--report-dir", args[index + 1]))
                 index += 2
             else:
-                normalized.extend(("--report-dir", "__pyronaut__/reports/tests"))
+                normalized.extend(("--report-dir", str((_pyronaut_output_dir(project_dir or Path.cwd()) / "reports" / "tests"))))
                 index += 1
             continue
         if token.startswith("--report="):
@@ -6145,7 +6165,7 @@ def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Calla
     smoke = _extract_flag(args, "--smoke") or _extract_flag(args, "--non-interactive")
     non_interactive = _extract_flag(args, "--non-interactive")
     initial_mode = "test" if _extract_flag(args, "--test") else "run"
-    report_dir = (_extract_path_flag(args, "--report-dir") or (project_dir / "__pyronaut__" / "reports" / "tests")).resolve()
+    report_dir = (_extract_path_flag(args, "--report-dir") or (_pyronaut_output_dir(project_dir) / "reports" / "tests")).resolve()
     trace_delegation = _delegation_trace_enabled() or _extract_flag(args, "--trace-delegation")
 
     if not smoke and not non_interactive:

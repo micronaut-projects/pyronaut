@@ -547,8 +547,8 @@ class PyronautTestMainTest {
     @Test
     void externalLayoutAddsMainAndTestResources() throws Exception {
         Path project = tempDir.resolve("external-test-layout");
-        Files.createDirectories(project.resolve("__pyronaut__/classes"));
-        Files.createDirectories(project.resolve("__pyronaut__/test-classes"));
+        Files.createDirectories(project.resolve("build/pyronaut/classes"));
+        Files.createDirectories(project.resolve("build/pyronaut/test-classes"));
         Path mainResources = Files.createDirectories(project.resolve("src/main/resources"));
         Path testResources = Files.createDirectories(project.resolve("src/test/resources"));
         Files.writeString(project.resolve("build.gradle"), "plugins { id 'java' }");
@@ -559,10 +559,10 @@ class PyronautTestMainTest {
         );
         external.write(project);
         List<String> urls = PyronautTestMain.resolveExternalProjectLayout(
-            project, Path.of("__pyronaut__/classes"), Path.of("__pyronaut__/test-classes"), external
+            project, Path.of("build/pyronaut/classes"), Path.of("build/pyronaut/test-classes"), external
         ).classpathUrls().stream().map(Object::toString).toList();
-        assertTrue(urls.stream().anyMatch(url -> url.contains("__pyronaut__/classes")));
-        assertTrue(urls.stream().anyMatch(url -> url.contains("__pyronaut__/test-classes")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("build/pyronaut/classes")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("build/pyronaut/test-classes")));
         assertTrue(urls.stream().anyMatch(url -> url.contains("main/resources")));
         assertTrue(urls.stream().anyMatch(url -> url.contains("test/resources")));
     }

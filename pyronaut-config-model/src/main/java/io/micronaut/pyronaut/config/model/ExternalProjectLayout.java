@@ -58,6 +58,10 @@ public record ExternalProjectLayout(ProjectKind kind,
                                     List<Path> testResourcesClasspath) {
     public static final String FILE_NAME = "project-layout.properties";
 
+    public static Path outputDirectory(Path root) {
+        return root.resolve(detect(root) == ProjectKind.MAVEN ? "target" : "build").resolve("pyronaut");
+    }
+
     public ExternalProjectLayout {
         kind = kind == null ? ProjectKind.PYPROJECT : kind;
         mainJavaSources = copy(mainJavaSources);
@@ -124,7 +128,7 @@ public record ExternalProjectLayout(ProjectKind kind,
     }
 
     public static Path file(Path root) {
-        return root.resolve("__pyronaut__").resolve(FILE_NAME);
+        return outputDirectory(root).resolve(FILE_NAME);
     }
 
     public void write(Path root) throws IOException {

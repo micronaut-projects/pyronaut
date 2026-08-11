@@ -27,6 +27,7 @@ import io.micronaut.pyronaut.install.DirectSourceDependencyResolver;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarationRequest;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarations;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarationsProcessor;
@@ -1455,20 +1456,24 @@ public final class PyronautDevMain implements Callable<Integer> {
             return stagingRoot;
         }
         Path project = Path.of(configured).toAbsolutePath().normalize();
-        return Files.isRegularFile(project.resolve("pyproject.toml")) ? project : stagingRoot;
+        return Files.isRegularFile(project.resolve("pyproject.toml")) || ExternalProjectLayout.isExternal(project) ? project : stagingRoot;
     }
 
     static Path projectCacheDirectory(DirectSourceInvocation invocation, Path stagingRoot) {
         if (invocation.setup() == null) {
             String configured = System.getProperty(PROJECT_DIR_PROPERTY);
             if (configured != null && !configured.isBlank()) {
-                return Path.of(configured).toAbsolutePath().normalize().resolve(DEFAULT_PYRONAUT_DIR);
+                Path project = Path.of(configured).toAbsolutePath().normalize();
+                return ExternalProjectLayout.isExternal(project) ? ExternalProjectLayout.outputDirectory(project) : project.resolve(DEFAULT_PYRONAUT_DIR);
             }
             Path source = invocation.sources().getFirst().toAbsolutePath().normalize();
             Path sourceDirectory = Files.isDirectory(source) ? source : source.getParent();
             return sourceDirectory.resolve(DEFAULT_PYRONAUT_DIR);
         }
-        return projectDirectory(stagingRoot).resolve(DEFAULT_PYRONAUT_DIR);
+        Path project = projectDirectory(stagingRoot);
+        return ExternalProjectLayout.isExternal(project)
+            ? ExternalProjectLayout.outputDirectory(project)
+            : project.resolve(DEFAULT_PYRONAUT_DIR);
     }
 
     private static void stageSources(List<Path> sources, Path targetDir) throws IOException {

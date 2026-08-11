@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.processor;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -43,7 +44,8 @@ final class ProcessorOptions {
     }
 
     static List<String> resolve(Path root, PyprojectModel model, List<String> explicit, boolean testPass) {
-        Set<String> supported = readSupported(root.resolve("__pyronaut__").resolve(CACHE_FILE));
+        Set<String> supported = readSupported((ExternalProjectLayout.isExternal(root)
+            ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__")).resolve(CACHE_FILE));
         Map<String, String> values = new TreeMap<>();
         DEFAULTS.forEach((key, value) -> {
             if (supported.contains(key)) {

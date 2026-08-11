@@ -29,12 +29,21 @@ import java.util.Map;
  */
 public final class PyprojectJsonSchemaGenerator {
     public static final String SCHEMA_FILE_NAME = "pyronaut-pyproject.schema.json";
+    public static final String PROJECT_SCHEMA_FILE_NAME = "pyronaut-project.schema.json";
 
     public String generate() {
+        return generate("Pyronaut pyproject.toml schema", "Schema for Pyronaut configuration under [tool.pyronaut] in pyproject.toml.");
+    }
+
+    public String generateProject() {
+        return generate("Pyronaut project.toml schema", "Schema for Pyronaut configuration under [tool.pyronaut] in project.toml.");
+    }
+
+    private String generate(String title, String description) {
         ObjectSchema root = objectSchema(true);
         root.put("$schema", "http://json-schema.org/draft-07/schema#");
-        root.put("title", "Pyronaut pyproject.toml schema");
-        root.put("description", "Schema for Pyronaut configuration under [tool.pyronaut] in pyproject.toml.");
+        root.put("title", title);
+        root.put("description", description);
 
         for (PyprojectConfigSpec.FieldSpec field : PyprojectConfigSpec.FIELDS) {
             insertField(root, field.canonicalPath(), fieldSchema(field, false));
@@ -58,6 +67,12 @@ public final class PyprojectJsonSchemaGenerator {
     public Path write(Path schemaFile) throws IOException {
         Files.createDirectories(schemaFile.getParent());
         Files.writeString(schemaFile, generate(), StandardCharsets.UTF_8);
+        return schemaFile;
+    }
+
+    public Path writeProject(Path schemaFile) throws IOException {
+        Files.createDirectories(schemaFile.getParent());
+        Files.writeString(schemaFile, generateProject(), StandardCharsets.UTF_8);
         return schemaFile;
     }
 

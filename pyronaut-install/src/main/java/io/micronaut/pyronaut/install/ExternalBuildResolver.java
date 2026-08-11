@@ -191,7 +191,7 @@ final class ExternalBuildResolver {
     }
 
     private static GradleSourceSets resolveGradleSourceSets(Path root, boolean offline) {
-        Path cache = root.resolve("__pyronaut__");
+        Path cache = ExternalProjectLayout.outputDirectory(root);
         try {
             Files.createDirectories(cache);
             Path output = cache.resolve("external-gradle-sources.txt");
@@ -310,7 +310,7 @@ final class ExternalBuildResolver {
     }
 
     private static Path writeEffectiveMavenPom(Path root, boolean offline, Path localRepository) throws IOException {
-        Path cache = root.resolve("__pyronaut__");
+        Path cache = ExternalProjectLayout.outputDirectory(root);
         Files.createDirectories(cache);
         Path output = cache.resolve("external-effective-pom.xml");
         try {
@@ -371,8 +371,8 @@ final class ExternalBuildResolver {
             return buildClasspath;
         }
 
-        Path processorPom = root.resolve("__pyronaut__").resolve("external-annotation-processors.pom");
-        Path output = root.resolve("__pyronaut__").resolve("external-annotation-processors.classpath");
+        Path processorPom = ExternalProjectLayout.outputDirectory(root).resolve("external-annotation-processors.pom");
+        Path output = ExternalProjectLayout.outputDirectory(root).resolve("external-annotation-processors.classpath");
         StringBuilder pom = new StringBuilder("<project xmlns=\"http://maven.apache.org/POM/4.0.0\"><modelVersion>4.0.0</modelVersion><groupId>io.micronaut.pyronaut</groupId><artifactId>external-annotation-processors</artifactId><version>1</version><dependencies>");
         for (String[] coordinate : coordinates) {
             pom.append("<dependency><groupId>").append(coordinate[0]).append("</groupId><artifactId>").append(coordinate[1]).append("</artifactId><version>").append(coordinate[2]).append("</version></dependency>");
@@ -458,7 +458,7 @@ final class ExternalBuildResolver {
     }
 
     private static List<Path> resolveClasspath(Path root, ProjectKind kind, String scope, boolean offline, Path localRepository) throws IOException {
-        Path cache = root.resolve("__pyronaut__");
+        Path cache = ExternalProjectLayout.outputDirectory(root);
         Files.createDirectories(cache);
         Path output = cache.resolve("external-" + scope + ".classpath");
         Files.deleteIfExists(output);

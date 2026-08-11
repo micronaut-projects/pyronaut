@@ -41,14 +41,26 @@ public final class PyprojectModelReader {
 
     public PyprojectModel readFile(Path file) {
         validateFileName(file);
+        return read(file, "pyproject.toml");
+    }
+
+    /** Reads the shared Pyronaut configuration from an external Java project's project.toml. */
+    public PyprojectModel readProjectToml(Path file) {
+        if (!"project.toml".equals(file.getFileName().toString())) {
+            throw new PyprojectModelException("Invalid config filename '" + file.getFileName() + "'. Expected 'project.toml'");
+        }
+        return read(file, "project.toml");
+    }
+
+    private PyprojectModel read(Path file, String descriptorName) {
         if (!Files.exists(file)) {
-            throw new PyprojectModelException("Missing required file 'pyproject.toml' at: " + file);
+            throw new PyprojectModelException("Missing required file '" + descriptorName + "' at: " + file);
         }
         TomlParseResult parsed;
         try {
             parsed = Toml.parse(file);
         } catch (IOException e) {
-            throw new PyprojectModelException("Failed reading pyproject.toml: " + file, e);
+            throw new PyprojectModelException("Failed reading " + descriptorName + ": " + file, e);
         }
         failOnParseErrors(file, parsed.errors());
         return map(parsed);

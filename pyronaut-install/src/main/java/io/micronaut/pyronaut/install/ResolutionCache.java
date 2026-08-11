@@ -67,7 +67,7 @@ final class ResolutionCache {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update("external-install-v3-development-support".getBytes(StandardCharsets.UTF_8));
-            for (String name : List.of("pom.xml", "mvnw", "settings.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradle.properties")) {
+            for (String name : List.of("project.toml", "pom.xml", "mvnw", "settings.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradle.properties")) {
                 Path file = projectRoot.resolve(name);
                 if (Files.isRegularFile(file)) {
                     digest.update(name.getBytes(StandardCharsets.UTF_8));

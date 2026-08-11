@@ -66,4 +66,12 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"x-taplo\""));
         assertTrue(schema.contains("\"hidden\": true"));
     }
+
+    @Test
+    void generatesProjectSchemaDescription() {
+        String schema = generator.generateProject();
+        assertTrue(schema.contains("Pyronaut project.toml schema"));
+        assertTrue(schema.contains("project.toml"));
+        assertTrue(schema.contains("\"incremental\""));
+    }
 }
