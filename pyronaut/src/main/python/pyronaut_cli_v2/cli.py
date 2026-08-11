@@ -398,6 +398,16 @@ def run(
                 owner_command=shlex.join(["pyronaut", command, *forwarded_args]),
             )
 
+        # External dev must process before validation/restart orchestration;
+        # those paths may assemble the application classpath first.
+        if command == "dev" and _is_external_build_project(Path(project_dir)):
+            preflight_code = _run_preflight(
+                project_dir, no_cache, local_repository, execute, locate,
+                install=False, process_pass=None,
+            )
+            if preflight_code != SUCCESS:
+                return preflight_code
+
         if auto_restart_mode:
             if no_validate:
                 sys.stderr.write("[validation] skipped (--no-validate)\n")
@@ -412,18 +422,17 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-            if not _is_external_build_project(Path(project_dir)):
-                preflight_code = _run_preflight(
-                    project_dir,
-                    no_cache,
-                    local_repository,
-                    execute,
-                    locate,
-                    install=False,
-                    process_pass="main",
-                )
-                if preflight_code != SUCCESS:
-                    return preflight_code
+            preflight_code = _run_preflight(
+                project_dir,
+                no_cache,
+                local_repository,
+                execute,
+                locate,
+                install=False,
+                process_pass=None if _is_external_build_project(Path(project_dir)) else "main",
+            )
+            if preflight_code != SUCCESS:
+                return preflight_code
             if tr_session is not None:
                 tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
@@ -598,15 +607,13 @@ def _delegate(
         if _is_external_build_project(project_dir):
             classes_dir = _pyronaut_output_dir(project_dir) / "classes"
             if not classes_dir.is_dir():
-                process_code = _run_preflight(
-                    str(project_dir),
-                    no_cache=True,
-                    local_repository=None,
-                    runner=runner,
-                    resolver=resolver,
-                    install=False,
-                    process_pass=None,
-                )
+                # Invoke the public process entry point so it follows exactly
+                # the same external-project setup as `pyronaut process`.
+                process_executable = shutil.which("pyronaut") or sys.argv[0]
+                process_code = subprocess.run(
+                    [process_executable, "process", "--project-dir", str(project_dir), "--no-cache"],
+                    check=False,
+                ).returncode
                 if process_code != SUCCESS:
                     return process_code
         try:
