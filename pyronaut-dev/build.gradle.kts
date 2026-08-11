@@ -122,6 +122,10 @@ configurations.named("nativeImageClasspath") {
 configurations.named("runtimeClasspath") {
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-server")
     exclude(group = "io.micronaut.testresources", module = "micronaut-test-resources-control-panel")
+    // Control Panel is an optional development distribution.  It must not be
+    // part of pyronaut-dev's native image runtime graph; the jars are bundled
+    // separately and added only for an explicit --control-panel launch.
+    exclude(group = "io.micronaut.controlpanel")
 }
 
 // The native parent image already contains these modules.  Keep their Maven

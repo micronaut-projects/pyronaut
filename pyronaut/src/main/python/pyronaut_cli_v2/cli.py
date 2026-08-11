@@ -1024,6 +1024,8 @@ def _build_direct_source_native_jvm_args(
         # explicit, otherwise developmentRuntimeClasspath can activate it.
         if not _control_panel_requested(Path.cwd().resolve(), args):
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
+    elif command == "run":
+        jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.restartable=true")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
@@ -4449,7 +4451,9 @@ def _build_dev_delegate_invocation(
     # Keep the original arguments for toolchain selection so --jvm/--native
     # can override the project configuration. Remove those orchestration-only
     # flags from the native launcher command after selection.
-    launch_args = args
+    # CLI convenience flags are consumed above and represented as JVM
+    # properties; do not pass them to the native pyronaut-dev parser.
+    launch_args = delegate_args
     dev_command_line = _pyronaut_dev_native_command_line(
         "run",
         launch_args,
@@ -5772,6 +5776,7 @@ def _pyronaut_run_native_command_line(
     classpath = _build_native_application_classpath(command, project_dir, executable_path)
     return [
         executable_path,
+        "-Dmicronaut.control-panel.enabled=false",
         f"-Djava.class.path={classpath}",
         *[value for value in args if value not in {"--jvm", "--native"}],
     ]
