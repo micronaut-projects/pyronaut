@@ -4274,6 +4274,11 @@ def _run_test_cycle(
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
+    # The validator must see the newly started owned server. Starting it only
+    # after validation leaves a stale URI from the previous dev session.
+    if tr_session is not None and test_resources_env_overrides is None:
+        tr_session.ensure_started(runner=execute, resolver=resolver, java_home_provider=java_home_provider)
+        test_resources_env_overrides = tr_session.client_env_overrides()
     if no_validate:
         sys.stderr.write("[validation] skipped (--no-validate)\n")
     else:
@@ -4300,10 +4305,6 @@ def _run_test_cycle(
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
-
-    if tr_session is not None and test_resources_env_overrides is None:
-        tr_session.ensure_started(runner=execute, resolver=resolver, java_home_provider=java_home_provider)
-        test_resources_env_overrides = tr_session.client_env_overrides()
 
     return (
         _delegate(
@@ -6245,7 +6246,7 @@ def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Calla
 class _OwnedTestResourcesSession:
     def __init__(self, *, project_dir: Path, owner_command: str, quiet: bool = False) -> None:
         self._project_dir = project_dir
-        self._session_file = project_dir / "__pyronaut__" / "test-resources-session.json"
+        self._session_file = _pyronaut_output_dir(project_dir) / "test-resources-session.json"
         self._settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
         self._owner_pid = os.getpid()
         self._owner_command = owner_command
@@ -6269,7 +6270,7 @@ class _OwnedTestResourcesSession:
         resolver: Callable[[str], str | None],
         java_home_provider: JavaHomeProvider | None = None,
     ) -> None:
-        cache_dir = self._project_dir / "__pyronaut__"
+        cache_dir = _pyronaut_output_dir(self._project_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         if self._should_attach_to_external_server():
