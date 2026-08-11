@@ -319,10 +319,9 @@ def run(
         return PLATFORM_UNSUPPORTED
 
     project_dir = _extract_project_dir(forwarded_args)
-    if command == "test":
-        forwarded_args = _normalize_report_argument(forwarded_args, Path(project_dir).resolve())
-        if not any(value == "--report-dir" or value.startswith("--report-dir=") for value in forwarded_args):
-            forwarded_args = [*forwarded_args, "--report-dir", str(_pyronaut_output_dir(Path(project_dir).resolve()) / "reports" / "tests")]
+    # Report locations are selected by the native test launcher from the
+    # project layout. Do not forward the CLI's internal report path option;
+    # pyronaut-test intentionally does not expose --report-dir.
     no_cache = _extract_no_cache(forwarded_args)
     local_repository = _extract_local_repository(forwarded_args)
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
@@ -1487,8 +1486,6 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
             _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
     else:
         raise RuntimeError(f"Native application classpath is not supported for command: {command}")
-    if command == "dev" and not _control_panel_enabled_for_project(project_dir):
-        entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
     return entries
 
 
@@ -5701,6 +5698,8 @@ def _pyronaut_dev_native_command_line(
                     "-Dmicronaut.control-panel.security.access=ANONYMOUS",
                     f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}",
                 ))
+        elif effective_classpath_command == "run":
+            jvm_args.append("-Dmicronaut.control-panel.enabled=false")
         jvm_args = [*jvm_args, f"-Djava.class.path={classpath}"]
         test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
         if test_resources_client_classpath:
