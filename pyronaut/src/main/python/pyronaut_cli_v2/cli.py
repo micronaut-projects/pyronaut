@@ -398,16 +398,6 @@ def run(
                 owner_command=shlex.join(["pyronaut", command, *forwarded_args]),
             )
 
-        # External dev must process before validation/restart orchestration;
-        # those paths may assemble the application classpath first.
-        if command == "dev" and _is_external_build_project(Path(project_dir)):
-            preflight_code = _run_preflight(
-                project_dir, no_cache, local_repository, execute, locate,
-                install=False, process_pass=None,
-            )
-            if preflight_code != SUCCESS:
-                return preflight_code
-
         if auto_restart_mode:
             if no_validate:
                 sys.stderr.write("[validation] skipped (--no-validate)\n")
@@ -6037,7 +6027,7 @@ def _test_resources_enabled(project_dir: Path) -> bool:
 
 
 def _read_external_test_resources_enabled(project_dir: Path) -> bool:
-    layout_file = project_dir / "__pyronaut__" / "project-layout.properties"
+    layout_file = _pyronaut_output_dir(project_dir) / "project-layout.properties"
     if not layout_file.exists():
         return False
     return any(
