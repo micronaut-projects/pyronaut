@@ -1830,7 +1830,11 @@ def _run_preflight(
         process_args.extend(["--java-src", layout.java_source_dir])
     if process_pass is not None:
         process_args.extend(["--pass", process_pass])
-    if no_cache:
+    # A prior cached processing run may have been interrupted or its output
+    # removed. Force regeneration when the expected classes directory is
+    # missing; otherwise `dev` can incorrectly reuse the external-build cache
+    # and fail during classpath assembly.
+    if no_cache or not (_pyronaut_output_dir(Path(project_dir)) / "classes").is_dir():
         process_args.append("--no-cache")
     return _delegate("process", process_args, runner, resolver)
 
