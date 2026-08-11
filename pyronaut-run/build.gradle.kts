@@ -52,6 +52,13 @@ dependencies {
     testRuntimeOnly(mn.micronaut.jackson.databind)
 }
 
+// Control Panel is an optional application feature; it must not be embedded
+// in the production runner native image. Explicit project dependencies remain
+// on the application's own runtime classpath.
+configurations.named("runtimeClasspath") {
+    exclude(group = "io.micronaut.controlpanel")
+}
+
 application {
     mainClass = "io.micronaut.pyronaut.run.PyronautRunMain"
     applicationDefaultJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow", "--enable-native-access=ALL-UNNAMED")

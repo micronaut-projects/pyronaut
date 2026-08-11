@@ -1175,7 +1175,7 @@ def _launcher_shared_lib_dir(executable_path: str | Path) -> Path:
     return tool_dir.parent / "shared" / "lib"
 
 
-def _delegate_lib_entries(executable_path: str) -> list[str]:
+def _delegate_lib_entries(executable_path: str, *, include_control_panel: bool = True) -> list[str]:
     path = Path(executable_path).resolve()
     if path.suffix == ".jar":
         return [str(path)]
@@ -1184,10 +1184,14 @@ def _delegate_lib_entries(executable_path: str) -> list[str]:
     if manifest.is_file():
         entries = [line.strip() for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
         resolved = [str(shared_lib / entry) for entry in entries if (shared_lib / entry).is_file()]
+        if not include_control_panel:
+            resolved = [entry for entry in resolved if not _is_control_panel_artifact(Path(entry).name)]
         if resolved:
             return resolved
     lib_dir = path.parent.parent / "lib"
     jars = sorted(lib_dir.glob("*.jar"))
+    if not include_control_panel:
+        jars = [jar for jar in jars if not _is_control_panel_artifact(jar.name)]
     if jars:
         return [str(jar) for jar in jars]
     command_name = path.name
@@ -1229,7 +1233,10 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
         delegate_executable = resolver(delegate_executable_name)
         if delegate_executable is None:
             raise RuntimeError(f"Missing delegated executable: {delegate_executable_name}")
-        delegate_entries.extend(_delegate_lib_entries(delegate_executable))
+        delegate_entries.extend(_delegate_lib_entries(
+            delegate_executable,
+            include_control_panel=command != "run",
+        ))
     # The external build owns the application runtime.  Put it first so its
     # Micronaut/Test Resources services are resolved against the same versions
     # Gradle or Maven selected; the Pyronaut delegate only supplies its command
