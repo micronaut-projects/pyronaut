@@ -1423,7 +1423,16 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
                 entries.append(str(test_classes_dir.resolve()))
         else:
             if not classes_dir.is_dir():
-                raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+                # Pure Java external projects may have no Python sources, so
+                # the processor legitimately produces no Pyronaut classes.
+                # Use the build tool's ordinary application output instead.
+                external_classes = [
+                    project_dir / "build/classes/java/main",
+                    project_dir / "target/classes",
+                ]
+                classes_dir = next((path for path in external_classes if path.is_dir()), classes_dir)
+            if not classes_dir.is_dir():
+                raise RuntimeError(f"Missing processed classes directory: {cache_dir / 'classes'}. Run pyronaut process first.")
             entries.append(str(classes_dir.resolve()))
         entries.extend(external.get("mainResources", []))
         if command in {"dev", "test"}:
