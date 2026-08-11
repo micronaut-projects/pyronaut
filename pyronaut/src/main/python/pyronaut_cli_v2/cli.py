@@ -594,6 +594,21 @@ def _delegate(
         return runner(command_line, env) or SUCCESS
 
     if command == "dev":
+        project_dir = Path(_extract_project_dir(args)).resolve()
+        if _is_external_build_project(project_dir):
+            classes_dir = _pyronaut_output_dir(project_dir) / "classes"
+            if not classes_dir.is_dir():
+                process_code = _run_preflight(
+                    str(project_dir),
+                    no_cache=True,
+                    local_repository=None,
+                    runner=runner,
+                    resolver=resolver,
+                    install=False,
+                    process_pass=None,
+                )
+                if process_code != SUCCESS:
+                    return process_code
         try:
             dev_command_line, env = _build_dev_delegate_invocation(
                 args,
