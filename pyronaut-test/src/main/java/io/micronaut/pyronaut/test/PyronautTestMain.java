@@ -205,6 +205,7 @@ public final class PyronautTestMain implements Callable<Integer> {
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+        String previousPythonEnabledProperty = System.getProperty(MICRONAUT_PYTHON_ENABLED);
         Path resolvedPytestSourceDir = resolvePytestSourceDir(root, resolvedTestsDir);
         String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
         String previousFailOnNotPresentProperty = System.getProperty(CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT);
@@ -213,6 +214,9 @@ public final class PyronautTestMain implements Callable<Integer> {
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
+            if (ExternalProjectLayout.isExternal(root)) {
+                applyExternalPythonDefault(applicationClassLoader, System.getenv());
+            }
             if (PyronautLauncherLogging.shouldInitializeApplicationDefaults(applicationClassLoader)) {
                 PyronautLauncherLogging.initializeApplicationDefaults((String) null);
             }
@@ -390,6 +394,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                 BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
             }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
+            restoreSystemProperty(MICRONAUT_PYTHON_ENABLED, previousPythonEnabledProperty);
             restoreSystemProperty(MICRONAUT_SERVER_PORT, previousServerPortProperty);
             restoreSystemProperty(CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT, previousFailOnNotPresentProperty);
             restoreSystemProperty(CONFIGURATION_VALIDATOR_SUPPRESSIONS, previousConfigurationSuppressionsProperty);
@@ -463,6 +468,16 @@ public final class PyronautTestMain implements Callable<Integer> {
             enabled = System.getenv("MICRONAUT_PYTHON_ENABLED");
         }
         return Boolean.parseBoolean(enabled);
+    }
+
+    static boolean applyExternalPythonDefault(ClassLoader classLoader, Map<String, String> environment) {
+        if (classLoader.getResource(PYTHON_ENABLED_MARKER) != null
+            || System.getProperty(MICRONAUT_PYTHON_ENABLED) != null
+            || environment.get("MICRONAUT_PYTHON_ENABLED") != null) {
+            return false;
+        }
+        System.setProperty(MICRONAUT_PYTHON_ENABLED, Boolean.FALSE.toString());
+        return true;
     }
 
     static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path testClassesDir, Path configDir, Path testResourcesDir) throws IOException {

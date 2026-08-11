@@ -651,7 +651,7 @@ class PyronautProcessorMainTest {
     }
 
     @Test
-    void externalJavaProjectGeneratesContextConfigurerWithoutPythonMarker() throws Exception {
+    void externalJavaProjectDoesNotGenerateContextConfigurerOrPythonMarker() throws Exception {
         Path project = externalProject("external-java-only");
         CapturingExecutor executor = new CapturingExecutor();
 
@@ -664,11 +664,9 @@ class PyronautProcessorMainTest {
         ));
         Path output = ExternalProjectLayout.outputDirectory(project);
         Path classes = output.resolve("classes");
-        assertTrue(Files.isRegularFile(output.resolve("external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java")));
-        assertTrue(Files.isRegularFile(classes.resolve("META-INF/services/io.micronaut.context.ApplicationContextConfigurer")));
+        assertFalse(Files.exists(output.resolve("external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java")));
+        assertFalse(Files.exists(classes.resolve("META-INF/services/io.micronaut.context.ApplicationContextConfigurer")));
         assertFalse(Files.exists(classes.resolve("META-INF/pyronaut/python-enabled")));
-        assertTrue(Files.readString(output.resolve("external-main-sources/io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java"))
-            .contains("@ContextConfigurer"));
 
         int defaultRequestCount = executor.requests.size();
         command.incremental = Boolean.TRUE;

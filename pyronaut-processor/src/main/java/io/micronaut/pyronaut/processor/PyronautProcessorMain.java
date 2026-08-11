@@ -55,8 +55,6 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_INCREMENTAL_DIR = "__pyronaut__/incremental";
     private static final String APPLICATION_VFS_SRC = "META-INF/GRAALPY-VFS/micronaut-application/src";
     private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
-    private static final String APPLICATION_CONTEXT_CONFIGURER_SERVICE = "META-INF/services/io.micronaut.context.ApplicationContextConfigurer";
-    private static final String EXTERNAL_CONTEXT_CONFIGURER_CLASS = "io.micronaut.pyronaut.generated.PyronautPythonContextConfigurer";
     private static final String DEFAULT_JAVA_SRC = "src-java";
     private static final String DEFAULT_TEST_PYTHON_SRC = "tests";
     private static final String DEFAULT_TEST_JAVA_SRC = "test-java";
@@ -221,7 +219,6 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                 for (Path source : externalLayout.mainJavaSources()) {
                     mergeSourceTrees(source, mergedExternalMainRoot);
                 }
-                writeExternalContextConfigurer(resolvedMainJavaSrc);
             }
             Path resolvedMainTargetDir = externalLayout == null
                 ? root.resolve(targetDir).normalize()
@@ -392,7 +389,6 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         mergeSourceTrees(resolvedMainJavaSrc, resolvedTestJavaSrc, mergedTestJavaSrc);
                     } else {
                         mergeSourceTrees(resolvedTestJavaSrc, mergedTestJavaSrc);
-                        writeExternalContextConfigurer(mergedTestJavaSrc);
                     }
 
                     progressReporter.startPass("test", incrementalCompilation);
@@ -653,51 +649,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         }
     }
 
-    private static void writeExternalContextConfigurer(Path javaSourceRoot) {
-        Path sourceFile = javaSourceRoot.resolve("io/micronaut/pyronaut/generated/PyronautPythonContextConfigurer.java");
-        try {
-            Files.createDirectories(sourceFile.getParent());
-            Files.writeString(sourceFile, """
-                package io.micronaut.pyronaut.generated;
-
-                import io.micronaut.context.ApplicationContextBuilder;
-                import io.micronaut.context.ApplicationContextConfigurer;
-                import io.micronaut.context.annotation.ContextConfigurer;
-                import io.micronaut.context.env.PropertySource;
-                import io.micronaut.core.order.Ordered;
-                import java.util.Map;
-
-                @ContextConfigurer
-                public final class PyronautPythonContextConfigurer implements ApplicationContextConfigurer {
-                    private static final String PYTHON_ENABLED = \"micronaut.python.enabled\";
-                    private static final String PYTHON_MARKER = \"META-INF/pyronaut/python-enabled\";
-
-                    public PyronautPythonContextConfigurer() {
-                    }
-
-                    @Override
-                    public void configure(ApplicationContextBuilder builder) {
-                        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-                        if (classLoader != null && classLoader.getResource(PYTHON_MARKER) != null) {
-                            return;
-                        }
-                        if (System.getProperty(PYTHON_ENABLED) != null || System.getenv(\"MICRONAUT_PYTHON_ENABLED\") != null) {
-                            return;
-                        }
-                        builder.propertySources(PropertySource.of(\"pyronaut-python-default\", Map.of(PYTHON_ENABLED, false), Ordered.HIGHEST_PRECEDENCE));
-                    }
-                }
-                """);
-        } catch (Exception e) {
-            throw new PyronautProcessorException("Failed to generate external Python context configurer", e);
-        }
-    }
-
     private static void writeExternalRuntimeMetadata(Path targetDirectory, boolean pythonEnabled) {
         try {
-            Path service = targetDirectory.resolve(APPLICATION_CONTEXT_CONFIGURER_SERVICE);
-            Files.createDirectories(service.getParent());
-            Files.writeString(service, EXTERNAL_CONTEXT_CONFIGURER_CLASS + System.lineSeparator());
             Path marker = targetDirectory.resolve(PYTHON_ENABLED_MARKER);
             if (pythonEnabled) {
                 Files.createDirectories(marker.getParent());

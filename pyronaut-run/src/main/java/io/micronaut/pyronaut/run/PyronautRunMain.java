@@ -53,6 +53,8 @@ public final class PyronautRunMain implements Callable<Integer> {
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
+    private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
+    private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String EXTERNAL_DEVELOPMENT_MODE = "pyronaut.external.development";
     private static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
@@ -190,11 +192,15 @@ public final class PyronautRunMain implements Callable<Integer> {
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+        String previousPythonEnabledProperty = System.getProperty(MICRONAUT_PYTHON_ENABLED);
         String previousLoggerConfigProperty = System.getProperty(LOGGER_CONFIG_PROPERTY);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
+            if (ExternalProjectLayout.isExternal(root)) {
+                applyExternalPythonDefault(applicationClassLoader, System.getenv());
+            }
             boolean defaultLoggingConfigurationApplied = runConfigurer.shouldInitializeApplicationDefaults(applicationClassLoader);
             if (defaultLoggingConfigurationApplied) {
                 loggingInitializer.initializeApplicationDefaults();
@@ -221,6 +227,7 @@ public final class PyronautRunMain implements Callable<Integer> {
                 BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
             }
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
+            restoreSystemProperty(MICRONAUT_PYTHON_ENABLED, previousPythonEnabledProperty);
             restoreSystemProperty(LOGGER_CONFIG_PROPERTY, previousLoggerConfigProperty);
         }
     }
@@ -269,6 +276,16 @@ public final class PyronautRunMain implements Callable<Integer> {
         if (System.getProperty(name) == null) {
             System.setProperty(name, value);
         }
+    }
+
+    static boolean applyExternalPythonDefault(ClassLoader classLoader, java.util.Map<String, String> environment) {
+        if (classLoader.getResource(PYTHON_ENABLED_MARKER) != null
+            || System.getProperty(MICRONAUT_PYTHON_ENABLED) != null
+            || environment.get("MICRONAUT_PYTHON_ENABLED") != null) {
+            return false;
+        }
+        System.setProperty(MICRONAUT_PYTHON_ENABLED, Boolean.FALSE.toString());
+        return true;
     }
 
     private static void applyConfigurationValidationDefaults() {

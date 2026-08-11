@@ -28,6 +28,35 @@ class PyronautRunMainTest {
     Path tempDir;
 
     @Test
+    void externalPythonDefaultHonorsMarkerAndExplicitConfiguration() throws Exception {
+        String property = "micronaut.python.enabled";
+        String previous = System.getProperty(property);
+        Path classes = Files.createDirectories(tempDir.resolve("external-python-default"));
+        try (java.net.URLClassLoader classLoader = new java.net.URLClassLoader(new URL[] {classes.toUri().toURL()}, null)) {
+            System.clearProperty(property);
+            assertTrue(PyronautRunMain.applyExternalPythonDefault(classLoader, Map.of()));
+            assertEquals("false", System.getProperty(property));
+
+            System.clearProperty(property);
+            Files.createDirectories(classes.resolve("META-INF/pyronaut"));
+            Files.writeString(classes.resolve("META-INF/pyronaut/python-enabled"), "");
+            assertFalse(PyronautRunMain.applyExternalPythonDefault(classLoader, Map.of()));
+            assertNull(System.getProperty(property));
+
+            Files.delete(classes.resolve("META-INF/pyronaut/python-enabled"));
+            System.setProperty(property, "true");
+            assertFalse(PyronautRunMain.applyExternalPythonDefault(classLoader, Map.of()));
+            assertEquals("true", System.getProperty(property));
+
+            System.clearProperty(property);
+            assertFalse(PyronautRunMain.applyExternalPythonDefault(classLoader, Map.of("MICRONAUT_PYTHON_ENABLED", "true")));
+            assertNull(System.getProperty(property));
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
     void enablesContextClassLoaderIntrospectionsWhileApplicationRuns() throws Exception {
         String property = "micronaut.introspections.use.context.classloader";
         String previous = System.getProperty(property);
