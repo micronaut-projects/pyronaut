@@ -32,6 +32,13 @@ dependencies {
     testImplementation(mnTest.junit.jupiter.engine)
 }
 
+// The production Python runner must not embed the optional Control Panel.
+// Applications may still supply those dependencies explicitly on their own
+// runtime classpath.
+configurations.named("runtimeClasspath") {
+    exclude(group = "io.micronaut.controlpanel")
+}
+
 application {
     mainClass = "io.micronaut.pyronaut.run.PyronautRunMain"
     applicationDefaultJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow", "--enable-native-access=ALL-UNNAMED")
