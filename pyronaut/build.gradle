@@ -34,6 +34,13 @@ def nativeSdkWheel = providers.gradleProperty("native")
     .map { it.toBoolean() }
     .orElse(false)
 def pyenvVersion = providers.gradleProperty("pyronautPyenvVersion").orElse("graalpy-25.0.3")
+def pyenvExecutable = providers.provider {
+    def pyenvRoot = System.getenv("PYENV_ROOT")
+    def configured = pyenvRoot == null || pyenvRoot.isBlank()
+        ? new File(System.getProperty("user.home"), ".pyenv/bin/pyenv")
+        : new File(pyenvRoot, "bin/pyenv")
+    configured.isFile() && configured.canExecute() ? configured.absolutePath : "pyenv"
+}
 def versionFromCatalog = { String key ->
     def catalogFile = rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile
     def matcher = catalogFile.getText("UTF-8") =~ /(?m)^${Pattern.quote(key)}\s*=\s*"([^"]+)"/
@@ -468,7 +475,7 @@ tasks.register("buildSdkWheel", Exec) {
         })
     }
     commandLine(
-        "pyenv",
+        pyenvExecutable.get(),
         "exec",
         "python",
         "-m",
@@ -497,7 +504,7 @@ tasks.register("installSdkWheel", Exec) {
             throw new GradleException("Expected exactly one Pyronaut SDK wheel in ${wheelDistDir.get().asFile.absolutePath}, found ${wheels.size()}")
         }
         commandLine(
-            "pyenv",
+            pyenvExecutable.get(),
             "exec",
             "python",
             "-m",

@@ -1958,7 +1958,7 @@ mode = "jvm"
         self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
         self.assertIn("Missing native delegated executable for pyronaut-test", stderr.getvalue())
 
-    def test_test_processes_test_pass_when_test_classes_missing(self):
+    def test_test_processes_all_passes_when_test_classes_missing(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "missing-test-classes"
@@ -1981,7 +1981,7 @@ mode = "jvm"
         self.assertEqual(0, exit_code)
         self.assertEqual(5, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"], executed[0])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "test"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "all"], executed[1])
         self._assert_test_resources_start(executed[2], str(project_dir))
         self._assert_test_delegate(executed[3], str(project_dir))
         self._assert_test_resources_stop(executed[4], str(project_dir))
@@ -2010,7 +2010,7 @@ mode = "jvm"
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
 
-    def test_test_processes_test_pass_even_when_output_dirs_exist(self):
+    def test_test_processes_all_passes_even_when_output_dirs_exist(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "ready-test"
@@ -2033,7 +2033,7 @@ mode = "jvm"
         self.assertEqual(0, exit_code)
         self.assertEqual(5, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"], executed[0])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "test"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "all"], executed[1])
         self._assert_test_resources_start(executed[2], str(project_dir))
         self._assert_test_delegate(executed[3], str(project_dir))
         self._assert_test_resources_stop(executed[4], str(project_dir))
@@ -2081,7 +2081,7 @@ mode = "jvm"
         self.assertEqual(0, exit_code)
         self.assertEqual(5, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test", "--no-cache"], executed[0])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "test", "--no-cache"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "all", "--no-cache"], executed[1])
         self._assert_test_resources_start(executed[2], "/tmp/demo")
         self._assert_test_delegate(executed[3], "/tmp/demo")
         self._assert_test_resources_stop(executed[4], "/tmp/demo")
@@ -2105,7 +2105,7 @@ mode = "jvm"
             )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "test"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "all"], executed[1])
         self._assert_test_delegate(executed[3], "/tmp/demo")
 
     def test_test_resources_start_forwards_local_repository_env_to_install(self):
@@ -2149,7 +2149,7 @@ mode = "jvm"
 
         self.assertEqual(0, exit_code)
         self.assertEqual(5, len(executed))
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "test"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "all"], executed[1])
         self._assert_test_delegate(executed[3], str(project_dir))
 
     def test_test_continuous_space_reruns_full_pipeline_and_reuses_test_resources(self):
@@ -2211,12 +2211,12 @@ mode = "jvm"
         self.assertGreaterEqual(calls["count"], 2)
         self.assertEqual(8, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[0][0])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "test"], executed[1][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "all"], executed[1][0])
         self._assert_test_resources_start(executed[2][0], str(project_dir))
         self._assert_test_delegate(executed[3][0], str(project_dir))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[4][0])
         self.assertEqual("http://localhost:61234", (executed[4][1] or {}).get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "test"], executed[5][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "all"], executed[5][0])
         self._assert_test_delegate(executed[6][0], str(project_dir))
         self._assert_test_resources_stop(executed[7][0], str(project_dir))
         self.assertEqual(1, sum(1 for command_line, _ in executed if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]))
@@ -2316,12 +2316,12 @@ enabled = true
         self.assertGreaterEqual(calls["count"], 4)
         self.assertEqual(8, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[0][0])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "test"], executed[1][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "all"], executed[1][0])
         self._assert_test_resources_start(executed[2][0], str(project_dir))
         self._assert_test_delegate(executed[3][0], str(project_dir))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "test"], executed[4][0])
         self.assertEqual("http://localhost:61235", (executed[4][1] or {}).get("MICRONAUT_TEST_RESOURCES_SERVER_URI"))
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "test"], executed[5][0])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir, "--pass", "all"], executed[5][0])
         self._assert_test_delegate(executed[6][0], str(project_dir))
         self._assert_test_resources_stop(executed[7][0], str(project_dir))
 
@@ -2421,7 +2421,7 @@ enabled = true
             executed[0][0],
         )
         self.assertEqual(
-            ["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "test"],
+            ["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "all"],
             executed[1][0],
         )
         self._assert_test_resources_start(executed[2][0], str(project_dir))
@@ -3388,7 +3388,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code)
         self.assertEqual(3, len(executed))
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test"], executed[0])
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "test"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "all"], executed[1])
         self._assert_test_delegate(executed[2], "/tmp/demo", ["--tests", "tests/test_math.py::test_add", "--tests", "*test_add*"])
 
     def test_run_debug_vm_sets_jvm_arg_and_forwards_flag(self):
@@ -5952,7 +5952,7 @@ java-version = 25
             ["/tmp/pyronaut-validate-config", "--project-dir", str(expected_project_dir), "--scenario", "test"],
             executed[0],
         )
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(expected_project_dir), "--pass", "test"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(expected_project_dir), "--pass", "all"], executed[1])
         self._assert_test_delegate(executed[2], str(expected_project_dir), expect_project_jars=False)
         self.assertIn("tests: 1 passed, 1 failed, 0 skipped", stderr.getvalue())
 
@@ -6005,7 +6005,7 @@ java-version = 25
             ["/tmp/pyronaut-validate-config", "--project-dir", "/tmp/demo", "--scenario", "test"],
             executed[0],
         )
-        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "test"], executed[1])
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "all"], executed[1])
         self._assert_test_resources_start(executed[2], "/tmp/demo")
         self._assert_test_delegate(executed[3], "/tmp/demo")
         self._assert_test_resources_stop(executed[4], "/tmp/demo")

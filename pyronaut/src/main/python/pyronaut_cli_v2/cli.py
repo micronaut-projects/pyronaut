@@ -4243,7 +4243,7 @@ def _run_test_cycle(
             execute,
             resolver,
             install=not (_pyronaut_output_dir(project_dir) / "project-layout.properties").exists(),
-            process_pass="test",
+            process_pass="all",
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
@@ -4269,7 +4269,7 @@ def _run_test_cycle(
             execute,
             resolver,
             install=False,
-            process_pass="test",
+            process_pass="all",
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides

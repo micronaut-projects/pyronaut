@@ -46,6 +46,11 @@ class E2EFlowTest(unittest.TestCase):
                     continue
                 project_dir = Path(temp_dir) / fixture_name
                 shutil.copytree(fixture_root / fixture_name, project_dir)
+                (project_dir / "project.toml").write_text(
+                    "[tool.pyronaut.processor]\n"
+                    "incremental = true\n",
+                    encoding="utf-8",
+                )
                 port = self._allocate_port()
                 resources = project_dir / "src/main/resources"
                 resources.mkdir(parents=True, exist_ok=True)
@@ -92,6 +97,20 @@ class E2EFlowTest(unittest.TestCase):
                     timeout_seconds=1800,
                 )
                 self.assertEqual(0, test_result.returncode, test_result.stdout + test_result.stderr)
+
+                controller = project_dir / "src/main/java/example/ResourceController.java"
+                controller.write_text(
+                    controller.read_text(encoding="utf-8") + "\n// Incremental test change.\n",
+                    encoding="utf-8",
+                )
+                incremental_test_result = self._run_cli(
+                    "test", "--project-dir", str(project_dir), "--select-class", "example.ExternalBuildTest",
+                    timeout_seconds=1800,
+                )
+                incremental_output = incremental_test_result.stdout + incremental_test_result.stderr
+                self.assertEqual(0, incremental_test_result.returncode, incremental_output)
+                self.assertIn("Incrementally compiling main sources (1 of 2 files)", incremental_output)
+                self.assertIn("ResourceController.java", incremental_output)
 
     @unittest.skipUnless(_e2e_full_enabled(), "Set PYRONAUT_E2E_FULL=true to run full e2e flow tests")
     def test_orchestrated_install_process_run_test_flow(self):
