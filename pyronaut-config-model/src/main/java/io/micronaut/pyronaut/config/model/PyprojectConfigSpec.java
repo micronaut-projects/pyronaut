@@ -158,7 +158,7 @@ public final class PyprojectConfigSpec {
     public static final FieldSpec PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED = bool(
         "tool.pyronaut.build.python-bytecode.enabled",
         "Whether generated Python resources should include GraalPy bytecode caches.",
-        false
+        true
     );
     public static final FieldSpec PYRONAUT_PROCESSOR_MODE = enumString(
         "tool.pyronaut.processor.mode",

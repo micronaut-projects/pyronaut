@@ -49,7 +49,7 @@ class PyronautProcessorMainTest {
         assertEquals(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize(), mainRequest.targetDir());
         assertEquals(Path.of("/tmp/build-a.jar"), mainRequest.annotationProcessorPath().getFirst());
         assertEquals(Path.of("/tmp/runtime-a.jar"), mainRequest.classpath().getFirst());
-        assertFalse(mainRequest.compilePythonBytecode());
+        assertTrue(mainRequest.compilePythonBytecode());
         assertFalse(mainRequest.incremental());
         assertEquals(PythonIncrementalMode.CONSERVATIVE, mainRequest.pythonIncrementalMode());
         assertEquals(

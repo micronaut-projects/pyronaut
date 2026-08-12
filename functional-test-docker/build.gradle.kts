@@ -1596,7 +1596,6 @@ val verifyEditorSupport by tasks.registering {
         fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi"),
         fixtureIdeStubsDir.file("micronaut/http/__init__.pyi"),
         fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi"),
-        fixtureIdeStubsDir.file("logback/config.py"),
         fixtureIdeStubsDir.file("pyronaut/test/__init__.pyi"),
         fixtureSchemasDir.file("micronaut-application.schema.json"),
         fixtureAppDir.file(".vscode/settings.json"),
@@ -1646,11 +1645,6 @@ val verifyEditorSupport by tasks.registering {
             fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
             "Identifies injectable constructors, methods, and fields.",
             "Jakarta annotation stub docstrings"
-        )
-        requireFixtureFileContains(
-            fixtureIdeStubsDir.file("logback/config.py").asFile,
-            "def dictConfig(config):",
-            "Packaged Python VFS sources"
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("pyronaut/test/__init__.pyi").asFile,

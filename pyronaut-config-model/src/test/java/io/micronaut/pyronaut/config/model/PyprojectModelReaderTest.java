@@ -44,7 +44,7 @@ class PyprojectModelReaderTest {
         assertEquals("/control-panel", model.pyronaut().controlPanel().path());
         assertEquals(Boolean.FALSE, model.pyronaut().controlPanel().productionEnabled());
         assertEquals("jvm", model.pyronaut().build().mode());
-        assertEquals(Boolean.FALSE, model.pyronaut().build().pythonBytecodeEnabled());
+        assertEquals(Boolean.TRUE, model.pyronaut().build().pythonBytecodeEnabled());
         assertEquals("jvm", model.pyronaut().processor().mode());
         assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
         assertEquals("conservative", model.pyronaut().processor().pythonIncrementalMode());
@@ -94,6 +94,19 @@ class PyprojectModelReaderTest {
 
             [tool.pyronaut.build.python-bytecode]
             enabled = true
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+
+        assertEquals(Boolean.TRUE, model.pyronaut().build().pythonBytecodeEnabled());
+    }
+
+    @Test
+    void pythonBytecodeConfigurationDefaultsToEnabled() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
             """);
 
         PyprojectModel model = reader.readFile(file);
