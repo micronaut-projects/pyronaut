@@ -340,9 +340,9 @@ Behavior:
 
 Direct source tests:
 
-Direct tests automatically discover recursive `**Test.java` or `**Test.py`
-sources based on the application language, so the common case does not need a
-separator:
+Direct tests automatically discover recursive `**Test.java` sources for Java
+and Python test modules named `*Test.py` or `test_*.py`, based on the
+application language, so the common case does not need a separator:
 
 [source,bash]
 ----

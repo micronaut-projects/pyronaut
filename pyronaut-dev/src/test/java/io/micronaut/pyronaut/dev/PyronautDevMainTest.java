@@ -126,11 +126,13 @@ final class PyronautDevMainTest {
         Path nested = Files.createDirectories(tempDir.resolve("nested"));
         Path javaTest = nested.resolve("NestedTest.java");
         Path pythonTest = nested.resolve("NestedTest.py");
+        Path pythonPytest = nested.resolve("test_nested.py");
         Files.writeString(javaTest, "class NestedTest {}\n");
         Files.writeString(pythonTest, "class NestedTest: pass\n");
+        Files.writeString(pythonPytest, "def test_nested(): pass\n");
 
         assertEquals(List.of(javaTest), PyronautDevMain.findImplicitTestSources(tempDir, PyronautDevMain.SourceType.JAVA));
-        assertEquals(List.of(pythonTest), PyronautDevMain.findImplicitTestSources(tempDir, PyronautDevMain.SourceType.PYTHON));
+        assertEquals(List.of(pythonTest, pythonPytest), PyronautDevMain.findImplicitTestSources(tempDir, PyronautDevMain.SourceType.PYTHON));
 
         PyronautDevMain.DirectSourceInvocation javaInvocation = PyronautDevMain.parseDirectTestSourceArgs(List.of("App.java"));
         PyronautDevMain.DirectSourceInvocation pythonInvocation = PyronautDevMain.parseDirectTestSourceArgs(List.of("App.py"));
