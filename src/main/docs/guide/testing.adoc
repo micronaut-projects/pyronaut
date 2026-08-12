@@ -29,7 +29,7 @@ See xref:configuration/vscodeExtension.adoc[].
 
 == Direct JUnit 5 Tests
 
-For a small application, Java or Python sources can be tested without a project manifest. By default, direct tests recursively discover `**Test.java` or `**Test.py` files from the current working directory according to the application language:
+For a small application, Java or Python sources can be tested without a project manifest. By default, direct tests recursively discover `**Test.java` files for Java and `*Test.py` or `test_*.py` modules for Python from the current working directory:
 
 [source,bash]
 ----

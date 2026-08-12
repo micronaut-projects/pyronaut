@@ -30,6 +30,10 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
 import org.eclipse.aether.resolution.DependencyResolutionException;
@@ -37,7 +41,7 @@ import org.eclipse.aether.resolution.DependencyResolutionException;
 /**
  * Entry point for {@code pyronaut-install}.
  */
-@SuppressWarnings({"checkstyle:InnerTypeLast", "checkstyle:MissingSwitchDefault"})
+@SuppressWarnings({"checkstyle:InnerTypeLast", "checkstyle:MissingSwitchDefault", "checkstyle:LeftCurly"})
 @CommandLine.Command(name = "pyronaut-install", mixinStandardHelpOptions = true, description = "Resolve and cache project dependencies")
 public final class PyronautInstallMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
@@ -231,13 +235,48 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
                 Map<InstallScope, List<String>> resolved = new EnumMap<>(InstallScope.class);
                 Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> resolvedEditorArtifacts = new EnumMap<>(InstallScope.class);
+                Map<InstallScope, Future<MavenClasspathResolver.ResolvedScopeDetails>> futures = new EnumMap<>(InstallScope.class);
                 for (InstallScope installScope : scopes) {
                     progressReporter.startScope(installScope);
-                    MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline, bypassRequested);
-                    List<String> classpath = manifestClasspath(installScope, details.classpath());
-                    progressReporter.finishScope(installScope, classpath.size());
-                    resolved.put(installScope, classpath);
-                    resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
+                }
+                RuntimeException firstFailure = null;
+                try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                    for (InstallScope installScope : scopes) {
+                        futures.put(installScope, executor.submit(() -> resolver.resolveScopeDetails(
+                            model,
+                            installScope,
+                            localRepo,
+                            offline,
+                            bypassRequested,
+                            false,
+                            progressListener(progressReporter, installScope)
+                        )));
+                    }
+                    for (InstallScope installScope : scopes) {
+                        try {
+                            MavenClasspathResolver.ResolvedScopeDetails details = futures.get(installScope).get();
+                            List<String> classpath = manifestClasspath(installScope, details.classpath());
+                            progressReporter.finishScope(installScope, classpath.size());
+                            resolved.put(installScope, classpath);
+                            resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException("Dependency resolution was interrupted", e);
+                        } catch (ExecutionException e) {
+                            progressReporter.failScope(installScope);
+                            RuntimeException failure = e.getCause() instanceof RuntimeException runtime
+                                ? runtime
+                                : new IllegalStateException("Dependency resolution failed", e.getCause());
+                            if (firstFailure == null) {
+                                firstFailure = failure;
+                            } else {
+                                firstFailure.addSuppressed(failure);
+                            }
+                        }
+                    }
+                }
+                if (firstFailure != null) {
+                    throw firstFailure;
                 }
                 AnnotationProcessorOptionDiscovery.refresh(cacheDir,
                     resolved.getOrDefault(InstallScope.BUILD, List.of()).stream().map(Path::of).toList());
@@ -277,6 +316,31 @@ public final class PyronautInstallMain implements Callable<Integer> {
             System.err.println("Unexpected install failure: " + e.getMessage());
             return InstallExitCode.INTERNAL_ERROR.code();
         }
+    }
+
+    private static DependencyProgressListener progressListener(InstallProgressReporter reporter, InstallScope scope) {
+        return new DependencyProgressListener() {
+            @Override
+            public void artifactPlanned(String name) { reporter.artifactPlanned(scope, name); }
+
+            @Override
+            public void reset() { reporter.resetScope(scope); }
+
+            @Override
+            public void begin() { reporter.beginScope(scope); }
+
+            @Override
+            public void artifactStarted(String name) { reporter.artifactStarted(scope, name); }
+
+            @Override
+            public void artifactTransferFinished(String name) { reporter.artifactTransferFinished(scope, name); }
+
+            @Override
+            public void artifactCompleted(String name) { reporter.artifactCompleted(scope, name); }
+
+            @Override
+            public void artifactFailed(String name) { reporter.artifactFailed(scope, name); }
+        };
     }
 
     private static List<String> manifestClasspath(InstallScope installScope, List<Path> resolvedClasspath) {
@@ -330,23 +394,52 @@ public final class PyronautInstallMain implements Callable<Integer> {
         Path localRepo = resolveLocalRepository(root);
         DependencyTreeRenderer renderer = DependencyTreeRenderer.create(color);
         boolean resolutionFailure = false;
+        Map<InstallScope, Future<MavenClasspathResolver.ResolvedScopeDetails>> futures = new EnumMap<>(InstallScope.class);
+        Map<InstallScope, RuntimeException> failures = new EnumMap<>(InstallScope.class);
         for (InstallScope installScope : scopes) {
             progressReporter.startScope(installScope);
-            try {
-                MavenClasspathResolver.ResolvedScopeDetails details = resolver.resolveScopeDetails(model, installScope, localRepo, offline, refresh || noCache);
-                progressReporter.finishScope(installScope, details.classpath().size());
-                renderer.renderScope(installScope, details.root());
-            } catch (PyprojectModelException e) {
-                progressReporter.finishScope(installScope, 0);
-                if (e.getCause() instanceof DependencyResolutionException dependencyResolutionException) {
-                    resolutionFailure = true;
-                    renderer.renderResolutionError(
-                        installScope,
-                        DependencyTreeRenderer.ResolutionFailure.fromException(e.getMessage(), dependencyResolutionException)
-                    );
-                    continue;
+        }
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (InstallScope installScope : scopes) {
+                futures.put(installScope, executor.submit(() -> resolver.resolveScopeDetails(
+                    model,
+                    installScope,
+                    localRepo,
+                    offline,
+                    refresh || noCache,
+                    false,
+                    progressListener(progressReporter, installScope)
+                )));
+            }
+            for (InstallScope installScope : scopes) {
+                try {
+                    MavenClasspathResolver.ResolvedScopeDetails details = futures.get(installScope).get();
+                    progressReporter.finishScope(installScope, details.classpath().size());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Dependency resolution was interrupted", e);
+                } catch (ExecutionException e) {
+                    RuntimeException failure = e.getCause() instanceof RuntimeException runtime
+                        ? runtime
+                        : new IllegalStateException("Dependency resolution failed", e.getCause());
+                    failures.put(installScope, failure);
+                    progressReporter.failScope(installScope);
                 }
-                throw e;
+            }
+        }
+        for (InstallScope installScope : scopes) {
+            RuntimeException failure = failures.get(installScope);
+            if (failure == null) {
+                renderer.renderScope(installScope, futures.get(installScope).resultNow().root());
+            } else if (failure instanceof PyprojectModelException e
+                && e.getCause() instanceof DependencyResolutionException dependencyResolutionException) {
+                resolutionFailure = true;
+                renderer.renderResolutionError(
+                    installScope,
+                    DependencyTreeRenderer.ResolutionFailure.fromException(e.getMessage(), dependencyResolutionException)
+                );
+            } else {
+                throw failure;
             }
         }
         return resolutionFailure ? InstallExitCode.RESOLUTION_ERROR.code() : InstallExitCode.SUCCESS.code();

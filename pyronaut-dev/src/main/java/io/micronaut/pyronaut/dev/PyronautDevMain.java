@@ -468,14 +468,22 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     static List<Path> findImplicitTestSources(Path root, SourceType sourceType) throws IOException {
         Path normalizedRoot = root.toAbsolutePath().normalize();
-        String suffix = sourceType == SourceType.JAVA ? "Test.java" : "Test.py";
         try (var paths = Files.walk(normalizedRoot)) {
             return paths.filter(Files::isRegularFile)
                 .filter(path -> !isManagedSourcePath(normalizedRoot, path))
-                .filter(path -> path.getFileName().toString().endsWith(suffix))
+                .filter(path -> isImplicitTestSource(path, sourceType))
                 .sorted()
                 .toList();
         }
+    }
+
+    private static boolean isImplicitTestSource(Path path, SourceType sourceType) {
+        String name = path.getFileName().toString();
+        if (sourceType == SourceType.JAVA) {
+            return name.endsWith("Test.java");
+        }
+        String lowerCase = name.toLowerCase(Locale.ROOT);
+        return lowerCase.endsWith("test.py") || lowerCase.startsWith("test_") && lowerCase.endsWith(".py");
     }
 
     private Integer runDirectSources(DirectSourceInvocation invocation) {

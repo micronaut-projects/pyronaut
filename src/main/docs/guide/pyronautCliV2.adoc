@@ -124,13 +124,20 @@ Common options:
 
 - `--project-dir <dir>`: project root (default `.`)
 - `--local-repository <dir>` (alias `--local-repo`): local Maven repository directory for resolved dependency artifacts; relative paths are resolved against the project root
-- `--scope <build|runtime|test|test-resources-server|all>`: restrict resolution scope
+- `--scope <build|runtime|development-runtime|test|test-resources-server|all>`: restrict resolution scope
 - `--dependencies`: render dependency tree output
 - `--progress <auto|on|off>`: progress display mode
 - `--color <auto|always|never>`: dependency output color mode
 - `--refresh`: force re-resolution and manifest rewrite without clearing the selected local repository
 - `--no-cache`: bypass Pyronaut manifest cache reads before rewriting manifests
 - `--offline`: resolve using offline repository mode
+
+When several scopes are selected, their Maven resolutions run in parallel. On an interactive terminal,
+`pyronaut install` renders one progress row per scope. Each row advances from 0% to 100% based on the
+number of artifacts resolved and shows the current artifact file name. ASCII `[###........]` bars are used
+by default for terminal and log compatibility; Unicode bars can be explicitly enabled on a known UTF-8
+terminal (`-Dpyronaut.progress.unicode=true`). Redirected and CI output remains deterministic and uses the existing summary lines without
+cursor-control sequences.
 
 Proxy configuration:
 
@@ -340,9 +347,9 @@ Behavior:
 
 Direct source tests:
 
-Direct tests automatically discover recursive `**Test.java` or `**Test.py`
-sources based on the application language, so the common case does not need a
-separator:
+Direct tests automatically discover recursive `**Test.java` sources for Java
+and Python test modules named `*Test.py` or `test_*.py`, based on the
+application language, so the common case does not need a separator:
 
 [source,bash]
 ----
