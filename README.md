@@ -2,10 +2,11 @@
 
 # Pyronaut
 
-Pyronaut brings Micronaut application development to Python code running on
-GraalPy. It combines Micronaut dependency injection, configuration, HTTP,
-testing, build tooling, and test resources with Python source files and pytest
-workflows.
+Pyronaut is a polyglot runtime for running Python and Java code built on the Micronaut programming model. Python and Java code can combine seamlessly and utilize Micronaut features like dependency injection, AOP, configuration properties, serialization and so on.
+
+For Python developers Pyronaut is a viable alternative to frameworks like FastAPI built on one of the most popular and mature frameworks in the Java ecosystem and highly scalable thanks to Netty.
+
+For Java developers Pyronaut provides a faster GraalVM crema-based development model that allows easily incorporating Python code using GraalPy.
 
 The main user entry point is the `pyronaut` command. The command is a Python
 orchestrator that delegates to focused JVM/native tools for dependency
