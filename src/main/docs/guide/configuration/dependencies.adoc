@@ -73,5 +73,11 @@ Useful install flags include:
 - `--no-cache` to bypass manifest cache reads
 - `--offline` to resolve without remote repository access
 
+When several scopes are selected, Maven resolution runs in parallel. Interactive terminals show one
+progress row per scope, advancing from 0% to 100% by resolved artifact count and displaying the current
+artifact file name. ASCII bars are used by default for compatibility with terminals and log collectors;
+Unicode block bars can be explicitly enabled with `-Dpyronaut.progress.unicode=true` on a known UTF-8 terminal.
+Redirected and CI output remains deterministic and does not contain cursor-control sequences.
+
 Use `tool.pyronaut.dependencies.development-runtime` for dependencies that should be available only to `pyronaut dev` and other development runtime launches.
 Those artifacts are written to `__pyronaut__/resolved-development-runtime-dependencies` and are not included in the production runtime manifest used by build/package flows.
