@@ -2,6 +2,7 @@ package io.micronaut.pyronaut.tui.commands;
 
 import io.micronaut.python.cli.ui.UiController;
 import io.micronaut.python.cli.ui.UiModel;
+import io.micronaut.python.cli.ui.Mode;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -24,6 +25,114 @@ class PyronautDelegatingTuiCommandTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void buildDirectSourceRunCommandUsesDevLauncherWithoutProjectLifecycle() throws Exception {
+        Path source = tempDir.resolve("App.java");
+        Files.writeString(source, "class App {}\n", StandardCharsets.UTF_8);
+        Path executable = tempDir.resolve("pyronaut-dev");
+
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "directDevExecutable", executable);
+        setField(command, "directArgs", List.of(source.toString()));
+        setField(command, "javaHome", "/tmp/selected-graalvm");
+
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(
+            command,
+            "buildDirectSourceCommand",
+            new Class<?>[]{Mode.class, Path.class},
+            Mode.RUN,
+            null
+        );
+
+        assertEquals(List.of(
+            executable.toString(),
+            "-Djava.home=/tmp/selected-graalvm",
+            "-Dpyronaut.dev.direct.command=dev",
+            "-Dmicronaut.environments=dev",
+            "-Dmicronaut.control-panel.enabled=false",
+            source.toString()
+        ), commandLine);
+    }
+
+    @Test
+    void startProcessUsesOrchestratorSelectedJavaHome() throws Exception {
+        Path project = tempDir.resolve("java-home");
+        Files.createDirectories(project);
+        Path output = project.resolve("java-home.txt");
+        Path script = project.resolve("capture-java-home.sh");
+        Files.writeString(script, "#!/bin/sh\nprintf '%s' \"$JAVA_HOME\" > \"$1\"\n", StandardCharsets.UTF_8);
+        script.toFile().setExecutable(true);
+
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "javaHome", "/tmp/selected-graalvm");
+        Process process = (Process) invoke(
+            command,
+            "startProcess",
+            new Class<?>[]{Path.class, List.class},
+            project,
+            List.of(script.toString(), output.toString())
+        );
+        assertEquals(0, process.waitFor());
+        assertEquals("/tmp/selected-graalvm", Files.readString(output));
+    }
+
+    @Test
+    void buildDirectSourceTestCommandPreservesExplicitSelectorsAndReport() throws Exception {
+        Path source = tempDir.resolve("App.java");
+        Path testSource = tempDir.resolve("AppTest.java");
+        Path reports = tempDir.resolve("reports");
+        Files.writeString(source, "class App {}\n", StandardCharsets.UTF_8);
+        Files.writeString(testSource, "class AppTest {}\n", StandardCharsets.UTF_8);
+
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "directDevExecutable", tempDir.resolve("pyronaut-dev"));
+        setField(command, "directArgs", List.of(source.toString(), "--", testSource.toString()));
+
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(
+            command,
+            "buildDirectSourceCommand",
+            new Class<?>[]{Mode.class, Path.class},
+            Mode.TEST,
+            reports
+        );
+
+        assertEquals(List.of(
+            tempDir.resolve("pyronaut-dev").toString(),
+            "-Dpyronaut.dev.direct.command=test",
+            "-Dmicronaut.environments=test",
+            "test",
+            source.toString(),
+            "--report",
+            reports.toAbsolutePath().normalize().toString(),
+            "--",
+            testSource.toString()
+        ), commandLine);
+    }
+
+    @Test
+    void buildDirectSourceTestCommandOmitsSeparatorForImplicitDiscovery() throws Exception {
+        Path source = tempDir.resolve("App.java");
+        Path reports = tempDir.resolve("reports");
+        PyronautDelegatingTuiCommand command = new PyronautDelegatingTuiCommand();
+        setField(command, "directDevExecutable", tempDir.resolve("pyronaut-dev"));
+        setField(command, "directArgs", List.of(source.toString()));
+
+        @SuppressWarnings("unchecked")
+        List<String> commandLine = (List<String>) invoke(
+            command,
+            "buildDirectSourceCommand",
+            new Class<?>[]{Mode.class, Path.class},
+            Mode.TEST,
+            reports
+        );
+
+        assertFalse(commandLine.contains("--"));
+        assertTrue(commandLine.contains("--report"));
+        assertTrue(commandLine.contains(source.toString()));
+    }
 
     @Test
     void prepareTestResourcesDeletesStaleSettingsWhenHealthCheckFails() throws Exception {

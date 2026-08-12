@@ -125,23 +125,35 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     @Option(names = "--report-dir", description = "Path to pyronaut-test report directory")
     Path reportDir;
 
-    @Option(names = "--validate-executable", required = true, description = "Path to pyronaut-validate-config executable")
+    @Option(names = "--java-home", description = "Java home selected by the Pyronaut CLI orchestrator")
+    String javaHome;
+
+    @Option(names = "--toolchain-type", description = "Toolchain selected by the Pyronaut CLI orchestrator")
+    String toolchainType;
+
+    @Option(names = "--validate-executable", description = "Path to pyronaut-validate-config executable")
     Path validateExecutable;
 
-    @Option(names = "--install-executable", required = true, description = "Path to pyronaut-install executable")
+    @Option(names = "--install-executable", description = "Path to pyronaut-install executable")
     Path installExecutable;
 
-    @Option(names = "--process-executable", required = true, description = "Path to pyronaut-processor executable")
+    @Option(names = "--process-executable", description = "Path to pyronaut-processor executable")
     Path processExecutable;
 
-    @Option(names = "--run-executable", required = true, description = "Path to pyronaut-run executable")
+    @Option(names = "--run-executable", description = "Path to pyronaut-run executable")
     Path runExecutable;
 
-    @Option(names = "--test-executable", required = true, description = "Path to pyronaut-test executable")
+    @Option(names = "--test-executable", description = "Path to pyronaut-test executable")
     Path testExecutable;
 
     @Option(names = "--native-dev-executable", description = "Path to pyronaut-dev native executable")
     Path nativeDevExecutable;
+
+    @Option(names = "--direct-dev-executable", description = "Path to the direct-source pyronaut-dev executable")
+    Path directDevExecutable;
+
+    @Option(names = "--direct-arg", description = "Argument forwarded to direct-source pyronaut-dev", arity = "1")
+    List<String> directArgs = new ArrayList<>();
 
     @Option(names = "--native-command", split = ",", description = "Lifecycle command to route through pyronaut-dev")
     Set<String> nativeCommands = Set.of();
@@ -264,6 +276,10 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private void runModeCycle(Path project, String reason, boolean restart) {
+        if (directSourceMode()) {
+            runDirectSourceMode(project, reason, restart);
+            return;
+        }
         shutdownActiveProcess();
         if (restart) {
             controller.notify("Change detected, restarting run workflow", UiModel.Severity.INFO);
@@ -316,6 +332,10 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private void testModeCycle(Path project, Path reports, String reason, boolean restart) {
+        if (directSourceMode()) {
+            testDirectSourceMode(project, reports, reason, restart);
+            return;
+        }
         shutdownActiveProcess();
         controller.startTesting();
         if (restart) {
@@ -400,6 +420,108 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         }
     }
 
+    private boolean directSourceMode() {
+        return directDevExecutable != null;
+    }
+
+    private void runDirectSourceMode(Path project, String reason, boolean restart) {
+        shutdownActiveProcess();
+        controller.startCompiling();
+        controller.notify(reason + " (direct source -> dev)", UiModel.Severity.INFO);
+        try {
+            var command = buildDirectSourceCommand(Mode.RUN, null);
+            controller.stopCompiling();
+            if (traceDelegation) {
+                controller.addActivityOutput("[tui-delegate] " + String.join(" ", command));
+            }
+            long generation = executionGeneration.incrementAndGet();
+            var process = startProcess(project, command);
+            activeProcess.set(new ManagedProcess(generation, process, null));
+            controller.setRunning();
+            controller.notify(restart ? "Direct run command restarted" : "Direct run command started", UiModel.Severity.SUCCESS);
+            attachOutputReaders(process, true);
+            Thread.ofVirtual().start(() -> onBackgroundProcessExit(generation, process, "Direct run command"));
+        } catch (IOException | IllegalStateException e) {
+            controller.stopCompiling();
+            controller.notify("Failed starting direct run command: " + e.getMessage(), UiModel.Severity.ERROR);
+        }
+    }
+
+    private void testDirectSourceMode(Path project, Path reports, String reason, boolean restart) {
+        shutdownActiveProcess();
+        controller.startTesting();
+        controller.startCompiling();
+        if (restart) {
+            controller.notify("Change detected, rerunning direct tests", UiModel.Severity.INFO);
+        }
+        controller.notify(reason + " (direct source -> test)", UiModel.Severity.INFO);
+        int testCode;
+        try {
+            testCode = runForegroundWithIncrementalEvents(
+                project,
+                buildDirectSourceCommand(Mode.TEST, reports),
+                reports.resolve(EVENTS_REPORT)
+            );
+        } catch (IllegalStateException e) {
+            controller.stopCompiling();
+            controller.stopTesting();
+            controller.notify("Failed starting direct test command: " + e.getMessage(), UiModel.Severity.ERROR);
+            return;
+        }
+        controller.stopCompiling();
+        var summary = summarizeReports(reports);
+        renderSummary(summary);
+        if (testCode == 0 && summary.failed == 0) {
+            controller.notify("Direct tests completed successfully", UiModel.Severity.SUCCESS);
+        } else if (summary.failed > 0) {
+            controller.notify("Direct tests completed with failures", UiModel.Severity.ERROR);
+        } else {
+            controller.notify("Direct test command exited with code " + testCode, UiModel.Severity.WARNING);
+        }
+        controller.stopTesting();
+    }
+
+    private List<String> buildDirectSourceCommand(Mode mode, Path reports) {
+        var command = new ArrayList<String>();
+        command.add(directDevExecutable.toString());
+        // Native pyronaut-dev does not populate java.home like a regular JVM
+        // launcher. The direct CLI supplies this property so the in-process
+        // javac compiler can locate the JDK modules; the TUI must do the same.
+        if (javaHome != null && !javaHome.isBlank()) {
+            command.add("-Djava.home=" + javaHome);
+        }
+        if (toolchainType != null && !toolchainType.isBlank()) {
+            command.add("-Dpyronaut.dev.toolchain.type=" + toolchainType);
+        }
+        command.add("-Dpyronaut.dev.direct.command=" + (mode == Mode.RUN ? "dev" : "test"));
+        if (directArgs.stream().noneMatch(value -> value.startsWith("-Dmicronaut.environments="))) {
+            command.add("-Dmicronaut.environments=" + (mode == Mode.RUN ? "dev" : "test"));
+        }
+        if (mode == Mode.RUN && !controlPanel) {
+            command.add("-Dmicronaut.control-panel.enabled=false");
+        }
+        if (controlPanel) {
+            command.add("-Dmicronaut.control-panel.enabled=true");
+            command.add("-Dmicronaut.control-panel.path=/control-panel");
+            command.add("-Dmicronaut.control-panel.security.access=ANONYMOUS");
+        }
+        if (mode == Mode.TEST) {
+            command.add("test");
+        }
+        var args = new ArrayList<>(directArgs);
+        if (mode == Mode.TEST && reports != null) {
+            int separator = args.indexOf("--");
+            var reportArgs = List.of("--report", reports.toAbsolutePath().normalize().toString());
+            if (separator < 0) {
+                args.addAll(0, reportArgs);
+            } else {
+                args.addAll(separator, reportArgs);
+            }
+        }
+        command.addAll(args);
+        return command;
+    }
+
     private int runForegroundWithIncrementalEvents(Path project, List<String> command, Path eventsFile) {
         if (traceDelegation) {
             controller.addActivityOutput("[tui-delegate] " + String.join(" ", command));
@@ -432,6 +554,16 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         var builder = new ProcessBuilder(command);
         builder.directory(project.toFile());
         builder.redirectErrorStream(true);
+        if (javaHome != null && !javaHome.isBlank()) {
+            builder.environment().put("JAVA_HOME", javaHome);
+            Path javaBin = Path.of(javaHome).resolve("bin");
+            String path = builder.environment().get("PATH");
+            if (path == null || path.isBlank()) {
+                builder.environment().put("PATH", javaBin.toString());
+            } else if (!path.startsWith(javaBin + File.pathSeparator)) {
+                builder.environment().put("PATH", javaBin + File.pathSeparator + path);
+            }
+        }
         var testResourcesConnection = applyTestResourcesEnvironment(project, builder);
         if (testResourcesConnection.isPresent()) {
             activeTestResourcesConnection.set(testResourcesConnection.get());
@@ -834,17 +966,38 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private static void addExecutableLibEntries(Path executable, LinkedHashSet<String> entries) throws IOException {
-        Path libDir = executable.toAbsolutePath().normalize().getParent().getParent().resolve("lib");
-        if (!Files.isDirectory(libDir)) {
-            throw new IllegalStateException("Missing delegate library directory: " + libDir);
+        Path normalized = executable.toAbsolutePath().normalize();
+        Path toolDir = normalized.getParent().getParent();
+        Path classpathManifest = toolDir.resolve("bin").resolve("pyronaut-classpath.txt");
+        Path sharedLibDir = toolDir.getParent().resolve("shared").resolve("lib");
+        if (Files.isRegularFile(classpathManifest) && Files.isDirectory(sharedLibDir)) {
+            int resolvedBefore = entries.size();
+            for (String line : Files.readAllLines(classpathManifest, StandardCharsets.UTF_8)) {
+                String name = line.trim();
+                if (!name.isEmpty()) {
+                    Path jar = sharedLibDir.resolve(name);
+                    if (Files.isRegularFile(jar)) {
+                        entries.add(jar.toAbsolutePath().normalize().toString());
+                    }
+                }
+            }
+            if (entries.size() > resolvedBefore) {
+                return;
+            }
         }
-        try (var stream = Files.list(libDir)) {
-            stream
-                .filter(path -> path.getFileName().toString().endsWith(".jar"))
-                .sorted()
-                .map(path -> path.toAbsolutePath().normalize().toString())
-                .forEach(entries::add);
+        Path libDir = toolDir.resolve("lib");
+        if (Files.isDirectory(libDir)) {
+            try (var stream = Files.list(libDir)) {
+                stream
+                    .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                    .sorted()
+                    .map(path -> path.toAbsolutePath().normalize().toString())
+                    .forEach(entries::add);
+            }
+            return;
         }
+        throw new IllegalStateException("Missing delegate library directory: " + libDir
+            + " (or shared wheel library directory: " + sharedLibDir + ")");
     }
 
     private static boolean isJavaLauncherDistribution(Path executable) {
@@ -1850,6 +2003,9 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
     }
 
     private Set<String> watchRootsForMode(Mode mode) {
+        if (directSourceMode()) {
+            return Set.of(".");
+        }
         if (mode == Mode.TEST) {
             return Set.of("src", "config", "tests");
         }
@@ -2264,8 +2420,12 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
                 return false;
             }
             var first = relativePath.getName(0).toString();
-            if ("__pyronaut__".equals(first) || ".pytest_cache".equals(first) || "build".equals(first) || ".gradle".equals(first)) {
+            if ("__pyronaut__".equals(first) || ".pytest_cache".equals(first) || "build".equals(first)
+                || ".gradle".equals(first) || ".git".equals(first) || ".venv".equals(first)) {
                 return false;
+            }
+            if (directSourceMode()) {
+                return true;
             }
             return watchedRoots.contains(first);
         }

@@ -151,7 +151,8 @@ public final class PyronautTui {
             runner.styleEngine(styleEngine);
 
             var rootHandler = new ActionHandler(bindings)
-                    .registerAnnotated(view);
+                    .registerAnnotated(view)
+                    .registerAnnotated(actions);
             runner.eventRouter().addGlobalHandler(rootHandler);
 
             actions.setQuitter(() -> {

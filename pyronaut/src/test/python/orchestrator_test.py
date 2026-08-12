@@ -5542,6 +5542,172 @@ java-version = 25
         self.assertNotIn("PYTHONHOME", env)
         self.assertTrue(env.get("PATH", "").startswith(str(expected_project_dir / ".venv" / "bin") + os.pathsep))
 
+    def test_tui_interactive_uses_native_run_toolchain(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "native-tui"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"native\"\n",
+                encoding="utf-8",
+            )
+
+            exit_code = cli.run(
+                ["--tui", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        tui_command = executed[0]
+        self.assertIn("--native-dev-executable", tui_command)
+        native_command_indices = [
+            index for index, value in enumerate(tui_command) if value == "--native-command"
+        ]
+        native_commands = [tui_command[index + 1] for index in native_command_indices]
+        self.assertIn("run", native_commands)
+
+    def test_tui_direct_source_run_does_not_require_pyproject(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "App.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+            with patch("os.getcwd", return_value=temp_dir):
+                exit_code = cli.run(
+                    ["--tui", str(source)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, len(executed))
+        command = executed[0]
+        self.assertIn("--direct-dev-executable", command)
+        self.assertIn("/tmp/pyronaut-dev", command)
+        self.assertIn("--direct-arg", command)
+        self.assertIn(str(source), command)
+        self.assertNotIn("--validate-executable", command)
+        self.assertNotIn("--process-executable", command)
+
+    def test_tui_direct_source_preserves_direct_options_and_report_path(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "App.java"
+            report_path = Path(temp_dir) / "reports"
+            source.write_text("class App {}\n", encoding="utf-8")
+            with patch("os.getcwd", return_value=temp_dir):
+                exit_code = cli.run(
+                    [
+                        str(source),
+                        "--tui",
+                        "--report",
+                        str(report_path),
+                        "--port",
+                        "8181",
+                        "--property",
+                        "a.b=c",
+                    ],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        command = executed[0]
+        self.assertEqual(str(report_path.resolve()), command[command.index("--report-dir") + 1])
+        direct_args = [command[index + 1] for index, value in enumerate(command) if value == "--direct-arg"]
+        self.assertTrue(direct_args[-5:] == [str(source), "--port", "8181", "--property", "a.b=c"])
+
+    def test_tui_passes_orchestrator_java_home_and_toolchain_to_direct_launcher(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "App.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+            with patch("os.getcwd", return_value=temp_dir):
+                exit_code = cli.run(
+                    [str(source), "--tui"],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/selected-graalvm",
+                )
+
+        self.assertEqual(0, exit_code)
+        command, env = executed[0]
+        self.assertEqual("/tmp/selected-graalvm", command[command.index("--java-home") + 1])
+        self.assertEqual("jvm", command[command.index("--toolchain-type") + 1])
+        self.assertEqual("/tmp/selected-graalvm", env["JAVA_HOME"])
+
+    def test_tui_direct_source_test_preserves_explicit_test_sources(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "App.java"
+            test_source = Path(temp_dir) / "AppTest.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+            test_source.write_text("class AppTest {}\n", encoding="utf-8")
+            with patch("os.getcwd", return_value=temp_dir):
+                exit_code = cli.run(
+                    ["--tui", "--test", str(source), "--", str(test_source)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        command = executed[0]
+        direct_args = [command[index + 1] for index, value in enumerate(command) if value == "--direct-arg"]
+        self.assertEqual([str(source), "--", str(test_source)], direct_args[-3:])
+
+    def test_tui_direct_source_test_omits_separator_for_implicit_discovery(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "App.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+            with patch("os.getcwd", return_value=temp_dir):
+                exit_code = cli.run(
+                    ["--tui", "--test", str(source)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        command = executed[0]
+        direct_args = [command[index + 1] for index, value in enumerate(command) if value == "--direct-arg"]
+        self.assertEqual([str(source)], direct_args[-1:])
+
     def test_tui_interactive_suppresses_test_resources_stderr_chatter(self):
         executed = []
         settings_file: Path | None = None
@@ -5861,7 +6027,7 @@ java-version = 25
             for index, token in enumerate(executed[0][0])
             if token == "--native-command"
         ]
-        self.assertEqual(["validate-config", "install", "process", "test"], native_command_names)
+        self.assertEqual(["validate-config", "install", "process", "run", "test"], native_command_names)
 
     def test_tui_help_delegates_to_tui_executable_help(self):
         executed = []

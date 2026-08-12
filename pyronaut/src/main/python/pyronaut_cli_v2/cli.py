@@ -212,7 +212,24 @@ def run(
         return SUCCESS
 
     if "--tui" in argv or argv[0] == "--tui":
-        return _run_tui(argv=list(argv), runner_with_env=execute, resolver=locate)
+        tui_args = [value for value in argv if value != "--tui"]
+        tui_project_dir = (
+            Path.cwd()
+            if _looks_like_direct_source_invocation(tui_args)
+            else Path(_extract_project_dir(tui_args)).resolve()
+        )
+        tui_java_home_provider = java_home_provider or _default_java_home_provider(
+            runner=runner,
+            runner_with_env=runner_with_env,
+            process_runner=process_runner,
+            project_dir=tui_project_dir,
+        )
+        return _run_tui(
+            argv=list(argv),
+            runner_with_env=execute,
+            resolver=locate,
+            java_home_provider=tui_java_home_provider,
+        )
 
     command = argv[0]
     forwarded_args = _normalize_project_flag(list(argv[1:]))
@@ -867,7 +884,7 @@ def _resolve_direct_source_dev_executable(args: Sequence[str], resolver: Callabl
     if mode == TOOLCHAIN_TYPE_JVM:
         bundled = _bundled_executable(DEV_NATIVE_EXECUTABLE)
         return str(bundled) if bundled is not None and bundled.exists() else resolver(DEV_NATIVE_EXECUTABLE)
-    return _resolve_pyronaut_dev_native_executable(resolver)
+    return _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
 
 def _stop_direct_source_test_resources_server(
     *,
@@ -5866,7 +5883,7 @@ def _use_pyronaut_dev_native_toolchain(
 def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     if not argv:
         return False
-    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources", "--control-panel", "--verbose"}
+    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources", "--control-panel", "--verbose", "--test", "--smoke", "--non-interactive", "--trace-delegation"}
     value_options = {"--port", "--property", "-D", "--config", "--setup"}
     index = 0
     while index < len(argv):
@@ -6190,7 +6207,13 @@ def _help_color_enabled(stream) -> bool:
     return bool(getattr(stream, "isatty", lambda: False)()) and _read_env("NO_COLOR") is None
 
 
-def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Callable[[str], str | None]) -> int:
+def _run_tui(
+    *,
+    argv: list[str],
+    runner_with_env: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    java_home_provider: JavaHomeProvider | None = None,
+) -> int:
     from .tui.app import TuiApp, TuiOptions
     from .tui.reports import render_summary_line
 
@@ -6201,14 +6224,51 @@ def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Calla
     if _extract_flag(args, "--version") or _extract_flag(args, "-V"):
         return _delegate_to_tui_binary(["--version"], runner_with_env, resolver)
 
-    project_dir = Path(_extract_project_dir(args)).resolve()
+    direct_source = _looks_like_direct_source_invocation(args)
+    project_dir = Path.cwd().resolve() if direct_source else Path(_extract_project_dir(args)).resolve()
+    try:
+        tui_toolchain_type = _read_pyproject_toolchain_type(project_dir)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
     smoke = _extract_flag(args, "--smoke") or _extract_flag(args, "--non-interactive")
     non_interactive = _extract_flag(args, "--non-interactive")
     initial_mode = "test" if _extract_flag(args, "--test") else "run"
-    report_dir = (_extract_path_flag(args, "--report-dir") or (_pyronaut_output_dir(project_dir) / "reports" / "tests")).resolve()
+    report_dir = (_extract_path_flag(args, "--report-dir") or _extract_tui_report_path(args, project_dir) or (_pyronaut_output_dir(project_dir) / "reports" / "tests")).resolve()
     trace_delegation = _delegation_trace_enabled() or _extract_flag(args, "--trace-delegation")
 
     if not smoke and not non_interactive:
+        direct_dev_executable = None
+        direct_args = None
+        if direct_source:
+            try:
+                direct_dev_executable = _resolve_direct_source_dev_executable(args, resolver)
+            except (RuntimeError, ValueError) as exc:
+                print(str(exc), file=sys.stderr)
+                return PRECONDITION_FAILED
+            if direct_dev_executable is None:
+                print("Missing native delegated executable: pyronaut-dev", file=sys.stderr)
+                return PRECONDITION_FAILED
+            direct_args = _direct_tui_arguments(args)
+            # The regular direct-source CLI supplies the native launcher
+            # compiler/application classpaths as JVM properties. The TUI is a
+            # second process, so forward those properties with the source
+            # selectors as well.
+            try:
+                direct_env = _build_java_home_env("dev", java_home_provider)
+                direct_args = [
+                    *_build_direct_source_native_jvm_args(
+                        direct_dev_executable,
+                        direct_env,
+                        command="dev",
+                        environment="dev",
+                        args=direct_args,
+                    ),
+                    *direct_args,
+                ]
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return PRECONDITION_FAILED
         return _run_tamboui_tui(
             project_dir=project_dir,
             initial_mode=initial_mode,
@@ -6217,6 +6277,10 @@ def _run_tui(*, argv: list[str], runner_with_env: RunnerWithEnv, resolver: Calla
             trace_delegation=trace_delegation,
             runner=runner_with_env,
             resolver=resolver,
+            java_home_provider=java_home_provider,
+            toolchain_type=tui_toolchain_type,
+            direct_dev_executable=direct_dev_executable,
+            direct_args=direct_args,
         )
 
     def _delegate(command: str, forwarded: Sequence[str]) -> int:
@@ -6585,6 +6649,56 @@ def _should_mirror_test_resources_log_line(line: str) -> bool:
     )
 
 
+def _direct_tui_arguments(args: Sequence[str]) -> list[str]:
+    """Return direct-source arguments for the delegating TUI."""
+    result: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"--test", "--smoke", "--non-interactive", "--control-panel", "--trace-delegation"}:
+            index += 1
+            continue
+        if token == "--project-dir":
+            index += 2
+            continue
+        if token.startswith("--project-dir="):
+            index += 1
+            continue
+        if token == "--report-dir":
+            index += 2
+            continue
+        if token.startswith("--report-dir="):
+            index += 1
+            continue
+        if token == "--report":
+            index += 1
+            if index < len(args) and not args[index].startswith("-"):
+                index += 1
+            continue
+        if token.startswith("--report="):
+            index += 1
+            continue
+        result.append(token)
+        index += 1
+    return result
+
+
+def _extract_tui_report_path(args: Sequence[str], project_dir: Path) -> Path | None:
+    """Resolve the optional direct-source --report path for the TUI."""
+    for index, token in enumerate(args):
+        if token.startswith("--report="):
+            value = token.split("=", 1)[1].strip()
+            return Path(value) if value else None
+        if token != "--report":
+            continue
+        if index + 1 < len(args):
+            value = args[index + 1]
+            if not value.startswith("-") and not value.endswith((".java", ".py")):
+                return Path(value)
+        return _pyronaut_output_dir(project_dir) / "reports" / "tests"
+    return None
+
+
 def _run_tamboui_tui(
     *,
     project_dir: Path,
@@ -6594,13 +6708,17 @@ def _run_tamboui_tui(
     trace_delegation: bool,
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
+    java_home_provider: JavaHomeProvider | None = None,
+    toolchain_type: str | None = None,
+    direct_dev_executable: str | None = None,
+    direct_args: Sequence[str] | None = None,
 ) -> int:
     tui_executable = _resolve_required_tui_executable(resolver)
     if tui_executable is None:
         return PRECONDITION_FAILED
 
     try:
-        base_env = _build_java_home_env("tui", _ensure_graalvm_java_home)
+        base_env = _build_java_home_env("tui", java_home_provider)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -6621,34 +6739,42 @@ def _run_tamboui_tui(
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
 
-    delegated = {
-        "validate-config": _resolve_delegate_executable_path("validate-config", ["--project-dir", str(project_dir)], resolver),
-        "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
-        "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
-        "run": _resolve_delegate_executable_path("run", ["--project-dir", str(project_dir)], resolver),
-        "test": _resolve_delegate_executable_path("test", ["--project-dir", str(project_dir)], resolver),
-    }
+    if direct_dev_executable is not None:
+        delegated = {}
+    else:
+        delegated = {
+            "validate-config": _resolve_delegate_executable_path("validate-config", ["--project-dir", str(project_dir)], resolver),
+            "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
+            "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
+            "run": _resolve_delegate_executable_path("run", ["--project-dir", str(project_dir)], resolver),
+            "test": _resolve_delegate_executable_path("test", ["--project-dir", str(project_dir)], resolver),
+        }
     missing = [name for (name, path) in delegated.items() if path is None]
     if missing:
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
         return PRECONDITION_FAILED
     pyronaut_table = _read_pyproject_pyronaut_table(project_dir)
+    if direct_dev_executable is not None:
+        native_commands = []
+    else:
+        native_commands = None
     try:
-        native_commands = [
-            command
-            for command in ("validate-config", "install", "process", "test")
-            if _use_pyronaut_dev_native_toolchain(
-                command,
-                project_dir,
-                pyronaut_table=pyronaut_table,
-            )
-        ]
+        if native_commands is None:
+            native_commands = [
+                command
+                for command in ("validate-config", "install", "process", "run", "test")
+                if _use_pyronaut_dev_native_toolchain(
+                    command,
+                    project_dir,
+                    pyronaut_table=pyronaut_table,
+                )
+            ]
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
     native_dev_executable = None
     if native_commands:
-        native_dev_executable = _resolve_pyronaut_dev_native_executable(resolver)
+        native_dev_executable = _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
         if native_dev_executable is None:
             print(
                 "Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.",
@@ -6665,17 +6791,28 @@ def _run_tamboui_tui(
         initial_mode,
         "--report-dir",
         str(report_dir),
-        "--validate-executable",
-        str(delegated["validate-config"]),
-        "--install-executable",
-        str(delegated["install"]),
-        "--process-executable",
-        str(delegated["process"]),
-        "--run-executable",
-        str(delegated["run"]),
-        "--test-executable",
-        str(delegated["test"]),
     ]
+    if base_env is not None and base_env.get("JAVA_HOME"):
+        command_line.extend(["--java-home", base_env["JAVA_HOME"]])
+    if toolchain_type is not None:
+        command_line.extend(["--toolchain-type", toolchain_type])
+    if direct_dev_executable is not None:
+        command_line.extend(["--direct-dev-executable", direct_dev_executable])
+        for value in direct_args or ():
+            command_line.extend(["--direct-arg", value])
+    else:
+        command_line.extend([
+            "--validate-executable",
+            str(delegated["validate-config"]),
+            "--install-executable",
+            str(delegated["install"]),
+            "--process-executable",
+            str(delegated["process"]),
+            "--run-executable",
+            str(delegated["run"]),
+            "--test-executable",
+            str(delegated["test"]),
+        ])
     if native_dev_executable is not None:
         command_line.extend(["--native-dev-executable", native_dev_executable])
         for command in native_commands:
