@@ -341,11 +341,13 @@ public final class PyronautDevMain implements Callable<Integer> {
         Map<String, String> properties = new LinkedHashMap<>();
         String verboseLogger = null;
         boolean afterSeparator = false;
+        boolean testSourceSeparator = false;
 
         for (int i = 0; i < args.size(); i++) {
             String token = args.get(i);
             if ("--".equals(token)) {
                 afterSeparator = true;
+                testSourceSeparator = true;
                 continue;
             }
             if (!afterSeparator) {
@@ -411,7 +413,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             properties.put("micronaut.server.port", port);
         }
         addDefaultOpenApiExposure(properties, configs);
-        return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), Map.copyOf(properties), verboseLogger);
+        return new DirectSourceInvocation(test, setup, report, List.copyOf(configs), List.copyOf(sources), List.copyOf(testSources), testSourceSeparator, Map.copyOf(properties), verboseLogger);
     }
 
     private static boolean isSourceSelector(String value) {
@@ -460,6 +462,22 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
+    private static List<Path> findImplicitTestSources(SourceType sourceType) throws IOException {
+        return findImplicitTestSources(Path.of(".").toAbsolutePath().normalize(), sourceType);
+    }
+
+    static List<Path> findImplicitTestSources(Path root, SourceType sourceType) throws IOException {
+        Path normalizedRoot = root.toAbsolutePath().normalize();
+        String suffix = sourceType == SourceType.JAVA ? "Test.java" : "Test.py";
+        try (var paths = Files.walk(normalizedRoot)) {
+            return paths.filter(Files::isRegularFile)
+                .filter(path -> !isManagedSourcePath(normalizedRoot, path))
+                .filter(path -> path.getFileName().toString().endsWith(suffix))
+                .sorted()
+                .toList();
+        }
+    }
+
     private Integer runDirectSources(DirectSourceInvocation invocation) {
         Path stagingRoot = null;
         Map<String, String> previousProperties = new LinkedHashMap<>();
@@ -475,7 +493,10 @@ public final class PyronautDevMain implements Callable<Integer> {
             SourceType sourceType = sourceType(invocation.sources());
             if (invocation.test()) {
                 if (invocation.testSources().isEmpty()) {
-                    throw new IllegalArgumentException("Direct tests require test sources after '--'");
+                    if (invocation.testSourceSeparator()) {
+                        throw new IllegalArgumentException("Direct tests require test sources after '--'");
+                    }
+                    invocation = invocation.withTestSources(findImplicitTestSources(sourceType));
                 }
                 SourceType testSourceType = sourceType(invocation.testSources());
                 if (sourceType != testSourceType) {
@@ -1753,6 +1774,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                                   List<Path> configs,
                                   List<Path> sources,
                                   List<Path> testSources,
+                                  boolean testSourceSeparator,
                                   Map<String, String> properties,
                                   String verboseLogger) {
         DirectSourceInvocation {
@@ -1764,6 +1786,10 @@ public final class PyronautDevMain implements Callable<Integer> {
 
         boolean verbose() {
             return verboseLogger != null;
+        }
+
+        DirectSourceInvocation withTestSources(List<Path> sources) {
+            return new DirectSourceInvocation(test, setup, report, configs, this.sources, sources, testSourceSeparator, properties, verboseLogger);
         }
     }
 

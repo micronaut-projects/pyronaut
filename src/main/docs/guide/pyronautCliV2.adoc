@@ -340,7 +340,17 @@ Behavior:
 
 Direct source tests:
 
-Direct mode separates application sources from test sources with `--`:
+Direct tests automatically discover recursive `**Test.java` or `**Test.py`
+sources based on the application language, so the common case does not need a
+separator:
+
+[source,bash]
+----
+pyronaut test Foo.java
+pyronaut test Foo.py
+----
+
+The equivalent explicit syntax remains available for custom test layouts:
 
 [source,bash]
 ----
@@ -348,6 +358,10 @@ pyronaut test Foo.java -- FooTest.java
 pyronaut test Foo.py -- FooTest.py
 pyronaut test src/*.java -- test/*.java
 ----
+
+The implicit search is rooted at the current working directory. An explicit
+`--` with no test source is invalid; use the shorthand form when you want the
+default recursive test discovery.
 
 Direct tests are compiled in-memory and executed through JUnit 5. Python direct tests use the Python compiler's JUnit 5 integration; they do not invoke pytest or require a Python virtual environment. Java-only direct tests disable Python runtime beans unless `micronaut.python.enabled` is supplied explicitly.
 

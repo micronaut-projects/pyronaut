@@ -29,7 +29,16 @@ See xref:configuration/vscodeExtension.adoc[].
 
 == Direct JUnit 5 Tests
 
-For a small application, Java or Python sources can be tested without a project manifest. The application sources come before `--`; JUnit 5 test sources come after it:
+For a small application, Java or Python sources can be tested without a project manifest. By default, direct tests recursively discover `**Test.java` or `**Test.py` files from the current working directory according to the application language:
+
+[source,bash]
+----
+pyronaut test Foo.java
+pyronaut test Foo.py
+----
+
+Test sources can also be supplied explicitly after `--`, which is useful for
+custom test layouts:
 
 [source,bash]
 ----
@@ -37,6 +46,8 @@ pyronaut test Foo.java -- FooTest.java
 pyronaut test Foo.py -- FooTest.py
 pyronaut test -t Foo.java -- *Test.java
 ----
+
+An explicit `--` without test sources remains invalid.
 
 Direct tests are compiled and executed in-memory through the JUnit Platform. Python tests can use `@MicronautTest` and `org.junit.jupiter.api.Test` in the same style as the Python test suite. Direct Java runs disable Python runtime infrastructure automatically; Python remains enabled by default for Python tests.
 

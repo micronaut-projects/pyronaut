@@ -6127,6 +6127,7 @@ def _print_test_usage(stream=None) -> None:
             "                     [--select-class=<selectClasses>]",
             "                     [--test-classes-dir=<testClassesDir>]",
             "                     [--tests=<tests>] [--tests-dir=<testsDir>]",
+            "       pyronaut test <source>",
             "       pyronaut test <source> -- <test-source>",
             "                       [-D<name=value>] [--config=<file-or-dir>]",
             "                       [--setup=<pyproject.toml>]",
@@ -6137,7 +6138,7 @@ def _print_test_usage(stream=None) -> None:
         description="Run tests for a processed Pyronaut application or direct Java/Python JUnit 5 sources",
         options=[
             ("<source.java|source.py|source-dir>...", "Java or Python application sources for direct source test execution"),
-            ("<test-source.java|test-source.py|test-dir>...", "Java or Python JUnit 5 test sources after --"),
+            ("<test-source.java|test-source.py|test-dir>...", "Explicit Java or Python JUnit 5 test sources after --; omitted sources default to **Test.java or **Test.py"),
             ("-D<name=value>", "Set a Micronaut/system property for direct source execution"),
             ("--classes-dir=<classesDir>", "Processed classes directory"),
             ("--config=<file-or-dir>", "Configuration file or directory for direct source execution"),

@@ -118,6 +118,34 @@ final class PyronautDevMainTest {
         assertEquals("c", invocation.properties().get("a.b"));
         assertEquals("dev", invocation.properties().get("micronaut.environments"));
         assertEquals("true", invocation.properties().get("pyronaut.dev.compile-python-bytecode"));
+        assertTrue(invocation.testSourceSeparator());
+    }
+
+    @Test
+    void directTestsUseImplicitLanguageSpecificRecursiveSelectors(@TempDir Path tempDir) throws IOException {
+        Path nested = Files.createDirectories(tempDir.resolve("nested"));
+        Path javaTest = nested.resolve("NestedTest.java");
+        Path pythonTest = nested.resolve("NestedTest.py");
+        Files.writeString(javaTest, "class NestedTest {}\n");
+        Files.writeString(pythonTest, "class NestedTest: pass\n");
+
+        assertEquals(List.of(javaTest), PyronautDevMain.findImplicitTestSources(tempDir, PyronautDevMain.SourceType.JAVA));
+        assertEquals(List.of(pythonTest), PyronautDevMain.findImplicitTestSources(tempDir, PyronautDevMain.SourceType.PYTHON));
+
+        PyronautDevMain.DirectSourceInvocation javaInvocation = PyronautDevMain.parseDirectTestSourceArgs(List.of("App.java"));
+        PyronautDevMain.DirectSourceInvocation pythonInvocation = PyronautDevMain.parseDirectTestSourceArgs(List.of("App.py"));
+        assertTrue(javaInvocation.testSources().isEmpty());
+        assertTrue(pythonInvocation.testSources().isEmpty());
+        assertFalse(javaInvocation.testSourceSeparator());
+        assertFalse(pythonInvocation.testSourceSeparator());
+    }
+
+    @Test
+    void explicitEmptyTestSourceSeparatorIsPreserved() {
+        PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectTestSourceArgs(List.of("App.java", "--"));
+
+        assertTrue(invocation.testSources().isEmpty());
+        assertTrue(invocation.testSourceSeparator());
     }
 
     @Test
