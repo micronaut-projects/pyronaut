@@ -51,6 +51,29 @@ class InstallProgressReporterTest {
     }
 
     @Test
+    void interactiveModeRendersArtifactProgressAndBasename() {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (InstallProgressReporter reporter = new InstallProgressReporter(new PrintStream(buffer), InstallProgressReporter.ProgressMode.ON, true)) {
+            reporter.startScope(InstallScope.RUNTIME);
+            reporter.artifactPlanned(InstallScope.RUNTIME, "https://repo.example.invalid/a/b/runtime-dependency-1.0.jar");
+            reporter.artifactStarted(InstallScope.RUNTIME, "https://repo.example.invalid/a/b/runtime-dependency-1.0.jar");
+            assertTrue(buffer.toString(StandardCharsets.UTF_8).contains(" 0%"));
+            reporter.artifactCompleted(InstallScope.RUNTIME, "https://repo.example.invalid/a/b/runtime-dependency-1.0.jar");
+            assertTrue(buffer.toString(StandardCharsets.UTF_8).contains(" 99%"));
+            reporter.artifactTransferFinished(InstallScope.RUNTIME, "https://repo.example.invalid/a/b/runtime-dependency-1.0.jar");
+            reporter.finishScope(InstallScope.RUNTIME, 1);
+            assertTrue(buffer.toString(StandardCharsets.UTF_8).contains("100%"));
+        }
+
+        String output = buffer.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("runtime-dependency-1.0.jar"));
+        assertTrue(output.contains("100%"));
+        assertTrue(output.contains("[#############]"));
+        assertFalse(output.contains("FAILED"));
+        assertTrue(output.contains("Resolved runtime dependencies (1 artifacts)"));
+    }
+
+    @Test
     void offModeSuppressesProgressOutput() {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (InstallProgressReporter reporter = new InstallProgressReporter(new PrintStream(buffer), InstallProgressReporter.ProgressMode.OFF, true)) {

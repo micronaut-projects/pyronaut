@@ -28,8 +28,10 @@ import org.eclipse.aether.RepositorySystemSession.SessionBuilder;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
+import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
+import org.eclipse.aether.graph.DependencyVisitor;
 import org.eclipse.aether.repository.Authentication;
 import org.eclipse.aether.repository.Proxy;
 import org.eclipse.aether.repository.RemoteRepository;
@@ -41,8 +43,13 @@ import org.eclipse.aether.resolution.ArtifactDescriptorException;
 import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
 import org.eclipse.aether.resolution.ArtifactDescriptorResult;
 import org.eclipse.aether.resolution.DependencyRequest;
+import org.eclipse.aether.collection.DependencyCollectionException;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.resolution.DependencyResult;
+import org.eclipse.aether.AbstractRepositoryListener;
+import org.eclipse.aether.RepositoryEvent;
+import org.eclipse.aether.transfer.TransferEvent;
+import org.eclipse.aether.transfer.TransferListener;
 import org.eclipse.aether.supplier.RepositorySystemSupplier;
 import org.eclipse.aether.supplier.SessionBuilderSupplier;
 import org.eclipse.aether.util.artifact.JavaScopes;
@@ -68,6 +75,7 @@ import java.util.function.Supplier;
 /**
  * Resolves classpaths using Apache Maven Resolver.
  */
+@SuppressWarnings({"checkstyle:InnerTypeLast", "checkstyle:NeedBraces"})
 final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_CLIENT_MODULE = "io.micronaut.testresources:micronaut-test-resources-client";
     private static final String TEST_RESOURCES_SERVER_MODULE = "io.micronaut.testresources:micronaut-test-resources-server";
@@ -199,10 +207,21 @@ final class MavenClasspathResolver {
                                              boolean offline,
                                              boolean forceUpdates,
                                              boolean includeTestResourcesServer) {
+        return resolveScopeDetails(model, scope, localRepositoryPath, offline, forceUpdates, includeTestResourcesServer, null);
+    }
+
+    ResolvedScopeDetails resolveScopeDetails(PyprojectModel model,
+                                             InstallScope scope,
+                                             Path localRepositoryPath,
+                                             boolean offline,
+                                             boolean forceUpdates,
+                                             boolean includeTestResourcesServer,
+                                             DependencyProgressListener progressListener) {
         List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
+            if (progressListener != null) progressListener.reset();
             Map<String, String> managedVersions = new LinkedHashMap<>();
             for (Dependency dependency : managedDependencies) {
                 Artifact artifact = dependency.getArtifact();
@@ -225,16 +244,42 @@ final class MavenClasspathResolver {
 
             CollectRequest collectRequest = new CollectRequest();
             collectRequest.setRepositories(repositories);
-            if (scope != InstallScope.TEST_RESOURCES_SERVER) {
-                managedDependencies.forEach(collectRequest::addManagedDependency);
-            }
+            managedDependencies.forEach(collectRequest::addManagedDependency);
 
             for (String coordinate : coordinates) {
                 collectRequest.addDependency(toDependency(coordinate, managedVersions));
             }
 
+            // Build the complete dependency graph before resolving artifacts. The
+            // combined resolver otherwise interleaves graph discovery and downloads,
+            // making a percentage denominator unstable (and causing a long 99% plateau).
+            CollectResult collected = repositorySystem.collectDependencies(session, collectRequest);
+            // Collection can materialize managed/BOM edges during its first pass;
+            // repeat once so those newly materialized artifacts are included before
+            // the fixed progress denominator is used by resolution.
+            collected = repositorySystem.collectDependencies(session, collectRequest);
+            if (progressListener != null) progressListener.begin();
+            if (progressListener != null && model.pyronaut() != null && requiresPyronautManagedDependencies(model)) {
+                String toolVersion = normalizedVersion(pyronautVersionProvider.get());
+                if (toolVersion != null) progressListener.artifactPlanned(PYRONAUT_GROUP + ":" + PYRONAUT_BOM_ARTIFACT + ":pom:" + toolVersion);
+            }
+            if (progressListener != null) {
+                collected.getRoot().accept(new DependencyVisitor() {
+                    @Override
+                    public boolean visitEnter(DependencyNode node) {
+                        if (node.getArtifact() != null) progressListener.artifactPlanned(node.getArtifact().toString());
+                        return true;
+                    }
+
+                    @Override
+                    public boolean visitLeave(DependencyNode node) {
+                        return true;
+                    }
+                });
+            }
+
             DependencyRequest dependencyRequest = new DependencyRequest(
-                collectRequest,
+                collected.getRoot(),
                 DependencyFilterUtils.classpathFilter(JavaScopes.RUNTIME)
             );
 
@@ -258,7 +303,7 @@ final class MavenClasspathResolver {
                 .toList();
             validateProductionControlPanelSecurity(model, scope, result);
             return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
-        } catch (DependencyResolutionException e) {
+        } catch (DependencyResolutionException | DependencyCollectionException e) {
             String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage();
             if (proxyConfiguration != null) {
                 message = message + " (proxy " + proxyConfiguration.summary() + ")";
@@ -821,7 +866,8 @@ final class MavenClasspathResolver {
     private CloseableSession newSession(Path localRepositoryPath,
                                         boolean offline,
                                         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration,
-                                        boolean forceUpdates) {
+                                        boolean forceUpdates,
+                                        DependencyProgressListener progressListener) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
         if (forceUpdates) {
@@ -841,7 +887,65 @@ final class MavenClasspathResolver {
             );
             sessionBuilder.setProxySelector(proxySelector);
         }
+        if (progressListener != null) {
+            sessionBuilder.withRepositoryListener(new ProgressRepositoryListener(progressListener));
+            sessionBuilder.withTransferListener(new ProgressTransferListener(progressListener));
+        }
         return sessionBuilder.build();
+    }
+
+    private static final class ProgressRepositoryListener extends AbstractRepositoryListener {
+        private final DependencyProgressListener listener;
+
+        private ProgressRepositoryListener(DependencyProgressListener listener) {
+            this.listener = listener;
+        }
+
+        @Override
+        public void artifactResolving(RepositoryEvent event) {
+            if (event.getArtifact() != null) listener.artifactPlanned(event.getArtifact().toString());
+        }
+
+        @Override
+        public void artifactResolved(RepositoryEvent event) {
+            if (event.getArtifact() != null) listener.artifactCompleted(event.getArtifact().toString());
+        }
+    }
+
+    private static final class ProgressTransferListener implements TransferListener {
+        private final DependencyProgressListener listener;
+
+        private ProgressTransferListener(DependencyProgressListener listener) {
+            this.listener = listener;
+        }
+
+        @Override
+        public void transferInitiated(TransferEvent event) {
+        }
+
+        @Override
+        public void transferStarted(TransferEvent event) {
+            if (event.getResource() != null) listener.artifactStarted(event.getResource().getResourceName());
+        }
+
+        @Override
+        public void transferProgressed(TransferEvent event) {
+        }
+
+        @Override
+        public void transferCorrupted(TransferEvent event) {
+        }
+
+        @Override
+        public void transferSucceeded(TransferEvent event) {
+            if (event.getResource() != null) listener.artifactTransferFinished(event.getResource().getResourceName());
+        }
+
+        @Override
+        public void transferFailed(TransferEvent event) {
+            // Transfer failures may belong to optional source artifacts. The enclosing
+            // dependency resolution result is the authoritative scope failure signal.
+        }
     }
 
     private static Authentication authentication(ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration) {
