@@ -102,7 +102,8 @@ include::src/main/docs/examples/gettingStarted/fastapi/upgraded/main.py[]
 ----
 
 `Item` is a standard Python dataclass.
-`@Serdeable` enables compile-time JSON serialization, while `@Validated`, `Valid`, `NotBlank`, and `Positive` apply Micronaut Validation to the request body.
+`@Serdeable` enables compile-time JSON serialization, while `Valid`, `NotBlank`, and `Positive` apply Micronaut Validation to the request body.
+As with the initial example, the HTTP operations are defined as classless module-level functions. The presence of `Valid` implicitly enables validation, so an explicit `@Validated` declaration is not needed.
 No reflection or Pydantic model is required.
 
 The development server reloads the application automatically.
