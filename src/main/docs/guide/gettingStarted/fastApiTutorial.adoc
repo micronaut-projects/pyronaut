@@ -157,8 +157,19 @@ pyronaut test main.py -- test_main.py
 ----
 
 `@MicronautTest` starts and stops an embedded server for the test class.
-The injected `HttpClient` calls the application over HTTP, covering the root response, path and query binding, a valid request body, and a validation failure.
+`requests.with_context` accepts the injected `ApplicationContext` and provides a `requests`-compatible client backed by the Micronaut HTTP client, covering the root response, path and query binding, a valid request body, and a validation failure.
 The development server does not need to be running separately.
+
+== Deploy It
+
+Deploy the application by running the same source file with `pyronaut run`:
+
+[source,bash]
+----
+pyronaut run main.py
+----
+
+Pyronaut compiles and runs the application directly. No separate application server, runtime, or other infrastructure needs to be installed; Pyronaut is the only required installation.
 
 == Recap
 

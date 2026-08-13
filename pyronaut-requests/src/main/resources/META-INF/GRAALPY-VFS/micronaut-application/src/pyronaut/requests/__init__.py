@@ -319,8 +319,9 @@ def _response_body_bytes(body) -> bytes:
 
 
 class Response:
-    def __init__(self, request_url: str, resp, history=None, body=None):
+    def __init__(self, request_url: str, resp, history=None, body=None, mapper=None):
         self._resp = resp
+        self._mapper = mapper or _ensure_default_mapper()
         self.url = request_url
         if hasattr(resp, 'statusCode'):
             self.status_code = int(resp.statusCode)
@@ -379,6 +380,7 @@ class Response:
     def json(self, type: Optional[type] = None):
         if type is None:
             # Always return native Python dict/list
+            mapper = self._mapper
             try:
                 Map = jtype("java.util.Map")
                 List = jtype("java.util.List")
@@ -565,7 +567,7 @@ class Session:
         # Use Java invoker to prevent ForeignException crossing into pytest
         result = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
         if getattr(result, 'success', False) or getattr(result, 'response', None) is not None:
-            response = Response(full_url, result.response, history=[], body=getattr(result, 'body', None))
+            response = Response(full_url, result.response, history=[], body=getattr(result, 'body', None), mapper=self._mapper)
             try:
                 for name, sc in response.headers.items():
                     if str(name).lower() != "set-cookie":
@@ -611,7 +613,7 @@ class Session:
                 req = req.header(_jstring(k), _jstring(v))
             r2 = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
             if getattr(r2, 'success', False) or getattr(r2, 'response', None) is not None:
-                response = Response(self._resolve_url(location), r2.response, history=list(history), body=getattr(r2, 'body', None))
+                response = Response(self._resolve_url(location), r2.response, history=list(history), body=getattr(r2, 'body', None), mapper=self._mapper)
                 try:
                     for name, sc in response.headers.items():
                         if str(name).lower() != "set-cookie":
@@ -742,15 +744,25 @@ def options(url: str, **kwargs):
 
 def with_context(ctx):
     # Resolve server safely via wrapper to avoid ForeignException crossing
-    server = ctx["io.micronaut.runtime.server.EmbeddedServer"]
+    context_embedded_server = java.type("io.micronaut.runtime.server.EmbeddedServer")
+    context_json_mapper = java.type("io.micronaut.json.JsonMapper")
+    if isinstance(ctx, dict):
+        server = ctx["io.micronaut.runtime.server.EmbeddedServer"]
+        try:
+            mapper = ctx["io.micronaut.json.JsonMapper"]
+        except KeyError:
+            mapper = _ensure_default_mapper()
+    else:
+        server = ctx.getBean(context_embedded_server)
+        try:
+            mapper = ctx.getBean(context_json_mapper)
+            if mapper is None:
+                mapper = _ensure_default_mapper()
+        except BaseException:
+            mapper = _ensure_default_mapper()
     server_url = server.getURL()
     base_url = str(server_url)
     client = server.getApplicationContext().createBean(HttpClient, server_url)
-    # resolve mapper from context if present
-    try:
-        mapper = ctx["io.micronaut.json.JsonMapper"]
-    except KeyError:
-        mapper = _ensure_default_mapper()
     return Session(base_url, mapper, client=client)
 
 
