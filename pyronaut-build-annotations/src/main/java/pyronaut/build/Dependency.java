@@ -34,12 +34,18 @@ public @interface Dependency {
     String version() default "";
     /** @return dependency scope */
     Scope scope() default Scope.RUNTIME;
+    /** @return transitive modules excluded beneath this dependency */
+    String[] exclusions() default {};
 
     /** Dependency resolution scope. */
     enum Scope {
         /** Dependency used at application runtime. */
         RUNTIME,
         /** Dependency used while compiling or running annotation processors. */
-        BUILD
+        BUILD,
+        /** Dependency used only by direct test execution. */
+        TEST,
+        /** Maven BOM providing dependency management. */
+        BOM
     }
 }

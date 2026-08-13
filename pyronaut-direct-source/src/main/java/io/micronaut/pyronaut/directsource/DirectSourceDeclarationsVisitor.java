@@ -43,9 +43,9 @@ public final class DirectSourceDeclarationsVisitor implements PythonSourceVisito
         }
         for (PythonCall call : source.calls()) {
             Map<String, String> values = call.keywordArguments();
-            boolean buildScope = isBuildScope(values.get("scope"));
+            boolean buildScope = scope(values.get("scope")) == DirectSourceDeclarations.Scope.BUILD;
             switch (call.name()) {
-                case "Dependency" -> addDependency(values, buildScope);
+                case "Dependency" -> addDependency(values);
                 case "MavenRepository" -> addRepository(call, values);
                 case "AppConfig" -> addProperty(values, buildScope);
                 default -> {
@@ -63,16 +63,40 @@ public final class DirectSourceDeclarationsVisitor implements PythonSourceVisito
         }
     }
 
-    private void addDependency(Map<String, String> values, boolean buildScope) {
+    private void addDependency(Map<String, String> values) {
         String group = values.get("group");
         String module = values.get("module");
         if (group != null && module != null) {
             String version = values.get("version");
             dependencies.add(new DirectSourceDeclarations.Dependency(
                 group + ":" + module + (version == null || version.isBlank() ? "" : ":" + version),
-                buildScope
+                scope(values.get("scope")), exclusions(values.get("exclusions"))
             ));
         }
+    }
+
+    private static DirectSourceDeclarations.Scope scope(String value) {
+        if (value == null || value.isBlank() || value.endsWith("RUNTIME")) {
+            return DirectSourceDeclarations.Scope.RUNTIME;
+        }
+        if (value.endsWith("BUILD")) {
+            return DirectSourceDeclarations.Scope.BUILD;
+        }
+        if (value.endsWith("TEST")) {
+            return DirectSourceDeclarations.Scope.TEST;
+        }
+        if (value.endsWith("BOM")) {
+            return DirectSourceDeclarations.Scope.BOM;
+        }
+        return DirectSourceDeclarations.Scope.RUNTIME;
+    }
+
+    private static List<String> exclusions(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        String normalized = value.trim().replace('[', ' ').replace(']', ' ').replace('"', ' ').replace('\'', ' ');
+        return java.util.Arrays.stream(normalized.split(",")).map(String::trim).filter(v -> !v.isBlank()).toList();
     }
 
     private void addRepository(PythonCall call, Map<String, String> values) {

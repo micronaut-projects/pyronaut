@@ -32,6 +32,7 @@ import org.eclipse.aether.collection.CollectResult;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.graph.DependencyVisitor;
+import org.eclipse.aether.graph.Exclusion;
 import org.eclipse.aether.repository.Authentication;
 import org.eclipse.aether.repository.Proxy;
 import org.eclipse.aether.repository.RemoteRepository;
@@ -247,7 +248,7 @@ final class MavenClasspathResolver {
             managedDependencies.forEach(collectRequest::addManagedDependency);
 
             for (String coordinate : coordinates) {
-                collectRequest.addDependency(toDependency(coordinate, managedVersions));
+                collectRequest.addDependency(toDependency(model, coordinate, managedVersions));
             }
 
             // Build the complete dependency graph before resolving artifacts. The
@@ -748,7 +749,8 @@ final class MavenClasspathResolver {
         }
         String coreVersion = normalizedVersion(model.pyronaut().coreVersion());
         String platformVersion = normalizedVersion(model.pyronaut().platformVersion());
-        if (coreVersion == null && platformVersion == null) {
+        PyprojectModel.Dependencies configured = model.pyronaut().dependencies();
+        if (coreVersion == null && platformVersion == null && (configured == null || configured.boms() == null || configured.boms().isEmpty())) {
             return List.of();
         }
         if (platformVersion == null) {
@@ -756,6 +758,15 @@ final class MavenClasspathResolver {
         }
         Map<String, Dependency> managed = new LinkedHashMap<>();
         LinkedHashSet<String> visitedBoms = new LinkedHashSet<>();
+        if (configured != null && configured.boms() != null) {
+            for (String bom : configured.boms()) {
+                String[] parts = splitCoordinate(bom, 3, "BOM");
+                addManagedDependenciesFromBom(
+                    new DefaultArtifact(parts[0], parts[1], "", "pom", parts[2]),
+                    repositories, session, visitedBoms, managed
+                );
+            }
+        }
         if (coreVersion != null) {
             addManagedDependenciesFromBom(
                 new DefaultArtifact("io.micronaut", "micronaut-core-bom", "", "pom", coreVersion),
@@ -765,13 +776,12 @@ final class MavenClasspathResolver {
                 managed
             );
         }
-        addManagedDependenciesFromBom(
-            new DefaultArtifact("io.micronaut.platform", "micronaut-platform", "", "pom", platformVersion),
-            repositories,
-            session,
-            visitedBoms,
-            managed
-        );
+        if (platformVersion != null) {
+            addManagedDependenciesFromBom(
+                new DefaultArtifact("io.micronaut.platform", "micronaut-platform", "", "pom", platformVersion),
+                repositories, session, visitedBoms, managed
+            );
+        }
         if (requiresPyronautManagedDependencies(model)) {
             String toolVersion = normalizedVersion(pyronautVersionProvider.get());
             if (toolVersion == null) {
@@ -851,16 +861,50 @@ final class MavenClasspathResolver {
         return artifact.getGroupId() + ":" + artifact.getArtifactId() + ":" + artifact.getExtension() + ":" + classifier;
     }
 
-    private static Dependency toDependency(String coordinate, Map<String, String> managedVersions) {
+    private static Dependency toDependency(PyprojectModel model, String coordinate, Map<String, String> managedVersions) {
         String[] parts = coordinate.split(":");
+        List<Exclusion> exclusions = exclusions(model, coordinate);
         if (parts.length == 3) {
-            return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", parts[2]), JavaScopes.RUNTIME);
+            return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", parts[2]), JavaScopes.RUNTIME, false, exclusions);
         }
         if (parts.length == 2) {
             String managedVersion = managedVersions.get(parts[0] + ":" + parts[1]);
-            return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", managedVersion), JavaScopes.RUNTIME);
+            return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", managedVersion), JavaScopes.RUNTIME, false, exclusions);
         }
         throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate + "'. Expected group:artifact[:version]");
+    }
+
+    private static List<Exclusion> exclusions(PyprojectModel model, String coordinate) {
+        if (model.pyronaut() == null || model.pyronaut().dependencies() == null) {
+            return List.of();
+        }
+        String module = moduleKey(coordinate);
+        PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        if (dependencies.exclusions() != null) {
+            values.addAll(dependencies.exclusions());
+        }
+        if (dependencies.artifactExclusions() != null) {
+            values.addAll(dependencies.artifactExclusions().getOrDefault(module, List.of()));
+        }
+        if (values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream().map(value -> {
+            String[] parts = splitCoordinate(value, 2, "exclusion");
+            return new Exclusion(parts[0], parts[1], "*", "*");
+        }).toList();
+    }
+
+    private static String[] splitCoordinate(String value, int expected, String kind) {
+        if (value == null) {
+            throw new PyprojectModelException("Invalid " + kind + " coordinate: 'null'");
+        }
+        String[] parts = value.trim().split(":");
+        if (parts.length != expected || java.util.Arrays.stream(parts).anyMatch(String::isBlank)) {
+            throw new PyprojectModelException("Invalid " + kind + " coordinate: '" + value + "'. Expected group:artifact" + (expected == 3 ? ":version" : ""));
+        }
+        return parts;
     }
 
     private CloseableSession newSession(Path localRepositoryPath,

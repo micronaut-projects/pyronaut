@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.install;
 import io.micronaut.core.annotation.Internal;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
+import io.micronaut.pyronaut.directsource.DirectSourceDeclarations;
 import io.micronaut.testresources.core.TestResourcesResolver;
 import java.io.IOException;
 import java.net.URL;
@@ -110,6 +111,7 @@ public final class DirectSourceDependencyResolver {
             return new DetailedResult(
                 cachedBuild,
                 cachedRuntime,
+                List.of(),
                 artifactsFromClasspath(cachedBuild),
                 artifactsFromClasspath(cachedRuntime),
                 true
@@ -131,10 +133,49 @@ public final class DirectSourceDependencyResolver {
         return new DetailedResult(
             buildResult,
             runtimeResult,
+            List.of(),
             artifactsFromResolvedDetails(buildDetails.editorArtifacts()),
             artifactsFromResolvedDetails(runtimeDetails.editorArtifacts()),
             false
         );
+    }
+
+    public DetailedResult resolveDetailed(Path cacheDirectory,
+                                          List<DirectSourceDeclarations.Dependency> declarations,
+                                          List<String> repositories,
+                                          Path localRepository,
+                                          boolean offline,
+                                          boolean bypassCache,
+                                          List<String> fingerprintInputs) throws IOException {
+        List<String> build = declarations.stream().filter(DirectSourceDeclarations.Dependency::build).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        List<String> runtime = declarations.stream().filter(d -> d.scope() == DirectSourceDeclarations.Scope.RUNTIME).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        List<String> test = declarations.stream().filter(DirectSourceDeclarations.Dependency::test).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        List<String> boms = declarations.stream().filter(DirectSourceDeclarations.Dependency::bom).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        Map<String, List<String>> artifactExclusions = new LinkedHashMap<>();
+        declarations.forEach(d -> artifactExclusions.put(moduleKey(d.coordinate()), d.exclusions()));
+        String hash = fingerprint(build, runtime, test, boms, artifactExclusions, repositories, localRepository, fingerprintInputs);
+        Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
+        Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
+        Path testManifest = cacheDirectory.resolve(InstallScope.TEST.manifestFile());
+        if (!bypassCache && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
+            && Files.isRegularFile(buildManifest) && Files.isRegularFile(runtimeManifest) && Files.isRegularFile(testManifest)) {
+            return new DetailedResult(read(buildManifest), read(runtimeManifest), read(testManifest),
+                artifactsFromClasspath(read(buildManifest)), artifactsFromClasspath(read(runtimeManifest)), true);
+        }
+        PyprojectModel model = model(build, runtime, test, boms, artifactExclusions, repositories);
+        var buildDetails = resolver.resolveScopeDetails(model, InstallScope.BUILD, localRepository, offline, bypassCache);
+        var runtimeDetails = resolver.resolveScopeDetails(model, InstallScope.RUNTIME, localRepository, offline, bypassCache);
+        var testDetails = resolver.resolveScopeDetails(model, InstallScope.TEST, localRepository, offline, bypassCache);
+        List<String> buildResult = classpathStrings(buildDetails);
+        List<String> runtimeResult = classpathStrings(runtimeDetails);
+        List<String> testResult = classpathStrings(testDetails);
+        Files.createDirectories(cacheDirectory);
+        Files.write(buildManifest, buildResult);
+        Files.write(runtimeManifest, runtimeResult);
+        Files.write(testManifest, testResult);
+        Files.writeString(cacheDirectory.resolve(HASH_FILE), hash);
+        return new DetailedResult(buildResult, runtimeResult, testResult,
+            artifactsFromResolvedDetails(buildDetails.editorArtifacts()), artifactsFromResolvedDetails(runtimeDetails.editorArtifacts()), false);
     }
 
     /**
@@ -156,6 +197,18 @@ public final class DirectSourceDependencyResolver {
                                          List<String> repositories,
                                          Map<String, String> runtimeProperties,
                                          boolean testResourcesEligible) throws IOException {
+        return resolveForLaunch(cacheDirectory, build, runtime, List.of(), List.of(), Map.of(), repositories, runtimeProperties, testResourcesEligible);
+    }
+
+    public LaunchResult resolveForLaunch(Path cacheDirectory,
+                                         List<String> build,
+                                         List<String> runtime,
+                                         List<String> test,
+                                         List<String> boms,
+                                         Map<String, List<String>> exclusions,
+                                         List<String> repositories,
+                                         Map<String, String> runtimeProperties,
+                                         boolean testResourcesEligible) throws IOException {
         Path localRepository = MavenClasspathResolver.resolveLocalMavenRepository();
         boolean effectiveTestResourcesEligibility =
             testResourcesEligible && !resolver.isTestResourcesDisabledViaEnvironment();
@@ -163,15 +216,17 @@ public final class DirectSourceDependencyResolver {
             runtimeProperties,
             effectiveTestResourcesEligibility
         );
-        String hash = fingerprint(build, runtime, repositories, localRepository, launchInputs);
+        String hash = fingerprint(build, runtime, test, boms, exclusions, repositories, localRepository, launchInputs);
         Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
         Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
+        Path testManifest = cacheDirectory.resolve(InstallScope.TEST.manifestFile());
         Path serverManifest = cacheDirectory.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile());
         Path metadata = cacheDirectory.resolve(LAUNCH_METADATA_FILE);
         if (Files.isRegularFile(cacheDirectory.resolve(HASH_FILE))
             && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
             && Files.isRegularFile(buildManifest)
             && Files.isRegularFile(runtimeManifest)
+            && (test.isEmpty() || Files.isRegularFile(testManifest))
             && Files.isRegularFile(metadata)) {
             boolean required = readTestResourcesRequired(metadata);
             if (!required || Files.isRegularFile(serverManifest)) {
@@ -185,11 +240,11 @@ public final class DirectSourceDependencyResolver {
             }
         }
 
-        PyprojectModel baseModel = model(build, runtime, repositories, null);
+        PyprojectModel baseModel = model(build, runtime, test, boms, exclusions, repositories, null);
         boolean required = false;
         MavenClasspathResolver.ResolvedScopeDetails serverDetails = null;
         if (effectiveTestResourcesEligibility && runtimeProperties != null && !runtimeProperties.isEmpty()) {
-            PyprojectModel enabledModel = model(build, runtime, repositories, enabledTestResources());
+            PyprojectModel enabledModel = model(build, runtime, test, boms, exclusions, repositories, enabledTestResources());
             serverDetails = resolver.resolveScopeDetails(
                 enabledModel,
                 InstallScope.TEST_RESOURCES_SERVER,
@@ -208,12 +263,16 @@ public final class DirectSourceDependencyResolver {
             resolver.resolveScopeDetails(baseModel, InstallScope.BUILD, localRepository, false, false);
         MavenClasspathResolver.ResolvedScopeDetails runtimeDetails =
             resolver.resolveScopeDetails(baseModel, InstallScope.RUNTIME, localRepository, false, false);
+        MavenClasspathResolver.ResolvedScopeDetails testDetails =
+            resolver.resolveScopeDetails(baseModel, InstallScope.TEST, localRepository, false, false);
         List<String> buildResult = classpathStrings(buildDetails);
         List<String> runtimeResult = classpathStrings(runtimeDetails);
+        List<String> testResult = classpathStrings(testDetails);
         List<String> serverResult = required && serverDetails != null ? classpathStrings(serverDetails) : List.of();
         Files.createDirectories(cacheDirectory);
         Files.write(buildManifest, buildResult);
         Files.write(runtimeManifest, runtimeResult);
+        Files.write(testManifest, testResult);
         if (required) {
             Files.write(serverManifest, serverResult);
         } else {
@@ -226,13 +285,16 @@ public final class DirectSourceDependencyResolver {
 
     private static PyprojectModel model(List<String> build,
                                         List<String> runtime,
+                                        List<String> test,
+                                        List<String> boms,
+                                        Map<String, List<String>> exclusions,
                                         List<String> repositories,
                                         PyprojectModel.TestResources testResources) {
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
             null,
             PyronautManagedVersions.micronautPlatformVersion(),
             repositories,
-            new PyprojectModel.Dependencies(runtime, List.of(), build, List.of()),
+            new PyprojectModel.Dependencies(runtime, List.of(), build, test, boms, List.of(), exclusions),
             null,
             null,
             null,
@@ -431,6 +493,31 @@ public final class DirectSourceDependencyResolver {
         }
     }
 
+    private static String fingerprint(List<String> build, List<String> runtime, List<String> test, List<String> boms,
+                                      Map<String, List<String>> exclusions, List<String> repositories, Path localRepository,
+                                      List<String> additionalInputs) {
+        List<String> extra = new ArrayList<>(additionalInputs);
+        extra.addAll(boms.stream().map(v -> "bom=" + v).toList());
+        exclusions.entrySet().stream().sorted(Map.Entry.comparingByKey())
+            .forEach(e -> extra.add("exclusions=" + e.getKey() + "=" + e.getValue()));
+        return fingerprint(build, runtime, repositories, localRepository,
+            java.util.stream.Stream.concat(extra.stream(), test.stream().map(v -> "test=" + v)).toList());
+    }
+
+    private static String moduleKey(String coordinate) {
+        String[] parts = coordinate.split(":");
+        return parts.length >= 2 ? parts[0] + ":" + parts[1] : coordinate;
+    }
+
+    private static PyprojectModel model(List<String> build, List<String> runtime, List<String> test,
+                                        List<String> boms, Map<String, List<String>> exclusions,
+                                        List<String> repositories) {
+        PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(null, PyronautManagedVersions.micronautPlatformVersion(),
+            repositories, new PyprojectModel.Dependencies(runtime, List.of(), build, test, boms, List.of(), exclusions),
+            null, null, null, null, null, null, null, null, null, null, false);
+        return new PyprojectModel(null, null, pyronaut);
+    }
+
     private static void update(MessageDigest digest, String name, List<String> values) {
         digest.update(name.getBytes(StandardCharsets.UTF_8));
         digest.update((byte) 0);
@@ -490,6 +577,7 @@ public final class DirectSourceDependencyResolver {
      *
      * @param build resolved build classpath
      * @param runtime resolved runtime classpath
+     * @param test resolved test classpath
      * @param buildArtifacts build artifact metadata
      * @param runtimeArtifacts runtime artifact metadata
      * @param cacheHit whether existing manifests were reused
@@ -497,6 +585,7 @@ public final class DirectSourceDependencyResolver {
     public record DetailedResult(
         List<String> build,
         List<String> runtime,
+        List<String> test,
         List<ResolvedArtifact> buildArtifacts,
         List<ResolvedArtifact> runtimeArtifacts,
         boolean cacheHit

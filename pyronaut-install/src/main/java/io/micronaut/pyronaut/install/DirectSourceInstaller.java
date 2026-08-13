@@ -100,14 +100,8 @@ final class DirectSourceInstaller {
             } catch (RuntimeException e) {
                 throw new IllegalArgumentException("Direct source declaration discovery failed: " + e.getMessage(), e);
             }
-            List<String> build = declarations.dependencies().stream()
-                .filter(DirectSourceDeclarations.Dependency::build)
-                .map(DirectSourceDeclarations.Dependency::coordinate)
-                .toList();
-            List<String> runtime = declarations.dependencies().stream()
-                .filter(dependency -> !dependency.build())
-                .map(DirectSourceDeclarations.Dependency::coordinate)
-                .toList();
+            List<String> build = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::build).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+            List<String> runtime = declarations.dependencies().stream().filter(dependency -> dependency.scope() == DirectSourceDeclarations.Scope.RUNTIME).map(DirectSourceDeclarations.Dependency::coordinate).toList();
             progressReporter.directSourceDeclarations(
                 build.size(),
                 runtime.size(),
@@ -115,8 +109,7 @@ final class DirectSourceInstaller {
             );
             DirectSourceDependencyResolver.DetailedResult resolved = dependencyResolver.resolveDetailed(
                 cacheDir,
-                build,
-                runtime,
+                declarations.dependencies(),
                 declarations.repositories(),
                 localRepository,
                 offline,
@@ -125,6 +118,7 @@ final class DirectSourceInstaller {
             );
             LinkedHashSet<String> resolvedArtifacts = new LinkedHashSet<>(resolved.build());
             resolvedArtifacts.addAll(resolved.runtime());
+            resolvedArtifacts.addAll(resolved.test());
             progressReporter.directSourceDependencies(resolvedArtifacts.size());
             if (selection.language() == DirectSourceDiscovery.Language.JAVA) {
                 List<Path> ideClasspath = jarClasspath(discoveryClasspath, resolved.build(), resolved.runtime());

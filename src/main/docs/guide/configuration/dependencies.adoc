@@ -46,6 +46,23 @@ test = [
 Use `group:artifact` for dependencies managed by the Micronaut platform, Micronaut core BOM, or Pyronaut BOM.
 Use `group:artifact:version` for dependencies that are not managed.
 
+=== Custom BOMs and exclusions
+
+Project BOMs can be applied to every dependency scope:
+
+[source,toml]
+----
+[tool.pyronaut.dependencies]
+boms = ["io.netty:netty-bom:4.2.17.Final"]
+runtime = ["io.netty:netty-handler"]
+exclusions = ["commons:commons-lang"]
+
+[tool.pyronaut.dependencies.artifact-exclusions]
+"io.netty:netty-handler" = ["commons:commons-lang"]
+----
+
+`boms` entries must use `group:artifact:version`. Explicit dependency versions take precedence over BOM management; user BOMs are applied before the bundled Micronaut and Pyronaut BOMs. Global exclusions remove matching transitive modules from all roots, while an explicitly declared dependency remains available. Artifact exclusions apply only below the matching direct `group:artifact` root.
+
 == Install Behavior
 
 Run:

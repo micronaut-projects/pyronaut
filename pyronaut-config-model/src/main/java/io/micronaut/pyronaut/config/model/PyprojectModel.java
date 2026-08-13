@@ -225,11 +225,36 @@ public record PyprojectModel(Project project,
      * @param developmentRuntime development runtime dependencies
      * @param build build dependencies
      * @param test test dependencies
+     * @param boms user-declared Maven BOMs
+     * @param exclusions global transitive exclusions
+     * @param artifactExclusions per-direct-dependency transitive exclusions
      */
     public record Dependencies(List<String> runtime,
                                List<String> developmentRuntime,
                                List<String> build,
-                               List<String> test) {
+                               List<String> test,
+                               List<String> boms,
+                               List<String> exclusions,
+                               Map<String, List<String>> artifactExclusions) {
+        public Dependencies {
+            runtime = runtime == null ? List.of() : List.copyOf(runtime);
+            developmentRuntime = developmentRuntime == null ? List.of() : List.copyOf(developmentRuntime);
+            build = build == null ? List.of() : List.copyOf(build);
+            test = test == null ? List.of() : List.copyOf(test);
+            boms = boms == null ? List.of() : List.copyOf(boms);
+            exclusions = exclusions == null ? List.of() : List.copyOf(exclusions);
+            if (artifactExclusions == null || artifactExclusions.isEmpty()) {
+                artifactExclusions = Map.of();
+            } else {
+                var normalized = new java.util.LinkedHashMap<String, List<String>>();
+                artifactExclusions.forEach((key, value) -> normalized.put(key, value == null ? List.of() : List.copyOf(value)));
+                artifactExclusions = Map.copyOf(normalized);
+            }
+        }
+
+        public Dependencies(List<String> runtime, List<String> developmentRuntime, List<String> build, List<String> test) {
+            this(runtime, developmentRuntime, build, test, List.of(), List.of(), Map.of());
+        }
     }
 
     /**

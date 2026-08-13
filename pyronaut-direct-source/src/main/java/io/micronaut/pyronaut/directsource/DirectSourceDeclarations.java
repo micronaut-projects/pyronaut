@@ -54,8 +54,37 @@ public record DirectSourceDeclarations(
      * A Maven coordinate requested by a direct-source declaration.
      *
      * @param coordinate Maven coordinate
-     * @param build whether the dependency is build-scoped
+     * @param scope declaration scope
+     * @param exclusions transitive modules excluded beneath this dependency
      */
-    public record Dependency(String coordinate, boolean build) {
+    public record Dependency(String coordinate, Scope scope, List<String> exclusions) {
+        public Dependency {
+            exclusions = exclusions == null ? List.of() : List.copyOf(exclusions);
+        }
+
+        public Dependency(String coordinate, boolean build) {
+            this(coordinate, build ? Scope.BUILD : Scope.RUNTIME, List.of());
+        }
+
+        public Dependency(String coordinate, boolean build, List<String> exclusions) {
+            this(coordinate, build ? Scope.BUILD : Scope.RUNTIME, exclusions);
+        }
+
+        public boolean build() {
+            return scope == Scope.BUILD;
+        }
+
+        public boolean test() {
+            return scope == Scope.TEST;
+        }
+
+        public boolean bom() {
+            return scope == Scope.BOM;
+        }
+    }
+
+    /** Direct declaration scope. */
+    public enum Scope {
+        RUNTIME, BUILD, TEST, BOM
     }
 }

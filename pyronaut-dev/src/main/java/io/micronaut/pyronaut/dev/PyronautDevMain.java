@@ -613,11 +613,18 @@ public final class PyronautDevMain implements Callable<Integer> {
         boolean testResourcesEligible) throws IOException {
         DirectSourceDeclarations declarations = request.declarations();
         List<String> build = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::build).map(DirectSourceDeclarations.Dependency::coordinate).toList();
-        List<String> runtime = declarations.dependencies().stream().filter(declaration -> !declaration.build()).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        List<String> runtime = declarations.dependencies().stream().filter(declaration -> declaration.scope() == DirectSourceDeclarations.Scope.RUNTIME).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        List<String> test = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::test).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        List<String> boms = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::bom).map(DirectSourceDeclarations.Dependency::coordinate).toList();
+        Map<String, List<String>> exclusions = new LinkedHashMap<>();
+        declarations.dependencies().forEach(dependency -> exclusions.put(dependency.coordinate().substring(0, dependency.coordinate().lastIndexOf(':')), dependency.exclusions()));
         DirectSourceDependencyResolver.LaunchResult result = new DirectSourceDependencyResolver().resolveForLaunch(
             projectCacheDirectory(invocation, stagingRoot),
             build,
             runtime,
+            test,
+            boms,
+            exclusions,
             declarations.repositories(),
             declarations.runtimeProperties(),
             testResourcesEligible

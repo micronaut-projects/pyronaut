@@ -103,11 +103,13 @@ public final class DirectSourceDeclarationsProcessor extends AbstractProcessor {
         if (!String.valueOf(values.get("version")).isBlank()) {
             coordinate += ":" + values.get("version");
         }
-        dependencies.add(new DirectSourceDeclarations.Dependency(coordinate, isBuild(values.get("scope"))));
+        dependencies.add(new DirectSourceDeclarations.Dependency(
+            coordinate, scope(values.get("scope")), exclusions(values.get("exclusions"))
+        ));
     }
 
     private void addProperty(Map<String, Object> values) {
-        (isBuild(values.get("scope")) ? buildProperties : runtimeProperties)
+        (scope(values.get("scope")) == DirectSourceDeclarations.Scope.BUILD ? buildProperties : runtimeProperties)
             .put(String.valueOf(values.get("name")), String.valueOf(values.get("value")));
     }
 
@@ -132,8 +134,28 @@ public final class DirectSourceDeclarationsProcessor extends AbstractProcessor {
         return values;
     }
 
-    private static boolean isBuild(Object scope) {
-        return String.valueOf(scope).endsWith("BUILD");
+    private static DirectSourceDeclarations.Scope scope(Object scope) {
+        String value = String.valueOf(scope);
+        if (value.endsWith("BUILD")) {
+            return DirectSourceDeclarations.Scope.BUILD;
+        }
+        if (value.endsWith("TEST")) {
+            return DirectSourceDeclarations.Scope.TEST;
+        }
+        if (value.endsWith("BOM")) {
+            return DirectSourceDeclarations.Scope.BOM;
+        }
+        return DirectSourceDeclarations.Scope.RUNTIME;
+    }
+
+    private static List<String> exclusions(Object value) {
+        if (value == null) {
+            return List.of();
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(entry -> entry instanceof AnnotationValue annotationValue ? String.valueOf(annotationValue.getValue()) : String.valueOf(entry)).toList();
+        }
+        return List.of(String.valueOf(value));
     }
 
     private DirectSourceDeclarations declarations() {

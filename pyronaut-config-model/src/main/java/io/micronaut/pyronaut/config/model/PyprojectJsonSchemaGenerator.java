@@ -90,6 +90,10 @@ public final class PyprojectJsonSchemaGenerator {
                 schema.put("type", "object");
                 schema.put("additionalProperties", Map.of("type", "string"));
             }
+            case STRING_ARRAY_MAP -> {
+                schema.put("type", "object");
+                schema.put("additionalProperties", Map.of("type", "array", "items", Map.of("type", "string")));
+            }
             default -> throw new IllegalArgumentException("Unsupported field type: " + field.type());
         }
         if (field.description() != null && !field.description().isBlank()) {

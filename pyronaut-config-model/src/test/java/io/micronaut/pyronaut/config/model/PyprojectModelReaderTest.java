@@ -245,6 +245,24 @@ class PyprojectModelReaderTest {
     }
 
     @Test
+    void parsesBomsAndDependencyExclusions() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+            [tool.pyronaut.dependencies]
+            boms = ["io.netty:netty-bom:4.2.17.Final"]
+            exclusions = ["commons:commons-lang"]
+            [tool.pyronaut.dependencies.artifact-exclusions]
+            "io.netty:netty-handler" = ["commons:commons-lang"]
+            """);
+        PyprojectModel.Dependencies dependencies = reader.readFile(file).pyronaut().dependencies();
+        assertEquals(List.of("io.netty:netty-bom:4.2.17.Final"), dependencies.boms());
+        assertEquals(List.of("commons:commons-lang"), dependencies.exclusions());
+        assertEquals(List.of("commons:commons-lang"), dependencies.artifactExclusions().get("io.netty:netty-handler"));
+    }
+
+    @Test
     void rejectInvalidToml() throws IOException {
         Path file = tempDir.resolve("pyproject.toml");
         Files.writeString(file, "[project\nname = \"broken\"\n");

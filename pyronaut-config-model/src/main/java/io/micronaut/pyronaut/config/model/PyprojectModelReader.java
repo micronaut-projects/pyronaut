@@ -44,7 +44,12 @@ public final class PyprojectModelReader {
         return read(file, "pyproject.toml");
     }
 
-    /** Reads the shared Pyronaut configuration from an external Java project's project.toml. */
+    /**
+     * Reads the shared Pyronaut configuration from an external Java project's project.toml.
+     *
+     * @param file project.toml file
+     * @return parsed project model
+     */
     public PyprojectModel readProjectToml(Path file) {
         if (!"project.toml".equals(file.getFileName().toString())) {
             throw new PyprojectModelException("Invalid config filename '" + file.getFileName() + "'. Expected 'project.toml'");
@@ -106,7 +111,10 @@ public final class PyprojectModelReader {
                 runtime,
                 developmentRuntime,
                 build,
-                readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST)
+                readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_TEST),
+                readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_BOMS),
+                readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_EXCLUSIONS),
+                readStringArrayMap(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_ARTIFACT_EXCLUSIONS)
             ),
             new PyprojectModel.Run(readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_RUN_BANNER_ENABLED)),
             resolveControlPanel(parsed),
@@ -500,6 +508,33 @@ public final class PyprojectModelReader {
             return Map.copyOf(out);
         }
         return Map.of();
+    }
+
+    private static Map<String, List<String>> readStringArrayMap(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+        TomlTable table;
+        try {
+            table = parsed.getTable(field.canonicalPath());
+        } catch (TomlInvalidTypeException e) {
+            throw invalidType(field.canonicalPath(), "table", e);
+        }
+        if (table == null) {
+            return Map.of();
+        }
+        var out = new java.util.LinkedHashMap<String, List<String>>();
+        for (Map.Entry<String, Object> entry : table.toMap().entrySet()) {
+            if (!(entry.getValue() instanceof TomlArray array)) {
+                throw new PyprojectModelException("Invalid type for '" + field.canonicalPath() + "." + entry.getKey() + "': expected array");
+            }
+            var values = new ArrayList<String>();
+            for (Object value : array.toList()) {
+                if (!(value instanceof String string)) {
+                    throw new PyprojectModelException("Invalid type for '" + field.canonicalPath() + "." + entry.getKey() + "': expected string array");
+                }
+                values.add(string);
+            }
+            out.put(entry.getKey(), List.copyOf(values));
+        }
+        return Map.copyOf(out);
     }
 
     private static PyprojectModel.TestResources resolveTestResources(TomlParseResult parsed) {

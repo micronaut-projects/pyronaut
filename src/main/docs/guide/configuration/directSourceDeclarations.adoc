@@ -37,6 +37,17 @@ class App {
 
 Use `scope = Dependency.Scope.BUILD` for annotation processors and `scope = AppConfig.Scope.BUILD` for annotation processor options.
 
+Direct declarations also support test dependencies, BOMs, and transitive exclusions:
+
+[source,java]
+----
+@Dependency(group = "io.netty", module = "netty-bom", version = "4.2.17.Final", scope = Dependency.Scope.BOM)
+@Dependency(group = "io.netty", module = "netty-handler", exclusions = {"commons:commons-lang"})
+@Dependency(group = "org.junit.jupiter", module = "junit-jupiter-engine", scope = Dependency.Scope.TEST)
+----
+
+`BOM` declarations provide dependency management without being placed on the classpath. `TEST` declarations are available to `pyronaut test` and are omitted from normal run and dev classpaths. Python declarations use the corresponding `Dependency.Scope.BOM` and `Dependency.Scope.TEST` values and may pass `exclusions=["group:artifact"]`.
+
 == Conditional Test Resources
 
 Direct `pyronaut dev` and `pyronaut test` commands inspect runtime dependencies together with inline runtime `@AppConfig` declarations.

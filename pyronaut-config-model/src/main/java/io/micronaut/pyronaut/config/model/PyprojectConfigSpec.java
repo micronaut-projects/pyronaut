@@ -31,7 +31,8 @@ public final class PyprojectConfigSpec {
         BOOLEAN,
         INTEGER,
         STRING_ARRAY,
-        STRING_MAP
+        STRING_MAP,
+        STRING_ARRAY_MAP
     }
 
     public record FieldSpec(
@@ -141,6 +142,15 @@ public final class PyprojectConfigSpec {
     public static final FieldSpec PYRONAUT_DEPENDENCIES_TEST = stringArray(
         "tool.pyronaut.dependencies.test",
         "Test dependencies."
+    );
+    public static final FieldSpec PYRONAUT_DEPENDENCIES_BOMS = stringArray(
+        "tool.pyronaut.dependencies.boms", "User-declared Maven BOMs (group:artifact:version)."
+    );
+    public static final FieldSpec PYRONAUT_DEPENDENCIES_EXCLUSIONS = stringArray(
+        "tool.pyronaut.dependencies.exclusions", "Globally excluded transitive modules (group:artifact)."
+    );
+    public static final FieldSpec PYRONAUT_DEPENDENCIES_ARTIFACT_EXCLUSIONS = stringArrayMap(
+        "tool.pyronaut.dependencies.artifact-exclusions", "Transitive exclusions keyed by direct group:artifact dependency."
     );
     public static final FieldSpec PYRONAUT_BUILD_MODE = enumString(
         "tool.pyronaut.build.mode",
@@ -773,6 +783,9 @@ public final class PyprojectConfigSpec {
         PYRONAUT_DEPENDENCIES_DEVELOPMENT_RUNTIME,
         PYRONAUT_DEPENDENCIES_BUILD,
         PYRONAUT_DEPENDENCIES_TEST,
+        PYRONAUT_DEPENDENCIES_BOMS,
+        PYRONAUT_DEPENDENCIES_EXCLUSIONS,
+        PYRONAUT_DEPENDENCIES_ARTIFACT_EXCLUSIONS,
         PYRONAUT_BUILD_MODE,
         PYRONAUT_BUILD_BASE_IMAGE,
         PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED,
@@ -874,6 +887,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.core", true),
         section("tool.pyronaut.platform", true),
         section("tool.pyronaut.dependencies", true),
+        section("tool.pyronaut.dependencies.artifact-exclusions", false),
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.processor", true),
         section("tool.pyronaut.test", true),
@@ -926,6 +940,10 @@ public final class PyprojectConfigSpec {
 
     private static FieldSpec stringMap(String canonicalPath, String description, List<String> aliases) {
         return new FieldSpec(canonicalPath, ValueType.STRING_MAP, description, null, List.of(), aliases);
+    }
+
+    private static FieldSpec stringArrayMap(String canonicalPath, String description) {
+        return new FieldSpec(canonicalPath, ValueType.STRING_ARRAY_MAP, description, null, List.of(), List.of());
     }
 
     private static FieldSpec enumString(String canonicalPath, String description, Object defaultValue, List<String> enumValues) {

@@ -57,4 +57,17 @@ final class DirectSourceDeclarationsVisitorTest {
         assertEquals(List.of("https://repo.example.test"), request.declarations().repositories());
         assertEquals(Map.of("example.value", "ok"), request.declarations().runtimeProperties());
     }
+
+    @Test
+    void collectsTestBomAndExclusions() {
+        DirectSourceDeclarationsVisitor visitor = new DirectSourceDeclarationsVisitor();
+        visitor.visit(new PythonSource("app.py", "python", List.of(
+            new PythonCall("Dependency", List.of(), Map.of("group", "io.netty", "module", "netty-bom", "version", "1", "scope", "Scope.BOM")),
+            new PythonCall("Dependency", List.of(), Map.of("group", "io.netty", "module", "netty-handler", "scope", "Scope.TEST", "exclusions", "['commons:commons-lang']"))
+        )), null);
+        DirectSourceDeclarationRequest request = assertThrows(DirectSourceDeclarationRequest.class, () -> visitor.finish(null));
+        assertEquals(DirectSourceDeclarations.Scope.BOM, request.declarations().dependencies().get(0).scope());
+        assertEquals(DirectSourceDeclarations.Scope.TEST, request.declarations().dependencies().get(1).scope());
+        assertEquals(List.of("commons:commons-lang"), request.declarations().dependencies().get(1).exclusions());
+    }
 }

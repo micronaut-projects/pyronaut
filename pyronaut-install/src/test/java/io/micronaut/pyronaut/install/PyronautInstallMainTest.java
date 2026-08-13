@@ -1,5 +1,7 @@
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.pyronaut.config.model.PyprojectModel;
+
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.pyronaut.config.model.PyprojectJsonSchemaGenerator;
@@ -1548,6 +1550,25 @@ class PyronautInstallMainTest {
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("junit-platform-launcher")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("junit-jupiter-engine")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
+    }
+
+    @Test
+    void resolvesCustomBomVersionAndExcludesTransitiveDependency() throws Exception {
+        Path repository = tempDir.resolve("repo-custom-bom");
+        writeBom(repository, "com.example", "example-bom", "1.0.0",
+            List.of(new ManagedDependency("com.example", "root", "1.0.0")));
+        writeArtifactWithDependencies(repository, "com.example", "root", "1.0.0",
+            List.of(new DependencyCoordinate("com.example", "transitive", "1.0.0")));
+        writeArtifact(repository, "com.example", "transitive", "1.0.0");
+        PyprojectModel model = new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of("com.example:root"), List.of(), List.of(), List.of(),
+                List.of("com.example:example-bom:1.0.0"), List.of("com.example:transitive"), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+        MavenClasspathResolver.ResolvedScopeDetails result = new MavenClasspathResolver().resolveScopeDetails(
+            model, InstallScope.RUNTIME, tempDir.resolve("m2-custom-bom"), false);
+        assertTrue(result.classpath().stream().anyMatch(path -> path.getFileName().toString().contains("root-1.0.0")));
+        assertTrue(result.classpath().stream().noneMatch(path -> path.getFileName().toString().contains("transitive-1.0.0")));
     }
 
     @Test
