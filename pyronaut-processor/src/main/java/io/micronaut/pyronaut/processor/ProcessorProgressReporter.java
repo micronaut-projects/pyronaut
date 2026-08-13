@@ -34,14 +34,14 @@ final class ProcessorProgressReporter implements AutoCloseable {
     private Thread spinnerThread;
     private IncrementalPlan incrementalPlan;
 
-    void startPass(String passName, boolean incremental) {
-        startPass(passName, -1L, incremental);
-    }
-
     ProcessorProgressReporter(PrintStream output, ProgressMode mode, boolean tty) {
         this.output = output;
         this.enabled = mode != ProgressMode.OFF;
         this.interactive = mode == ProgressMode.ON || (mode == ProgressMode.AUTO && tty);
+    }
+
+    void startPass(String passName, boolean incremental) {
+        startPass(passName, -1L, incremental);
     }
 
     static ProcessorProgressReporter create(String mode) {

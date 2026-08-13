@@ -120,6 +120,12 @@ public final class NativeProvidedJarResolver {
         return null;
     }
 
+    /**
+     * A binary jar and its optional sources jar.
+     * @param binary binary jar
+     * @param source source jar
+     * @param artifactId artifact identifier
+     */
     public record JarPair(Path binary, Path source, String artifactId) {
     }
 }

@@ -429,6 +429,7 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.netty.util",
 
     /* other */
+    "-H:Preserve=package=org.graalvm.polyglot",
     "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
     "-H:Preserve=package=org.slf4j.*",
     "-H:Preserve=package=org.w3c.dom.bootstrap",

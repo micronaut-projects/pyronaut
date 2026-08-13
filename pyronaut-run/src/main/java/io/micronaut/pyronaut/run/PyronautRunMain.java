@@ -40,22 +40,20 @@ import java.util.stream.Stream;
 /**
  * Entry point for {@code pyronaut-run}.
  */
-@SuppressWarnings("checkstyle:InnerTypeLast")
+@SuppressWarnings({"checkstyle:InnerTypeLast", "checkstyle:DesignForExtension"})
 @CommandLine.Command(name = "pyronaut-run", mixinStandardHelpOptions = true, description = "Run a processed Pyronaut application")
 public class PyronautRunMain implements Callable<Integer> {
+    protected static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
+    protected static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
-    protected static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
     private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
-    protected static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
     private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
     private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
-
-
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
 
@@ -423,6 +421,7 @@ public class PyronautRunMain implements Callable<Integer> {
         void initializeApplicationDefaults();
     }
 
+    /** Resolved classpath and temporary resources for an external project. */
     public record ResolvedProjectLayout(Path processedClassesRoot, List<URL> classpathUrls) implements AutoCloseable {
         public ResolvedProjectLayout {
             classpathUrls = List.copyOf(classpathUrls);

@@ -58,10 +58,6 @@ public record ExternalProjectLayout(ProjectKind kind,
                                     List<Path> testResourcesClasspath) {
     public static final String FILE_NAME = "project-layout.properties";
 
-    public static Path outputDirectory(Path root) {
-        return root.resolve(detect(root) == ProjectKind.MAVEN ? "target" : "build").resolve("pyronaut");
-    }
-
     public ExternalProjectLayout {
         kind = kind == null ? ProjectKind.PYPROJECT : kind;
         mainJavaSources = copy(mainJavaSources);
@@ -105,6 +101,10 @@ public record ExternalProjectLayout(ProjectKind kind,
                                  List<Path> annotationProcessorClasspath) {
         this(kind, mainJavaSources, testJavaSources, mainResources, testResources,
             buildClasspath, runtimeClasspath, developmentRuntimeClasspath, testClasspath, annotationProcessorClasspath, false, List.of());
+    }
+
+    public static Path outputDirectory(Path root) {
+        return root.resolve(detect(root) == ProjectKind.MAVEN ? "target" : "build").resolve("pyronaut");
     }
 
     private static List<Path> copy(List<Path> paths) {

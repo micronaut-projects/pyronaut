@@ -26,6 +26,7 @@ public final class PyprojectConfigSpec {
     private PyprojectConfigSpec() {
     }
 
+    /** Supported configuration value types. */
     public enum ValueType {
         STRING,
         BOOLEAN,
@@ -35,6 +36,15 @@ public final class PyprojectConfigSpec {
         STRING_ARRAY_MAP
     }
 
+    /**
+     * Metadata for one configuration field.
+     * @param canonicalPath canonical path
+     * @param type value type
+     * @param description description
+     * @param defaultValue default value
+     * @param enumValues allowed values
+     * @param aliasPaths aliases
+     */
     public record FieldSpec(
         String canonicalPath,
         ValueType type,
@@ -59,6 +69,12 @@ public final class PyprojectConfigSpec {
         }
     }
 
+    /**
+     * Metadata for one configuration section.
+     * @param canonicalPath canonical path
+     * @param aliasPaths aliases
+     * @param strict whether unknown values are rejected
+     */
     public record SectionSpec(
         String canonicalPath,
         List<String> aliasPaths,
