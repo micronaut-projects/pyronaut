@@ -39,8 +39,16 @@ def pyenvExecutable = providers.provider {
     def configured = pyenvRoot == null || pyenvRoot.isBlank()
         ? new File(System.getProperty("user.home"), ".pyenv/bin/pyenv")
         : new File(pyenvRoot, "bin/pyenv")
-    configured.isFile() && configured.canExecute() ? configured.absolutePath : "pyenv"
+    if (configured.isFile() && configured.canExecute()) {
+        return configured.absolutePath
+    }
+    def pathEntry = (System.getenv("PATH") ?: "").split(Pattern.quote(File.pathSeparator))
+        .collect { new File(it, "pyenv") }
+        .find { it.isFile() && it.canExecute() }
+    pathEntry?.absolutePath ?: ""
 }
+def usesPyenv = pyenvExecutable.map { !it.isEmpty() }
+def pythonCommand = pyenvExecutable.map { it ? [it, "exec", "python"] : ["python3"] }
 def versionFromCatalog = { String key ->
     def catalogFile = rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile
     def matcher = catalogFile.getText("UTF-8") =~ /(?m)^${Pattern.quote(key)}\s*=\s*"([^"]+)"/
@@ -464,10 +472,11 @@ tasks.register("buildSdkWheel", Exec) {
     inputs.property("native", nativeSdkWheel)
     outputs.dir(wheelDistDir)
     doFirst {
-        // Build with the same pyenv interpreter used by installSdkWheel.
-        // Using the ambient `python3` can produce (for example) a CPython
-        // 3.14 wheel which GraalPy cannot install.
-        environment("PYENV_VERSION", pyenvVersion.get())
+        // Prefer the configured pyenv interpreter, but allow environments
+        // without pyenv to build with the system Python.
+        if (usesPyenv.get()) {
+            environment("PYENV_VERSION", pyenvVersion.get())
+        }
         delete(wheelDistDir)
         delete(wheelStagingDir.get().dir("build"))
         delete(fileTree(wheelStagingDir).matching {
@@ -475,9 +484,7 @@ tasks.register("buildSdkWheel", Exec) {
         })
     }
     commandLine(
-        pyenvExecutable.get(),
-        "exec",
-        "python",
+        *pythonCommand.get(),
         "-m",
         "pip",
         "wheel",
@@ -504,16 +511,16 @@ tasks.register("installSdkWheel", Exec) {
             throw new GradleException("Expected exactly one Pyronaut SDK wheel in ${wheelDistDir.get().asFile.absolutePath}, found ${wheels.size()}")
         }
         commandLine(
-            pyenvExecutable.get(),
-            "exec",
-            "python",
+            *(pythonCommand.get()),
             "-m",
             "pip",
             "install",
             "--force-reinstall",
             wheels.first().absolutePath
         )
-        environment("PYENV_VERSION", pyenvVersion.get())
+        if (usesPyenv.get()) {
+            environment("PYENV_VERSION", pyenvVersion.get())
+        }
     }
 }
 
