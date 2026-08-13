@@ -112,9 +112,9 @@ You can let Pyronaut discover a compatible installed JDK, or pin a toolchain:
 ----
 [tool.pyronaut.toolchain]
 type = "jvm" # jvm|native
-distribution = "ce"
+distribution = "ee"
 java-version = 25
-version = "25.0.2"
+version = "25i2"
 ----
 
 Development builds can use `distribution = "dev"` with a `release-tag` or explicit `download-url`.

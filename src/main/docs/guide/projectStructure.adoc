@@ -1,4 +1,49 @@
-= Pyronaut Project Layout
+== Pyronaut Toolchain
+
+Pyronaut requires an installed GraalVM toolchain. GraalVM can be installed in a variety of ways, refer to the https://www.graalvm.org/downloads/[GraalVM download page] for more information.
+
+If you don't want to install GraalVM manually then Pyronaut will provision an installation using the configured toolchain settings and install it to `USER_HOME/.pyronaut/sdks`.
+
+[source,toml]
+----
+[tool.pyronaut.toolchain]
+type = "jvm" # jvm|native
+distribution = "ee"
+java-version = 25
+version = "25i2"
+----
+
+It is important to note there are two possible toolchains (`native` and `jvm`) that have different trade offs.
+
+The `jvm` toolchain requires a GraalVM a Java runtime and provides better peak performance at the cost of startup time and memory consumption.
+
+The `native` toolchain provides better startup time, better memory consumption and is often preferred for development time when fast restarts and test execution are ideal. You can choose to use the native toolchain locally and still deploy a JVM application or vica versa.
+
+The following table summarizes the trade-offs.
+
+|===
+|Characteristic |JVM |Native
+
+|Startup Time
+|Slower
+|Faster
+
+|Memory Consumption
+|Greater
+|Lower
+
+|Compatibility
+|Broad Java Library Compatibility
+|Some Libraries Require Metadata
+
+|Peak Performance
+|Superior
+|Requires PGO Optimization
+|===
+
+NOTE: Direct code execution (`pyronaut run App.py`) always selects the `native` toolchain by default.
+
+== Pyronaut Project Layout
 
 Pyronaut reads project layout from `[tool.pyronaut.sources]` in `pyproject.toml`.
 All configured paths are relative to the project root.

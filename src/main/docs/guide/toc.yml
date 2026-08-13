@@ -6,7 +6,7 @@ gettingStarted:
   title: Getting Started
   fastApiTutorial: The FastAPI Tutorial
 projectStructure:
-  title: Pyronaut Project Layout
+  title: Pyronaut Toolchain & Project Layout
 configuration:
   title: Configuration & Build Setup
   mavenGradle: Using Maven and Gradle Projects

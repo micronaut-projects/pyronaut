@@ -303,7 +303,7 @@ public final class PyprojectConfigSpec {
     public static final FieldSpec PYRONAUT_TOOLCHAIN_DISTRIBUTION = enumString(
         "tool.pyronaut.toolchain.distribution",
         "Desired GraalVM distribution/channel.",
-        "ce",
+        "ee",
         List.of("ce", "ee", "dev")
     );
     public static final FieldSpec PYRONAUT_TOOLCHAIN_TYPE = enumString(
@@ -319,7 +319,7 @@ public final class PyprojectConfigSpec {
     public static final FieldSpec PYRONAUT_TOOLCHAIN_JAVA_VERSION = integer(
         "tool.pyronaut.toolchain.java-version",
         "Minimum required Java major version for the GraalVM toolchain.",
-        Integer.valueOf(25),
+            25,
         List.of(),
         List.of("tool.pyronaut.toolchain.javaVersion")
     );

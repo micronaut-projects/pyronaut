@@ -57,7 +57,7 @@ class PyprojectModelReaderTest {
         assertEquals("tests-config", model.pyronaut().sources().testResources());
         assertEquals(List.of(), model.pyronaut().sources().additionalResources());
         assertEquals(List.of(), model.pyronaut().sources().additionalTestResources());
-        assertEquals("ce", model.pyronaut().toolchain().distribution());
+        assertEquals("ee", model.pyronaut().toolchain().distribution());
         assertEquals("jvm", model.pyronaut().toolchain().type());
         assertEquals(Integer.valueOf(25), model.pyronaut().toolchain().javaVersion());
         assertNotNull(model.pyronaut().ideStubs());
