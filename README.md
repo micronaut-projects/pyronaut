@@ -40,6 +40,178 @@ that make Python applications work with Micronaut:
 
 The full user guide lives in `src/main/docs/guide`.
 
+## Getting started from a source checkout
+
+These instructions build the Pyronaut CLI from this repository. The tested
+local setup uses GraalVM Community Edition `25.1.3+9.1` and GraalPy `3.12.8`
+from Oracle GraalVM Native 25.1.3. GraalVM Enterprise Edition should also
+work, but the Community Edition setup is the one currently replicated by the
+project maintainers.
+
+### 1. Install the prerequisites
+
+Install GraalVM CE `25.1.3+9.1` from the
+[GraalVM 25.1.3 releases](https://github.com/graalvm/graalvm-ce-builds/releases#release-graal-25.1.3).
+On macOS, use the `aarch64` bundle, extract it, and set `JAVA_HOME` to the
+JDK's `Contents/Home` directory. On Linux, choose the bundle matching your
+machine's architecture:
+
+```bash
+export JAVA_HOME="/path/to/graalvm-community-25.1.3/Contents/Home"
+java -version
+```
+
+The output should identify GraalVM CE `25.1.3+9.1`. Set `JAVA_HOME` in the
+same shell where you run Gradle.
+
+Install `pyenv` if it is not already available:
+
+```bash
+brew install pyenv
+
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.zshrc
+echo '[[ -d "$PYENV_ROOT/bin" ]] && export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.zshrc
+echo 'eval "$(pyenv init - zsh)"' >> ~/.zshrc
+
+source ~/.zshrc
+```
+
+Install GraalPy `3.12.8` (`graalpy3.12-25.1.3`) with `pyenv`:
+
+```bash
+pyenv install --list | grep graalpy
+pyenv install graalpy3.12-25.1.3
+pyenv shell graalpy3.12-25.1.3
+
+python --version
+```
+
+If `pyenv install` reports that the version is already installed, select it
+with `pyenv shell graalpy3.12-25.1.3` instead. If you do not have `pyenv`, ask
+your coding assistant to install and configure it for your shell.
+
+### 2. Build the Pyronaut CLI
+
+Clone the repository and select the GraalPy environment used by the Gradle
+wheel task:
+
+```bash
+git clone https://github.com/micronaut-projects/pyronaut.git
+cd pyronaut
+export PYENV_VERSION=graalpy3.12-25.1.3
+```
+
+Build the SDK wheel:
+
+```bash
+./gradlew :micronaut-pyronaut:buildSdkWheel \
+  --stacktrace \
+  --refresh-dependencies
+```
+
+The `--refresh-dependencies` option is intentional. It helps avoid
+compilation errors caused by a version mismatch between a Micronaut Core
+snapshot downloaded from the Maven snapshots repository and the checked-out
+Pyronaut sources.
+
+The wheel is written to:
+
+```text
+pyronaut/pyronaut/build/wheel/dist/
+```
+
+### 3. Install the CLI
+
+Choose one of the following options.
+
+#### Option 1: Install into the active pyenv environment
+
+This uses the `PYENV_VERSION` selected above and installs the wheel into that
+environment:
+
+```bash
+./gradlew :micronaut-pyronaut:installSdkWheel
+pyronaut --help
+pyronaut --version
+```
+
+The help command should print the CLI usage. The version command currently
+prints:
+
+```text
+Pyronaut: 0.0.1-SNAPSHOT
+Micronaut Core: 5.2.0-SNAPSHOT
+Micronaut Platform: 5.1.0
+GraalPy: 25.1.3
+Native Image JDK: 25
+```
+
+The Pyronaut, Micronaut Core, and platform versions may change as the
+repository evolves.
+
+#### Option 2: Install into a project-local virtual environment
+
+Use this option when you want the CLI isolated to a demo application. Run the
+commands from the demo application's directory, outside the Pyronaut checkout:
+
+```bash
+python3 -m venv .venv-pyronaut-sdk
+source .venv-pyronaut-sdk/bin/activate
+python -m pip install --upgrade pip
+python -m pip install /absolute/path/to/pyronaut/pyronaut/build/wheel/dist/pyronaut-0.0.1.dev0-py3-none-any.whl
+pyronaut --help
+pyronaut --version
+```
+
+Replace `/absolute/path/to/pyronaut` with the full path to the checkout where
+you built the wheel. For example, if the checkout is under `~/Code/pyronaut`,
+use `/Users/your-user/Code/pyronaut` as the corresponding absolute path.
+
+If you rebuild the wheel, reinstall the new wheel into the virtual environment:
+
+```bash
+python -m pip install --force-reinstall /absolute/path/to/pyronaut/pyronaut/build/wheel/dist/pyronaut-0.0.1.dev0-py3-none-any.whl
+```
+
+### Test prerequisite: pytest in GraalPy
+
+`pyronaut test` requires `pytest` to be installed in the GraalPy environment
+used by Pyronaut. Pyronaut does not install Python packages automatically, and
+a CPython virtual environment cannot provide packages to the embedded GraalPy
+runtime.
+
+If the CLI is installed into the active pyenv environment (Option 1), install
+pytest into that active environment. If the CLI is project-local (Option 2),
+use the project-local environment described below. For a separate project
+environment, create and activate a GraalPy virtual environment from the
+hello-world directory:
+
+For Option 1:
+
+```bash
+python -m pip install --upgrade pip pytest
+python -m pytest --version
+```
+
+For a separate project environment:
+
+```bash
+graalpy -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip pytest
+python -m pytest --version
+```
+
+If you are using Option 2 and installed the CLI into `.venv-pyronaut-sdk`,
+activate that environment and install `pytest` into it instead of creating a
+second environment:
+
+```bash
+source .venv-pyronaut-sdk/bin/activate
+python -m pip install --upgrade pip pytest
+python -m pytest --version
+```
+
 ## CLI at a glance
 
 ```bash
@@ -80,7 +252,10 @@ requires = ["setuptools", "wheel", "tomli"]
 build-backend = "setuptools.build_meta"
 
 [tool.pyronaut]
-repositories = ["mavenCentral"]
+repositories = [
+  "https://s01.oss.sonatype.org/content/repositories/snapshots/",
+  "mavenCentral"
+]
 
 [tool.pyronaut.dependencies]
 runtime = [
@@ -111,7 +286,30 @@ additional-resources = ["views", "assets"]
 additional-test-resources = ["test-fixtures"]
 ```
 
-## Minimal application
+## Hello-world application
+
+Create the hello-world application in its own directory outside the Pyronaut
+checkout. Run the following commands from the parent directory of the
+checkout:
+
+### 1. Create the application directory
+
+```bash
+mkdir -p hello-world
+cd hello-world
+```
+
+All application, installation, run, and test commands in this section are run
+from the `hello-world` directory.
+
+### 2. Create `pyproject.toml`
+
+Create `pyproject.toml` in the `hello-world` directory using the minimal
+example shown in [Typical project layout](#typical-project-layout) above.
+The snapshots repository is required because this source checkout uses
+Micronaut Core `5.2.0-SNAPSHOT`, which is not published to Maven Central.
+
+### 3. Add a controller
 
 Create `src/controllers.py`:
 
@@ -124,6 +322,8 @@ def index() -> str:
     return "Hello from Pyronaut"
 ```
 
+### 4. Add application configuration
+
 Create `config/application.toml`:
 
 ```toml
@@ -134,13 +334,46 @@ name = "hello-pyronaut"
 port = 8080
 ```
 
+### 5. Run the application
+
 Run the application in development mode:
 
 ```bash
 pyronaut install
+```
+
+After `pyronaut install` succeeds, process the sources and start development
+mode:
+
+```bash
 pyronaut process
 pyronaut dev
 ```
+
+Wait for `pyronaut install` to resolve every scope before running
+`pyronaut process`. A successful install resolves build, runtime,
+development-runtime, test, and test-resources-server dependencies, then
+generates the application schema and Python editor stubs. Dependency counts
+vary, but the output has this shape:
+
+```text
+Resolved build dependencies (... artifacts)
+Resolved runtime dependencies (... artifacts)
+Resolved development-runtime dependencies (... artifacts)
+Resolved test dependencies (... artifacts)
+Resolved test-resources-server dependencies (... artifacts)
+Generated application schema from runtime classpath (... fragments)
+Generated Python editor stubs (... packages, ... symbols)
+```
+
+The `SLF4J(W)` messages about no providers are warnings from the install
+process and do not indicate a failed dependency resolution.
+
+If any scope reports `Dependency resolution failed`, treat `pyronaut install`
+as unsuccessful and do not continue to `pyronaut process`. Processing then
+fails with `Missing build scope cache` because installation did not write the
+required `__pyronaut__/resolved-build-dependencies` manifest. Fix the
+dependency or repository configuration and rerun `pyronaut install`.
 
 `pyronaut dev` performs install/process preflight automatically, so after the
 first successful install this is normally enough:
@@ -150,9 +383,13 @@ pyronaut dev
 curl http://localhost:8080/
 ```
 
-## Testing example
+### 6. Add and run a test
 
 Create `tests/test_controller.py`:
+
+This test uses the Pyronaut Requests integration. Its
+`io.micronaut.pyronaut:micronaut-pyronaut-requests` dependency is included in
+the `test` dependencies in the `pyproject.toml` example above.
 
 ```python
 import pytest
@@ -187,6 +424,18 @@ pyronaut test
 ```
 
 Reports are written under `__pyronaut__/reports/tests`.
+
+### Troubleshooting
+
+If `pyronaut install` reports `Dependency resolution failed`, do not continue
+to `pyronaut process`. Fix the dependency or repository configuration and run
+`pyronaut install` again until every scope resolves successfully. Otherwise,
+`pyronaut process` will report `Missing build scope cache` because installation
+did not create the required build dependency manifest.
+
+If `pyronaut test` reports that pytest is not installed, activate the GraalPy
+environment where pytest was installed and verify it with
+`python -m pytest --version` before rerunning the test.
 
 ## Common CLI workflows
 
@@ -243,7 +492,7 @@ Build deployable artifacts:
 
 ```bash
 pyronaut build --jvm
-pyronaut build --native --main-class example.Application
+pyronaut build --native
 pyronaut build --docker
 pyronaut build --native --docker
 pyronaut build --native --docker --static
@@ -272,16 +521,13 @@ PYRONAUT_TEST_RESOURCES_DISABLED=true pyronaut test
 
 ## Building the CLI locally
 
+For the complete source-checkout setup, dependency refresh guidance, and SDK
+wheel installation options, follow [Getting started from a source checkout](#getting-started-from-a-source-checkout).
+
 Build and test the repository:
 
 ```bash
 ./gradlew check
-```
-
-Build the Python SDK wheel:
-
-```bash
-./gradlew :micronaut-pyronaut:buildSdkWheel
 ```
 
 Build the native SDK wheel:
@@ -289,25 +535,6 @@ Build the native SDK wheel:
 ```bash
 ./gradlew :micronaut-pyronaut:buildSdkWheel -Pnative=true
 ```
-
-Install the local wheel into the active Python environment:
-
-```bash
-./gradlew :micronaut-pyronaut:installSdkWheel
-pyronaut --help
-pyronaut --version
-```
-
-Or install the built wheel into a virtual environment:
-
-```bash
-python3 -m venv .venv-pyronaut-sdk
-source .venv-pyronaut-sdk/bin/activate
-python -m pip install --upgrade pip
-python -m pip install pyronaut/build/wheel/dist/pyronaut-*.whl
-```
-
-The wheel artifacts are written to `pyronaut/build/wheel/dist/`.
 
 ## Functional testing
 
