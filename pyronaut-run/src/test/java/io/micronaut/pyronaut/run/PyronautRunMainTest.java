@@ -5,8 +5,6 @@ import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -110,7 +108,7 @@ class PyronautRunMainTest {
             List.of(), List.of(), List.of(), List.of(), List.of()
         );
         layout.write(project);
-        List<String> urls = PyronautRunMain.resolveExternalProjectLayout(project, Path.of("__pyronaut__/classes"), layout)
+        List<String> urls = new PyronautRunMain().resolveExternalProjectLayout(project, layout)
             .classpathUrls().stream().map(Object::toString).toList();
         assertTrue(urls.stream().anyMatch(url -> url.contains("main/resources")));
         assertTrue(urls.stream().anyMatch(url -> url.contains(classes.getFileName().toString())));
@@ -129,7 +127,7 @@ class PyronautRunMainTest {
             List.of(), List.of(runtime), List.of(development), List.of(), List.of()
         );
         layout.write(project);
-        List<String> urls = PyronautRunMain.resolveExternalProjectLayout(project, Path.of("build/pyronaut/classes"), layout)
+        List<String> urls = new PyronautRunMain().resolveExternalProjectLayout(project, layout)
             .classpathUrls().stream().map(Object::toString).toList();
         assertTrue(urls.stream().anyMatch(url -> url.contains("runtime.jar")));
         assertTrue(urls.stream().noneMatch(url -> url.contains("development-control-panel.jar")));
@@ -215,31 +213,6 @@ class PyronautRunMainTest {
     }
 
     @Test
-    void appliesTestResourcesPropertiesFromEnvironment() {
-        String previousUri = System.getProperty("micronaut.test.resources.server.uri");
-        String previousToken = System.getProperty("micronaut.test.resources.server.access.token");
-        String previousTimeout = System.getProperty("micronaut.test.resources.server.client.read.timeout");
-        System.clearProperty("micronaut.test.resources.server.uri");
-        System.clearProperty("micronaut.test.resources.server.access.token");
-        System.clearProperty("micronaut.test.resources.server.client.read.timeout");
-        try {
-            PyronautRunMain.applyTestResourcesProperties(Map.of(
-                "MICRONAUT_TEST_RESOURCES_SERVER_URI", "http://localhost:18080",
-                "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "token-123",
-                "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", "60"
-            ));
-
-            assertEquals("http://localhost:18080", System.getProperty("micronaut.test.resources.server.uri"));
-            assertEquals("token-123", System.getProperty("micronaut.test.resources.server.access.token"));
-            assertEquals("60", System.getProperty("micronaut.test.resources.server.client.read.timeout"));
-        } finally {
-            restoreProperty("micronaut.test.resources.server.uri", previousUri);
-            restoreProperty("micronaut.test.resources.server.access.token", previousToken);
-            restoreProperty("micronaut.test.resources.server.client.read.timeout", previousTimeout);
-        }
-    }
-
-    @Test
     void resolveProjectLayoutUsesResolvedRuntimeDependencies() throws Exception {
         Path project = tempDir.resolve("project-layout");
         Path pyronautDir = project.resolve("__pyronaut__");
@@ -252,12 +225,35 @@ class PyronautRunMainTest {
         Files.createDirectories(pyronautDir);
         Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
 
-        PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
+        PyronautRunMain.ResolvedProjectLayout layout = new PyronautRunMain().resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
         List<String> urls = layout.classpathUrls().stream().map(URL::toString).toList();
         assertEquals(classesDir.toAbsolutePath().normalize(), layout.processedClassesRoot());
         assertTrue(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
         assertTrue(urls.stream().anyMatch(url -> url.contains("__pyronaut__/classes/")));
         assertTrue(urls.stream().anyMatch(url -> url.contains("config/")) || urls.stream().anyMatch(url -> url.endsWith("/config")));
+    }
+
+    @Test
+    void resolveProjectLayoutNeverUsesDevelopmentDependenciesForRun() throws Exception {
+        Path project = tempDir.resolve("project-production-layout");
+        Path pyronautDir = project.resolve("__pyronaut__");
+        Files.createDirectories(pyronautDir.resolve("classes"));
+        Files.createDirectories(project.resolve("config"));
+        Path runtimeJar = Files.createFile(tempDir.resolve("production-runtime.jar"));
+        Path developmentJar = Files.createFile(tempDir.resolve("production-development-control-panel.jar"));
+        Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
+        Files.writeString(pyronautDir.resolve("resolved-development-runtime-dependencies"), developmentJar + "\n", StandardCharsets.UTF_8);
+
+        String previous = System.getProperty("micronaut.environments");
+        try {
+            System.clearProperty("micronaut.environments");
+            List<String> urls = new PyronautRunMain().resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"))
+                .classpathUrls().stream().map(URL::toString).toList();
+            assertTrue(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
+            assertFalse(urls.stream().anyMatch(url -> url.contains(developmentJar.getFileName().toString())));
+        } finally {
+            restoreProperty("micronaut.environments", previous);
+        }
     }
 
     @Test
@@ -275,30 +271,6 @@ class PyronautRunMainTest {
             restoreProperty("org.graalvm.nativeimage.imagecode", previousNativeImageCode);
             restoreProperty("java.class.path", previousClasspath);
         }
-    }
-
-    @Test
-    void resolveProjectLayoutPrefersDevelopmentRuntimeDependencies() throws Exception {
-        Path project = tempDir.resolve("project-development-layout");
-        Path pyronautDir = project.resolve("__pyronaut__");
-        Path classesDir = pyronautDir.resolve("classes");
-        Path configDir = project.resolve("config");
-        Path runtimeJar = tempDir.resolve("runtime.jar");
-        Path developmentRuntimeJar = tempDir.resolve("runtime-dev.jar");
-        Files.createDirectories(classesDir);
-        Files.createDirectories(configDir);
-        Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
-        Files.writeString(developmentRuntimeJar, "", StandardCharsets.UTF_8);
-        Files.createDirectories(pyronautDir);
-        Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
-        Files.writeString(pyronautDir.resolve("resolved-development-runtime-dependencies"), developmentRuntimeJar + "\n", StandardCharsets.UTF_8);
-
-        PyronautRunMain.ResolvedProjectLayout layout = PyronautRunMain.resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
-        List<String> urls = layout.classpathUrls().stream()
-            .map(URL::toString)
-            .toList();
-        assertTrue(urls.stream().anyMatch(url -> url.contains(developmentRuntimeJar.getFileName().toString())));
-        assertFalse(urls.stream().anyMatch(url -> url.contains(runtimeJar.getFileName().toString())));
     }
 
     @Test

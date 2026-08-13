@@ -59,6 +59,10 @@ configurations.named("runtimeClasspath") {
     exclude(group = "io.micronaut.controlpanel")
 }
 
+configurations.named("nativeImageClasspath") {
+    exclude(group = "io.micronaut.controlpanel")
+}
+
 application {
     mainClass = "io.micronaut.pyronaut.run.PyronautRunMain"
     applicationDefaultJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow", "--enable-native-access=ALL-UNNAMED")

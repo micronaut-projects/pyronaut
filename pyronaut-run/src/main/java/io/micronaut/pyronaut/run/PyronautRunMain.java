@@ -29,13 +29,9 @@ import picocli.CommandLine;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.ServiceLoader;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
@@ -46,31 +42,19 @@ import java.util.stream.Stream;
  */
 @SuppressWarnings("checkstyle:InnerTypeLast")
 @CommandLine.Command(name = "pyronaut-run", mixinStandardHelpOptions = true, description = "Run a processed Pyronaut application")
-public final class PyronautRunMain implements Callable<Integer> {
+public class PyronautRunMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_CLASSES_DIR = "__pyronaut__/classes";
     private static final String DEFAULT_CONFIG_DIR = "config";
-    private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
-    private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
+    protected static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
     private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
-    private static final String EXTERNAL_DEVELOPMENT_MODE = "pyronaut.external.development";
-    private static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
+    protected static final String MICRONAUT_ENVIRONMENTS = "micronaut.environments";
     private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
     private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
-    private static final String OPENAPI_SWAGGER_PATHS = "micronaut.router.static-resources.swagger.paths";
-    private static final String OPENAPI_SWAGGER_MAPPING = "micronaut.router.static-resources.swagger.mapping";
-    private static final String OPENAPI_SWAGGER_UI_PATHS = "micronaut.router.static-resources.swagger-ui.paths";
-    private static final String OPENAPI_SWAGGER_UI_MAPPING = "micronaut.router.static-resources.swagger-ui.mapping";
-    private static final String OPENAPI_REDOC_PATHS = "micronaut.router.static-resources.redoc.paths";
-    private static final String OPENAPI_REDOC_MAPPING = "micronaut.router.static-resources.redoc.mapping";
-    private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
-        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
-        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
-        new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT", "micronaut.test.resources.server.client.read.timeout")
-    );
+
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -161,10 +145,10 @@ public final class PyronautRunMain implements Callable<Integer> {
         ResolvedProjectLayout layout;
         PyprojectModel model;
         try {
-            applyTestResourcesProperties(System.getenv());
+            configureEnv(System.getenv());
             if (ExternalProjectLayout.isExternal(root)) {
                 ExternalProjectLayout external = ExternalProjectLayout.read(root);
-                layout = resolveExternalProjectLayout(root, classesDir, external);
+                layout = resolveExternalProjectLayout(root, external);
                 Path projectToml = root.resolve("project.toml");
                 model = Files.isRegularFile(projectToml) ? modelReader.readProjectToml(projectToml) : null;
             } else {
@@ -180,7 +164,7 @@ public final class PyronautRunMain implements Callable<Integer> {
                     layout = resolveProjectLayout(root, classesDir, root.resolve(configDir).normalize(), List.of());
                 }
             }
-            applyDevelopmentOpenApiExposure(root, configDir);
+            resolveDefaultConfiguration(root, configDir);
             applyConfigurationValidationDefaults();
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
@@ -232,38 +216,11 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    private static void applyDevelopmentOpenApiExposure(Path projectDir, Path configuredConfigDir) {
-        String environments = System.getProperty(MICRONAUT_ENVIRONMENTS, "");
-        boolean development = java.util.Arrays.stream(environments.split(","))
-            .map(String::trim)
-            .anyMatch("dev"::equalsIgnoreCase);
-        if (!development || hasExplicitOpenApiExposure(projectDir, configuredConfigDir)) {
-            return;
-        }
-        setDefaultProperty(OPENAPI_SWAGGER_PATHS, "classpath:META-INF/swagger");
-        setDefaultProperty(OPENAPI_SWAGGER_MAPPING, "/swagger/**");
-        setDefaultProperty(OPENAPI_SWAGGER_UI_PATHS, "classpath:META-INF/swagger/views/swagger-ui");
-        setDefaultProperty(OPENAPI_SWAGGER_UI_MAPPING, "/swagger-ui/**");
-        setDefaultProperty(OPENAPI_REDOC_PATHS, "classpath:META-INF/swagger/views/redoc");
-        setDefaultProperty(OPENAPI_REDOC_MAPPING, "/redoc/**");
+    protected void configureEnv(Map<String, String> env) {
+
     }
 
-    private static boolean hasExplicitOpenApiExposure(Path projectDir, Path configuredConfigDir) {
-        Path configDir = configuredConfigDir.isAbsolute() ? configuredConfigDir : projectDir.resolve(configuredConfigDir);
-        for (String name : List.of("application.toml", "application.yml", "application.yaml", "application.properties")) {
-            Path config = configDir.resolve(name);
-            try {
-                if (Files.isRegularFile(config)) {
-                    String content = Files.readString(config, StandardCharsets.UTF_8);
-                    if (content.contains("static-resources") && content.contains("swagger")) {
-                        return true;
-                    }
-                }
-            } catch (IOException ignored) {
-                // Defaults remain best effort when configuration cannot be read.
-            }
-        }
-        return false;
+    protected void resolveDefaultConfiguration(Path root, Path configDir) {
     }
 
     static void enableContextClassLoaderIntrospections() {
@@ -272,7 +229,7 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    private static void setDefaultProperty(String name, String value) {
+    protected static void setDefaultProperty(String name, String value) {
         if (System.getProperty(name) == null) {
             System.setProperty(name, value);
         }
@@ -302,7 +259,7 @@ public final class PyronautRunMain implements Callable<Integer> {
     }
 
     private static boolean startMicronautApplication(Path resolvedClassesDir,
-                                                     ApplicationArgs applicationArgs) throws Exception {
+                                                     ApplicationArgs applicationArgs) {
         Micronaut micronaut = Micronaut.build(applicationArgs.appArgs.toArray(String[]::new));
         micronaut.banner(!Boolean.FALSE.equals(applicationArgs.bannerEnabled));
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
@@ -334,32 +291,22 @@ public final class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir) throws IOException {
+    protected ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir) throws IOException {
         return resolveProjectLayout(root, classesDir, configDir, List.of());
     }
 
-    static ResolvedProjectLayout resolveExternalProjectLayout(Path root, Path classesDir, ExternalProjectLayout external) throws IOException {
+    protected ResolvedProjectLayout resolveExternalProjectLayout(Path root, ExternalProjectLayout external) throws IOException {
         Path resolvedClassesDir = ExternalProjectLayout.outputDirectory(root).resolve("classes").normalize();
         if (!Files.isDirectory(resolvedClassesDir)) {
             throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
         }
         LinkedHashSet<URL> urls = new LinkedHashSet<>();
         // `run` is a production-style launch. Development-only dependencies
-        // (notably the optional control panel) must never be selected merely
-        // because the external layout contains a development classpath.
+        // must never be selected merely because the external layout contains
+        // a development classpath.
         for (Path entry : external.runtimeClasspath()) {
             if (Files.exists(entry)) {
                 urls.add(entry.toUri().toURL());
-            }
-        }
-        if (Boolean.getBoolean(EXTERNAL_DEVELOPMENT_MODE)) {
-            for (Path entry : external.testClasspath()) {
-                String fileName = entry.getFileName().toString();
-                if (fileName.startsWith("micronaut-test-resources-client-")
-                    || fileName.startsWith("micronaut-test-resources-core-")
-                    || fileName.startsWith("micronaut-test-resources-codec-")) {
-                    urls.add(entry.toUri().toURL());
-                }
             }
         }
         urls.add(resolvedClassesDir.toUri().toURL());
@@ -368,16 +315,10 @@ public final class PyronautRunMain implements Callable<Integer> {
                 urls.add(resource.toUri().toURL());
             }
         }
-        if (Boolean.getBoolean(EXTERNAL_DEVELOPMENT_MODE)) {
-            URL location = PyronautRunMain.class.getProtectionDomain().getCodeSource().getLocation();
-            if (location != null) {
-                urls.add(location);
-            }
-        }
         return new ResolvedProjectLayout(resolvedClassesDir, List.copyOf(urls));
     }
 
-    static ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir, List<Path> additionalResourceDirs) throws IOException {
+    protected ResolvedProjectLayout resolveProjectLayout(Path root, Path classesDir, Path configDir, List<Path> additionalResourceDirs) throws IOException {
         Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
         Path resolvedClassesDir = root.resolve(classesDir).normalize();
         if (!Files.isDirectory(resolvedClassesDir)) {
@@ -428,7 +369,7 @@ public final class PyronautRunMain implements Callable<Integer> {
         return contextClassLoader != null ? contextClassLoader : PyronautRunMain.class.getClassLoader();
     }
 
-    private static void addManifestEntries(LinkedHashSet<URL> urls, Path manifest) throws IOException {
+    protected void addManifestEntries(LinkedHashSet<URL> urls, Path manifest) throws IOException {
         if (!Files.exists(manifest)) {
             return;
         }
@@ -437,15 +378,18 @@ public final class PyronautRunMain implements Callable<Integer> {
             if (trimmed.isEmpty()) {
                 continue;
             }
+            if (includeClasspathEntry(trimmed)) {
+                continue;
+            }
             urls.add(Path.of(trimmed).toAbsolutePath().normalize().toUri().toURL());
         }
     }
 
-    private static Path resolveRunManifest(Path pyronautDir) {
-        Path developmentManifest = pyronautDir.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST);
-        if (Files.exists(developmentManifest)) {
-            return developmentManifest;
-        }
+    protected boolean includeClasspathEntry(String name) {
+        return false;
+    }
+
+    protected Path resolveRunManifest(Path pyronautDir) {
         return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
     }
 
@@ -459,24 +403,6 @@ public final class PyronautRunMain implements Callable<Integer> {
         for (Path resourceDir : resourceDirs) {
             addPathIfDirectory(urls, resourceDir);
         }
-    }
-
-    static void applyTestResourcesProperties(java.util.Map<String, String> environment) {
-        for (TestResourcesProperty property : TEST_RESOURCES_PROPERTIES) {
-            if (System.getProperty(property.systemProperty()) != null) {
-                continue;
-            }
-            String value = environment.get(property.environmentVariable());
-            if (value == null || value.isBlank()) {
-                continue;
-            }
-            System.setProperty(property.systemProperty(), value);
-        }
-    }
-
-    @FunctionalInterface
-    interface ClassResolver {
-        Class<?> load(String className, ClassLoader classLoader) throws Exception;
     }
 
     @FunctionalInterface
@@ -497,8 +423,8 @@ public final class PyronautRunMain implements Callable<Integer> {
         void initializeApplicationDefaults();
     }
 
-    record ResolvedProjectLayout(Path processedClassesRoot, List<URL> classpathUrls) implements AutoCloseable {
-        ResolvedProjectLayout {
+    public record ResolvedProjectLayout(Path processedClassesRoot, List<URL> classpathUrls) implements AutoCloseable {
+        public ResolvedProjectLayout {
             classpathUrls = List.copyOf(classpathUrls);
         }
 
@@ -510,9 +436,6 @@ public final class PyronautRunMain implements Callable<Integer> {
         public void close() throws IOException {
         }
 
-    }
-
-    private record TestResourcesProperty(String environmentVariable, String systemProperty) {
     }
 
     private static void blockUntilInterrupted() {

@@ -1252,7 +1252,7 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
     else:
         entries = _read_test_delegate_dependency_entries(cache_dir)
 
-    if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+    if command == "run" and not _control_panel_dependency_declared(project_dir):
         entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
     application_entries = entries
     delegate_entries: list[str] = []
@@ -1266,7 +1266,7 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             raise RuntimeError(f"Missing delegated executable: {delegate_executable_name}")
         delegate_entries.extend(_delegate_lib_entries(
             delegate_executable,
-            include_control_panel=command != "run",
+            include_control_panel=_control_panel_dependency_declared(project_dir) if command == "run" else True,
         ))
     # The external build owns the application runtime.  Put it first so its
     # Micronaut/Test Resources services are resolved against the same versions
@@ -1340,7 +1340,8 @@ def _build_native_application_classpath(command: str, project_dir: Path, launche
     entries = _build_native_application_classpath_entries(command, project_dir)
     if launcher_executable and "pyronaut-run-python" in Path(launcher_executable).name:
         entries = _replace_embedded_python_vfs_classes(entries, project_dir, launcher_executable)
-    if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+    if ((command == "dev" and not _control_panel_enabled_for_project(project_dir))
+            or (command == "run" and not _control_panel_dependency_declared(project_dir))):
         entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
     filtered = _dedupe_classpath_entries(
             _filter_native_launcher_provided_entries(
@@ -1349,7 +1350,8 @@ def _build_native_application_classpath(command: str, project_dir: Path, launche
                 command,
             )
         )
-    if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+    if ((command == "dev" and not _control_panel_enabled_for_project(project_dir))
+            or (command == "run" and not _control_panel_dependency_declared(project_dir))):
         filtered = [entry for entry in filtered if not _is_control_panel_artifact(Path(entry).name)]
     return os.pathsep.join(filtered)
 
@@ -1438,7 +1440,8 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
             ]
         key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
         entries.extend(external.get(key, []))
-        if command == "dev" and not _control_panel_enabled_for_project(project_dir):
+        if ((command == "dev" and not _control_panel_enabled_for_project(project_dir))
+                or (command == "run" and not _control_panel_dependency_declared(project_dir))):
             entries = [entry for entry in entries if not _is_control_panel_artifact(Path(entry).name)]
         classes_dir = cache_dir / "classes"
         test_classes_dir = cache_dir / "test-classes"
@@ -4496,7 +4499,9 @@ def _build_dev_delegate_invocation(
 ) -> tuple[list[str], dict[str, str]]:
     project_dir = Path(_extract_project_dir(args)).resolve()
     delegate_args, dev_jvm_args = _split_dev_delegate_options(args)
-    if not _control_panel_requested(project_dir, args):
+    if _control_panel_requested(project_dir, args) or _control_panel_dependency_declared(project_dir):
+        dev_jvm_args.append("-Dmicronaut.control-panel.enabled=true")
+    else:
         dev_jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     # Convenience options are consumed by the Python orchestrator and must not
     # leak into the native pyronaut-dev command line.
@@ -4579,7 +4584,7 @@ def _build_dev_delegate_invocation(
     command_line.insert(command_line.index("-cp"), "-Dmicronaut.control-panel.enabled=false")
     if not _has_micronaut_environments_property(args):
         command_line.insert(command_line.index("-cp"), "-Dmicronaut.environments=dev")
-    if _is_external_build_project(project_dir) and _control_panel_requested(project_dir, args):
+    if _control_panel_requested(project_dir, args) or _control_panel_dependency_declared(project_dir):
         for property_name, value in reversed((
             ("micronaut.control-panel.enabled", "true"),
             ("micronaut.control-panel.path", "/control-panel"),
@@ -4642,7 +4647,24 @@ def _control_panel_requested(project_dir: Path, args: Sequence[str]) -> bool:
 def _control_panel_enabled_for_project(project_dir: Path) -> bool:
     if os.environ.get("PYRONAUT_CONTROL_PANEL_ENABLED", "").lower() == "true":
         return True
-    return _control_panel_requested(project_dir, ())
+    if _control_panel_requested(project_dir, ()):
+        return True
+    return _control_panel_dependency_declared(project_dir)
+
+
+def _control_panel_dependency_declared(project_dir: Path) -> bool:
+    table = _read_pyproject_pyronaut_table(project_dir)
+    if not isinstance(table, dict):
+        return False
+    dependencies = table.get("dependencies")
+    if not isinstance(dependencies, dict):
+        return False
+    return any(
+        isinstance(dependency, str) and "control-panel" in dependency.lower().replace("_", "-")
+        for values in dependencies.values()
+        if isinstance(values, list)
+        for dependency in values
+    )
 
 
 def _stop_managed_process(process: ManagedProcess) -> bool:
@@ -5826,9 +5848,14 @@ def _pyronaut_run_native_command_line(
             f"Build or install {executable_name}, or set tool.pyronaut.toolchain.type = 'jvm'."
         )
     classpath = _build_native_application_classpath(command, project_dir, executable_path)
+    control_panel_property = (
+        "-Dmicronaut.control-panel.enabled=true"
+        if _control_panel_dependency_declared(project_dir)
+        else "-Dmicronaut.control-panel.enabled=false"
+    )
     return [
         executable_path,
-        "-Dmicronaut.control-panel.enabled=false",
+        control_panel_property,
         f"-Djava.class.path={classpath}",
         *[value for value in args if value not in {"--jvm", "--native"}],
     ]

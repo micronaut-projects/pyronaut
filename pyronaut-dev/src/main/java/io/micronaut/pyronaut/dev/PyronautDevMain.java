@@ -35,7 +35,6 @@ import io.micronaut.pyronaut.directsource.DirectSourceDeclarationsVisitor;
 import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
-import io.micronaut.pyronaut.run.PyronautRunMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
 import io.micronaut.pyronaut.testresources.DirectSourceTestResourcesSession;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
@@ -575,7 +574,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             System.err.println(e.getMessage());
             return PRECONDITION_FAILED;
         } catch (Exception e) {
-            System.err.println("Direct source launch failed: " + e.getMessage());
+            System.err.println("Direct source launch failed: " + e);
             return INTERNAL_ERROR;
         } finally {
             if (testResourcesSession != null) {
@@ -1171,6 +1170,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         return BUNDLED_TEST_RESOURCES_JARS.stream().anyMatch(name::startsWith);
     }
 
+    private static boolean isControlPanelJar(Path path) {
+        return path.getFileName().toString().startsWith("micronaut-control-panel-");
+    }
+
     private static List<URL> toUrls(List<Path> paths) throws IOException {
         List<URL> urls = new ArrayList<>();
         for (Path path : paths) {
@@ -1296,7 +1299,10 @@ public final class PyronautDevMain implements Callable<Integer> {
                                                                          Path pyronautDir) throws IOException {
         List<Path> build = readManifest(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST));
         boolean developmentMode = isDevelopmentMode();
-        List<Path> runtime = readManifest(resolveRunManifest(pyronautDir, developmentMode));
+        List<Path> runtime = new ArrayList<>(readManifest(resolveRunManifest(pyronautDir, developmentMode)));
+        if (!controlPanelRequested(invocation)) {
+            runtime.removeIf(PyronautDevMain::isControlPanelJar);
+        }
         List<Path> test = invocation.test() ? readManifest(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)) : List.of();
         List<Path> compilerBase = new ArrayList<>(directCompilerClasspath(invocation));
         Optional<Path> buildAnnotationsJar = findPyronautBuildAnnotationsJar();
@@ -1715,7 +1721,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                 }
                 case RUN -> {
                     PyronautLauncherLogging.initializeApplicationDefaults(false);
-                    yield new CommandLine(new PyronautRunMain()).execute(args);
+                    yield new CommandLine(new PyronautDevRun()).execute(args);
                 }
                 case TEST -> {
                     PyronautLauncherLogging.initializeApplicationDefaults(false);

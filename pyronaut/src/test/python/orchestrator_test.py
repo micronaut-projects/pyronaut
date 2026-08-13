@@ -631,6 +631,24 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("-Dmicronaut.control-panel.path=/control-panel", jvm_args)
         self.assertIn("-Dmicronaut.control-panel.security.access=ANONYMOUS", jvm_args)
 
+    def test_control_panel_is_not_enabled_by_generated_schema_or_development_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut]\n[tool.pyronaut.dependencies]\nruntime = []\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(cli._control_panel_enabled_for_project(project_dir))
+
+    def test_control_panel_dependency_is_an_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.dependencies]\ndevelopment-runtime = [\"io.micronaut.controlpanel:micronaut-control-panel-ui\"]\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(cli._control_panel_enabled_for_project(project_dir))
+
     def test_dev_detects_standalone_main_python_source(self):
         previous_cwd = Path.cwd()
         with tempfile.TemporaryDirectory() as temp_dir:

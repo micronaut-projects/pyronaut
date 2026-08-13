@@ -39,6 +39,13 @@ configurations.named("runtimeClasspath") {
     exclude(group = "io.micronaut.controlpanel")
 }
 
+// Keep the optional Control Panel out of the native image itself. Excluding
+// only runtimeClasspath is insufficient because GraalVM resolves the native
+// image classpath separately during the production image build.
+configurations.named("nativeImageClasspath") {
+    exclude(group = "io.micronaut.controlpanel")
+}
+
 application {
     mainClass = "io.micronaut.pyronaut.run.PyronautRunMain"
     applicationDefaultJvmArgs = listOf("--sun-misc-unsafe-memory-access=allow", "--enable-native-access=ALL-UNNAMED")
