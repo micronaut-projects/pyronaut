@@ -15,7 +15,7 @@ pyronaut create demo --features data-jdbc,mysql
 pyronaut create demo --features data-jdbc,mysql,json-schema,test-resources
 ----
 
-Pyronaut defaults already include the Netty HTTP server, Micronaut Serialization with Jackson, Pyronaut Logback integration, pytest support, and the core Pyronaut compiler/runtime dependencies.
+Pyronaut defaults already include the Netty HTTP server, Micronaut Serialization with Jackson, Pyronaut Logback integration, JUnit/pytest test support, and the core Pyronaut compiler/runtime dependencies.
 Those defaults can appear in the feature list, but they do not need to be explicitly selected for a standard HTTP application.
 
 The richer reference-style application can be reproduced by adding:

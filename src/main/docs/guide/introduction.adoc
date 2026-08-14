@@ -4,7 +4,7 @@ Pyronaut provides Micronaut application support for Python code running on Graal
 It combines Micronaut dependency injection, configuration, HTTP, testing, and build tooling with Python source files and Python test workflows.
 
 The `pyronaut` command is the main entry point.
-It resolves Java dependencies from `pyproject.toml`, processes Python and Java sources, runs the application, runs pytest-backed tests, validates configuration, and builds deployable artifacts.
+It resolves Java dependencies from `pyproject.toml`, processes Python and Java sources, runs the application, executes configured JUnit and pytest tests, validates configuration, and builds deployable artifacts.
 
 Typical Pyronaut projects contain:
 

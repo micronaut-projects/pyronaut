@@ -99,7 +99,7 @@ Feature selection:
 
 - Run `pyronaut create --list-features` to see the supported feature names.
 - Pass features as a comma-separated list, for example `--features data-jdbc,mysql,json-schema,test-resources`.
-- Pyronaut defaults already include the Netty HTTP server, Micronaut Serialization with Jackson, Logback integration, and pytest support.
+- Pyronaut defaults already include the Netty HTTP server, Micronaut Serialization with Jackson, Logback integration, and JUnit/pytest test support.
 - Unsupported JVM-language, build-tool, CI/IaC, generated-source, JVM app-type, and Java reflection-dependent starter features are hidden from `--list-features` and fail early if explicitly requested. Reflection-dependent examples include `jackson-databind`, `data-jpa`, `hibernate-jpa`, and `hibernate-validator`.
 
 Examples:
@@ -323,7 +323,7 @@ Behavior:
 
 === `pyronaut test`
 
-Runs project tests via `pyronaut-test` and the pytest-backed JUnit engine, or runs direct Java/Python JUnit 5 sources in-memory.
+Runs project tests via `pyronaut-test` using the configured JUnit, pytest, or both engines, or runs direct Java/Python JUnit 5 sources in-memory.
 
 Common options:
 
@@ -341,7 +341,7 @@ Behavior:
 - Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
 - Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
 - Uses test classpath manifest and processed test classes when available.
-- Uses the configured Python test directory for pytest discovery unless `--tests-dir` overrides it.
+- Uses the configured Python test directory for pytest discovery unless `--tests-dir` overrides it; JUnit Python modules are discovered from processed test classes.
 - Includes the configured resources directory, any `additional-resources` directories, the configured test resources directory, and any `additional-test-resources` directories on the classpath when present.
 - Writes reports under `__pyronaut__/reports/tests`.
 

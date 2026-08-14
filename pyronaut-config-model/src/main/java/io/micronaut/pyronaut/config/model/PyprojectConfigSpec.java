@@ -214,6 +214,12 @@ public final class PyprojectConfigSpec {
         "jvm",
         List.of("jvm", "native")
     );
+    public static final FieldSpec PYRONAUT_TEST_ENGINE = enumString(
+        "tool.pyronaut.test.engine",
+        "Test engine selection.",
+        "both",
+        List.of("junit", "pytest", "both")
+    );
     public static final FieldSpec PYRONAUT_RUN_BANNER_ENABLED = bool(
         "tool.pyronaut.run.banner-enabled",
         "Whether the Micronaut banner is printed when running the application.",
@@ -810,6 +816,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_PROCESSOR_PYTHON_INCREMENTAL_MODE,
         PYRONAUT_PROCESSOR_DAEMON,
         PYRONAUT_TEST_MODE,
+        PYRONAUT_TEST_ENGINE,
         PYRONAUT_RUN_BANNER_ENABLED,
         PYRONAUT_CONTROL_PANEL_ENABLED,
         PYRONAUT_CONTROL_PANEL_PATH,

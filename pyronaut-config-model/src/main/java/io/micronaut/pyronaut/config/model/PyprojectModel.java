@@ -125,8 +125,26 @@ public record PyprojectModel(Project project,
      * tool.pyronaut.test table.
      *
      * @param mode test execution mode (for example jvm or native)
+     * @param engine test engine selection
      */
-    public record Test(String mode) {
+    public record Test(String mode, TestEngine engine) {
+        /**
+         * Compatibility constructor using the default test engine.
+         *
+         * @param mode test execution mode
+         */
+        public Test(String mode) {
+            this(mode, TestEngine.BOTH);
+        }
+    }
+
+    /**
+     * Test engines supported by Pyronaut project test execution.
+     */
+    public enum TestEngine {
+        JUNIT,
+        PYTEST,
+        BOTH
     }
 
     /**

@@ -1,7 +1,21 @@
-= Testing with Pytest
+= Testing
 
-Pyronaut runs Python tests through pytest and reports them through the JUnit Platform.
-Use `pyronaut test` instead of invoking pytest directly when tests need the Micronaut classpath, processed sources, test resources, or `MicronautTest`.
+Pyronaut supports JUnit 5 tests, pytest tests, or both through the JUnit Platform.
+Use `pyronaut test` when tests need the Micronaut classpath, processed sources, test resources, or Micronaut test integration.
+
+== Selecting a Test Engine
+
+Configure the engine under `[tool.pyronaut.test]`:
+
+[source,toml]
+----
+[tool.pyronaut.test]
+engine = "both" # junit|pytest|both
+----
+
+The default is `both`, preserving the current behavior. `junit` runs only JUnit Jupiter tests, `pytest` runs only pytest tests, and `both` runs both engines in one JUnit Platform launch.
+
+JUnit tests written as Python modules can use module-level `MicronautTest()` and JUnit lifecycle annotations such as `BeforeAll` and `BeforeEach`. Pytest tests use pytest fixtures, scopes, parametrization, marks, and plugins. A module-level JUnit `MicronautTest()` module is owned by JUnit and is excluded from pytest discovery when both engines are enabled.
 
 Add the pytest integration to the test scope:
 
@@ -25,7 +39,34 @@ VS Code's Python pytest support invokes pytest directly and is not suitable for 
 Use the Pyronaut VS Code Test Explorer extension when running these tests from VS Code.
 See xref:configuration/vscodeExtension.adoc[].
 
-`pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts configured project test resources, and delegates test discovery to pytest. For direct sources, Test Resources starts only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. Use `--disable-test-resources` to disable either form of automatic orchestration.
+`pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts configured project test resources, and delegates discovery to the configured engines. For direct sources, Test Resources starts only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. Use `--disable-test-resources` to disable either form of automatic orchestration.
+
+== JUnit 5 Python Modules
+
+The JUnit engine supports Python modules as JUnit 5 tests. Invoke `MicronautTest()` at module level. Top-level functions whose names start with `test` become test methods; helper and lifecycle functions can use the generated test object's `self` receiver. Injected module attributes are available through that receiver.
+
+[source,python]
+----
+from typing import Annotated
+
+from jakarta.inject import Inject
+from micronaut.context import ApplicationContext
+from micronaut.test.extensions.junit5.annotation import MicronautTest
+from org.junit.jupiter.api import BeforeEach
+
+MicronautTest()
+
+context: Annotated[ApplicationContext, Inject]
+
+@BeforeEach
+def verify_context(self):
+    assert self.context.isRunning()
+
+def test_context(self):
+    assert self.context.isRunning()
+----
+
+JUnit module tests can run in direct source mode. They do not use pytest fixtures or require a Python virtual environment.
 
 == Direct JUnit 5 Tests
 
@@ -49,7 +90,7 @@ pyronaut test -t Foo.java -- *Test.java
 
 An explicit `--` without test sources remains invalid.
 
-Direct tests are compiled and executed in-memory through the JUnit Platform. Python tests can use `@MicronautTest` and `org.junit.jupiter.api.Test` in the same style as the Python test suite. Direct Java runs disable Python runtime infrastructure automatically; Python remains enabled by default for Python tests.
+Direct tests are compiled and executed in-memory through the JUnit Platform. Python direct tests use the JUnit engine and can use module-level `MicronautTest()`; pytest is not invoked because it requires test files on disk. Direct Java runs disable Python runtime infrastructure automatically; Python remains enabled by default for Python tests.
 
 Use `--continuous` or `-t` to rerun direct tests when application or test sources change. The console prints execution progress and a final test summary.
 
@@ -98,7 +139,9 @@ Important files include:
 - `.pyronaut-last-nodeid.txt`
 - `events.ndjson`
 
+With `engine = "both"`, the JUnit XML and HTML reports contain results from both engines. The node-id and event files remain pytest-specific.
+
 == Context Tests
 
-Use `MicronautTest` when a pytest needs a Micronaut `ApplicationContext`, injected beans, an `EmbeddedServer`, or configuration properties.
+Use `MicronautTest` with the pytest fixture integration when a pytest needs a Micronaut `ApplicationContext`, injected beans, an `EmbeddedServer`, or configuration properties.
 Use `pyronaut.requests` or the `requests` shim for HTTP tests against the embedded server.

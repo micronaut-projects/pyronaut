@@ -1,6 +1,10 @@
 {
   "reflection": [
     {
+      "type": "org.graalvm.nativeimage.ImageSingletons",
+      "allDeclaredFields": true
+    },
+    {
       "type": "ch.qos.logback.core.status.NopStatusListener",
       "methods": [
         {

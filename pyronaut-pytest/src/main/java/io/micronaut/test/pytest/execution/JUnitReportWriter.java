@@ -60,9 +60,14 @@ public final class JUnitReportWriter {
         for (TestResult result : results) {
             String name = result.name();
             String details = result.details();
-            if (result.status() != Status.FAILED) {
+            if (result.status() == Status.PASSED) {
                 xml += "<testcase name=\"" + escapeXml(name) + "\"><system-out>" + escapeXml(result.stdout())
                     + "</system-out><system-err>" + escapeXml(result.stderr()) + "</system-err></testcase>";
+                continue;
+            }
+            if (result.status() == Status.SKIPPED) {
+                xml += "<testcase name=\"" + escapeXml(name) + "\"><skipped message=\""
+                    + escapeXml(details) + "\"/></testcase>";
                 continue;
             }
             xml += "<testcase name=\"" + escapeXml(name) + "\"><failure message=\""
