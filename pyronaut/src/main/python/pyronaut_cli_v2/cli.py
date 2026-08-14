@@ -1587,13 +1587,12 @@ def _filter_native_launcher_provided_entries(
     launcher_executable: str | None,
     command: str,
 ) -> list[str]:
-    launcher_provided_coordinates = _native_launcher_provided_artifact_coordinates(launcher_executable)
     launcher_provided_names = _native_launcher_provided_file_names(launcher_executable)
     launcher_provided_artifact_ids = _native_launcher_provided_artifact_ids(launcher_executable, launcher_provided_names)
     return [
         entry
         for entry in entries
-        if not _is_native_launcher_provided_artifact(entry, launcher_provided_names, launcher_provided_artifact_ids, launcher_provided_coordinates, command)
+        if not _is_native_launcher_provided_artifact(entry, launcher_provided_names, launcher_provided_artifact_ids, command)
     ]
 
 
@@ -1608,10 +1607,18 @@ def _native_launcher_provided_file_names(launcher_executable: str | None) -> set
     return {Path(entry).name for entry in _native_launcher_provided_jar_entries(launcher_executable)}
 
 
-def _native_launcher_provided_artifact_ids(launcher_executable: str | None, file_names: set[str]) -> set[str]:
-    if _native_launcher_provided_artifact_coordinates(launcher_executable):
-        return set()
-    return _versioned_jar_artifact_ids(file_names)
+def _native_launcher_provided_artifact_ids(
+    launcher_executable: str | None,
+    file_names: set[str],
+) -> set[tuple[str | None, str]]:
+    coordinates = _native_launcher_provided_artifact_coordinates(launcher_executable)
+    if coordinates:
+        return {
+            identity
+            for coordinate in coordinates
+            if (identity := _artifact_identity(coordinate)) is not None
+        }
+    return {(None, artifact_id) for artifact_id in _versioned_jar_artifact_ids(file_names)}
 
 
 def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_name: str) -> list[str]:
@@ -1714,11 +1721,19 @@ def _versioned_jar_artifact_id(file_name: str) -> str | None:
     return None
 
 
+def _artifact_identity(coordinate: str | None) -> tuple[str | None, str] | None:
+    if coordinate is None:
+        return None
+    group, separator, artifact = coordinate.partition(":")
+    if not separator or not group or not artifact:
+        return None
+    return group, artifact
+
+
 def _is_native_launcher_provided_artifact(
     entry: str,
     launcher_provided_names: set[str],
-    launcher_provided_artifact_ids: set[str],
-    launcher_provided_coordinates: set[str],
+    launcher_provided_artifact_ids: set[tuple[str | None, str]],
     command: str,
 ) -> bool:
     file_name = Path(entry).name
@@ -1729,15 +1744,11 @@ def _is_native_launcher_provided_artifact(
     if _is_native_test_resources_client_artifact(file_name):
         return True
     coordinate = _artifact_coordinate(entry)
-    if coordinate is not None and coordinate in launcher_provided_coordinates:
-        return True
-    artifact = coordinate.rsplit(":", 1)[-1] if coordinate is not None else _versioned_jar_artifact_id(file_name)
-    if any(provided.rsplit(":", 1)[-1] == artifact for provided in launcher_provided_coordinates):
-        return True
     if file_name in launcher_provided_names:
         return True
     artifact_id = _versioned_jar_artifact_id(file_name)
-    return artifact_id in launcher_provided_artifact_ids
+    identity = _artifact_identity(coordinate) if coordinate is not None else (None, artifact_id)
+    return identity is not None and identity in launcher_provided_artifact_ids
 
 
 @lru_cache(maxsize=4096)
@@ -2617,11 +2628,17 @@ def _copytree_if_exists(source: Path, target: Path) -> None:
 def _stage_manifest_artifacts(
     *, source: Path, target: Path, project_dir: Path, pyronaut_dir: Path,
     exclude_python: bool = False,
+    launcher_executable: str | None = None,
 ) -> None:
     project_root = project_dir.resolve()
     artifact_root = pyronaut_dir / "m2-repository"
     rewritten: list[str] = []
-    for entry in _read_manifest_entries(source):
+    entries = _read_manifest_entries(source)
+    if launcher_executable:
+        entries = _filter_native_launcher_provided_entries(
+            entries, launcher_executable, "build"
+        )
+    for entry in entries:
         path = Path(entry)
         if exclude_python and _is_python_runtime_artifact(path.name):
             continue
@@ -2976,6 +2993,9 @@ def _prepare_native_docker_context(
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
+    delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
+    if delegate_executable is None:
+        raise RuntimeError(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}")
     _stage_manifest_artifacts(
         source=runtime_manifest,
         target=pyronaut_dir / "resolved-runtime-dependencies",
@@ -2985,9 +3005,6 @@ def _prepare_native_docker_context(
     )
     if _is_python_runtime_project(project_dir):
         _stage_python_runner_runtime_dependencies(pyronaut_dir, resolver)
-    delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
-    if delegate_executable is None:
-        raise RuntimeError(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}")
     _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / "pyronaut-native-build")
 
 
@@ -3049,7 +3066,9 @@ def _stage_runner_runtime_dependencies(pyronaut_dir: Path, runner: str) -> None:
     manifest.write_text("".join(f"{entry}\n" for entry in entries), encoding="utf-8")
 
 
-def _prepare_crema_native_docker_context(*, project_dir: Path, context_dir: Path) -> None:
+def _prepare_crema_native_docker_context(
+    *, project_dir: Path, context_dir: Path, resolver: Callable[[str], str | None]
+) -> None:
     app_dir = _prepare_common_docker_app_context(project_dir, context_dir)
     pyronaut_dir = app_dir / "__pyronaut__"
     classes_dir = project_dir / "__pyronaut__" / "classes"
@@ -3058,6 +3077,16 @@ def _prepare_crema_native_docker_context(*, project_dir: Path, context_dir: Path
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
+    runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+    if runtime_manifest.exists():
+        _stage_manifest_artifacts(
+            source=runtime_manifest,
+            target=pyronaut_dir / "resolved-runtime-dependencies",
+            project_dir=project_dir,
+            pyronaut_dir=pyronaut_dir,
+            exclude_python=not _is_python_runtime_project(project_dir),
+            launcher_executable=resolver(NATIVE_BUILD_EXECUTABLE),
+        )
 
 
 def _manifest_docker_copy_lines(context_dir: Path, *, destination_root: str = "/app") -> list[str]:
@@ -3351,7 +3380,9 @@ def _run_docker_build(
                     runner_name=runner_name,
                 )
             elif (base_image := _configured_docker_base_image(project_dir, docker_config)) is not None:
-                _prepare_crema_native_docker_context(project_dir=project_dir, context_dir=context_dir)
+                _prepare_crema_native_docker_context(
+                    project_dir=project_dir, context_dir=context_dir, resolver=resolver
+                )
                 build_args["PYRONAUT_BASE_IMAGE"] = base_image
                 custom = _resolve_build_dockerfile(
                     project_dir=project_dir,

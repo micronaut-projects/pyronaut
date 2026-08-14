@@ -1045,6 +1045,26 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual([str(binary.resolve())], jars)
         self.assertEqual({"io.micronaut:micronaut-jdbc"}, coordinates)
 
+    def test_native_provided_coordinates_keep_same_artifact_id_from_different_group(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_dir = Path(temp_dir) / "bin"
+            bin_dir.mkdir()
+            native_dev = bin_dir / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            (bin_dir / "native-provided-classpath.txt").write_text(
+                "tools.jackson.core:jackson-databind\n", encoding="utf-8"
+            )
+
+            entries = [
+                "com.fasterxml.jackson.core:jackson-databind",
+                "tools.jackson.core:jackson-databind",
+            ]
+            filtered = cli._filter_native_launcher_provided_entries(  # noqa: SLF001
+                entries, str(native_dev), "dev"
+            )
+
+        self.assertEqual(["com.fasterxml.jackson.core:jackson-databind"], filtered)
+
     def test_delegate_lib_entries_resolve_wheel_shared_classpath_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             tools = Path(temp_dir) / "tools"
