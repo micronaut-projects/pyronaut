@@ -249,12 +249,16 @@ class ApplicationContextWrapper:
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", value).lower()
 
     def _foreign_java_class_name(self, key):
-        if type(key).__module__ != "polyglot":
-            return None
+        key_type = type(key)
+        if key_type.__module__ == "polyglot":
+            match = JAVA_CLASS_RE.search(repr(key))
+            return match.group(1) if match is not None else None
+        module_name = getattr(key, "__module__", None)
+        class_name = getattr(key, "__name__", None)
+        if module_name and class_name and str(module_name).startswith("micronaut."):
+            return f"io.{module_name}.{class_name}"
         match = JAVA_CLASS_RE.search(repr(key))
-        if match is None:
-            return None
-        return match.group(1)
+        return match.group(1) if match is not None else None
 
     def _find_bean(self, bean_class, lookup_key):
         try:
