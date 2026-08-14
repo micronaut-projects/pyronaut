@@ -96,6 +96,28 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void isolatesSinglePythonSourceFromSiblingModules(@TempDir Path tempDir) throws Exception {
+        Path source = tempDir.resolve("controller.py");
+        Path unrelated = tempDir.resolve("unrelated.py");
+        Files.writeString(source, "def index(): pass\n");
+        Files.writeString(unrelated, "class Unrelated: pass\n");
+        List<Path> stagingRoots = new ArrayList<>();
+
+        assertEquals(0, PyronautDevMain.execute(
+            new String[]{"run", source.toString()},
+            (command, args) -> 0,
+            (invocation, stagingRoot) -> {
+                stagingRoots.add(stagingRoot);
+                assertTrue(Files.isRegularFile(stagingRoot.resolve("src/controller.py")));
+                assertFalse(Files.exists(stagingRoot.resolve("src/unrelated.py")));
+                return 0;
+            }
+        ));
+
+        assertEquals(List.of(tempDir.resolve("__pyronaut__")), stagingRoots);
+    }
+
+    @Test
     void parsesDirectSourceInvocation() {
         PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectTestSourceArgs(List.of(
             "--port", "8081",

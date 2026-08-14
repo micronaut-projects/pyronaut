@@ -510,20 +510,16 @@ public final class PyronautDevMain implements Callable<Integer> {
                     throw new IllegalArgumentException("Application and test sources must use the same language");
                 }
             }
-            if (canUseOriginalSingleSource(invocation)) {
-                stagingRoot = invocation.sources().getFirst().toAbsolutePath().normalize().getParent();
-            } else {
-                stagingRoot = directSourceStagingRoot(invocation);
-                Files.createDirectories(stagingRoot);
-                stageSetup(invocation, stagingRoot);
-                Path stagedSources = stagingRoot.resolve("src");
-                resetStagedSources(stagedSources);
-                stageSources(invocation.sources(), stagedSources);
-                if (!invocation.testSources().isEmpty()) {
-                    stageSources(invocation.testSources(), stagedSources);
-                }
-                stageConfig(invocation.configs(), stagingRoot.resolve("config"));
+            stagingRoot = directSourceStagingRoot(invocation);
+            Files.createDirectories(stagingRoot);
+            stageSetup(invocation, stagingRoot);
+            Path stagedSources = stagingRoot.resolve("src");
+            resetStagedSources(stagedSources);
+            stageSources(invocation.sources(), stagedSources);
+            if (!invocation.testSources().isEmpty()) {
+                stageSources(invocation.testSources(), stagedSources);
             }
+            stageConfig(invocation.configs(), stagingRoot.resolve("config"));
             applyProperties(invocation.properties(), previousProperties);
             applyConfigurationValidationDefaults();
             if (invocation.setup() == null) {
@@ -583,16 +579,6 @@ public final class PyronautDevMain implements Callable<Integer> {
             restoreProperties(previousProperties, previousProperties.keySet());
             DirectSourceDeclarationState.clear();
         }
-    }
-
-    private static boolean canUseOriginalSingleSource(DirectSourceInvocation invocation) {
-        return !invocation.test()
-            && invocation.setup() == null
-            && invocation.testSources().isEmpty()
-            && invocation.configs().isEmpty()
-            && invocation.sources().size() == 1
-            && Files.isRegularFile(invocation.sources().getFirst())
-            && !invocation.sources().getFirst().getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".java");
     }
 
     private static Path directSourceStagingRoot(DirectSourceInvocation invocation) {
@@ -954,19 +940,6 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static void configureDirectSource(PyronautCompiler.Builder builder, DirectSourceInvocation invocation, Path stagingRoot) throws IOException {
         SourceType sourceType = sourceType(invocation.sources());
-        if (invocation.sources().size() == 1) {
-            Path source = invocation.sources().getFirst().toAbsolutePath().normalize();
-            if (Files.isRegularFile(source) && canUseOriginalSingleSource(invocation)) {
-                // The compiler reads source files into memory; use the original
-                // parent directory for a single source instead of staging it.
-                if (sourceType == SourceType.JAVA) {
-                    builder.javaSrc(source.getParent().toString());
-                } else {
-                    builder.pythonSrc(source.getParent().toString());
-                }
-                return;
-            }
-        }
         if (sourceType == SourceType.JAVA) {
             builder.javaSrc(stagingRoot.resolve("src").toString());
         } else {
