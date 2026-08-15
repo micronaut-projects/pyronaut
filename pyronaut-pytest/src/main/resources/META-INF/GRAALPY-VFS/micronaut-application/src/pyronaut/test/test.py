@@ -255,8 +255,12 @@ class ApplicationContextWrapper:
             return match.group(1) if match is not None else None
         module_name = getattr(key, "__module__", None)
         class_name = getattr(key, "__name__", None)
-        if module_name and class_name and str(module_name).startswith("micronaut."):
-            return f"io.{module_name}.{class_name}"
+        if module_name and class_name:
+            module_name = str(module_name)
+            if module_name.startswith("micronaut."):
+                return f"io.{module_name}.{class_name}"
+            if module_name.startswith(("java.", "javax.", "jakarta.", "io.", "org.", "com.")):
+                return f"{module_name}.{class_name}"
         match = JAVA_CLASS_RE.search(repr(key))
         return match.group(1) if match is not None else None
 
