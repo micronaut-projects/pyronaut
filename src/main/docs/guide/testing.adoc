@@ -43,7 +43,7 @@ See xref:configuration/vscodeExtension.adoc[].
 
 == JUnit 5 Python Modules
 
-The JUnit engine supports Python modules as JUnit 5 tests. Invoke `MicronautTest()` at module level. Top-level functions whose names start with `test` become test methods; helper and lifecycle functions can use the generated test object's `self` receiver. Injected module attributes are available through that receiver.
+The JUnit engine supports Python modules as JUnit 5 tests. Invoke `MicronautTest()` at module level. Top-level functions whose names start with `test` become test methods, while helper and lifecycle functions are also defined at module level. Injected values are available through their module-level attributes.
 
 [source,python]
 ----
@@ -59,11 +59,11 @@ MicronautTest()
 context: Annotated[ApplicationContext, Inject]
 
 @BeforeEach
-def verify_context(self):
-    assert self.context.isRunning()
+def verify_context():
+    assert context.isRunning()
 
-def test_context(self):
-    assert self.context.isRunning()
+def test_context():
+    assert context.isRunning()
 ----
 
 JUnit module tests can run in direct source mode. They do not use pytest fixtures or require a Python virtual environment.
