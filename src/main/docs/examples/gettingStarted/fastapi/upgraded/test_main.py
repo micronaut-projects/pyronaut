@@ -19,22 +19,22 @@ MicronautTest()
 
 context: Annotated[ApplicationContext, Inject]
 
-def client(self):
-    return requests.with_context(self.context)
+def client():
+    return requests.with_context(context)
 
-def test_root(self):
-    response = self.client().get("/")
+def test_root():
+    response = client().get("/")
     assert response.json() == {"Hello": "World"}
 
-def test_read_item(self):
-    response = self.client().get("/items/5", params={"q": "somequery"})
+def test_read_item():
+    response = client().get("/items/5", params={"q": "somequery"})
     assert response.json() == {
         "item_id": 5,
         "q": "somequery",
     }
 
-def test_update_item(self):
-    response = self.client().put(
+def test_update_item():
+    response = client().put(
         "/items/5",
         json={"name": "Foo", "price": 42.0, "is_offer": True},
     )
@@ -43,8 +43,8 @@ def test_update_item(self):
         "item_id": 5,
     }
 
-def test_item_validation(self):
-    response = self.client().put(
+def test_item_validation():
+    response = client().put(
         "/items/5",
         json={"name": "", "price": -1},
     )

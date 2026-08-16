@@ -158,7 +158,7 @@ pyronaut test main.py -- test_main.py
 
 `MicronautTest()` starts and stops an embedded server for the generated JUnit 5 test module.
 `requests.with_context` accepts the injected `ApplicationContext` and provides a `requests`-compatible client backed by the Micronaut HTTP client, covering the root response, path and query binding, a valid request body, and a validation failure.
-Functions whose names start with `test` are exposed as JUnit 5 test methods automatically, so no top-level test class, `@Test` decorator, or return annotation is needed. The `self` parameter is supplied by the generated test object and lets helper functions access injected module attributes.
+Functions whose names start with `test` are exposed as JUnit 5 test methods automatically, so no top-level test class, `@Test` decorator, `self` parameter, or return annotation is needed. Injected values are available directly through module-level attributes.
 The development server does not need to be running separately.
 
 == Deploy It
