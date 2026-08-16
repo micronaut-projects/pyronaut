@@ -56,6 +56,7 @@ public class PytestTestEngine implements TestEngine {
     public static final String EVENTS_REPORT = "pytest.report.events";
     private static final Logger LOG = LoggerFactory.getLogger(PytestTestEngine.class);
     private Context context = PythonContextRuntime.isInitialized() && PythonContextRuntime.isReuseContext() ? PythonContextRuntime.getContext() : null;
+    private boolean ownsContext;
     private String junitXmlReport;
     private String htmlReport;
     private String lastNodeIdReport;
@@ -135,6 +136,7 @@ public class PytestTestEngine implements TestEngine {
                 PytestTestEngine.class.getClassLoader(),
                 pythonOptions
             );
+            this.ownsContext = true;
         } catch (Exception e) {
             throw new IllegalStateException("Failed to initialize GraalPy context: " + e.getMessage(), e);
         }
@@ -165,10 +167,14 @@ public class PytestTestEngine implements TestEngine {
                 throw e;
             } finally {
                 try {
-                    PythonContextRuntime.resetContext();
-                    if (!PythonContextRuntime.isReuseContext()) {
-                        context.close();
-                        context = null;
+                    // A reusable context may be shared with another engine. Resetting it reloads
+                    // sys.modules and can invalidate imports needed by the following engine.
+                    if (ownsContext) {
+                        PythonContextRuntime.resetContext();
+                        if (!PythonContextRuntime.isReuseContext()) {
+                            context.close();
+                            context = null;
+                        }
                     }
                 } catch (Exception e) {
                     // ignore

@@ -15,14 +15,57 @@
  */
 package io.micronaut.test.pytest;
 
+import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.context.python.PythonContextRuntime;
+import org.graalvm.polyglot.Context;
 import org.junit.jupiter.api.Test;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.testkit.engine.EngineTestKit;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Integration test for the PytestTestEngine.
  */
 class PytestEngineTest {
+
+    @Test
+    void engineDoesNotResetAReusableContextAfterExecution() throws Exception {
+        Context context = null;
+        try {
+            if (PythonContextRuntime.isInitialized()) {
+                context = PythonContextRuntime.getContext();
+                PythonContextRuntime.setReuseContext(false);
+                PythonContextRuntime.resetContext();
+                context.close(true);
+            }
+            context = GraalPyContextFactory.bootstrapReusableContext(getClass().getClassLoader());
+            context.eval("python", """
+                import builtins
+                import importlib
+
+                builtins.__pytest_reload_calls = 0
+
+                def __pytest_tracking_reload(module):
+                    builtins.__pytest_reload_calls += 1
+                    return module
+
+                importlib.reload = __pytest_tracking_reload
+                """);
+
+            EngineTestKit
+                .engine(PytestTestEngine.ENGINE_ID)
+                .execute();
+
+            assertEquals(0, context.eval("python", "builtins.__pytest_reload_calls").asInt());
+        } finally {
+            if (context != null) {
+                PythonContextRuntime.setReuseContext(false);
+                PythonContextRuntime.resetContext();
+                context.close(true);
+            }
+        }
+    }
 
     @Test
     void engineCanDiscoverPythonTests() {
