@@ -109,8 +109,10 @@ def micronaut_test_fixture(request,
 
     start_error = bootstrap.getError()
     if start_error:
-        pytest = __import__("pytest")
-        pytest.fail(f"Micronaut Fixture Setup Failed: {start_error}", pytrace=False)
+        # Keep fixture bootstrap failures as a native Python exception.  Calling
+        # pytest.fail here lets a Java/foreign exception cross pytest's
+        # hookwrapper boundary in GraalPy native mode.
+        raise AssertionError(f"Micronaut Fixture Setup Failed: {start_error}")
     return ApplicationContextWrapper(bootstrap.getContext())
 
 
