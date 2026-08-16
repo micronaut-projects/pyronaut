@@ -36,6 +36,7 @@ import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceL
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
+import io.micronaut.python.processing.visitor.ScriptDef;
 import io.micronaut.pyronaut.testresources.DirectSourceTestResourcesSession;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
 import io.micronaut.pyronaut.validateconfig.PyronautValidateConfigMain;
@@ -910,7 +911,7 @@ public final class PyronautDevMain implements Callable<Integer> {
                     Pattern callPattern = Pattern.compile("(?m)^\\s*(?:@?MicronautTest)\\s*(?:\\(|$)");
                     if (callPattern.matcher(source).find()) {
                         String moduleName = file.getFileName().toString().replaceFirst("\\.py$", "");
-                        String className = packageName + "." + moduleName;
+                        String className = packageName + "." + ScriptDef.toJavaClassName(moduleName);
                         if (!classNames.contains(className)) {
                             classNames.add(className);
                         }
