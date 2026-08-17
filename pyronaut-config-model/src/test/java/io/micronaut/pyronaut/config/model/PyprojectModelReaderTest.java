@@ -502,6 +502,22 @@ class PyprojectModelReaderTest {
 
         PyprojectModel model = reader.readFile(file);
         assertEquals("jvm", model.pyronaut().test().mode());
+        assertEquals(PyprojectModel.TestEngine.BOTH, model.pyronaut().test().engine());
+    }
+
+    @Test
+    void parseTestEngineWhenConfigured() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.test]
+            engine = "junit"
+            """);
+
+        PyprojectModel model = reader.readFile(file);
+        assertEquals(PyprojectModel.TestEngine.JUNIT, model.pyronaut().test().engine());
     }
 
     @Test
@@ -627,6 +643,36 @@ class PyprojectModelReaderTest {
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
         assertEquals("Invalid value for 'tool.pyronaut.test.mode': expected one of [jvm, native]", exception.getMessage());
+    }
+
+    @Test
+    void rejectInvalidTestEngineValue() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.test]
+            engine = "fast"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid value for 'tool.pyronaut.test.engine': expected one of [junit, pytest, both]", exception.getMessage());
+    }
+
+    @Test
+    void rejectInvalidTestEngineType() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.test]
+            engine = ["junit"]
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid type for 'tool.pyronaut.test.engine': expected string", exception.getMessage());
     }
 
     @Test

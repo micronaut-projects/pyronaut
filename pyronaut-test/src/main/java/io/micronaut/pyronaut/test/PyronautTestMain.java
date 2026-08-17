@@ -24,8 +24,10 @@ import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
+import io.micronaut.test.pytest.PytestTestEngine;
 import io.micronaut.test.pytest.execution.JUnitReportWriter;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
+import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
 import org.junit.platform.launcher.TestExecutionListener;
@@ -203,6 +205,11 @@ public final class PyronautTestMain implements Callable<Integer> {
             System.err.println("Test execution failed: " + e.getMessage());
             return 7;
         }
+        PyprojectModel.TestEngine testEngine = model == null
+            ? PyprojectModel.TestEngine.BOTH
+            : model.pyronaut().test().engine();
+        boolean junitEnabled = testEngine != PyprojectModel.TestEngine.PYTEST;
+        boolean pytestEnabled = testEngine != PyprojectModel.TestEngine.JUNIT;
 
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
@@ -250,16 +257,21 @@ public final class PyronautTestMain implements Callable<Integer> {
                 Path eventsReport = reportsDir.resolve(DEFAULT_EVENTS_REPORT);
                 Files.createDirectories(reportsDir);
                 clearLegacyReportAliases(root);
-                requestBuilder.configurationParameter(PYTEST_REPORT_DIR, reportsDir.toString());
-                requestBuilder.configurationParameter(PYTEST_JUNIT_XML_REPORT, junitReport.toString());
-                requestBuilder.configurationParameter(PYTEST_HTML_REPORT, htmlReport.toString());
-                requestBuilder.configurationParameter(PYTEST_LAST_NODEID_REPORT, nodeIdReport.toString());
-                requestBuilder.configurationParameter(PYTEST_EVENTS_REPORT, eventsReport.toString());
+                if (pytestEnabled) {
+                    requestBuilder.configurationParameter(PYTEST_REPORT_DIR, reportsDir.toString());
+                    requestBuilder.configurationParameter(PYTEST_JUNIT_XML_REPORT, junitReport.toString());
+                    requestBuilder.configurationParameter(PYTEST_HTML_REPORT, htmlReport.toString());
+                    requestBuilder.configurationParameter(PYTEST_LAST_NODEID_REPORT, nodeIdReport.toString());
+                    requestBuilder.configurationParameter(PYTEST_EVENTS_REPORT, eventsReport.toString());
+                }
+                requestBuilder.filters(EngineFilter.includeEngines(engineIds(testEngine).toArray(String[]::new)));
                 boolean publishReports = true;
                 if (selectClasses == null || selectClasses.isEmpty()) {
                     java.util.LinkedHashSet<Path> classpathRoots = new java.util.LinkedHashSet<>();
-                    classpathRoots.add(layout.processedClassesRoot());
-                    if (ExternalProjectLayout.isExternal(root)) {
+                    if (junitEnabled) {
+                        classpathRoots.add(layout.processedClassesRoot());
+                    }
+                    if (junitEnabled && ExternalProjectLayout.isExternal(root)) {
                         Path mainClasses = root.resolve(classesDir).normalize();
                         if (Files.isDirectory(mainClasses)) {
                             classpathRoots.add(mainClasses);
@@ -268,22 +280,26 @@ public final class PyronautTestMain implements Callable<Integer> {
                             requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
                         }
                     }
-                    requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(classpathRoots));
-                    Optional<String> pytestTests = buildPytestTestsParameter(normalizePytestTestSelectors(root, resolvedTestsDir, tests));
-                    if (Files.isDirectory(resolvedPytestSourceDir)) {
-                        List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
-                        List<Path> selectedFiles = mapToPytestSourceFiles(resolvedTestsDir, resolvedPytestSourceDir, explicitFiles);
-                        boolean onlyDirectSelectors = hasOnlyDirectFileSelectors(tests);
-                        if (explicitFiles.isEmpty() || !onlyDirectSelectors) {
-                            requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedPytestSourceDir.toString()));
-                            requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedPytestSourceDir.toString());
-                        } else {
-                            for (Path file : selectedFiles) {
-                                requestBuilder.selectors(DiscoverySelectors.selectFile(file.toString()));
+                    if (junitEnabled && !classpathRoots.isEmpty()) {
+                        requestBuilder.selectors(DiscoverySelectors.selectClasspathRoots(classpathRoots));
+                    }
+                    if (pytestEnabled) {
+                        Optional<String> pytestTests = buildPytestTestsParameter(normalizePytestTestSelectors(root, resolvedTestsDir, tests));
+                        if (Files.isDirectory(resolvedPytestSourceDir)) {
+                            List<Path> explicitFiles = resolveDirectTestFileSelectors(root, resolvedTestsDir, tests);
+                            List<Path> selectedFiles = mapToPytestSourceFiles(resolvedTestsDir, resolvedPytestSourceDir, explicitFiles);
+                            boolean onlyDirectSelectors = hasOnlyDirectFileSelectors(tests);
+                            if (explicitFiles.isEmpty() || !onlyDirectSelectors) {
+                                requestBuilder.selectors(DiscoverySelectors.selectDirectory(resolvedPytestSourceDir.toString()));
+                                requestBuilder.configurationParameter(PYTEST_SOURCE_DIR, resolvedPytestSourceDir.toString());
+                            } else {
+                                for (Path file : selectedFiles) {
+                                    requestBuilder.selectors(DiscoverySelectors.selectFile(file.toString()));
+                                }
                             }
                         }
+                        pytestTests.ifPresent(value -> requestBuilder.configurationParameter(PYTEST_TESTS, value));
                     }
-                    pytestTests.ifPresent(value -> requestBuilder.configurationParameter(PYTEST_TESTS, value));
                 } else {
                     for (String className : selectClasses) {
                         try {
@@ -299,8 +315,8 @@ public final class PyronautTestMain implements Callable<Integer> {
                 Launcher launcher = LauncherFactory.create();
                 SummaryGeneratingListener listener = new SummaryGeneratingListener();
                 launcher.registerTestExecutionListeners(listener);
-                List<JUnitReportWriter.TestResult> javaTestResults = new CopyOnWriteArrayList<>();
-                if (ExternalProjectLayout.isExternal(root)) {
+                List<JUnitReportWriter.TestResult> testResults = new CopyOnWriteArrayList<>();
+                if (ExternalProjectLayout.isExternal(root) || junitEnabled) {
                     launcher.registerTestExecutionListeners(new TestExecutionListener() {
                         @Override
                         public void executionStarted(TestIdentifier identifier) {
@@ -335,7 +351,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                                 case FAILED -> JUnitReportWriter.Status.FAILED;
                                 case ABORTED -> JUnitReportWriter.Status.SKIPPED;
                             };
-                            javaTestResults.add(new JUnitReportWriter.TestResult(
+                            testResults.add(new JUnitReportWriter.TestResult(
                                 identifier.getDisplayName(), reportStatus,
                                 result.getThrowable().map(Throwable::toString).orElse(""), "", ""));
                         }
@@ -352,9 +368,9 @@ public final class PyronautTestMain implements Callable<Integer> {
                 try {
                     launcher.execute(request);
                 } finally {
-                    if (ExternalProjectLayout.isExternal(root)) {
+                    if (junitEnabled) {
                         try {
-                            JUnitReportWriter.write(reportsDir, listener.getSummary(), javaTestResults);
+                            JUnitReportWriter.write(reportsDir, listener.getSummary(), testResults);
                         } catch (IOException e) {
                             System.err.println("Unable to write test report: " + e.getMessage());
                         }
@@ -413,6 +429,14 @@ public final class PyronautTestMain implements Callable<Integer> {
         if (System.getProperty(MICRONAUT_SERVER_PORT) == null) {
             System.setProperty(MICRONAUT_SERVER_PORT, DEFAULT_TEST_SERVER_PORT);
         }
+    }
+
+    static List<String> engineIds(PyprojectModel.TestEngine engine) {
+        return switch (engine) {
+            case JUNIT -> List.of("junit-jupiter");
+            case PYTEST -> List.of(PytestTestEngine.ENGINE_ID);
+            case BOTH -> List.of("junit-jupiter", PytestTestEngine.ENGINE_ID);
+        };
     }
 
     private static void setDefaultProperty(String name, String value) {

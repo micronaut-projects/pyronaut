@@ -117,7 +117,7 @@ def test_index(client):
     assert response.text == "Hello from Pyronaut"
 ----
 
-Run tests through Pyronaut so the Micronaut classpath and pytest engine are set up consistently:
+Run tests through Pyronaut so the Micronaut classpath and configured test engine are set up consistently:
 
 [source,bash]
 ----

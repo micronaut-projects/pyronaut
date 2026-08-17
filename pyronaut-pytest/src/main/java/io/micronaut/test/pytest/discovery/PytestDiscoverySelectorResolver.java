@@ -30,19 +30,26 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
  * Resolves JUnit 5 discovery selectors into pytest test descriptors.
  */
 public final class PytestDiscoverySelectorResolver {
- 
+
+    private static final Pattern JUNIT_MICRONAUT_TEST_IMPORT = Pattern.compile(
+        "^from\\s+micronaut\\.test\\.extensions\\.junit5\\.annotation\\s+import\\s+MicronautTest(?:\\s+as\\s+(\\w+))?\\s*$",
+        Pattern.MULTILINE
+    );
+
     private static final Logger LOG = LoggerFactory.getLogger(PytestDiscoverySelectorResolver.class);
- 
+
     private final Context context;
     private Path baseDirectory;
     private PytestTestFilters testFilters = PytestTestFilters.from(null);
- 
+
     public PytestDiscoverySelectorResolver(Context context) {
         this.context = context;
     }
@@ -131,6 +138,10 @@ public final class PytestDiscoverySelectorResolver {
         LOG.debug("Adding Python file: {}", filePath);
 
         try {
+            if (isJUnitModule(filePath)) {
+                LOG.debug("Skipping JUnit Python module from pytest discovery: {}", filePath);
+                return;
+            }
             PytestAstParser astParser = new PytestAstParser(context);
             List<TestDescriptor> testDescriptors = astParser.parsePythonFileAsTests(filePath, baseDirectory);
 
@@ -148,6 +159,20 @@ public final class PytestDiscoverySelectorResolver {
         } catch (Exception e) {
             LOG.error("Error parsing Python file: {}", filePath, e);
         }
+    }
+
+    static boolean isJUnitModule(Path filePath) throws IOException {
+        String source = Files.readString(filePath);
+        Matcher importMatcher = JUNIT_MICRONAUT_TEST_IMPORT.matcher(source);
+        if (!importMatcher.find()) {
+            return false;
+        }
+        String annotationName = importMatcher.group(1);
+        if (annotationName == null || annotationName.isBlank()) {
+            annotationName = "MicronautTest";
+        }
+        Pattern call = Pattern.compile("^" + Pattern.quote(annotationName) + "\\s*\\(", Pattern.MULTILINE);
+        return call.matcher(source).find();
     }
 
     /**

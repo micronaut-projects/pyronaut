@@ -37,6 +37,7 @@ import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceL
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
+import io.micronaut.python.processing.visitor.ScriptDef;
 import io.micronaut.pyronaut.testresources.DirectSourceTestResourcesSession;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
 import io.micronaut.pyronaut.validateconfig.PyronautValidateConfigMain;
@@ -48,6 +49,7 @@ import io.micronaut.runtime.Micronaut;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
@@ -147,6 +149,9 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final Pattern JAVA_PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([A-Za-z_][\\w.]*)\\s*;");
     private static final Pattern JAVA_TYPE_PATTERN = Pattern.compile("\\b(?:class|interface|record|enum)\\s+([A-Za-z_][\\w]*)");
     private static final Pattern PYTHON_TYPE_PATTERN = Pattern.compile("(?m)^\\s*class\\s+([A-Za-z_][\\w]*)\\s*[:(]");
+    private static final Pattern PYTHON_JUNIT_MODULE_PATTERN = Pattern.compile(
+        "(?m)^\\s*from\\s+micronaut\\.test\\.extensions\\.junit5\\.annotation\\s+import\\s+.*\\bMicronautTest\\b.*$"
+    );
     private static final List<String> BUNDLED_TEST_RESOURCES_JARS = List.of(
         "micronaut-test-resources-",
         "micronaut-pyronaut-test-resources-server-"
@@ -767,8 +772,21 @@ public final class PyronautDevMain implements Callable<Integer> {
                 throw new IllegalArgumentException("No JUnit test classes were found in the supplied test sources");
             }
             for (String testClassName : testClassNames) {
-                Class<?> testClass = Class.forName(testClassName, true, applicationClassLoader);
+                Class<?> testClass;
+                try {
+                    testClass = Class.forName(testClassName, true, applicationClassLoader);
+                } catch (ClassNotFoundException e) {
+                    if (!testClassName.startsWith("python.")) {
+                        throw e;
+                    }
+                    testClass = Class.forName(testClassName.substring("python.".length()), true, applicationClassLoader);
+                }
                 requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
+            }
+            // Direct source execution currently supports compiled JUnit modules only.
+            // Do not let the pytest engine bootstrap (and require pytest on disk).
+            if (pythonSource) {
+                requestBuilder.filters(EngineFilter.includeEngines("junit-jupiter"));
             }
             LauncherDiscoveryRequest request = requestBuilder.build();
             Launcher launcher = LauncherFactory.create();
@@ -896,6 +914,17 @@ public final class PyronautDevMain implements Callable<Integer> {
                 }
             } else if (file.getFileName().toString().endsWith(".py")) {
                 String packageName = pythonPackageName(file, selectors);
+                Matcher junitModuleMatcher = PYTHON_JUNIT_MODULE_PATTERN.matcher(source);
+                if (junitModuleMatcher.find()) {
+                    Pattern callPattern = Pattern.compile("(?m)^\\s*(?:@?MicronautTest)\\s*(?:\\(|$)");
+                    if (callPattern.matcher(source).find()) {
+                        String moduleName = file.getFileName().toString().replaceFirst("\\.py$", "");
+                        String className = packageName + "." + ScriptDef.toJavaClassName(moduleName);
+                        if (!classNames.contains(className)) {
+                            classNames.add(className);
+                        }
+                    }
+                }
                 Matcher typeMatcher = PYTHON_TYPE_PATTERN.matcher(source);
                 while (typeMatcher.find()) {
                     String className = packageName + "." + typeMatcher.group(1);

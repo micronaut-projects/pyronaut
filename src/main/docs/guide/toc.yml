@@ -25,7 +25,7 @@ packaging:
 logging:
   title: Python Logging with Logback
 testing:
-  title: Testing with Pytest
+  title: Testing
   micronautTest: Using MicronautTest
   testResources:
     title: Test Resources & Docker

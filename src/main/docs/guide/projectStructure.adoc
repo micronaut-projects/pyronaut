@@ -61,7 +61,7 @@ The default layout is:
 |-- config/
 |   `-- application.toml and other application resources
 |-- tests/
-|   `-- pytest sources
+|   `-- Python test sources (pytest or JUnit modules)
 |-- test-java/
 |   `-- optional Java test sources
 |-- tests-config/

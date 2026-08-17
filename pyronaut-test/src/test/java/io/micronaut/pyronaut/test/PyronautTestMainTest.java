@@ -1,6 +1,7 @@
 package io.micronaut.pyronaut.test;
 
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -153,6 +154,13 @@ class PyronautTestMainTest {
         } finally {
             restoreProperty(property, previous);
         }
+    }
+
+    @Test
+    void selectsConfiguredTestEngines() {
+        assertEquals(List.of("junit-jupiter"), PyronautTestMain.engineIds(PyprojectModel.TestEngine.JUNIT));
+        assertEquals(List.of("pyronaut-pytest"), PyronautTestMain.engineIds(PyprojectModel.TestEngine.PYTEST));
+        assertEquals(List.of("junit-jupiter", "pyronaut-pytest"), PyronautTestMain.engineIds(PyprojectModel.TestEngine.BOTH));
     }
 
     @Test
