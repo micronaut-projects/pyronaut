@@ -28,6 +28,7 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationCon
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarationRequest;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarations;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarationsProcessor;
@@ -180,6 +181,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     static void main(String[] args) {
+        PyronautRuntimeProperties.disableGraalVmImageSingletons();
         configureNativeRuntimeDefaults();
         initializeLauncherLogging();
         Integer verificationExit = verifySystemResourceIfRequested();

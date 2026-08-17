@@ -22,6 +22,7 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospect
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.test.pytest.execution.JUnitReportWriter;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
@@ -934,6 +935,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        PyronautRuntimeProperties.disableGraalVmImageSingletons();
         PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautTestMain()).execute(args);
         System.exit(exitCode);

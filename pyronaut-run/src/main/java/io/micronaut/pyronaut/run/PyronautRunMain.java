@@ -23,6 +23,7 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospect
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
@@ -492,6 +493,7 @@ public class PyronautRunMain implements Callable<Integer> {
     }
 
     static void main(String[] args) {
+        PyronautRuntimeProperties.disableGraalVmImageSingletons();
         loadRunConfigurer().initializeLauncher();
         int exitCode = new CommandLine(new PyronautRunMain()).execute(args);
         System.exit(exitCode);
