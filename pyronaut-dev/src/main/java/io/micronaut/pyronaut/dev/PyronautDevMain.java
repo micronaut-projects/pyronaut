@@ -48,6 +48,7 @@ import io.micronaut.runtime.Micronaut;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
@@ -779,6 +780,11 @@ public final class PyronautDevMain implements Callable<Integer> {
                     testClass = Class.forName(testClassName.substring("python.".length()), true, applicationClassLoader);
                 }
                 requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
+            }
+            // Direct source execution currently supports compiled JUnit modules only.
+            // Do not let the pytest engine bootstrap (and require pytest on disk).
+            if (pythonSource) {
+                requestBuilder.filters(EngineFilter.includeEngines("junit-jupiter"));
             }
             LauncherDiscoveryRequest request = requestBuilder.build();
             Launcher launcher = LauncherFactory.create();
