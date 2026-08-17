@@ -457,6 +457,7 @@ val nativeImageRuntimeArgs = listOf(
 
     /* other runtime APIs */
     "-H:Preserve=package=javax.xml.namespace.*",
+    "-H:Preserve=package=org.apache.commons.logging.*",
     "-H:Preserve=package=org.reactivestreams.*",
 
     /* other */
