@@ -109,8 +109,10 @@ def micronaut_test_fixture(request,
 
     start_error = bootstrap.getError()
     if start_error:
-        pytest = __import__("pytest")
-        pytest.fail(f"Micronaut Fixture Setup Failed: {start_error}", pytrace=False)
+        # Keep fixture bootstrap failures as a native Python exception.  Calling
+        # pytest.fail here lets a Java/foreign exception cross pytest's
+        # hookwrapper boundary in GraalPy native mode.
+        raise AssertionError(f"Micronaut Fixture Setup Failed: {start_error}")
     return ApplicationContextWrapper(bootstrap.getContext())
 
 
@@ -255,8 +257,12 @@ class ApplicationContextWrapper:
             return match.group(1) if match is not None else None
         module_name = getattr(key, "__module__", None)
         class_name = getattr(key, "__name__", None)
-        if module_name and class_name and str(module_name).startswith("micronaut."):
-            return f"io.{module_name}.{class_name}"
+        if module_name and class_name:
+            module_name = str(module_name)
+            if module_name.startswith("micronaut."):
+                return f"io.{module_name}.{class_name}"
+            if module_name.startswith(("java.", "javax.", "jakarta.", "io.", "org.", "com.")):
+                return f"{module_name}.{class_name}"
         match = JAVA_CLASS_RE.search(repr(key))
         return match.group(1) if match is not None else None
 

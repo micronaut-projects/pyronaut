@@ -8,6 +8,7 @@ dependencies {
     implementation(mn.micronaut.context.python)
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(libs.micronaut.test.core)
+    compileOnly(libs.micronaut.data.connection)
     implementation(mnTest.junit.platform.engine)
     implementation(mnTest.junit.platform.launcher)
     implementation(mn.graalpy) {

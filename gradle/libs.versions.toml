@@ -66,6 +66,7 @@ micronaut-json-schema-configuration-validator = { module = "io.micronaut.jsonsch
 micronaut-toml = { module = "io.micronaut.toml:micronaut-toml", version.ref = "micronaut-toml" }
 micronaut-test-core = { module = "io.micronaut.test:micronaut-test-core", version.ref = "micronaut-test" }
 micronaut-data-jdbc = { module = "io.micronaut.data:micronaut-data-jdbc", version.ref = "micronaut-data" }
+micronaut-data-connection = { module = "io.micronaut.data:micronaut-data-connection", version.ref = "micronaut-data" }
 micronaut-data-processor = { module = "io.micronaut.data:micronaut-data-processor", version.ref = "micronaut-data" }
 javaparser-core = { module = "com.github.javaparser:javaparser-core", version.ref = "javaparser" }
 graalvm-reachability-metadata = { module = "org.graalvm.buildtools:graalvm-reachability-metadata", version.ref = "graalvm-reachability-metadata" }

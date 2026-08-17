@@ -30,6 +30,9 @@ import io.micronaut.core.io.scan.ClassClassPathResourceLoader;
 import io.micronaut.core.io.scan.ClassPathResourceLoader;
 import io.micronaut.core.io.scan.CombinedClassPathResourceLoader;
 import io.micronaut.core.io.service.SoftServiceLoader;
+import io.micronaut.data.connection.ConnectionDefinition;
+import io.micronaut.data.connection.ConnectionOperations;
+import io.micronaut.data.connection.ConnectionOperationsRegistry;
 import io.micronaut.inject.qualifiers.Qualifiers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
@@ -346,6 +349,14 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         Object resource = applicationContext.getBean(config.resourceType(), Qualifiers.byName(config.dataSourceName()));
         @SuppressWarnings({"rawtypes", "unchecked"})
         SqlHandler<Object> handler = applicationContext.getBean(SqlHandler.class, Qualifiers.byTypeArguments(config.resourceType()));
+        if (resource instanceof DataSource) {
+            ConnectionOperations<?> operations = applicationContext.getBean(ConnectionOperationsRegistry.class)
+                .provideSynchronous(ConnectionOperations.class, config.dataSourceName());
+            return script -> operations.execute(ConnectionDefinition.REQUIRES_NEW, ignored -> {
+                handler.handle(resource, script);
+                return null;
+            });
+        }
         return script -> handler.handle(resource, script);
     }
 

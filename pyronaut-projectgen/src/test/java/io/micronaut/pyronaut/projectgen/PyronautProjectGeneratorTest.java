@@ -103,6 +103,13 @@ class PyronautProjectGeneratorTest {
     }
 
     @Test
+    void jinjavaViewsUseTheViewModuleOnly(PreviewGenerator generator) throws Exception {
+        String dependencies = dependenciesSection(generator.generate(defaultOptions(List.of("views-jinjava"))).get("pyproject.toml"));
+        assertTrue(dependencies.contains("  'io.micronaut.views:micronaut-views-jinjava'"));
+        assertFalse(dependencies.contains("jackson-databind"));
+    }
+
+    @Test
     void dependencyScopesMirrorPyronautInstallNames(PreviewGenerator generator) throws Exception {
         Map<String, String> project = generator.generate(defaultOptions(List.of("scope-mapping-fixture")));
         String pyproject = project.get("pyproject.toml");

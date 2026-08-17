@@ -393,6 +393,11 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.micronaut.reactor.*",
     "-H:Preserve=package=io.micronaut.core.annotation.*",
     "-H:Preserve=package=io.micronaut.core.beans.*",
+    "-H:Preserve=package=io.micronaut.core.convert.*",
+    "-H:Preserve=package=io.micronaut.core.async.*",
+    "-H:Preserve=package=io.micronaut.core.exceptions.*",
+    "-H:Preserve=package=io.micronaut.core.order.*",
+    "-H:Preserve=package=io.micronaut.core.propagation.*",
     "-H:Preserve=package=io.micronaut.expressions.*",
     "-H:Preserve=package=io.micronaut.context.visitor.*",
     "-H:Preserve=package=io.micronaut.validation.*",
@@ -427,9 +432,17 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.netty.resolver.*",
     "-H:Preserve=package=io.netty.util.concurrent",
     "-H:Preserve=package=io.netty.util",
+    "-H:Preserve=package=io.netty.util.internal.logging.*",
+
+    /* reactor.* */
+    "-H:Preserve=package=reactor.core.*",
+    "-H:Preserve=package=reactor.util.*",
+
+    /* other runtime APIs */
+    "-H:Preserve=package=javax.xml.namespace.*",
+    "-H:Preserve=package=org.reactivestreams.*",
 
     /* other */
-    "-H:Preserve=package=org.graalvm.polyglot",
     "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
     "-H:Preserve=package=org.slf4j.*",
     "-H:Preserve=package=org.w3c.dom.bootstrap",
@@ -453,6 +466,8 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=org.codehaus.plexus.*",
     "-H:Preserve=package=com.github.javaparser.*",
     "-H:Preserve=package=ch.qos.logback.*",
+    "-H:Preserve=package=org.graalvm.polyglot",
+    "-H:Preserve=package=org.apache.commons.logging.*",
     "-H:-PrintRestrictHeapAccessWarnings",
     "-H:IncludeResources=pyronaut-test-resources-logback\\.xml",
 
@@ -678,6 +693,9 @@ tasks {
     }
 
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")
+    nativeCompileTask.configure {
+        dependsOn(writeNativeClasspathManifests)
+    }
     val testSourceSet = the<SourceSetContainer>()["test"]
 
     register<Test>("nativeSmokeTest") {
@@ -703,6 +721,10 @@ graalvmNative {
         named("main") {
             imageName.set("pyronaut-dev")
             sharedLibrary.set(false)
+            // Pass the heap setting to native-image itself. Gradle's
+            // org.gradle.jvmargs only controls the Gradle daemon and does
+            // not increase the heap available to the native-image process.
+            buildArgs.add("-J-Xmx28g")
             buildArgs.addAll(nativeImageCLibraryPathArgs)
             buildArgs.addAll(nativeImageRuntimeArgs)
             buildArgs.addAll(nativeImageBuildReportArgs)

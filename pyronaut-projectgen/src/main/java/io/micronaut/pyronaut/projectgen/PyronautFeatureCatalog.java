@@ -84,6 +84,12 @@ public final class PyronautFeatureCatalog {
             .dependency(Scope.TEST, "io.micronaut.test:micronaut-test-junit5")
             .testConfiguration("micronaut.server.port", -1)
             .build());
+        add(features, PyronautCatalogFeature.builder("views-jinjava")
+            .title("Jinjava Views")
+            .description("Adds Jinjava server-side view rendering.")
+            .category("Web")
+            .dependency(Scope.RUNTIME, "io.micronaut.views:micronaut-views-jinjava")
+            .build());
 
         for (String unsupported : List.of(
             "gradle",
