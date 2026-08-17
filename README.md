@@ -2,48 +2,49 @@
 
 # Pyronaut
 
-Pyronaut is a polyglot runtime for running Python and Java code built on the Micronaut programming model. Python and Java code can combine seamlessly and utilize Micronaut features like dependency injection, AOP, configuration properties, serialization and so on.
+Pyronaut is the complete application platform for Python.
 
-For Python developers Pyronaut is a viable alternative to frameworks like FastAPI built on one of the most popular and mature frameworks in the Java ecosystem and highly scalable thanks to Netty.
+Python applications, not Python plumbing.
 
-For Java developers Pyronaut provides a faster GraalVM crema-based development model that allows easily incorporating Python code using GraalPy.
+Pyronaut is to Python what Node.js is to JavaScript: an integrated path from
+project creation to a production service. It gives Python teams one coherent
+workflow for building, testing, validating, packaging, and deploying
+applications instead of asking each team to assemble and maintain its own
+framework, server, test setup, container build, and deployment glue.
 
-The main user entry point is the `pyronaut` command. The command is a Python
-orchestrator that delegates to focused JVM/native tools for dependency
-resolution, source processing, application execution, tests, configuration
-validation, native builds, and test resources.
+You write Python, `pyproject.toml`, and pytest tests. Pyronaut provides the
+application model and workflow around them, including HTTP, dependency
+injection, configuration, serialization, logging, test resources, and
+production packaging. It is powered by GraalPy and Micronaut infrastructure,
+but you do not need to understand those internals to use the platform.
 
-## What is in this repository?
+The `pyronaut` command is the single entry point for installing dependencies,
+processing sources, running locally, testing, validating configuration, and
+building deployable artifacts.
 
-This repository contains the Pyronaut CLI and the Micronaut integration modules
-that make Python applications work with Micronaut:
+## What Pyronaut provides
 
-- `pyronaut`: the packaged Python CLI orchestrator and SDK wheel.
-- `pyronaut-install`: resolves Maven dependencies, writes classpath manifests,
-  generates configuration schemas, and creates IDE stubs.
-- `pyronaut-processor`: processes Python and Java sources into Micronaut
-  metadata/classes.
-- `pyronaut-dev`: runs applications in development mode with automatic
-  install/process preflight.
-- `pyronaut-run` and `pyronaut-test`: run applications and pytest-backed tests.
-- `pyronaut-create`: generates new Pyronaut applications from project
-  templates.
-- `pyronaut-validate-config`: validates Micronaut configuration for run, test,
-  and production scenarios.
-- `pyronaut-test-resources-server`: manages Micronaut Test Resources for local
-  development and tests.
-- `pyronaut-native-build`: builds native executables.
-- `pyronaut-tui`: interactive terminal UI over the same CLI workflow.
-- `pyronaut-projectgen` and `pyronaut-projectgen-app`: project generation
-  support.
-- `pyronaut-pytest`, `pyronaut-requests`, `pyronaut-logging`, and
-  `pyronaut-logback`: runtime and testing support libraries.
+Pyronaut brings the surrounding application experience into one platform:
 
-The full user guide lives in `src/main/docs/guide`.
+- A single CLI for the development-to-production workflow.
+- A known project layout and `pyproject.toml`-based application model.
+- Managed application dependencies and configuration.
+- Built-in HTTP, dependency injection, serialization, logging, and testing
+  capabilities.
+- Pytest-backed tests with application context and test resources.
+- Configuration validation before run, test, and production use.
+- GraalPy application wheels, container images, native executables, and
+  reusable production runtime options.
 
-## Getting started from a source checkout
+Pyronaut is built on GraalPy, with Micronaut infrastructure underneath. The
+technical guide in `src/main/docs/guide` explains the underlying capabilities
+when you need more detail.
 
-These instructions build the Pyronaut CLI from this repository. The tested
+## Building Pyronaut from source
+
+The following contributor setup builds the Pyronaut CLI from this repository.
+When packaged distributions are available, most users should be able to
+install Pyronaut without reproducing this source-build setup. The tested
 local setup uses GraalVM Community Edition `25.1.3+9.1` and GraalPy `3.12.8`
 from Oracle GraalVM Native 25.1.3. GraalVM Enterprise Edition should also
 work, but the Community Edition setup is the one currently replicated by the
@@ -220,9 +221,9 @@ pyronaut [--version] [--tui [--smoke|--non-interactive]] \
   <install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ```
 
-Current platform support is macOS and Linux. Commands that delegate to the JVM
-require a compatible GraalVM JDK; the CLI can discover local GraalVM
-installations or provision configured toolchains.
+Current platform support is macOS and Linux. When a command needs a managed
+runtime toolchain, the CLI can discover a compatible local installation or
+provision one from the configured toolchain settings.
 
 ## Typical project layout
 
@@ -363,7 +364,7 @@ Resolved runtime dependencies (... artifacts)
 Resolved development-runtime dependencies (... artifacts)
 Resolved test dependencies (... artifacts)
 Resolved test-resources-server dependencies (... artifacts)
-Generated application schema from runtime classpath (... fragments)
+Generated application schema from application dependencies (... fragments)
 Generated Python editor stubs (... packages, ... symbols)
 ```
 
@@ -417,7 +418,7 @@ def test_index(client):
     assert response.text == "Hello from Pyronaut"
 ```
 
-Run tests through Pyronaut so the Micronaut classpath and pytest engine are set
+Run tests through Pyronaut so the application context and pytest engine are set
 up consistently:
 
 ```bash
@@ -491,6 +492,12 @@ pyronaut test-resources-server stop --project-dir /path/to/app
 
 Build deployable artifacts:
 
+Pyronaut supports several production delivery modes. The JVM runtime is the
+default and most mature choice today. Crema-based runtimes are experimental,
+while closed-world native images are available when fast startup and a small
+runtime footprint are priorities. Start with the default JVM path unless your
+deployment requirements call for another mode.
+
 ```bash
 pyronaut build --jvm
 pyronaut build --native
@@ -523,7 +530,7 @@ PYRONAUT_TEST_RESOURCES_DISABLED=true pyronaut test
 ## Building the CLI locally
 
 For the complete source-checkout setup, dependency refresh guidance, and SDK
-wheel installation options, follow [Getting started from a source checkout](#getting-started-from-a-source-checkout).
+wheel installation options, follow [Building Pyronaut from source](#building-pyronaut-from-source).
 
 Build and test the repository:
 
@@ -645,8 +652,8 @@ Open `build/docs/index.html` after the guide build completes.
 
 ## More information
 
-- `src/main/docs/guide/gettingStarted.adoc`: guided first application.
-- `src/main/docs/guide/pyronautCliV2.adoc`: full CLI reference.
+- `build/docs/index.html`: generated user guide after running
+  `./gradlew publishGuide`.
 - `pyronaut/README.md`: SDK wheel and orchestrator development notes.
 - `functional-test/README.md`: fixture application test workflow.
 - `pyronaut-cli-v2/docs/cli-protocol.md`: orchestrator/delegate protocol.

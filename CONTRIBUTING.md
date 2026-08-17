@@ -30,6 +30,9 @@ To build the documentation, run `./gradlew publishGuide` (or `./gradlew pG`), th
 
 To also build the Javadocs, run `./gradlew docs`.
 
+For terminology, page structure, and Python-first messaging guidance, see
+[`docs/documentation-style-guide.md`](docs/documentation-style-guide.md).
+
 ## Working on the code base
 
 If you use IntelliJ IDEA, you can import the project using the Intellij Gradle Tooling ("File / Import Project" and selecting the "settings.gradle" file).
