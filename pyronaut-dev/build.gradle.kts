@@ -465,6 +465,8 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=org.codehaus.plexus.*",
     "-H:Preserve=package=com.github.javaparser.*",
     "-H:Preserve=package=ch.qos.logback.*",
+    "-H:Preserve=package=org.graalvm.polyglot",
+    "-H:Preserve=package=org.apache.commons.logging.*",
     "-H:-PrintRestrictHeapAccessWarnings",
     "-H:IncludeResources=pyronaut-test-resources-logback\\.xml",
 
