@@ -233,7 +233,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             output.resolve("reports/config-validation").resolve(normalizedScenario), root,
             configured == null ? ("dev".equals(normalizedScenario) ? List.of("dev") : "test".equals(normalizedScenario) ? List.of("test") : List.of()) : configured.environments(),
             List.copyOf(classpath), List.copyOf(resources),
-            configured == null ? List.of("micronaut.config", "micronaut.openapi", "micronaut.processing") : configured.suppressions(),
+            configured == null ? List.of("micronaut.config", "micronaut.graalvm", "micronaut.openapi", "micronaut.processing") : configured.suppressions(),
             configured == null ? List.of() : configured.suppressedInjectErrors(), normalizedScenario);
     }
 
@@ -377,6 +377,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     private List<String> mergeSuppressions(PyprojectModel.Validation validation) {
         LinkedHashSet<String> merged = new LinkedHashSet<>();
         merged.add("micronaut.config");
+        merged.add("micronaut.graalvm");
         merged.add("micronaut.openapi");
         merged.add("micronaut.processing");
         merged.add("endpoints.*");
