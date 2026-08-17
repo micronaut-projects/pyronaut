@@ -105,6 +105,35 @@ class PytestFunctionInvokerTest {
     }
 
     @Test
+    void applicationContextWrapperResolvesMicronautJavaTypeKeys() throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String testSupport = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
+            context.eval("python", """
+                import java
+
+                class _MicronautJavaType:
+                    def __init__(self, target, interface=False):
+                        self._target = target
+                        self._interface = interface
+
+                EmbeddedServer = _MicronautJavaType(java.type("java.lang.String"), True)
+                wrapper = ApplicationContextWrapper(object())
+                _, lookup_key = wrapper._resolve_bean_key(EmbeddedServer)
+                """);
+
+            String lookupKey = context.getBindings("python").getMember("lookup_key").asString();
+            assertEquals("java.lang.String", lookupKey);
+        }
+    }
+
+    @Test
     void pytestListenerFiltersFrameworkFramesFromFailureText() throws Exception {
         try (Context context = Context.newBuilder("python")
             .allowAllAccess(true)

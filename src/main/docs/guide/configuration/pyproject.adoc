@@ -74,7 +74,10 @@ daemon = false
 
 [tool.pyronaut.test]
 mode = "jvm" # jvm|native
+engine = "both" # junit|pytest|both
 ----
+
+The test engine defaults to `both`. Use `junit` for JUnit Jupiter tests, `pytest` for pytest tests, or `both` to execute both types.
 
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
 Set `base-image = "default"` there to package native applications against the

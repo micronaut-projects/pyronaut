@@ -32,7 +32,7 @@ Generated projects use the standard Pyronaut layout:
 * `.gitignore`
 
 The default application includes a simple HTTP controller, Logback-backed Python logging setup, pytest integration, and generated agent guidance for local Pyronaut workflows.
-Python, TOML configuration, and pytest are fixed defaults. There are no language, build tool, or Java test framework switches for Pyronaut projects.
+Python and TOML are fixed project defaults. Test execution supports JUnit 5, pytest, or both through `tool.pyronaut.test.engine`; there are no language or build tool switches for Pyronaut projects.
 
 After generation, run:
 

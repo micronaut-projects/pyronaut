@@ -210,14 +210,21 @@ class ApplicationContextWrapper:
                         pass
                 raise KeyError(f"Key '{lookup_key}' not found in context")
 
-        lookup_key = self._foreign_java_class_name(key)
+        foreign_key = self._unwrap_micronaut_java_type(key)
+        lookup_key = self._foreign_java_class_name(foreign_key)
         if lookup_key is not None:
             try:
                 return java.type(lookup_key), lookup_key
             except BaseException:
-                return key, lookup_key
+                return foreign_key, lookup_key
 
         raise TypeError(f"Unsupported key type: {type(key)}")
+
+    def _unwrap_micronaut_java_type(self, key):
+        """Return the Java class wrapped by Core's _MicronautJavaType helper."""
+        if type(key).__name__ != "_MicronautJavaType":
+            return key
+        return getattr(key, "_target", key)
 
     def _python_type_to_lookup_key(self, key):
         module_name = key.__module__

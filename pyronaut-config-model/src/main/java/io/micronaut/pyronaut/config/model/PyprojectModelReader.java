@@ -131,7 +131,7 @@ public final class PyprojectModelReader {
                 readEnum(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_PYTHON_INCREMENTAL_MODE),
                 readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_DAEMON)
             ),
-            new PyprojectModel.Test(resolveTestMode(parsed)),
+            new PyprojectModel.Test(resolveTestMode(parsed), resolveTestEngine(parsed)),
             sources,
             resolveToolchain(parsed),
             resolveIdeStubs(parsed),
@@ -272,6 +272,22 @@ public final class PyprojectModelReader {
             "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_TEST_MODE.canonicalPath()
                 + "': expected one of " + PyprojectConfigSpec.PYRONAUT_TEST_MODE.enumValues()
         );
+    }
+
+    private static PyprojectModel.TestEngine resolveTestEngine(TomlParseResult parsed) {
+        String engine = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_ENGINE);
+        if (engine == null || engine.isBlank()) {
+            engine = (String) PyprojectConfigSpec.PYRONAUT_TEST_ENGINE.defaultValue();
+        }
+        String normalized = engine.trim().toUpperCase(java.util.Locale.ROOT);
+        try {
+            return PyprojectModel.TestEngine.valueOf(normalized);
+        } catch (IllegalArgumentException e) {
+            throw new PyprojectModelException(
+                "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_TEST_ENGINE.canonicalPath()
+                    + "': expected one of " + PyprojectConfigSpec.PYRONAUT_TEST_ENGINE.enumValues()
+            );
+        }
     }
 
     private static PyprojectModel.Toolchain resolveToolchain(TomlParseResult parsed) {
