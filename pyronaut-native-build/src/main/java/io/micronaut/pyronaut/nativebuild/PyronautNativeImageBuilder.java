@@ -159,7 +159,6 @@ public final class PyronautNativeImageBuilder {
 
             /* other */
             "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
-            "-H:ReachabilityMetadataResources=META-INF/native-image/io.micronaut/micronaut-pyronaut-run/reachability-metadata.json",
             "-H:Preserve=package=org.slf4j.*",
             "-H:Preserve=package=org.w3c.dom.bootstrap",
             "-H:Preserve=package=org.w3c.dom.events",
