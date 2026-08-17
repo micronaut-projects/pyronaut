@@ -4,11 +4,11 @@ inputs:
   micronaut-core-repository:
     description: Micronaut Core repository used by the include-git checkout.
     required: false
-    default: https://github.com/graemerocher/micronaut-core.git
+    default: https://github.com/micronaut-projects/micronaut-core.git
   micronaut-core-branch:
     description: Micronaut Core branch used by the include-git checkout.
     required: false
-    default: python-ast-experiments
+    default: 5.2.x
   graalpy-extensions-repository:
     description: GraalPy extensions repository used to build embedding snapshot artifacts.
     required: false
