@@ -62,7 +62,7 @@ class PyronautAgentSkills implements Feature {
             A Pyronaut project is identified by `pyproject.toml` with `[tool.pyronaut]` sections. The normal generated layout is:
 
             - `src/`: application Python sources.
-            - `tests/`: pytest tests and test support code.
+            - `tests/`: pytest tests and JUnit 5 Python module tests.
             - `config/`: application resources, including `application.toml`.
             - `tests-config/`: test-only resources.
             - `__pyronaut__/`: generated dependency manifests, processed classes, IDE stubs, schemas, reports, and local caches. Do not edit this directory by hand.
@@ -96,7 +96,7 @@ class PyronautAgentSkills implements Feature {
             - `runtime`: application runtime libraries, such as HTTP server, serde, data, security, cloud, messaging, views, and logging modules.
             - `development-runtime`: dependencies available only to `pyronaut run` and development runtime launches.
             - `build`: annotation processors and compile-time support, such as `micronaut-serde-processor`, `micronaut-security-processor`, or `micronaut-data-processor`.
-            - `test`: pytest integration, test clients, test-resources modules, and test-only libraries.
+            - `test`: pytest integration, JUnit 5 support, test clients, test-resources modules, and test-only libraries.
 
             Use managed coordinates without versions when the Micronaut platform manages them. Add explicit versions only for unmanaged third-party artifacts.
 
@@ -156,7 +156,8 @@ class PyronautAgentSkills implements Feature {
             - `pyronaut install`: resolves dependencies, writes scoped manifests under `__pyronaut__/`, materializes TOML schemas, and generates IDE stubs.
             - `pyronaut process`: processes `src/` and `tests/` sources into `__pyronaut__/classes` and `__pyronaut__/test-classes`.
             - `pyronaut run`: validates config for the `run` scenario, processes main sources, and starts the production application without automatic test-resources orchestration. Run `pyronaut install` explicitly after dependency or editor-support changes.
-            - `pyronaut test`: validates config for the `test` scenario, processes test sources, manages test resources when enabled, runs pytest through Pyronaut, and writes reports under `__pyronaut__/reports/tests`. Run `pyronaut install` explicitly after dependency or editor-support changes.
+            - `pyronaut test`: validates config for the `test` scenario, processes test sources, manages test resources when enabled, runs the configured JUnit and/or pytest engines, and writes reports under `__pyronaut__/reports/tests`. Run `pyronaut install` explicitly after dependency or editor-support changes.
+            - `pyronaut test <file.py>`: directly compiles and runs a Python test module in memory. Direct execution currently supports JUnit 5 modules only; pytest tests require files on disk and must be run with project-mode `pyronaut test`.
             - `pyronaut validate-config --scenario dev|run|test|production`: validates lifecycle configuration for a specific scenario and writes reports under `__pyronaut__/reports/config-validation/<scenario>`.
             - `pyronaut test-resources-server start|status|stop`: manages a reusable test-resources server. `dev` and `test` can also start an owned server automatically when test resources are enabled.
 
@@ -247,6 +248,24 @@ class PyronautAgentSkills implements Feature {
             ## Tests
 
             Write normal pytest tests under `tests/`. Use `pyronaut.test` fixtures when a Micronaut application context is needed, and use the Pyronaut `requests` integration for HTTP requests when available.
+
+            For tests that must be run directly (for example, `pyronaut test test_main.py`), write a JUnit 5 Python module. Do not wrap the tests in a class, use `self`, add a `@Test` decorator, or add a `-> None` return annotation. Import and call `MicronautTest()` at module scope, then define ordinary `test_*` functions:
+
+            ```python
+            from typing import Annotated
+
+            from jakarta.inject import Inject
+            from micronaut.context import ApplicationContext
+            from micronaut.test.extensions.junit5.annotation import MicronautTest
+
+            MicronautTest()
+            context: Annotated[ApplicationContext, Inject]
+
+            def test_root():
+                assert context is not None
+            ```
+
+            JUnit modules use JUnit lifecycle and dependency-injection semantics (`@BeforeAll`, `@BeforeEach`, and Micronaut injection). Pytest modules use pytest fixtures and hooks. Keep the styles separate; a pytest module cannot be executed through direct in-memory source execution.
 
             For tests with a Micronaut context, prefer a context-bound client fixture:
 
