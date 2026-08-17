@@ -440,6 +440,7 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=org.xml.sax.helpers",
     "-H:Preserve=package=org.xml.sax",
     "-H:Preserve=package=tools.jackson.core.*",
+    "-H:Preserve=package=tools.jackson.databind.*",
     "-H:Preserve=package=io.swagger.v3.oas.models.*",
     "-H:IncludeResources=templates/.*",
     "-H:Preserve=package=io.micronaut.test.*",
