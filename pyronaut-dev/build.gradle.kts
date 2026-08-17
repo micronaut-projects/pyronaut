@@ -393,6 +393,11 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.micronaut.reactor.*",
     "-H:Preserve=package=io.micronaut.core.annotation.*",
     "-H:Preserve=package=io.micronaut.core.beans.*",
+    "-H:Preserve=package=io.micronaut.core.convert.*",
+    "-H:Preserve=package=io.micronaut.core.async.*",
+    "-H:Preserve=package=io.micronaut.core.exceptions.*",
+    "-H:Preserve=package=io.micronaut.core.order.*",
+    "-H:Preserve=package=io.micronaut.core.propagation.*",
     "-H:Preserve=package=io.micronaut.expressions.*",
     "-H:Preserve=package=io.micronaut.context.visitor.*",
     "-H:Preserve=package=io.micronaut.validation.*",
@@ -427,9 +432,18 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.netty.resolver.*",
     "-H:Preserve=package=io.netty.util.concurrent",
     "-H:Preserve=package=io.netty.util",
+    "-H:Preserve=package=io.netty.util.internal.logging.*",
+
+    /* reactor.* */
+    "-H:Preserve=package=reactor.core.*",
+    "-H:Preserve=package=reactor.util.*",
+
+    /* other runtime APIs */
+    "-H:Preserve=package=javax.xml.namespace.*",
+    "-H:Preserve=package=org.apache.commons.logging.*",
+    "-H:Preserve=package=org.reactivestreams.*",
 
     /* other */
-    "-H:Preserve=package=org.graalvm.polyglot",
     "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
     "-H:Preserve=package=org.slf4j.*",
     "-H:Preserve=package=org.w3c.dom.bootstrap",
@@ -656,6 +670,9 @@ tasks {
     }
 
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")
+    nativeCompileTask.configure {
+        dependsOn(writeNativeClasspathManifests)
+    }
     val testSourceSet = the<SourceSetContainer>()["test"]
 
     register<Test>("nativeSmokeTest") {

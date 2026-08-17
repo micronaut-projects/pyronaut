@@ -124,8 +124,12 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=io.micronaut.reactor.*",
             "-H:Preserve=package=io.micronaut.core.annotation.*",
             "-H:Preserve=package=io.micronaut.core.beans.*",
+            "-H:Preserve=package=io.micronaut.core.async.*",
             "-H:Preserve=package=io.micronaut.validation.*",
+            "-H:Preserve=package=io.micronaut.core.exceptions.*",
             "-H:Preserve=package=io.micronaut.core.naming.*",
+            "-H:Preserve=package=io.micronaut.core.order.*",
+            "-H:Preserve=package=io.micronaut.core.propagation.*",
             "-H:Preserve=package=io.micronaut.core.reflect.*",
             "-H:Preserve=package=io.micronaut.core.type.*",
             "-H:Preserve=package=io.micronaut.core.util.*",
@@ -149,6 +153,7 @@ public final class PyronautNativeImageBuilder {
 
 
             /* netty.* */
+            "-H:Preserve=package=io.netty.util.internal.logging.*",
             "-H:Preserve=package=io.netty.channel.nio",
             "-H:Preserve=package=io.netty.channel",
             "-H:Preserve=package=io.netty.handler.codec.http.*",
@@ -156,6 +161,15 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=io.netty.resolver.*",
             "-H:Preserve=package=io.netty.util.concurrent",
             "-H:Preserve=package=io.netty.util",
+
+            /* reactor.* */
+            "-H:Preserve=package=reactor.core.*",
+            "-H:Preserve=package=reactor.util.*",
+
+            /* other runtime APIs */
+            "-H:Preserve=package=javax.xml.namespace.*",
+            "-H:Preserve=package=org.apache.commons.logging.*",
+            "-H:Preserve=package=org.reactivestreams.*",
 
             /* other */
             "-H:Preserve=package=com.fasterxml.jackson.annotation.*",

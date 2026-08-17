@@ -362,6 +362,9 @@ class PyronautNativeBuildMainTest {
         Files.writeString(configDir.resolve("application.toml"), "micronaut.application.name = \"demo\"\n");
         Files.createDirectories(configDir.resolve("nested"));
         Files.writeString(configDir.resolve("nested").resolve("extra.txt"), "hello\n");
+        Path projectMetadataDir = configDir.resolve("META-INF/native-image/example/app");
+        Files.createDirectories(projectMetadataDir);
+        Files.writeString(projectMetadataDir.resolve("reachability-metadata.json"), "{}\n");
         Path dependencyJar = createJar(
             project.resolve("__pyronaut__/m2-repository/io/example/runtime-lib/1.0/runtime-lib-1.0.jar"),
             "META-INF/GRAALPY-VFS/micronaut-application/src/logback/__init__.py"
@@ -402,6 +405,7 @@ class PyronautNativeBuildMainTest {
             .findFirst()
             .orElseThrow();
         assertTrue(directories.contains(generatedDir.toAbsolutePath().normalize().toString()));
+        assertTrue(directories.contains(projectMetadataDir.toAbsolutePath().normalize().toString()));
     }
 
     @Test

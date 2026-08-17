@@ -1286,6 +1286,7 @@ type = "native"
                         "/tmp/micronaut-runtime-5.1.0.jar",
                         "/tmp/micronaut-runtime-5.2.0.jar",
                         "/tmp/micronaut-views-core-6.0.0.jar",
+                        "/tmp/org.graalvm.polyglot-coverage-25.1.3.pom",
                     ]
                 )
                 + "\n",
@@ -1298,6 +1299,7 @@ type = "native"
         self.assertNotIn("/tmp/micronaut-context-python-5.1.0.jar", entries)
         self.assertNotIn("/tmp/micronaut-runtime-5.1.0.jar", entries)
         self.assertNotIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
+        self.assertNotIn("/tmp/org.graalvm.polyglot-coverage-25.1.3.pom", entries)
         self.assertIn("/tmp/micronaut-views-core-6.0.0.jar", entries)
 
     def test_native_application_classpath_keeps_control_panel_jars(self):
@@ -1319,6 +1321,22 @@ type = "native"
 
         self.assertIn(str(control_panel_dir / "micronaut-control-panel-core-2.0.0.jar"), entries)
         self.assertIn(str(control_panel_dir / "micronaut-control-panel-ui-2.0.0.jar"), entries)
+
+    def test_native_compile_binary_uses_generated_classpath_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dev = root / "build" / "native" / "nativeCompile" / "pyronaut-dev"
+            native_dev.parent.mkdir(parents=True)
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            manifest = root / "build" / "generated" / "native-classpaths" / "native-provided-classpath.txt"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text("org.graalvm.polyglot:polyglot\n", encoding="utf-8")
+
+            self.assertEqual(
+                ["org.graalvm.polyglot:polyglot"],
+                cli._native_launcher_manifest_entries(str(native_dev), "native-provided-classpath.txt"),  # noqa: SLF001
+            )
 
     def test_external_layout_native_classpath_uses_persisted_resources_and_filters_provided_artifacts(self):
         with tempfile.TemporaryDirectory() as temp_dir:

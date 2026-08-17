@@ -1436,7 +1436,9 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
             }
             return [
                 entry for entry in entries
-                if Path(entry).exists() and Path(entry).resolve() not in output_dirs
+                if Path(entry).exists()
+                and _is_native_application_classpath_entry(entry)
+                and Path(entry).resolve() not in output_dirs
             ]
         key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
         entries.extend(external.get(key, []))
@@ -1475,7 +1477,7 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
                 entry for entry in external.get("testClasspath", [])
                 if _is_native_test_resources_client_artifact(Path(entry).name)
             )
-        return [entry for entry in entries if Path(entry).exists()]
+        return [entry for entry in entries if _is_native_application_classpath_entry(entry)]
     if command == "process":
         # The project runtime dependencies provide application APIs (such as
         # jakarta.inject); native-compile-classpath is added by the delegate
@@ -1538,7 +1540,14 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
             _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
     else:
         raise RuntimeError(f"Native application classpath is not supported for command: {command}")
-    return entries
+    return [entry for entry in entries if _is_native_application_classpath_entry(entry)]
+
+
+def _is_native_application_classpath_entry(entry: str) -> bool:
+    path = Path(entry)
+    # Resolver manifests can contain POM metadata beside jars; POMs are not
+    # runtime classpath entries and can expose the embedded Polyglot metadata.
+    return path.suffix.lower() != ".pom"
 
 
 def _read_external_layout(project_dir: Path) -> dict[str, list[str]] | None:
@@ -1624,11 +1633,20 @@ def _native_launcher_provided_artifact_ids(
 def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_name: str) -> list[str]:
     if not launcher_executable:
         return []
-    executable_parent = Path(launcher_executable).parent
+    executable_path = Path(launcher_executable).resolve()
+    executable_parent = executable_path.parent
     candidates = (
         executable_parent / manifest_name,
         executable_parent.parent / "bin" / manifest_name,
         executable_parent.parent / manifest_name,
+    )
+    # A locally built nativeCompile binary lives below build/native/nativeCompile,
+    # while its manifests are generated under build/generated/native-classpaths.
+    # Keep local native runs consistent with installed distributions so embedded
+    # Polyglot/GraalPy jars are not re-added to java.class.path.
+    candidates += tuple(
+        parent / "generated" / "native-classpaths" / manifest_name
+        for parent in executable_path.parents
     )
     manifest = next((candidate for candidate in candidates if candidate.is_file()), None)
     if manifest is None:

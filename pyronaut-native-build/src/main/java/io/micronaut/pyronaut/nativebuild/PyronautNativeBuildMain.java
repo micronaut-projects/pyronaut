@@ -186,6 +186,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             if (projectResourceConfigDir != null) {
                 configurationDirs.add(projectResourceConfigDir);
             }
+            configurationDirs.addAll(projectNativeImageConfigurationDirs(configDir));
             configurationDirs.addAll(metadataSelection.directories());
 
             PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
@@ -476,6 +477,27 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Files.createDirectories(generatedDir);
         Files.writeString(generatedDir.resolve("resource-config.json"), buildResourceConfig(List.copyOf(resources)), StandardCharsets.UTF_8);
         return generatedDir;
+    }
+
+    private static List<Path> projectNativeImageConfigurationDirs(Path configDir) throws IOException {
+        Path nativeImageRoot = configDir.resolve("META-INF").resolve("native-image");
+        if (!Files.isDirectory(nativeImageRoot)) {
+            return List.of();
+        }
+        try (var stream = Files.walk(nativeImageRoot)) {
+            return stream
+                .filter(Files::isDirectory)
+                .filter(path -> !path.equals(nativeImageRoot))
+                .filter(path -> {
+                    try (var files = Files.list(path)) {
+                        return files.anyMatch(Files::isRegularFile);
+                    } catch (IOException e) {
+                        return false;
+                    }
+                })
+                .sorted()
+                .toList();
+        }
     }
 
     private static Set<String> discoverUserPackages(Path classesDir,

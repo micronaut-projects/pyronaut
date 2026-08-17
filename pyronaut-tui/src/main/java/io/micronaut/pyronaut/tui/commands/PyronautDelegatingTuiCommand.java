@@ -842,7 +842,18 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         if (nativeDevExecutable == null) {
             return Set.of();
         }
-        Path manifest = nativeDevExecutable.toAbsolutePath().normalize().getParent().resolve("native-provided-classpath.txt");
+        Path executable = nativeDevExecutable.toAbsolutePath().normalize();
+        Path parent = executable.getParent();
+        Path manifest = parent.resolve("native-provided-classpath.txt");
+        if (!Files.isRegularFile(manifest)) {
+            for (Path ancestor = parent; ancestor != null; ancestor = ancestor.getParent()) {
+                Path candidate = ancestor.resolve("generated/native-classpaths/native-provided-classpath.txt");
+                if (Files.isRegularFile(candidate)) {
+                    manifest = candidate;
+                    break;
+                }
+            }
+        }
         if (!Files.isRegularFile(manifest)) {
             return Set.of();
         }
