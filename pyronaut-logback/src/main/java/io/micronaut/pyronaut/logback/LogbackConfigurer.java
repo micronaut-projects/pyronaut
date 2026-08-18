@@ -568,10 +568,9 @@ public final class LogbackConfigurer {
         return (Logger) LoggerFactory.getLogger(name != null ? name : "");
     }
 
-    private static void installJulBridge() {
+    static void installJulBridge() {
         try {
             ClassLoader cl = LogbackConfigurer.class.getClassLoader();
-            resetGraalpyLogger(cl);
             Class<?> bridge = Class.forName("org.slf4j.bridge.SLF4JBridgeHandler", false, cl);
             Method removeHandlers = bridge.getMethod("removeHandlersForRootLogger");
             removeHandlers.invoke(null);
@@ -583,6 +582,9 @@ public final class LogbackConfigurer {
             }
 
             java.util.logging.Logger logger = java.util.logging.Logger.getLogger("org.graalvm.python.embedding.VirtualFileSystem");
+            logger.setFilter(record -> record.getMessage() == null
+                || !record.getMessage().startsWith("There are duplicate entries originating from different virtual filesystem instances."));
+            resetGraalpyLogger(cl);
             java.util.logging.Logger rootLogger = java.util.logging.Logger.getLogger("");
             Handler[] handlers = rootLogger.getHandlers();
             for (Handler handler : handlers) {

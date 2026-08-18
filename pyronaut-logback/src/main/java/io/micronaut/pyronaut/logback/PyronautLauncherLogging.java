@@ -65,6 +65,8 @@ public final class PyronautLauncherLogging {
         setDefaultProperty(SIMPLE_LOGGER_DEFAULT_LEVEL, "warn");
         setDefaultProperty(LOGBACK_STATUS_LISTENER, LOGBACK_NOP_STATUS_LISTENER);
 
+        LogbackConfigurer.installJulBridge();
+
         ILoggerFactory loggerFactory = LoggerFactory.getILoggerFactory();
         if (loggerFactory instanceof LoggerContext loggerContext) {
             initializeLauncherDefaults(loggerContext);
