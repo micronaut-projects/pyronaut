@@ -53,7 +53,9 @@ public final class PyronautLauncherLogging {
         "regex",
         "regex.Phases",
         "com.oracle.graal.python.runtime",
-        "com.oracle.graal.python.runtime.LoggingPosixSupport"
+        "com.oracle.graal.python.runtime.LoggingPosixSupport",
+        "io.micronaut.core.reflect.ClassUtils",
+        "io.micronaut.inject.qualifiers.MatchArgumentQualifier"
     };
 
     private PyronautLauncherLogging() {
@@ -210,13 +212,15 @@ public final class PyronautLauncherLogging {
         private boolean isSuppressedLogger(String loggerName) {
             return Arrays.stream(VERBOSE_DEFAULT_INFO_LOGGERS)
                 .anyMatch(configured -> matchesLogger(loggerName, configured))
-                && traceLoggers.stream().noneMatch(configured -> loggerName.equals(configured) || loggerName.startsWith(configured + "."));
+                && traceLoggers.stream().noneMatch(configured -> matchesLogger(loggerName, configured));
         }
 
         private boolean matchesLogger(String loggerName, String configured) {
             return loggerName.equals(configured)
                 || loggerName.startsWith(configured + ".")
-                || (configured.endsWith("LoggingPosixSupport") && loggerName.endsWith(".LoggingPosixSupport"));
+                || (configured.endsWith("LoggingPosixSupport") && loggerName.endsWith(".LoggingPosixSupport"))
+                || (configured.endsWith("ClassUtils") && loggerName.endsWith(".ClassUtils"))
+                || (configured.endsWith("MatchArgumentQualifier") && loggerName.endsWith(".MatchArgumentQualifier"));
         }
     }
 

@@ -108,6 +108,8 @@ class PyronautLogbackConfiguratorTest {
         assertEquals(Level.INFO, context.getLogger("regex").getEffectiveLevel());
         assertEquals(Level.INFO, context.getLogger("com.oracle.graal.python.runtime").getEffectiveLevel());
         assertEquals(Level.INFO, context.getLogger("com.oracle.graal.python.runtime.LoggingPosixSupport").getEffectiveLevel());
+        assertEquals(Level.INFO, context.getLogger("io.micronaut.core.reflect.ClassUtils").getEffectiveLevel());
+        assertEquals(Level.INFO, context.getLogger("io.micronaut.inject.qualifiers.MatchArgumentQualifier").getEffectiveLevel());
     }
 
     @Test
