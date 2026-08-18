@@ -35,7 +35,10 @@ public final class PyronautLogbackConfigurator extends ContextAwareBase implemen
     public ExecutionStatus configure(LoggerContext context) {
         setContext(context);
         if (Boolean.parseBoolean(System.getProperty(PyronautLauncherLogging.APPLICATION_DEFAULTS_MARKER))) {
-            PyronautLauncherLogging.initializeApplicationDefaults(context, null);
+            PyronautLauncherLogging.initializeApplicationDefaults(
+                context,
+                System.getProperty(PyronautLauncherLogging.VERBOSE_LOGGER_PROPERTY)
+            );
             return ExecutionStatus.DO_NOT_INVOKE_NEXT_IF_ANY;
         }
         if (hasExplicitConfiguration()) {

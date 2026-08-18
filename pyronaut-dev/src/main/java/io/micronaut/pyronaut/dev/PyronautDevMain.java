@@ -396,8 +396,8 @@ public final class PyronautDevMain implements Callable<Integer> {
                     }
                     case "--verbose" -> {
                         verboseLogger = "";
-                        if (token.startsWith("--verbose=")) {
-                            verboseLogger = token.substring("--verbose=".length());
+                        if (i + 1 < args.size() && !args.get(i + 1).startsWith("-") && !isSourceSelector(args.get(i + 1))) {
+                            verboseLogger = args.get(++i);
                         }
                         continue;
                     }

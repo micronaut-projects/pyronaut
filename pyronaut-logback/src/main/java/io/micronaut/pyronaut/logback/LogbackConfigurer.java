@@ -34,6 +34,7 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Handler;
 
 /**
@@ -120,6 +121,16 @@ public final class LogbackConfigurer {
                 configureLogger(logger, loggerConfig);
             }
         }
+        PyronautLauncherLogging.configureVerboseLoggerLevels(
+            lc,
+            System.getProperty(PyronautLauncherLogging.VERBOSE_LOGGER_PROPERTY),
+            loggers == null ? Set.of() : loggers.keySet()
+        );
+        PyronautLauncherLogging.installVerboseLoggerFilter(
+            lc,
+            System.getProperty(PyronautLauncherLogging.VERBOSE_LOGGER_PROPERTY),
+            loggers == null ? Set.of() : loggers.keySet()
+        );
         System.setProperty(PYTHON_LOGGING_CONFIGURED, Boolean.TRUE.toString());
     }
 

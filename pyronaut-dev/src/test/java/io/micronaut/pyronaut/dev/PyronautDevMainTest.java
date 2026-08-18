@@ -183,6 +183,17 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void scopesVerboseLoggingToCommaSeparatedLoggersWhenValueIsSeparateArgument() {
+        PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectSourceArgs(List.of(
+            "--verbose", "regex,com.oracle.graal.python.runtime", "App.java"
+        ));
+
+        assertTrue(invocation.verbose());
+        assertEquals("regex,com.oracle.graal.python.runtime", invocation.verboseLogger());
+        assertEquals(List.of(Path.of("App.java")), invocation.sources());
+    }
+
+    @Test
     void detectsDirectSourceLanguage(@TempDir Path tempDir) throws IOException {
         Path javaSource = tempDir.resolve("Foo.java");
         Path pythonSource = tempDir.resolve("foo.py");

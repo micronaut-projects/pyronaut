@@ -4795,8 +4795,11 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
         if token == "--":
             index += 1
             continue
-        if token in {"test", "--port", "--property", "--config", "--setup", "--report", "--verbose"}:
+        if token in {"test", "--port", "--property", "--config", "--setup", "--report"}:
             index += 2
+            continue
+        if token == "--verbose":
+            index += 2 if index + 1 < len(args) and not args[index + 1].startswith("-") else 1
             continue
         if token.startswith("--verbose="):
             index += 1
@@ -5969,7 +5972,7 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
         if arg in direct_options or arg.startswith("-D") or arg.startswith("--verbose="):
             if arg in value_options:
                 index += 2
-            elif arg == "--report" and index + 1 < len(argv) and not argv[index + 1].startswith("-"):
+            elif arg in {"--report", "--verbose"} and index + 1 < len(argv) and not argv[index + 1].startswith("-"):
                 index += 2
             else:
                 index += 1
@@ -6193,7 +6196,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
                 if command == "dev"
                 else []
             ),
-            ("--verbose[=LOGGER]", "Enable verbose logging, optionally scoped to a logger name."),
+            ("--verbose[=LOGGER]", "Enable verbose logging, optionally scoped to comma-separated logger names."),
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
             ("--no-cache", "Bypass run preflight cache reads where applicable"),
@@ -6238,7 +6241,7 @@ def _print_test_usage(stream=None) -> None:
             ("--config-dir=<configDir>", "Configuration directory"),
             ("--debug-vm", "Enable JVM JDWP debugging on port 5005"),
             ("--disable-test-resources", "Disable configured and conditionally inferred Test Resources"),
-            ("--verbose[=LOGGER]", "Enable verbose logging, optionally scoped to a logger name."),
+            ("--verbose[=LOGGER]", "Enable verbose logging, optionally scoped to comma-separated logger names."),
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),

@@ -30,6 +30,8 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -83,17 +85,53 @@ class PyronautLogbackConfiguratorTest {
 
     @Test
     void configuresApplicationDefaultsWithoutJoran() {
-        PyronautLauncherLogging.initializeApplicationDefaults(context, "io.example");
+        PyronautLauncherLogging.initializeApplicationDefaults(context, "io.example, regex");
 
         Logger rootLogger = context.getLogger(Logger.ROOT_LOGGER_NAME);
         assertEquals(Level.INFO, rootLogger.getLevel());
         assertEquals(Level.TRACE, context.getLogger("io.example").getLevel());
+        assertEquals(Level.TRACE, context.getLogger("regex").getLevel());
+        assertEquals(Level.INFO, context.getLogger("com.oracle.graal.python.runtime").getLevel());
         ConsoleAppender<?> appender = (ConsoleAppender<?>) rootLogger.iteratorForAppenders().next();
         PatternLayoutEncoder encoder = (PatternLayoutEncoder) appender.getEncoder();
         assertEquals(
             "%cyan(%d{yyyy-MM-dd HH:mm:ss.SSS}) %gray([%level]) %magenta(%logger{36}): %msg%n",
             encoder.getPattern()
         );
+    }
+
+    @Test
+    void limitsNoisyVerboseLoggersByDefault() {
+        PyronautLauncherLogging.initializeApplicationDefaults(context, "");
+
+        assertEquals(Level.TRACE, context.getLogger(Logger.ROOT_LOGGER_NAME).getLevel());
+        assertEquals(Level.INFO, context.getLogger("regex").getEffectiveLevel());
+        assertEquals(Level.INFO, context.getLogger("com.oracle.graal.python.runtime").getEffectiveLevel());
+        assertEquals(Level.INFO, context.getLogger("com.oracle.graal.python.runtime.LoggingPosixSupport").getEffectiveLevel());
+    }
+
+    @Test
+    void reappliesVerboseLoggerOverridesAfterPythonLoggingConfiguration() {
+        PyronautLauncherLogging.initializeApplicationDefaults(context, "");
+        LogbackConfigurer.configure(Map.of("root", Map.of("level", "DEBUG")));
+
+        assertEquals(Level.INFO, context.getLogger("regex").getEffectiveLevel());
+        assertEquals(Level.INFO, context.getLogger("com.oracle.graal.python.runtime").getEffectiveLevel());
+    }
+
+    @Test
+    void preservesExplicitPythonLoggerConfiguration() {
+        PyronautLauncherLogging.initializeApplicationDefaults(context, "");
+        context.getLogger("regex").setLevel(Level.DEBUG);
+        context.getLogger("com.oracle.graal.python.runtime").setLevel(Level.TRACE);
+        PyronautLauncherLogging.configureVerboseLoggerLevels(
+            context,
+            "",
+            Set.of("regex", "com.oracle.graal.python.runtime")
+        );
+
+        assertEquals(Level.DEBUG, context.getLogger("regex").getEffectiveLevel());
+        assertEquals(Level.TRACE, context.getLogger("com.oracle.graal.python.runtime").getEffectiveLevel());
     }
 
     @Test

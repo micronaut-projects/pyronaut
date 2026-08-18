@@ -153,7 +153,7 @@ public final class PyronautTestMain implements Callable<Integer> {
         names = "--verbose",
         arity = "0..1",
         fallbackValue = "",
-        description = "Enable verbose output, optionally scoped to a logger name"
+        description = "Enable verbose output, optionally scoped to comma-separated logger names"
     )
     String verboseLogger;
 

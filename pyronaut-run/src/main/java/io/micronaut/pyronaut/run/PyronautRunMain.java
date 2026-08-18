@@ -24,6 +24,7 @@ import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
+import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
@@ -74,7 +75,7 @@ public class PyronautRunMain implements Callable<Integer> {
             names = "--verbose",
             arity = "0..1",
             fallbackValue = "",
-            description = "Enable verbose output, optionally scoped to a logger name"
+            description = "Enable verbose output, optionally scoped to comma-separated logger names"
     )
     String verboseLogger;
 
@@ -194,6 +195,9 @@ public class PyronautRunMain implements Callable<Integer> {
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             contextBootstrapper.bootstrap(applicationClassLoader);
+            if (verboseLogger != null) {
+                PyronautLauncherLogging.reapplyVerboseLoggerDefaults(verboseLogger);
+            }
             ApplicationArgs applicationArgs = new ApplicationArgs(
                     model == null ? Boolean.TRUE : model.pyronaut().run().bannerEnabled(), appArgs, verboseLogger != null
             );
