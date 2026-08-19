@@ -236,6 +236,36 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void copiesDownloadedDefaultBaseImageWithoutInvokingNativeImage() throws Exception {
+        Path source = tempDir.resolve("pyronaut-run");
+        Files.writeString(source, "prebuilt-base", java.nio.charset.StandardCharsets.UTF_8);
+        source.toFile().setExecutable(true, false);
+        Path output = tempDir.resolve("output").resolve("pyronaut-run");
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(
+            new PyprojectModelReader(),
+            invoker,
+            (sourceUri, extractedRoot) -> { throw new IOException("metadata must not be downloaded"); }
+        );
+        int exit = new CommandLine(command).execute(
+            "--project-dir", tempDir.toString(),
+            "--output", output.toString(),
+            "--default-base-image",
+            "--default-base-image-path", source.toString()
+        );
+
+        assertEquals(0, exit);
+        assertTrue(executed.isEmpty());
+        assertEquals("prebuilt-base", Files.readString(output));
+        assertTrue(output.toFile().canExecute());
+    }
+
+    @Test
     void rejectsMainClassOverride() throws Exception {
         Path project = prepareProject("""
             [project]

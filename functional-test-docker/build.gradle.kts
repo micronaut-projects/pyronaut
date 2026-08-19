@@ -1190,15 +1190,16 @@ fun fixtureApplicationClasspathEntriesWithoutDuplicateVfsJars(): List<String> {
 }
 
 fun nativeFixtureApplicationClasspathEntries(): List<String> {
-    val launcherProvidedJarNames = nativeLauncherProvidedJarNames()
-    val launcherProvidedArtifactIds = nativeLauncherProvidedArtifactIds()
+    // The native launcher owns its implementation dependencies, but the
+    // fixture application classpath must remain complete. GraalPy resolves
+    // generated Python imports (including Java API stubs) through the
+    // application VFS/class loader; removing every jar whose artifact also
+    // appears in native-provided-classpath.txt changes that runtime behavior.
+    // Only the test-resources client is supplied separately below.
     return fixtureApplicationClasspathEntriesWithoutDuplicateVfsJars()
         .filterNot { entry ->
             val fileName = java.io.File(entry).name
-            val artifactId = versionedJarArtifactId(fileName)
-            isNativeTestResourcesClientArtifact(fileName) ||
-                launcherProvidedJarNames.contains(fileName) ||
-                launcherProvidedArtifactIds.contains(artifactId)
+            isNativeTestResourcesClientArtifact(fileName)
         }
         .distinct()
 }

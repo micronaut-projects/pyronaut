@@ -313,7 +313,7 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
-    void runScenarioUsesDevelopmentRuntimeManifestWhenPresent() throws Exception {
+    void runScenarioUsesRuntimeManifestWhenDevelopmentManifestIsPresent() throws Exception {
         Path project = prepareProject();
         Path runtimeJar = project.resolve("libs/runtime.jar");
         Path developmentRuntimeJar = project.resolve("libs/development.jar");
@@ -354,8 +354,8 @@ class PyronautValidateConfigMainTest {
 
         assertEquals(0, runExit);
         assertEquals(0, productionExit);
-        assertTrue(runClasspath.get().stream().anyMatch(entry -> entry.endsWith("development.jar")));
-        assertFalse(runClasspath.get().stream().anyMatch(entry -> entry.endsWith("runtime.jar")));
+        assertTrue(runClasspath.get().stream().anyMatch(entry -> entry.endsWith("runtime.jar")));
+        assertFalse(runClasspath.get().stream().anyMatch(entry -> entry.endsWith("development.jar")));
         assertTrue(productionClasspath.get().stream().anyMatch(entry -> entry.endsWith("runtime.jar")));
         assertFalse(productionClasspath.get().stream().anyMatch(entry -> entry.endsWith("development.jar")));
     }

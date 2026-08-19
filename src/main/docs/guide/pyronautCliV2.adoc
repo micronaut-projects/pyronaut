@@ -422,7 +422,7 @@ Common options:
 - `--docker`: build a container image instead of a wheel/native binary on the host
 - `--static`: static native container build; only valid with `--native --docker`
 - `--base-image`: build a reusable Crema production runtime image
-- `--base-image=default`: package against the bundled Java or Python Crema runtime
+- `--base-image=default`: package against the downloaded Java or Python Crema runtime
 - `--base-image-output <path>`: choose the local output for `--base-image`
 - `--name <name>` / `--version <version>`: package metadata for direct Java or Python sources
 - `--verbose` (native mode, forwarded to `native-image`)
@@ -435,6 +435,13 @@ JVM mode:
 - Outputs artifacts to `dist/`.
 
 Native mode always uses `io.micronaut.pyronaut.run.PyronautRunMain`; `--main-class` is not supported.
+
+The SDK wheel contains JVM launchers only. Native project commands download
+`pyronaut-dev` on demand, and native production runs download `pyronaut-run`
+for Java projects or `pyronaut-run-python` for Python projects. Direct-source
+`run`, `test`, and `dev` commands use `pyronaut-dev` because it includes the
+compiler. Downloaded images are versioned under `~/.pyronaut/bin` and are reused
+on later invocations.
 
 JVM Docker mode (`pyronaut build --docker`):
 
@@ -483,8 +490,9 @@ application builds. Base-image builds enable the native-image build report and
 SBOM export; inspect the generated report to verify included dependencies.
 
 Use `--base-image=default` when application dependencies do not need to be
-included in a custom base. It selects the bundled `pyronaut-run` image for Java
-applications and `pyronaut-run-python` for Python applications. The equivalent
+included in a custom base. It downloads and caches the language-specific
+`pyronaut-run` image for Java applications or `pyronaut-run-python` for Python
+applications. Docker Crema builds always use the Linux bundle. The equivalent
 `pyproject.toml` setting is `base-image = "default"`. Bare `--base-image`
 continues to create a custom base and export its report and SBOM.
 

@@ -1,6 +1,6 @@
 = Proxy Configuration
 
-`pyronaut install` honors proxy configuration while resolving Maven dependencies.
+`pyronaut install` and on-demand native-image downloads honor proxy configuration.
 Proxy settings are checked in this order:
 
 . Environment variables
@@ -72,3 +72,7 @@ If neither environment variables nor Pyronaut settings define a proxy, Pyronaut 
 ----
 
 When dependency resolution fails and a proxy was selected, the install error includes the proxy source and host summary.
+
+Native-image downloads use the same precedence and bypass rules. The selected
+bundle URL is formed from `[native-images].base-url` and `[native-images].version`;
+these settings are independent of the `[proxy]` table.

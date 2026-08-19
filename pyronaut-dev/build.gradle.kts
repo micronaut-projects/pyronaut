@@ -1,4 +1,6 @@
 import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask
+import org.gradle.api.tasks.bundling.Compression
+import org.gradle.api.tasks.bundling.Tar
 import org.gradle.api.tasks.SourceSetContainer
 import java.io.File
 import java.net.URLClassLoader
@@ -13,6 +15,16 @@ plugins {
 
 val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.platform.version")
 val controlPanelRuntime by configurations.creating
+val nativeBundleOs = when {
+    System.getProperty("os.name").lowercase().contains("linux") -> "linux"
+    System.getProperty("os.name").lowercase().contains("mac") -> "macos"
+    else -> System.getProperty("os.name").lowercase().replace(Regex("[^a-z0-9]+"), "-")
+}
+val nativeBundleArch = when (System.getProperty("os.arch").lowercase()) {
+    "aarch64", "arm64" -> "aarch64"
+    "x86_64", "amd64" -> "amd64"
+    else -> System.getProperty("os.arch").lowercase()
+}
 
 dependencies {
     implementation(project(":micronaut-pyronaut-build-annotations"))
@@ -695,6 +707,29 @@ tasks {
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")
     nativeCompileTask.configure {
         dependsOn(writeNativeClasspathManifests)
+    }
+    val nativeBundle = register<Tar>("nativeBundle") {
+        group = "distribution"
+        description = "Packages the versioned pyronaut-dev native image and runtime metadata"
+        dependsOn(nativeCompileTask)
+        dependsOn(writeNativeClasspathManifests)
+        dependsOn(copyNativeProvidedSources)
+        destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+        archiveFileName.set("pyronaut-dev-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
+        compression = Compression.GZIP
+        from(nativeCompileTask.flatMap { it.outputFile })
+        // GraalVM native-image may emit runtime libraries beside the
+        // executable. Keep them at the bundle root with the launcher.
+        from(layout.buildDirectory.dir("native/nativeCompile")) {
+            include("*.so", "*.dylib")
+        }
+        from(layout.buildDirectory.dir("native/nativeCompile/resources"))
+        from(layout.buildDirectory.dir("generated/native-classpaths")) {
+            include("native-compile-classpath.txt", "native-provided-classpath.txt")
+        }
+    }
+    named("assemble") {
+        dependsOn(nativeBundle)
     }
     val testSourceSet = the<SourceSetContainer>()["test"]
 

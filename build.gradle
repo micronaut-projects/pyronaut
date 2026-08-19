@@ -33,13 +33,14 @@ disabledSonatypePublishingTasks.each { taskName ->
     }
 }
 
-// A native SDK wheel embeds these three launchers. Native-image processes are
-// memory intensive, so order them explicitly without disabling parallelism for
-// the rest of the build.
-def nativeSdkWheelImageTaskPaths = [
-        ":micronaut-pyronaut-dev:nativeCompile",
-        ":micronaut-pyronaut-run:buildCremaNativeImage",
-        ":micronaut-pyronaut-run-python:buildCremaNativeImage"
+// Published native bundle builds produce these three launchers and their
+// complete versioned archives. Native-image processes are memory intensive,
+// so order them explicitly without disabling parallelism for the rest of the
+// build.
+def publishedNativeBundleTaskPaths = [
+        ":micronaut-pyronaut-dev:nativeBundle",
+        ":micronaut-pyronaut-run:nativeBundle",
+        ":micronaut-pyronaut-run-python:nativeBundle"
 ]
 allprojects {
     pluginManager.withPlugin("java") {
@@ -59,9 +60,9 @@ allprojects {
         if (task.name in disabledSonatypePublishingTasks || (lowerCaseTaskName.startsWith("publish") && lowerCaseTaskName.contains("sonatype"))) {
             enabled = false
         }
-        def taskIndex = nativeSdkWheelImageTaskPaths.indexOf(task.path)
+        def taskIndex = publishedNativeBundleTaskPaths.indexOf(task.path)
         if (taskIndex > 0) {
-            task.mustRunAfter(nativeSdkWheelImageTaskPaths[taskIndex - 1])
+            task.mustRunAfter(publishedNativeBundleTaskPaths[taskIndex - 1])
         }
     }
 }

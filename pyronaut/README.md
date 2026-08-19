@@ -16,22 +16,10 @@ Build the Python wheel that bundles the `pyronaut` orchestrator and delegated JV
 ./gradlew :micronaut-pyronaut:buildSdkWheel
 ```
 
-Build the native SDK wheel by opting into native launcher compilation:
-
-```bash
-./gradlew :micronaut-pyronaut:buildSdkWheel -Pnative=true
-```
-
 Build and install the JVM wheel into the active pyenv Python:
 
 ```bash
 ./gradlew :micronaut-pyronaut:installSdkWheel
-```
-
-Build and install the native wheel into the active pyenv Python:
-
-```bash
-./gradlew :micronaut-pyronaut:installSdkWheel -Pnative=true
 ```
 
 The wheel is written to:
@@ -62,7 +50,7 @@ If you rebuild the wheel and want to retest with the latest local artifact:
 python -m pip install --force-reinstall pyronaut/build/wheel/dist/pyronaut-*.whl
 ```
 
-The default SDK wheel delegates to the JVM launchers. The native SDK wheel stages native launchers from Gradle `nativeCompile` outputs; `pyronaut install` prefers the native launcher automatically when bundled, while `pyronaut process` stays on JIT by default unless the project opts into:
+The SDK wheel delegates to JVM launchers. Native images are downloaded on demand for native-configured projects and direct-source execution, then cached under `~/.pyronaut/bin`. The default bundle base URL is `https://gds.oracle.com/download/pyronaut/bundles/`; use `[native-images]` in `~/.pyronaut/settings.toml` to select a private base URL or pinned CI version. `pyronaut process` stays on JIT by default unless the project opts into:
 
 ```toml
 [tool.pyronaut.processor]

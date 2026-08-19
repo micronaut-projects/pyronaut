@@ -1,7 +1,6 @@
 import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 import org.gradle.api.GradleException
 import java.nio.file.Files
-import java.util.zip.ZipFile
 import java.util.regex.Pattern
 
 plugins {
@@ -30,9 +29,6 @@ def nativeImageJdkVersion = graalVmDevTag.map { tag ->
     def matcher = tag.trim() =~ /(\d+)/
     matcher.find() ? matcher.group(1) : buildJdkVersion.get()
 }.orElse(buildJdkVersion)
-def nativeSdkWheel = providers.gradleProperty("native")
-    .map { it.toBoolean() }
-    .orElse(false)
 def pyenvVersion = providers.gradleProperty("pyronautPyenvVersion").orElse("graalpy-25.0.3")
 def pyenvExecutable = providers.provider {
     def pyenvRoot = System.getenv("PYENV_ROOT")
@@ -88,31 +84,6 @@ def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-test-resources-server", command: "pyronaut-test-resources-server"],
     [path: ":micronaut-pyronaut-tui", command: "pyronaut-tui", installDir: "pyronaut-tui"]
 ]
-def delegatedNativeCliProjects = [
-    [path: ":micronaut-pyronaut-dev", command: "pyronaut-dev"],
-    [path: ":micronaut-pyronaut-run", command: "pyronaut-run"],
-    [path: ":micronaut-pyronaut-run-python", command: "pyronaut-run-python"]
-]
-def nativeWheelExcludedJars = [
-    "**/slf4j-simple-*.jar"
-]
-def supportedIdeStubPackagePrefixes = ["io/micronaut/", "jakarta/"]
-def nativeSourceJarNeededForIdeStubs = { File sourceJar ->
-    def binaryJar = new File(sourceJar.parentFile, sourceJar.name.replaceFirst(/-sources\.jar$/, ".jar"))
-    if (!binaryJar.isFile()) {
-        return false
-    }
-    try (def archive = new ZipFile(binaryJar)) {
-        def entries = archive.entries()
-        while (entries.hasMoreElements()) {
-            def name = entries.nextElement().name
-            if (name.endsWith(".class") && supportedIdeStubPackagePrefixes.any { name.startsWith(it) }) {
-                return true
-            }
-        }
-    }
-    return false
-}
 def mavenVersionDirReady = { File versionDir, String artifactId ->
     if (!versionDir.isDirectory()) {
         return false
@@ -190,9 +161,8 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
 }
 
 tasks.register("prepareWheelSources", Sync) {
-    // The SDK embeds the production launchers. Keep their distributions fresh
-    // whenever the wheel is rebuilt so runtime fixes are not masked by a
-    // stale installDist output.
+    // The SDK embeds only JVM launcher distributions. Keep them fresh whenever
+    // the wheel is rebuilt so runtime fixes are not masked by stale output.
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run-python").tasks.named("installDist"))
     from("src/main/python") {
@@ -205,27 +175,6 @@ tasks.register("prepareWheelSources", Sync) {
         def installDirName = cliProject.containsKey("installDir") ? cliProject.installDir : project(cliProject.path).name
         from(project(cliProject.path).layout.buildDirectory.dir("install/${installDirName}")) {
             into("src/pyronaut_cli_v2/tools/${cliProject.command}")
-            if (nativeSdkWheel.get()) {
-                exclude(nativeWheelExcludedJars)
-            }
-        }
-    }
-    inputs.property("native", nativeSdkWheel)
-
-    if (nativeSdkWheel.get()) {
-        delegatedNativeCliProjects.each { cliProject ->
-            def nativeCompileTask = project(cliProject.path).tasks.named("nativeCompile")
-            dependsOn(nativeCompileTask)
-            // installDist produces the coordinate manifest and source JARs used
-            // to populate the native tool's metadata-only lib directory.
-            dependsOn(project(cliProject.path).tasks.named("installDist"))
-            from(nativeCompileTask.map { it.outputFile.get().asFile }) {
-                into("src/pyronaut_cli_v2/tools/${cliProject.command}/native")
-            }
-            def installDirName = cliProject.containsKey("installDir") ? cliProject.installDir : project(cliProject.path).name
-            from(project(cliProject.path).layout.buildDirectory.file("install/${installDirName}/bin/native-compile-classpath.txt")) {
-                into("src/pyronaut_cli_v2/tools/${cliProject.command}/native")
-            }
         }
     }
 
@@ -246,59 +195,9 @@ tasks.register("prepareWheelSources", Sync) {
             }
         }
 
-        if (nativeSdkWheel.get()) {
-            delete(fileTree(wheelStagingDir).matching {
-                include(nativeWheelExcludedJars)
-            })
-            delegatedNativeCliProjects.each { cliProject ->
-                def nativeBinary = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/${cliProject.command}").asFile
-                if (nativeBinary.exists()) {
-                    nativeBinary.setExecutable(true)
-                }
-                def nativeProvidedClasspathSource = project(cliProject.path).layout.buildDirectory.file("generated/native-classpaths/native-provided-classpath.txt").get().asFile
-                def nativeProvidedClasspathTarget = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-provided-classpath.txt").asFile
-                if (nativeProvidedClasspathSource.isFile()) {
-                    nativeProvidedClasspathTarget.parentFile.mkdirs()
-                    nativeProvidedClasspathTarget.text = nativeProvidedClasspathSource.text
-
-                    // The native executable does not expose its hosted class
-                    // path. Package the listed artifacts beside it so native
-                    // metadata readers can inspect their bytecode and schema
-                    // resources without adding them to an application classpath.
-                    def nativeArtifactIds = nativeProvidedClasspathSource.readLines()
-                        .collect { it.trim() }
-                        .findAll { it && it.contains(":") }
-                        .collect { it.substring(it.indexOf(":") + 1) }
-                        .toSet()
-                    def nativeLibTarget = new File(nativeProvidedClasspathTarget.parentFile, "lib")
-                    nativeLibTarget.mkdirs()
-                    def installDirName = cliProject.containsKey("installDir") ? cliProject.installDir : project(cliProject.path).name
-                    def binaryLibSource = project(cliProject.path).layout.buildDirectory.dir("install/${installDirName}/lib").get().asFile
-                    def sourcesLibSource = project(cliProject.path).layout.buildDirectory.dir("generated/native-provided-sources").get().asFile
-                    [binaryLibSource, sourcesLibSource].findAll { it.isDirectory() }.each { sourceDir ->
-                        fileTree(sourceDir).matching { include("*.jar") }.files.each { artifact ->
-                            if (nativeArtifactIds.any { artifact.name.matches(Pattern.quote(it) + "-\\d.*\\.jar") }) {
-                                copy {
-                                    from(artifact)
-                                    into(nativeLibTarget)
-                                }
-                            }
-                        }
-                    }
-                }
-                def compileClasspathSource = project(cliProject.path).layout.buildDirectory.file("generated/native-classpaths/native-compile-classpath.txt").get().asFile
-                def compileClasspathTarget = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools/${cliProject.command}/native/native-compile-classpath.txt").asFile
-                if (compileClasspathSource.isFile()) {
-                    compileClasspathTarget.text = compileClasspathSource.text
-                }
-            }
-        }
-
         // The individual Gradle distributions contain the same dependency
         // JARs repeatedly. Store one copy in a wheel-level shared directory,
-        // while retaining per-tool manifests and launcher paths. Source JARs
-        // are metadata inputs for IDE stub generation, so retain them when
-        // their binary contains a supported io.micronaut or jakarta package.
+        // while retaining per-tool manifests and launcher paths.
         def toolsRoot = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools").asFile
         def sharedLib = new File(toolsRoot, "shared/lib")
         sharedLib.mkdirs()
@@ -317,15 +216,11 @@ tasks.register("prepareWheelSources", Sync) {
                 manifest.text = classpathEntries.unique().sort().join(System.lineSeparator()) + System.lineSeparator()
             }
 
-            [toolLib, new File(toolDir, "native/lib")].each { sourceDir ->
+            [toolLib].each { sourceDir ->
                 if (!sourceDir.isDirectory()) {
                     return
                 }
                 sourceDir.listFiles()?.findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }.each { artifact ->
-                    if (artifact.name.endsWith("-sources.jar") && sourceDir.parentFile.name == "native" && !nativeSourceJarNeededForIdeStubs(artifact)) {
-                        artifact.delete()
-                        return
-                    }
                     def existing = sharedByName[artifact.name]
                     if (existing != null) {
                         if (Files.mismatch(existing.toPath(), artifact.toPath()) != -1L) {
@@ -369,7 +264,7 @@ release-tag=${configuredTag}
 
         def versionInfoFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/version.properties").asFile
         versionInfoFile.parentFile.mkdirs()
-        versionInfoFile.text = """pyronaut=${project.findProperty("projectVersion")}
+        versionInfoFile.text = """pyronaut=${wheelVersion.get()}
 micronaut.core=${micronautCoreVersion.get()}
 micronaut.platform=${providers.gradleProperty("pyronaut.micronaut.platform.version").get()}
 graalpy=${graalPyVersion.get()}
@@ -430,46 +325,18 @@ pyronaut_cli_v2 =
 console_scripts =
     pyronaut = pyronaut_cli_v2.cli:main
 
-[bdist_wheel]
-root_is_pure = false
 """.trim() + System.lineSeparator()
 
         def setupPyFile = wheelStagingDir.get().file("setup.py").asFile
-        if (nativeSdkWheel.get()) {
-            setupPyFile.text = """
-from setuptools import setup
-from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
-import os
-
-class bdist_wheel(_bdist_wheel):
-    def finalize_options(self):
-        super().finalize_options()
-        self.root_is_pure = False
-        configured = os.environ.get("PYRONAUT_WHEEL_PLATFORM_TAG")
-        if configured:
-            self.plat_name = configured
-
-setup(
-    cmdclass={"bdist_wheel": bdist_wheel},
-    package_data={"pyronaut_cli_v2": [
-        "tools/*", "tools/*/*", "tools/*/*/*", "tools/*/*/*/*",
-        "tools/shared/lib/*", "toolchain-defaults.properties", "version.properties",
-    ]},
-    include_package_data=True,
-)
-""".trim() + System.lineSeparator()
-        } else {
-            setupPyFile.delete()
-        }
+        setupPyFile.delete()
     }
 }
 
 tasks.register("buildSdkWheel", Exec) {
     group = "build"
-    description = "Builds the Pyronaut SDK wheel. Use -Pnative=true to include native launchers."
+    description = "Builds the JVM-based Pyronaut SDK wheel."
     dependsOn(tasks.named("prepareWheelSources"))
     inputs.dir(wheelStagingDir)
-    inputs.property("native", nativeSdkWheel)
     outputs.dir(wheelDistDir)
     doFirst {
         // Prefer the configured pyenv interpreter, but allow environments
@@ -497,11 +364,10 @@ tasks.register("buildSdkWheel", Exec) {
 
 tasks.register("installSdkWheel", Exec) {
     group = "build"
-    description = "Builds and installs the Pyronaut SDK wheel with pyenv/pip. Use -Pnative=true to include native launchers."
+    description = "Builds and installs the JVM-based Pyronaut SDK wheel with pyenv/pip."
     dependsOn(tasks.named("buildSdkWheel"))
     dependsOn(tasks.named("prepareSdkMavenLocalEnvironment"))
     inputs.dir(wheelDistDir)
-    inputs.property("native", nativeSdkWheel)
     inputs.property("pyenvVersion", pyenvVersion)
     doFirst {
         def wheels = fileTree(wheelDistDir).matching {

@@ -110,13 +110,22 @@ Build a base image once after declaring the dependencies that should be shared:
 pyronaut build --base-image
 ----
 
-Use the bundled language-specific runtime when no dependency needs to be
-included in a custom base:
+Use the downloaded language-specific runtime when no dependency needs to be
+included in a custom base. The first invocation resolves the configured
+`[native-images]` bundle and stores it under `~/.pyronaut/bin`:
 
 [source,bash]
 ----
 pyronaut build --native --base-image=default
 ----
+
+The native launcher projects publish the same complete bundle format used by
+the CLI downloader. Running `./gradlew :micronaut-pyronaut-dev:assemble`,
+`:micronaut-pyronaut-run:assemble`, or
+`:micronaut-pyronaut-run-python:assemble` creates a versioned `.tar.gz` under
+the module's `build/distributions` directory. Each archive contains the native
+executable, generated native classpath manifests, and the native-image
+`resources` directory.
 
 [source,toml]
 ----

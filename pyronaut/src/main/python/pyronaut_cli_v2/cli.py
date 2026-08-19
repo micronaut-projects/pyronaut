@@ -5,6 +5,7 @@ import contextlib
 import fnmatch
 from functools import lru_cache
 import hashlib
+import importlib.metadata
 import json
 import shlex
 import shutil
@@ -45,7 +46,11 @@ COMMAND_TO_EXECUTABLE = {
     "test-resources-server": "pyronaut-test-resources-server",
 }
 DEV_NATIVE_EXECUTABLE = "pyronaut-dev"
-DEV_NATIVE_COMMANDS = {"install", "process", "run", "test", "validate-config"}
+# Configuration validation remains a JVM delegate. Unlike the development,
+# processor, and runtime commands, it needs the complete launcher classpath
+# (including Jackson's JsonMapper implementation) and is not part of the
+# downloadable native-image set.
+DEV_NATIVE_COMMANDS = {"install", "process", "run", "test"}
 TOOLCHAIN_TYPE_JVM = "jvm"
 TOOLCHAIN_TYPE_NATIVE = "native"
 
@@ -64,6 +69,9 @@ PYTHON_RUN_EXECUTABLE = "pyronaut-run-python"
 _DEFAULT_JDK_VERSION = "25"
 _DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i2"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
+_NATIVE_IMAGE_BASE_URL = "https://gds.oracle.com/download/pyronaut/bundles/"
+_NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
+_NATIVE_IMAGE_SETTINGS_TABLE = "native-images"
 _DEFAULT_DOCKER_JVM_BASE_IMAGE = f"container-registry.oracle.com/graalvm/jdk:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
 _DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = f"container-registry.oracle.com/graalvm/native-image:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
 _DEFAULT_DOCKER_NATIVE_BASE_IMAGE = "gcr.io/distroless/base"
@@ -279,7 +287,7 @@ def run(
             runner=runner,
             runner_with_env=runner_with_env,
             process_runner=process_runner,
-            project_dir=None,
+            project_dir=Path.cwd() if command == "run" else None,
         )
         if command == "dev":
             return _run_direct_source(
@@ -429,17 +437,18 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-            preflight_code = _run_preflight(
-                project_dir,
-                no_cache,
-                local_repository,
-                execute,
-                locate,
-                install=False,
-                process_pass=None if _is_external_build_project(Path(project_dir)) else "main",
-            )
-            if preflight_code != SUCCESS:
-                return preflight_code
+            if not _is_external_build_project(Path(project_dir)):
+                preflight_code = _run_preflight(
+                    project_dir,
+                    no_cache,
+                    local_repository,
+                    execute,
+                    locate,
+                    install=False,
+                    process_pass="main",
+                )
+                if preflight_code != SUCCESS:
+                    return preflight_code
             if tr_session is not None:
                 tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
@@ -775,7 +784,11 @@ def _delegate(
     env = _merge_env_overrides(env, env_overrides)
     env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
     if command == "install" and _has_direct_install_sources(args):
-        direct_launcher = _resolve_pyronaut_dev_native_executable(resolver)
+        try:
+            direct_launcher = _resolve_pyronaut_dev_native_executable(resolver)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
         direct_classpath = _native_launcher_compile_classpath_entries(direct_launcher)
         if direct_classpath:
             env = dict(env or os.environ)
@@ -791,7 +804,11 @@ def _delegate_direct_source(
     *,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    executable_path = _resolve_direct_source_dev_executable(args, resolver)
+    try:
+        executable_path = _resolve_direct_source_dev_executable(args, resolver)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
     if executable_path is None:
         print("Missing native delegated executable: pyronaut-dev", file=sys.stderr)
         return PRECONDITION_FAILED
@@ -1050,14 +1067,17 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
-        # Micronaut enables the Control Panel when its modules are present.
-        # Direct/external development launches must make the opt-in default
-        # explicit, otherwise developmentRuntimeClasspath can activate it.
+        # Newer micronaut-core releases honor this property when the native
+        # launcher starts. Direct source execution must use the static bean
+        # definitions embedded in pyronaut-dev, as 0.0.x did, rather than
+        # making the Crema URLClassLoader rediscover launcher classes.
+        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
         if not _control_panel_requested(Path.cwd().resolve(), args):
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     elif command == "run":
+        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
         jvm_args.append("-Dmicronaut.control-panel.enabled=false")
-    if command == "dev":
+    if command in {"dev", "test"}:
         jvm_args.append("-Dpyronaut.dev.direct.restartable=true")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
         jvm_args.append("-Dmicronaut.control-panel.enabled=true")
@@ -1104,6 +1124,10 @@ def _build_direct_source_native_jvm_args(
 def _direct_control_panel_classpath_entries(executable_path: str) -> list[str]:
     entries: list[str] = []
     launcher_lib = Path(executable_path).parent.parent / "lib"
+    if Path(executable_path).name in _NATIVE_IMAGE_COMMANDS:
+        packaged_lib = _packaged_tool_dir(Path(executable_path).name) / "lib"
+        if (packaged_lib / "control-panel").is_dir():
+            launcher_lib = packaged_lib
     bundled_dir = launcher_lib / "control-panel"
     for entry in sorted(bundled_dir.glob("*.jar")):
         if not entry.name.endswith("-sources.jar"):
@@ -1202,31 +1226,50 @@ def _resolve_run_manifest(cache_dir: Path) -> Path:
 def _launcher_shared_lib_dir(executable_path: str | Path) -> Path:
     """Resolve the wheel-level shared library directory for a launcher."""
     path = Path(executable_path).resolve()
+    if path.name in _NATIVE_IMAGE_COMMANDS:
+        packaged_shared = Path(__file__).resolve().parent / "tools" / "shared" / "lib"
+        if packaged_shared.is_dir():
+            return packaged_shared
     tool_dir = path.parent.parent
     return tool_dir.parent / "shared" / "lib"
+
+
+def _packaged_tool_dir(command_name: str) -> Path:
+    return Path(__file__).resolve().parent / "tools" / command_name
 
 
 def _delegate_lib_entries(executable_path: str, *, include_control_panel: bool = True) -> list[str]:
     path = Path(executable_path).resolve()
     if path.suffix == ".jar":
         return [str(path)]
-    manifest = path.parent.parent / "bin" / "pyronaut-classpath.txt"
-    shared_lib = _launcher_shared_lib_dir(path)
-    if manifest.is_file():
-        entries = [line.strip() for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
-        resolved = [str(shared_lib / entry) for entry in entries if (shared_lib / entry).is_file()]
-        if not include_control_panel:
-            resolved = [entry for entry in resolved if not _is_control_panel_artifact(Path(entry).name)]
-        if resolved:
-            return resolved
-    lib_dir = path.parent.parent / "lib"
-    jars = sorted(lib_dir.glob("*.jar"))
-    if not include_control_panel:
-        jars = [jar for jar in jars if not _is_control_panel_artifact(jar.name)]
-    if jars:
-        return [str(jar) for jar in jars]
     command_name = path.name
-    raise RuntimeError(f"Unable to resolve delegate jars for {command_name} from {lib_dir}")
+    packaged_dir = _packaged_tool_dir(command_name) if command_name in _NATIVE_IMAGE_COMMANDS else None
+    roots = [path.parent.parent]
+    if packaged_dir is not None:
+        roots.append(packaged_dir)
+    shared_lib = _launcher_shared_lib_dir(path)
+    for root in roots:
+        manifest = root / "bin" / "pyronaut-classpath.txt"
+        if manifest.is_file():
+            entries = [line.strip() for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+            resolved = []
+            for entry in entries:
+                candidate = root / "lib" / entry
+                if not candidate.is_file():
+                    candidate = shared_lib / entry
+                if candidate.is_file():
+                    resolved.append(str(candidate))
+            if not include_control_panel:
+                resolved = [entry for entry in resolved if not _is_control_panel_artifact(Path(entry).name)]
+            if resolved:
+                return list(dict.fromkeys(resolved))
+        lib_dir = root / "lib"
+        jars = sorted(lib_dir.glob("*.jar"))
+        if not include_control_panel:
+            jars = [jar for jar in jars if not _is_control_panel_artifact(jar.name)]
+        if jars:
+            return [str(jar) for jar in jars]
+    raise RuntimeError(f"Unable to resolve delegate jars for {command_name} from the packaged wheel")
 
 
 def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
@@ -1540,6 +1583,11 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
             _add_classpath_dir(entries, _resolve_layout_dir(project_dir, resource_dir))
     else:
         raise RuntimeError(f"Native application classpath is not supported for command: {command}")
+    if not _is_python_runtime_project(project_dir):
+        # Native development bundles contain GraalPy/compiler support jars.
+        # They must not turn a Java application's runtime into a Python
+        # runtime merely because those jars are present in its manifests.
+        entries = [entry for entry in entries if not _is_python_runtime_artifact(Path(entry).name)]
     return [entry for entry in entries if _is_native_application_classpath_entry(entry)]
 
 
@@ -1636,10 +1684,17 @@ def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_
     executable_path = Path(launcher_executable).resolve()
     executable_parent = executable_path.parent
     candidates = (
+        executable_parent / "resources" / executable_path.name / manifest_name,
         executable_parent / manifest_name,
         executable_parent.parent / "bin" / manifest_name,
         executable_parent.parent / manifest_name,
     )
+    if executable_path.name in _NATIVE_IMAGE_COMMANDS:
+        packaged_tool = _packaged_tool_dir(executable_path.name)
+        candidates += (
+            packaged_tool / "bin" / manifest_name,
+            packaged_tool / manifest_name,
+        )
     # A locally built nativeCompile binary lives below build/native/nativeCompile,
     # while its manifests are generated under build/generated/native-classpaths.
     # Keep local native runs consistent with installed distributions so embedded
@@ -1711,14 +1766,29 @@ def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> li
         executable_path.parent.parent.parent / "lib",
         _launcher_shared_lib_dir(executable_path),
     ]
+    if executable_path.name in _NATIVE_IMAGE_COMMANDS:
+        candidate_lib_dirs.extend((
+            _packaged_tool_dir(executable_path.name) / "lib",
+            _packaged_tool_dir(executable_path.name).parent / "shared" / "lib",
+        ))
+    manifest_entries = _native_launcher_manifest_entries(
+        launcher_executable, "native-provided-classpath.txt"
+    )
+    provided_ids = {
+        entry.split(":", 1)[1] if ":" in entry else _versioned_jar_artifact_id(Path(entry).name)
+        for entry in manifest_entries
+    }
+    provided_ids.discard(None)
+    resolved: list[str] = []
     for lib_dir in candidate_lib_dirs:
-        if lib_dir.is_dir():
-            return [
-                str(entry.resolve())
-                for entry in sorted(lib_dir.iterdir())
-                if entry.is_file() and entry.suffix == ".jar" and not entry.name.endswith("-sources.jar")
-            ]
-    return []
+        if not lib_dir.is_dir():
+            continue
+        for entry in sorted(lib_dir.iterdir()):
+            if (entry.is_file() and entry.suffix == ".jar"
+                    and not entry.name.endswith("-sources.jar")
+                    and (not provided_ids or _versioned_jar_artifact_id(entry.name) in provided_ids)):
+                resolved.append(str(entry.resolve()))
+    return list(dict.fromkeys(resolved))
 
 
 def _versioned_jar_artifact_ids(file_names: Iterable[str]) -> set[str]:
@@ -1897,7 +1967,7 @@ def _run_preflight(
     # removed. Force regeneration when the expected classes directory is
     # missing; otherwise `dev` can incorrectly reuse the external-build cache
     # and fail during classpath assembly.
-    if no_cache or not (_pyronaut_output_dir(Path(project_dir)) / "classes").is_dir():
+    if no_cache:
         process_args.append("--no-cache")
     return _delegate("process", process_args, runner, resolver)
 
@@ -1983,7 +2053,10 @@ def _looks_like_direct_build_invocation(args: Sequence[str]) -> bool:
 
 
 def _direct_build_source_selectors(args: Sequence[str]) -> list[str]:
-    value_options = {"--project-dir", "--project", "--mode", "--main-class", "--base-image-output", "--name", "--version", "--setup"}
+    value_options = {
+        "--project-dir", "--project", "--mode", "--main-class", "--base-image-output",
+        "--name", "--version", "--setup", "--local-repository", "--local-repo",
+    }
     selectors: list[str] = []
     index = 0
     while index < len(args):
@@ -2381,14 +2454,48 @@ def _run_build(
         output_dir = project_dir / "__pyronaut__" / "native"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_binary = output_dir / project_name
-        configured_base = _configured_local_base_image(project_dir)
+        try:
+            configured_base = _configured_local_base_image(project_dir)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
         configured_default_base = (_read_pyproject_build_base_image(project_dir) or "").strip().lower() == "default"
         if default_base_image:
-            configured_base = _bundled_default_base_image(project_dir)
+            try:
+                configured_base = _bundled_default_base_image(project_dir)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return PRECONDITION_FAILED
         if (default_base_image or configured_default_base) and configured_base is None:
-            print("The bundled default native base image is not installed for this platform.", file=sys.stderr)
+            print("The default native base image is not available for this platform.", file=sys.stderr)
             return PRECONDITION_FAILED
-        if configured_base is not None:
+        if default_base_image:
+            delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
+            if delegate_executable is None:
+                print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
+                return PRECONDITION_FAILED
+            native_command = [
+                delegate_executable,
+                "--project-dir",
+                str(project_dir),
+                "--output",
+                str(output_binary),
+                "--base-image",
+                "--default-base-image",
+                "--default-base-image-path",
+                str(configured_base),
+            ]
+            if _extract_offline(args):
+                native_command.append("--offline")
+            if verbose:
+                native_command.append("--verbose")
+            native_command.extend(_extract_native_build_passthrough_args(args))
+            if _delegation_trace_enabled():
+                print(shlex.join(native_command), file=sys.stderr)
+            exit_code = runner(native_command, env)
+            if exit_code != SUCCESS:
+                return exit_code
+        elif configured_base is not None:
             if not configured_base.is_file():
                 print(f"Configured base image does not exist: {configured_base}. Run pyronaut build --base-image first.", file=sys.stderr)
                 return PRECONDITION_FAILED
@@ -2406,6 +2513,8 @@ def _run_build(
                 "--output",
                 str(output_binary),
             ]
+            if _extract_offline(args):
+                native_command.append("--offline")
             if _is_python_runtime_project(project_dir):
                 native_command.append("--include-python")
             native_command.extend(_native_user_package_args(project_dir))
@@ -2437,6 +2546,7 @@ def _run_build(
                 "pip",
                 "wheel",
                 "--no-deps",
+                *(["--no-build-isolation"] if _extract_offline(args) else []),
                 "--wheel-dir",
                 str(dist_dir),
                 str(staging_dir),
@@ -2467,6 +2577,7 @@ def _run_build(
             "pip",
             "wheel",
             "--no-deps",
+            *(["--no-build-isolation"] if _extract_offline(args) else []),
             "--wheel-dir",
             str(dist_dir),
             str(staging_dir),
@@ -2750,6 +2861,11 @@ def _is_python_runtime_project(project_dir: Path) -> bool:
         return False
     python_root = project_dir / sources.python_source_dir
     java_root = project_dir / sources.java_source_dir
+    # A Java source tree is authoritative even when the runtime classpath also
+    # contains Micronaut's optional Python support (which is bundled by the
+    # native development launcher for compiler/editor services).
+    if java_root.is_dir() and any(p.suffix == ".java" for p in java_root.rglob("*.java")):
+        return False
     if any(project_dir.glob("*.py")) and not any(project_dir.glob("*.java")):
         return True
     if python_root.is_dir() and any(p.suffix == ".py" for p in python_root.rglob("*.py")):
@@ -2775,10 +2891,18 @@ def _configured_local_base_image(project_dir: Path) -> Path | None:
     return default_base if default_base.is_file() else None
 
 
-def _bundled_default_base_image(project_dir: Path) -> Path | None:
+def _bundled_default_base_image(
+    project_dir: Path,
+    *,
+    platform_name: str | None = None,
+) -> Path | None:
     launcher = PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]
     executable = _bundled_native_executable(launcher)
-    return executable if executable is not None and executable.is_file() else None
+    # An explicit platform is used for Docker targets and must not accidentally
+    # reuse a host-native executable from a source checkout.
+    if platform_name is None and executable is not None and executable.is_file():
+        return executable
+    return _ensure_native_image(launcher, platform_name=platform_name)
 
 
 def _native_user_package_args(project_dir: Path) -> list[str]:
@@ -3382,9 +3506,15 @@ def _run_docker_build(
                     return base_exit
                 _record_docker_base_image(project_dir, base_image)
             elif default_base_image:
-                bundled = _bundled_default_base_image(project_dir)
+                # Crema base images are Linux containers even when the CLI is
+                # running on macOS, so resolve the Linux bundle explicitly.
+                try:
+                    bundled = _bundled_default_base_image(project_dir, platform_name="linux")
+                except RuntimeError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return PRECONDITION_FAILED
                 if bundled is None or not bundled.is_file():
-                    print("The bundled default native base image is not installed for this platform.", file=sys.stderr)
+                    print("The default native base image is not available for this platform.", file=sys.stderr)
                     return PRECONDITION_FAILED
                 _prepare_bundled_docker_context(project_dir=project_dir, context_dir=context_dir)
                 bundled_dir = context_dir / "bundled-base"
@@ -3569,18 +3699,12 @@ def _run_lifecycle_validation(
     args = ["--project-dir", project_dir, "--scenario", scenario]
     if no_cache:
         args.append("--no-cache")
-    effective_env_overrides = env_overrides
-    if env_overrides is not None:
-        effective_env_overrides = _merge_env_overrides(
-            _build_non_test_resources_env("validate-config", None),
-            env_overrides,
-        )
     return _delegate(
         "validate-config",
         args,
         runner,
         resolver,
-        env_overrides=effective_env_overrides,
+        env_overrides=env_overrides,
     )
 
 
@@ -4112,7 +4236,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token == "--":
             passthrough.extend(args[index + 1:])
             break
-        if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate", "--docker", "--static", "--base-image", "--base-image=default"}:
+        if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--base-image", "--base-image=default"}:
             index += 1
             continue
         if token in {"--mode", "--main-class", "--project-dir", "--base-image-output", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src"}:
@@ -4550,8 +4674,6 @@ def _build_dev_delegate_invocation(
     delegate_args, dev_jvm_args = _split_dev_delegate_options(args)
     if _control_panel_requested(project_dir, args) or _control_panel_dependency_declared(project_dir):
         dev_jvm_args.append("-Dmicronaut.control-panel.enabled=true")
-    else:
-        dev_jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     # Convenience options are consumed by the Python orchestrator and must not
     # leak into the native pyronaut-dev command line.
     # Keep the original arguments for toolchain selection so --jvm/--native
@@ -4628,8 +4750,8 @@ def _build_dev_delegate_invocation(
         command_line.insert(classpath_index - 1, f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
     for jvm_arg in reversed(_build_test_resources_jvm_args(env_overrides)):
         command_line.insert(command_line.index("-cp"), jvm_arg)
-    # Control Panel is opt-in for dev. An explicit --control-panel/configured
-    # enablement is added below and intentionally overrides this default.
+    # Control Panel is opt-in for the JVM fallback. Explicit enablement below
+    # is inserted after this default and therefore takes precedence.
     command_line.insert(command_line.index("-cp"), "-Dmicronaut.control-panel.enabled=false")
     if not _has_micronaut_environments_property(args):
         command_line.insert(command_line.index("-cp"), "-Dmicronaut.environments=dev")
@@ -5126,12 +5248,16 @@ def _detect_graalvm_distribution(version_output: str, java_home: Path, version: 
     lowered = (version_output + "\n" + str(java_home)).lower()
     if version is not None and "dev" in version.lower():
         return "dev"
+    # Development archives identify themselves in the build string and/or
+    # installation directory (for example, graalvm-community-25.3.4.1-dev).
+    # Check this before the generic "graalvm community" marker so CE dev
+    # builds can satisfy an explicitly requested `distribution = "dev"`.
+    if "dev" in lowered:
+        return "dev"
     if "oracle graalvm" in lowered or "graalvm-jdk" in lowered:
         return "ee"
     if "graalvm community" in lowered or "graalvm ce" in lowered or "graalce" in lowered or "graalvm-community" in lowered:
         return "ce"
-    if "dev" in lowered:
-        return "dev"
     if "graalvm" in lowered:
         return "ce"
     return None
@@ -5216,30 +5342,364 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
     maven_settings = Path.home() / ".m2" / "settings.xml"
     try:
         root = ET.parse(maven_settings).getroot()
-        proxies = root.findall("./proxies/proxy")
+        # Maven settings normally declare a default XML namespace. ElementTree
+        # includes that namespace in every tag, so a namespace-free XPath would
+        # silently miss the proxy and make downloads fail on VPN-only hosts.
+        def local_name(element: ET.Element) -> str:
+            return element.tag.rsplit("}", 1)[-1]
+
+        proxy_containers = [element for element in root.iter() if local_name(element) == "proxies"]
+        proxies = [
+            proxy
+            for container in proxy_containers
+            for proxy in list(container)
+            if local_name(proxy) == "proxy"
+        ]
+
+        def child_text(element: ET.Element, name: str) -> str | None:
+            for child in list(element):
+                if local_name(child) == name:
+                    return child.text
+            return None
+
         proxy_element = next(
-            (element for element in proxies if (element.findtext("active") or "").strip().lower() == "true"),
+            (element for element in proxies if (child_text(element, "active") or "").strip().lower() == "true"),
             None,
         )
         if proxy_element is None and proxies:
             proxy_element = proxies[0]
         if proxy_element is not None:
-            protocol = (proxy_element.findtext("protocol") or "http").strip()
-            host = (proxy_element.findtext("host") or "").strip()
-            port = (proxy_element.findtext("port") or "").strip()
+            protocol = (child_text(proxy_element, "protocol") or "http").strip()
+            host = (child_text(proxy_element, "host") or "").strip()
+            port = (child_text(proxy_element, "port") or "").strip()
             if host and port:
                 credentials = ""
-                username = proxy_element.findtext("username")
-                password = proxy_element.findtext("password")
+                username = child_text(proxy_element, "username")
+                password = child_text(proxy_element, "password")
                 if username:
                     credentials = urllib.parse.quote(username, safe="")
                     if password:
                         credentials += ":" + urllib.parse.quote(password, safe="")
                     credentials += "@"
-                return f"{protocol}://{credentials}{host}:{int(port)}", proxy_element.findtext("nonProxyHosts")
+                return f"{protocol}://{credentials}{host}:{int(port)}", child_text(proxy_element, "nonProxyHosts")
     except (OSError, ET.ParseError, ValueError, TypeError):
         pass
     return None, None
+
+
+def _read_pyronaut_user_settings() -> dict[str, object]:
+    settings_path = Path.home() / ".pyronaut" / "settings.toml"
+    if not settings_path.is_file():
+        return {}
+    try:
+        import tomllib
+
+        with settings_path.open("rb") as settings_file:
+            settings = tomllib.load(settings_file)
+    except (OSError, ValueError, TypeError, ImportError) as exc:
+        raise RuntimeError(f"Failed reading {settings_path}: {exc}") from exc
+    if not isinstance(settings, dict):
+        raise RuntimeError(f"Invalid Pyronaut settings in {settings_path}")
+    return settings
+
+
+def _installed_pyronaut_version() -> str:
+    try:
+        version = importlib.metadata.version("pyronaut")
+        if version.strip():
+            return version.strip()
+    except importlib.metadata.PackageNotFoundError:
+        pass
+
+    version_file = Path(__file__).with_name("version.properties")
+    if version_file.is_file():
+        for line in version_file.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "pyronaut" and value.strip():
+                return value.strip().replace("-SNAPSHOT", ".dev0")
+    return "unknown"
+
+
+def _native_image_platform(
+    *,
+    platform_name: str | None = None,
+    machine_name: str | None = None,
+) -> tuple[str, str]:
+    current_platform = (platform_name or sys.platform).lower()
+    if current_platform.startswith("linux"):
+        os_segment = "linux"
+    elif current_platform == "darwin":
+        os_segment = "macos"
+    else:
+        raise RuntimeError(
+            f"Native Pyronaut images are not available for platform '{platform_name or sys.platform}'. "
+            "Supported platforms are Linux and macOS."
+        )
+
+    machine = (machine_name or platform.machine()).lower()
+    if machine in {"x86_64", "amd64"}:
+        arch = "amd64"
+    elif machine in {"aarch64", "arm64"}:
+        arch = "aarch64"
+    else:
+        raise RuntimeError(f"Native Pyronaut images are not available for architecture '{machine}'")
+    return os_segment, arch
+
+
+def _native_image_configuration() -> tuple[str, str]:
+    settings = _read_pyronaut_user_settings()
+    configured = settings.get(_NATIVE_IMAGE_SETTINGS_TABLE, {})
+    if configured is None:
+        configured = {}
+    if not isinstance(configured, dict):
+        raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}] must be a TOML table")
+
+    base_url = configured.get("base-url", _NATIVE_IMAGE_BASE_URL)
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].base-url must be a non-empty URL")
+    base_url = base_url.strip()
+    parsed_base_url = urllib.parse.urlparse(base_url)
+    if parsed_base_url.scheme in {"http", "https"}:
+        if not parsed_base_url.netloc:
+            raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].base-url must be an HTTP(S) URL or local directory")
+    elif parsed_base_url.scheme == "file":
+        if parsed_base_url.netloc not in {"", "localhost"} or not parsed_base_url.path:
+            raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].base-url must be an HTTP(S) URL or local directory")
+        base_url = str(Path(urllib.parse.unquote(parsed_base_url.path)).expanduser().resolve())
+    elif parsed_base_url.scheme == "":
+        base_url = str(Path(base_url).expanduser().resolve())
+    else:
+        raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].base-url must be an HTTP(S) URL or local directory")
+
+    version = configured.get("version", _installed_pyronaut_version())
+    if not isinstance(version, str) or not version.strip():
+        raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].version must be a non-empty string")
+    version = version.strip()
+    if any(character in version for character in "/\\"):
+        raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].version must not contain path separators")
+    return (base_url.rstrip("/") + "/") if parsed_base_url.scheme in {"http", "https"} else base_url, version
+
+
+def _native_image_local_archive(
+    base_url: str,
+    image_name: str,
+    archive_name: str,
+) -> Path | None:
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme in {"http", "https"}:
+        return None
+    root = Path(base_url).expanduser()
+    if not root.is_dir():
+        raise RuntimeError(f"Native image base directory does not exist: {root}")
+    archive = root / image_name / "build" / "distributions" / archive_name
+    if not archive.is_file():
+        raise RuntimeError(
+            f"Native image bundle not found at {archive}. Build {image_name} with Gradle or configure a matching version."
+        )
+    return archive
+
+
+def _native_image_cache_path(
+    image_name: str,
+    *,
+    version: str,
+    os_segment: str,
+    arch: str,
+) -> Path:
+    return Path.home() / ".pyronaut" / "bin" / version / f"{os_segment}-{arch}" / image_name
+
+
+@contextlib.contextmanager
+def _native_image_cache_lock(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        try:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        try:
+            yield
+        finally:
+            try:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except ImportError:
+                pass
+
+
+def _download_url_with_progress(url: str, destination: Path, label: str) -> None:
+    proxy, bypass = _download_proxy(url)
+    parsed_url = urllib.parse.urlparse(url)
+    host = parsed_url.hostname or ""
+    host_with_port = parsed_url.netloc.rsplit("@", 1)[-1]
+    bypassed = _proxy_bypasses_host(host, bypass) or _proxy_bypasses_host(host_with_port, bypass)
+    proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+
+    with opener.open(url) as response, destination.open("wb") as output:
+        total = int(response.headers.get("Content-Length", "0") or "0")
+        downloaded = 0
+        last_percent = -1
+        print(f"{label}... 0%", end="", file=sys.stderr, flush=True)
+        while chunk := response.read(1024 * 1024):
+            output.write(chunk)
+            downloaded += len(chunk)
+            if total:
+                percent = min(100, downloaded * 100 // total)
+                if percent != last_percent:
+                    last_percent = percent
+                    print(f"\r{label}... {percent}%", end="", file=sys.stderr, flush=True)
+        print(f"\r{label}... 100%", file=sys.stderr, flush=True)
+
+
+def _download_native_image_archive(url: str, destination: Path, image_name: str) -> None:
+    _download_url_with_progress(url, destination, f"Downloading {image_name}")
+
+
+def _extract_native_image_archive(archive: Path, destination: Path, image_name: str) -> None:
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            members = tar.getmembers()
+            expected_names = {image_name, f"./{image_name}"}
+            executable_members = [member for member in members if member.name in expected_names]
+            if len(executable_members) != 1 or not executable_members[0].isreg():
+                raise RuntimeError(
+                    f"Native image archive must contain a regular '{image_name}' executable"
+                )
+            root = destination.parent.resolve()
+            for member in members:
+                member_path = Path(member.name)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise RuntimeError(f"Native image archive contains an unsafe path: {member.name}")
+                target = (root / member_path).resolve()
+                if target != root and root not in target.parents:
+                    raise RuntimeError(f"Native image archive contains an unsafe path: {member.name}")
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if not member.isreg():
+                    raise RuntimeError(f"Native image archive contains unsupported entry: {member.name}")
+                source = tar.extractfile(member)
+                if source is None:
+                    raise RuntimeError(f"Unable to read '{member.name}' from native image archive")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+    except (OSError, tarfile.TarError) as exc:
+        raise RuntimeError(f"Unable to unpack native image archive: {exc}") from exc
+    if not destination.is_file():
+        raise RuntimeError(f"Native image archive did not extract '{image_name}'")
+    destination.chmod(0o755)
+
+
+def _ensure_native_image(
+    image_name: str,
+    *,
+    platform_name: str | None = None,
+    machine_name: str | None = None,
+) -> Path:
+    if image_name not in _NATIVE_IMAGE_COMMANDS:
+        raise RuntimeError(f"Unsupported native Pyronaut image: {image_name}")
+    base_url, version = _native_image_configuration()
+    os_segment, arch = _native_image_platform(platform_name=platform_name, machine_name=machine_name)
+    archive_name = f"{image_name}-{os_segment}-{arch}-{version}.tar.gz"
+    local_archive = _native_image_local_archive(base_url, image_name, archive_name)
+    url = local_archive.resolve().as_uri() if local_archive is not None else urllib.parse.urljoin(base_url, archive_name)
+    executable = _native_image_cache_path(
+        image_name,
+        version=version,
+        os_segment=os_segment,
+        arch=arch,
+    )
+    metadata = executable.with_name(executable.name + ".json")
+    lock = executable.with_name(executable.name + ".lock")
+    expected_metadata: dict[str, object] = {
+        "url": url,
+        "version": version,
+        "platform": f"{os_segment}-{arch}",
+        # Version 3 isolates per-image manifests/resources in the shared
+        # version/platform cache directory.
+        "bundle-format": 3,
+    }
+    # A local checkout keeps the same URL while Gradle replaces the archive
+    # in place. Record its cheap filesystem fingerprint so a rebuilt bundle is
+    # unpacked once, while ordinary invocations remain a metadata-only cache
+    # hit. Remote archives intentionally remain URL/version keyed; probing
+    # them would add network latency to every command.
+    if local_archive is not None:
+        archive_stat = local_archive.stat()
+        expected_metadata["archive-size"] = archive_stat.st_size
+        expected_metadata["archive-mtime-ns"] = archive_stat.st_mtime_ns
+        # Gradle can replace an archive while preserving its timestamp (for
+        # example when build output is copied from another filesystem). The
+        # inode-change timestamp catches that replacement without hashing a
+        # several-hundred-megabyte archive on every invocation.
+        expected_metadata["archive-ctime-ns"] = archive_stat.st_ctime_ns
+
+    with _native_image_cache_lock(lock):
+        if executable.is_file() and metadata.is_file():
+            try:
+                cached_metadata = json.loads(metadata.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                cached_metadata = None
+            if cached_metadata == expected_metadata:
+                # Do not touch an already-executable Mach-O on macOS. A
+                # redundant chmod can invalidate/retrigger Gatekeeper's
+                # ad-hoc signature validation and adds several seconds to
+                # every delegated native command.
+                if not os.access(executable, os.X_OK):
+                    executable.chmod(0o755)
+                return executable
+
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=f".{image_name}-", dir=executable.parent) as temp_dir:
+            temp_root = Path(temp_dir)
+            archive = temp_root / archive_name
+            extracted = temp_root / "bundle" / image_name
+            try:
+                if local_archive is not None:
+                    shutil.copy2(local_archive, archive)
+                else:
+                    _download_native_image_archive(url, archive, image_name)
+                _extract_native_image_archive(archive, extracted, image_name)
+            except Exception as exc:
+                raise RuntimeError(f"Failed downloading {image_name} from {url}: {exc}") from exc
+            metadata_tmp = temp_root / f"{image_name}.json"
+            metadata_tmp.write_text(json.dumps(expected_metadata, sort_keys=True) + "\n", encoding="utf-8")
+            # Keep the complete bundle alongside the executable. Native-image
+            # resource files and classpath manifests are runtime inputs even
+            # though the launcher itself is a single executable.
+            for item in extracted.parent.iterdir():
+                # Several native bundles contain identically named manifests
+                # (native-compile-classpath.txt, native-provided-classpath.txt)
+                # and resources. Keep those image-specific files separate;
+                # otherwise provisioning pyronaut-run after pyronaut-dev
+                # silently replaces the compiler manifest used by pyronaut-dev.
+                if item.name in {"native-compile-classpath.txt", "native-provided-classpath.txt"}:
+                    target = executable.parent / "resources" / image_name / item.name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(item, target)
+                    # Preserve the historical root-level location for
+                    # compatibility with older tooling. New lookups always
+                    # prefer the image-specific manifest above, so another
+                    # image cannot affect the active compiler classpath.
+                    legacy_target = executable.parent / item.name
+                    if not legacy_target.exists():
+                        shutil.copy2(target, legacy_target)
+                    continue
+                else:
+                    target = executable.parent / item.name
+                if item.is_dir():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(item, target, dirs_exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(item, target)
+            os.replace(metadata_tmp, metadata)
+    return executable
 
 
 def _normalize_proxy_url(value: str) -> str:
@@ -5264,29 +5724,7 @@ def _proxy_bypasses_host(host: str, bypass: str | None) -> bool:
 
 
 def _download_graalvm_archive(url: str, destination: Path) -> None:
-    proxy, bypass = _download_proxy(url)
-    parsed_url = urllib.parse.urlparse(url)
-    host = parsed_url.hostname or ""
-    host_with_port = parsed_url.netloc.rsplit("@", 1)[-1]
-    bypassed = _proxy_bypasses_host(host, bypass) or _proxy_bypasses_host(host_with_port, bypass)
-    proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
-    print("Downloading GraalVM SDK...", file=sys.stderr)
-    with opener.open(url) as response, destination.open("wb") as output:
-        total = int(response.headers.get("Content-Length", "0"))
-        downloaded = 0
-        while chunk := response.read(1024 * 1024):
-            output.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                print(
-                    f"\rDownloading GraalVM SDK... {downloaded * 100 // total}%",
-                    end="",
-                    file=sys.stderr,
-                    flush=True,
-                )
-        if total:
-            print(file=sys.stderr)
+    _download_url_with_progress(url, destination, "Downloading GraalVM SDK")
 
 
 def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
@@ -5577,6 +6015,10 @@ def _extract_no_cache(args: Sequence[str]) -> bool:
     return False
 
 
+def _extract_offline(args: Sequence[str]) -> bool:
+    return any(token == "--offline" for token in args)
+
+
 def _is_test_resources_start(args: Sequence[str]) -> bool:
     return len(args) > 0 and args[0].strip().lower() == "start"
 
@@ -5613,6 +6055,25 @@ def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
             skip_next = True
             continue
         if token.startswith("--local-repository=") or token.startswith("--local-repo="):
+            continue
+        filtered.append(token)
+    return filtered
+
+
+def _strip_orchestrator_only_args(args: Sequence[str]) -> list[str]:
+    """Remove CLI options consumed before invoking a native runner."""
+    filtered: list[str] = []
+    skip_next = False
+    value_options = {"--local-repository", "--local-repo", "--color", "--progress"}
+    flag_options = {"--offline", "--no-validate", "--no-cache"}
+    for token in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in value_options:
+            skip_next = True
+            continue
+        if token in flag_options or any(token.startswith(option + "=") for option in value_options | flag_options):
             continue
         filtered.append(token)
     return filtered
@@ -5737,6 +6198,9 @@ def _resolve_native_preferred_executable(
     if bundled is not None and bundled.exists():
         return str(bundled)
 
+    if command_name in {"pyronaut-run", "pyronaut-run-python"} and resolver is _resolve_executable:
+        return str(_ensure_native_image(command_name))
+
     if fallback_to_resolver:
         return resolver(command_name)
     return None
@@ -5751,7 +6215,9 @@ def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None
     bundled = _bundled_native_executable(DEV_NATIVE_EXECUTABLE)
     if bundled is not None and bundled.exists():
         return str(bundled)
-    return None
+    if resolver is not _resolve_executable:
+        return resolver(DEV_NATIVE_EXECUTABLE)
+    return str(_ensure_native_image(DEV_NATIVE_EXECUTABLE))
 
 
 def _pyronaut_dev_native_command_line(
@@ -5787,7 +6253,7 @@ def _pyronaut_dev_native_command_line(
             # launcher path, so fall back to it instead of rejecting dev/test.
             return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
-    jvm_args = _native_dev_java_home_jvm_args(java_home_provider)
+    jvm_args = _native_dev_java_home_jvm_args(java_home_provider) if command in {"dev", "run", "test"} else []
     # Coordinates contain ':', so use a delimiter independent of the host
     # path separator when passing the list through a system property.
     provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
@@ -5809,7 +6275,21 @@ def _pyronaut_dev_native_command_line(
     if selected_environment is not None:
         jvm_args.append(f"-Dmicronaut.environments={selected_environment}")
     direct_source = _looks_like_direct_source_invocation(args)
-    compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path)) if direct_source else ""
+    if direct_source:
+        # Preserve the 0.0.x native-launcher behavior for direct Java/Python
+        # sources. The embedded bean-definition index is authoritative; do
+        # not make the Crema URLClassLoader rediscover launcher classes from
+        # an application classpath.
+        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
+    # External-project `run`/`test` preflight invokes the native `process`
+    # command without a source selector. It still needs the compiler manifest
+    # (notably micronaut-context-python and micronaut-inject-python) on the
+    # processor classpath.
+    compiler_classpath = (
+        os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
+        if direct_source or command == "process"
+        else ""
+    )
     if compiler_classpath:
         # External Java sources need Pyronaut's Python annotation types and
         # processor support to compile, but those jars must not become part
@@ -5835,7 +6315,12 @@ def _pyronaut_dev_native_command_line(
         if test_resources_client_classpath:
             jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
-    command_args = [value for value in args if value not in {"--jvm", "--native"}]
+    # Tool commands are wrappers around the corresponding Pyronaut delegate;
+    # retain their resolver/progress/offline options. Runtime native launchers
+    # do not understand those orchestration-only flags and must receive the
+    # filtered form instead.
+    forwarded_args = args if command == "install" else _strip_orchestrator_only_args(args)
+    command_args = [value for value in forwarded_args if value not in {"--jvm", "--native"}]
     if command == "test" and _is_external_build_project(project_dir) and not any(
         value == "--select-class" or value.startswith("--select-class=") for value in command_args
     ):
@@ -5905,12 +6390,13 @@ def _pyronaut_run_native_command_line(
         if _control_panel_dependency_declared(project_dir)
         else "-Dmicronaut.control-panel.enabled=false"
     )
-    return [
+    command_line = [
         executable_path,
         control_panel_property,
         f"-Djava.class.path={classpath}",
-        *[value for value in args if value not in {"--jvm", "--native"}],
+        *_strip_orchestrator_only_args([value for value in args if value not in {"--jvm", "--native"}]),
     ]
+    return command_line
 
 
 def _native_dev_java_home_jvm_args(java_home_provider: JavaHomeProvider | None) -> list[str]:
@@ -6806,7 +7292,7 @@ def _run_tamboui_tui(
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
     try:
-        if initial_mode == "test" and _test_resources_enabled(project_dir):
+        if _test_resources_enabled(project_dir) or not (project_dir / "pyproject.toml").exists():
             tr_session = _OwnedTestResourcesSession(
                 project_dir=project_dir.resolve(),
                 owner_command=shlex.join(["pyronaut", "--tui", f"--{initial_mode}", "--project-dir", str(project_dir)]),
@@ -6833,6 +7319,12 @@ def _run_tamboui_tui(
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
         return PRECONDITION_FAILED
     pyronaut_table = _read_pyproject_pyronaut_table(project_dir)
+    if isinstance(pyronaut_table, dict):
+        configured_toolchain = pyronaut_table.get("toolchain")
+        if not isinstance(configured_toolchain, dict) or "type" not in configured_toolchain:
+            toolchain_type = None
+    else:
+        toolchain_type = None
     if direct_dev_executable is not None:
         native_commands = []
     else:
@@ -6853,7 +7345,11 @@ def _run_tamboui_tui(
         return PRECONDITION_FAILED
     native_dev_executable = None
     if native_commands:
-        native_dev_executable = _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
+        try:
+            native_dev_executable = _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return PRECONDITION_FAILED
         if native_dev_executable is None:
             print(
                 "Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.",
@@ -6871,8 +7367,6 @@ def _run_tamboui_tui(
         "--report-dir",
         str(report_dir),
     ]
-    if base_env is not None and base_env.get("JAVA_HOME"):
-        command_line.extend(["--java-home", base_env["JAVA_HOME"]])
     if toolchain_type is not None:
         command_line.extend(["--toolchain-type", toolchain_type])
     if direct_dev_executable is not None:

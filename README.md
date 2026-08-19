@@ -531,11 +531,32 @@ Build and test the repository:
 ./gradlew check
 ```
 
-Build the native SDK wheel:
+Build the JVM-based SDK wheel:
 
 ```bash
-./gradlew :micronaut-pyronaut:buildSdkWheel -Pnative=true
+./gradlew :micronaut-pyronaut:buildSdkWheel
 ```
+
+The wheel does not embed native executables. Native commands download the
+matching image on demand and cache it under `~/.pyronaut/bin`; configure a
+private bundle repository or pinned CI version in
+`~/.pyronaut/settings.toml` under `[native-images]`.
+
+During local development, `base-url` may instead point to this repository (or
+use a `file://` URL). Build the bundles first, then select the exact project
+version:
+
+```toml
+[native-images]
+base-url = "/path/to/pyronaut"
+version = "0.0.1-SNAPSHOT"
+```
+
+For example, `./gradlew :micronaut-pyronaut-dev:assemble` writes the bundle
+under `pyronaut-dev/build/distributions/`. The CLI looks below each native
+module for a platform-specific archive such as
+`pyronaut-dev-macos-aarch64-0.0.1-SNAPSHOT.tar.gz` and unpacks it into the
+normal local cache.
 
 ## Functional testing
 
