@@ -36,6 +36,33 @@ If you use IntelliJ IDEA, you can import the project using the Intellij Gradle T
 
 Micronaut Core `5.2.0-SNAPSHOT` is resolved from the published Micronaut snapshot repository. Stable GraalPy artifacts are resolved from Maven Central.
 
+## Testing native bundles from a checkout
+
+The Python wheel intentionally does not contain the large native launchers.
+When iterating on those launchers locally, build the bundles with:
+
+```bash
+./gradlew :micronaut-pyronaut-dev:assemble \
+  :micronaut-pyronaut-run:assemble \
+  :micronaut-pyronaut-run-python:assemble
+```
+
+Point the CLI at the checkout in `~/.pyronaut/settings.toml` and select the
+archive version produced by Gradle:
+
+```toml
+[native-images]
+base-url = "/absolute/path/to/pyronaut"
+version = "0.0.1-SNAPSHOT"
+```
+
+The same setting accepts a `file:///absolute/path/to/pyronaut` URL. Relative
+paths are resolved from the directory where the CLI is run. For each launcher,
+Pyronaut searches the corresponding module's
+`build/distributions/<launcher>-<os>-<architecture>-<version>.tar.gz`, for
+example `pyronaut-dev/build/distributions/pyronaut-dev-macos-aarch64-0.0.1-SNAPSHOT.tar.gz`.
+The archive is unpacked into `~/.pyronaut/bin` just like a downloaded bundle.
+
 ## Creating a pull request
 
 Once you are satisfied with your changes:

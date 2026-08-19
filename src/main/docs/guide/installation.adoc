@@ -15,6 +15,21 @@ Pyronaut runs on GraalPy and delegates Micronaut work to Java-based tools.
 Use a GraalVM JDK that satisfies the toolchain requirements for the current Pyronaut version.
 When no explicit toolchain is configured, the CLI discovers a compatible GraalVM from `JAVA_HOME`, common SDK locations, and Pyronaut's own SDK cache.
 
+The SDK wheel contains the JVM implementations of the delegated tools. Native
+executables are downloaded only when a native toolchain or direct-source flow
+needs them, then cached under:
+
+[source,text]
+----
+~/.pyronaut/bin/<version>/<os>-<architecture>/
+----
+
+The first native invocation displays download progress. Automatic GraalVM JDK
+provisioning uses the same percentage progress display and is stored under
+`~/.pyronaut/sdks/`. Configure the bundle source and version in
+`~/.pyronaut/settings.toml` when using a CI build or a VPN-only repository; see
+<<proxyConfig,Proxy Configuration>> for proxy setup.
+
 == Project Installation
 
 After a project has a `pyproject.toml`, run:

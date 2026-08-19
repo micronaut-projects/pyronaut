@@ -45,7 +45,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     private static final List<String> DEFAULT_CACHE_IGNORE = List.of("META-INF/*", "logback.xml", "logback-test.xml");
     private static final String TEST_RESOURCES_CLIENT_ARTIFACT = "micronaut-test-resources-client";
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "__pyronaut__/resolved-runtime-dependencies";
-    private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "__pyronaut__/resolved-development-runtime-dependencies";
+    private static final String TEST_DEPENDENCIES_MANIFEST = "__pyronaut__/resolved-test-dependencies";
 
     private static final String DEFAULT_SCENARIO = "production";
     private static final String MICRONAUT_SECURITY_GROUP_PATH = "/io/micronaut/security/";
@@ -318,13 +318,19 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
                 resolved.add(root.resolve(entry).normalize().toString());
             }
         } else if ("test".equals(normalizedScenario)) {
-            resolved.addAll(readClasspathManifest(root.resolve("__pyronaut__/resolved-test-dependencies")));
-            resolved.addAll(readClasspathManifest(resolveRunManifest(root)));
+            // The test manifest is the complete test classpath (including the
+            // application runtime graph). Never substitute the development
+            // graph, which may contain launcher-only Control Panel jars.
+            resolved.addAll(readClasspathManifest(root.resolve(TEST_DEPENDENCIES_MANIFEST)));
+            resolved.addAll(readClasspathManifest(root.resolve(RUNTIME_DEPENDENCIES_MANIFEST)));
             resolved.addAll(readClasspathManifest(root.resolve("__pyronaut__/resolved-build-dependencies")));
             Path testClasses = root.resolve("__pyronaut__/test-classes");
             resolved.add((Files.isDirectory(testClasses) ? testClasses : root.resolve("__pyronaut__/classes")).toString());
         } else if ("run".equals(normalizedScenario)) {
-            resolved.addAll(readClasspathManifest(resolveRunManifest(root)));
+            // Do not use resolved-development-runtime-dependencies here.
+            // That manifest contains optional launcher-only jars (notably
+            // Control Panel) which must not affect application validation.
+            resolved.addAll(readClasspathManifest(root.resolve(RUNTIME_DEPENDENCIES_MANIFEST)));
             resolved.add(root.resolve("__pyronaut__/classes").toString());
         } else {
             resolved.addAll(readClasspathManifest(root.resolve(RUNTIME_DEPENDENCIES_MANIFEST)));
@@ -334,14 +340,6 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             resolved.add(root.resolve(additional).normalize().toString());
         }
         return List.copyOf(resolved);
-    }
-
-    private static Path resolveRunManifest(Path root) {
-        Path developmentManifest = root.resolve(DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST);
-        if (Files.exists(developmentManifest)) {
-            return developmentManifest;
-        }
-        return root.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
     }
 
     private List<Path> resolveResourcesDirs(Path root,

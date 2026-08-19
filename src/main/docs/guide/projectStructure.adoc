@@ -43,6 +43,38 @@ The following table summarizes the trade-offs.
 
 NOTE: Direct code execution (`pyronaut run App.py`) always selects the `native` toolchain by default.
 
+Native images are not included in the SDK wheel. When the native toolchain is
+selected, Pyronaut downloads the matching `pyronaut-dev`, `pyronaut-run`, or
+`pyronaut-run-python` bundle for the current operating system and architecture.
+The default source is `https://gds.oracle.com/download/pyronaut/bundles/` and
+the default version is the installed Pyronaut version. You can pin a CI build:
+
+When Pyronaut provisions a GraalVM SDK automatically, the default distribution
+is Oracle GraalVM Enterprise Edition (EE). Select `ce` or `dev` explicitly in
+`[tool.pyronaut.toolchain]` when a different SDK is required.
+
+[source,toml]
+----
+[native-images]
+base-url = "https://artifactory.oci.oraclecorp.com/graalvm-pyronaut-dev-generic-local/download/pyronaut/bundles/"
+version = "0.0.1.dev18704471"
+----
+
+For local development, `base-url` may be an absolute checkout directory (or a
+`file://` URL). Build the launcher archives first and select their Gradle
+version, for example:
+
+[source,toml]
+----
+[native-images]
+base-url = "/path/to/pyronaut"
+version = "0.0.1-SNAPSHOT"
+----
+
+The CLI then finds archives under the matching module's
+`build/distributions` directory, such as
+`pyronaut-dev/build/distributions/pyronaut-dev-macos-aarch64-0.0.1-SNAPSHOT.tar.gz`.
+
 == Pyronaut Project Layout
 
 Pyronaut reads project layout from `[tool.pyronaut.sources]` in `pyproject.toml`.

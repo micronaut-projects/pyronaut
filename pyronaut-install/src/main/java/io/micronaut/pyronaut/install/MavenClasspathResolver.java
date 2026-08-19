@@ -218,7 +218,22 @@ final class MavenClasspathResolver {
                                              boolean forceUpdates,
                                              boolean includeTestResourcesServer,
                                              DependencyProgressListener progressListener) {
-        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates);
+        List<RemoteRepository> configuredRepositories = toRepositories(repositoriesForModel(model), forceUpdates);
+        final List<RemoteRepository> repositories;
+        if (offline) {
+            // Offline resolution must not even consider network repositories. Maven
+            // Resolver's offline flag prevents downloads, but retaining remote
+            // repositories can still trigger metadata lookups and misleading
+            // connection errors. Keep only local/file based repositories.
+            repositories = configuredRepositories.stream()
+                .filter(repository -> {
+                    String url = repository.getUrl();
+                    return url == null || !url.matches("(?i)^https?://.*");
+                })
+                .toList();
+        } else {
+            repositories = configuredRepositories;
+        }
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
@@ -1011,7 +1026,7 @@ final class MavenClasspathResolver {
         return new RepositorySystemSupplier().get();
     }
 
-    private static List<RemoteRepository> toRepositories(List<String> configuredRepositories, boolean forceUpdates) {
+    static List<RemoteRepository> toRepositories(List<String> configuredRepositories, boolean forceUpdates) {
         List<String> repositories = configuredRepositories == null || configuredRepositories.isEmpty()
             ? List.of("mavenCentral")
             : configuredRepositories;

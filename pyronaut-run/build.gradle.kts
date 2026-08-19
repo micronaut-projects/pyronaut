@@ -1,5 +1,7 @@
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.bundling.Compression
+import org.gradle.api.tasks.bundling.Tar
 import java.nio.file.Files
 
 plugins {
@@ -9,6 +11,16 @@ plugins {
 }
 
 val micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.platform.version")
+val nativeBundleOs = when {
+    System.getProperty("os.name").lowercase().contains("linux") -> "linux"
+    System.getProperty("os.name").lowercase().contains("mac") -> "macos"
+    else -> System.getProperty("os.name").lowercase().replace(Regex("[^a-z0-9]+"), "-")
+}
+val nativeBundleArch = when (System.getProperty("os.arch").lowercase()) {
+    "aarch64", "arm64" -> "aarch64"
+    "x86_64", "amd64" -> "amd64"
+    else -> System.getProperty("os.arch").lowercase()
+}
 
 dependencies {
     annotationProcessor(mn.micronaut.inject.java)
@@ -90,6 +102,13 @@ val writeNativeClasspathManifest by tasks.registering {
                 .sorted()
                 .joinToString("\n", postfix = "\n")
         )
+        directory.resolve("native-compile-classpath.txt").writeText(
+            configurations.runtimeClasspath.get().files
+                .map { it.toPath().toAbsolutePath().normalize().toString() }
+                .distinct()
+                .sorted()
+                .joinToString("\n", postfix = "\n")
+        )
     }
 }
 
@@ -124,6 +143,25 @@ tasks {
         dependsOn(buildCremaNativeImage)
         dependsOn(writeNativeClasspathManifest)
         onlyIf { false }
+    }
+    val nativeBundle = register<Tar>("nativeBundle") {
+        group = "distribution"
+        description = "Packages the versioned pyronaut-run native image and runtime metadata"
+        dependsOn(nativeCompileTask)
+        dependsOn(writeNativeClasspathManifest)
+        destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+        archiveFileName.set("pyronaut-run-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
+        compression = Compression.GZIP
+        from(cremaOutput)
+        from(layout.buildDirectory.dir("native/nativeCompile/resources")) {
+            into("resources")
+        }
+        from(layout.buildDirectory.dir("generated/native-classpaths")) {
+            include("native-compile-classpath.txt", "native-provided-classpath.txt")
+        }
+    }
+    named("assemble") {
+        dependsOn(nativeBundle)
     }
     val testSourceSet = the<SourceSetContainer>()["test"]
 

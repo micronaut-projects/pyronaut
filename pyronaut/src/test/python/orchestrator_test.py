@@ -2,6 +2,7 @@ import importlib.util
 import io
 import os
 import subprocess
+import tarfile
 import tempfile
 import time
 import unittest
@@ -510,12 +511,37 @@ class OrchestratorTest(unittest.TestCase):
                 exit_code = cli.run(
                     ["install", "--project-dir", str(project_dir)],
                     runner=self._runner_ok(),
-                    resolver=self._resolver(),
+                    resolver=lambda name: None if name == "pyronaut-dev" else self._resolver()(name),
                     platform_name="linux",
                 )
 
         self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
         self.assertIn("Missing native delegated executable for pyronaut-dev", stderr.getvalue())
+
+    def test_native_install_forwards_offline_and_local_repository_to_delegate(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"native\"\n", encoding="utf-8"
+            )
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda name: native_dev if name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["install", "--project-dir", str(project_dir), "--offline", "--local-repository", "/tmp/m2"],
+                    runner=lambda command_line, _env=None: executed.append(command_line) or 0,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertIn("--offline", executed[0])
+        self.assertIn("--local-repository", executed[0])
+        self.assertIn("/tmp/m2", executed[0])
 
     def test_install_rejects_invalid_toolchain_type(self):
         stderr = io.StringIO()
@@ -826,6 +852,41 @@ class OrchestratorTest(unittest.TestCase):
             executed,
         )
 
+    def test_run_direct_java_script_auto_provisions_graalvm_when_provider_is_omitted(self):
+        executed = []
+        provisioning_calls = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            source = Path(temp_dir) / "App.java"
+            source.write_text("class App {}\n", encoding="utf-8")
+
+            def runner_with_env(command_line, env):
+                executed.append((command_line, env))
+                return 0
+
+            with patch.object(
+                cli,
+                "_ensure_graalvm_java_home",
+                side_effect=lambda project_dir=None: provisioning_calls.append(project_dir) or "/tmp/provisioned-graalvm-25",
+            ), patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None,
+            ):
+                exit_code = cli.run(
+                    ["run", str(source)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, len(provisioning_calls))
+        self.assertEqual(Path.cwd(), provisioning_calls[0])
+        self.assertEqual("/tmp/provisioned-graalvm-25", executed[0][1]["JAVA_HOME"])
+
     def test_test_direct_java_sources_use_pyronaut_dev_native_executable(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1017,7 +1078,7 @@ class OrchestratorTest(unittest.TestCase):
 
             jvm_args = cli._build_direct_source_native_jvm_args(str(native_dev), {"JAVA_HOME": "/tmp/java-home"})
 
-        self.assertEqual(3, len(jvm_args))
+        self.assertEqual(2, len(jvm_args))
         self.assertEqual("-Djava.home=/tmp/java-home", jvm_args[0])
         compiler_arg = next(arg for arg in jvm_args if arg.startswith("-Dpyronaut.dev.compiler.class.path="))
         self.assertIn("micronaut-context-python-5.1.0.jar", compiler_arg)
@@ -1252,12 +1313,22 @@ type = "native"
             with patch.object(cli, "_bundled_native_executable", side_effect=lambda name: native_run_python if name == "pyronaut-run-python" else None):
                 command_line = cli._pyronaut_run_native_command_line(  # noqa: SLF001
                     "run",
-                    ["--project-dir", str(project_dir)],
+                    ["--project-dir", str(project_dir), "--offline", "--no-validate"],
                     self._resolver(),
                 )
 
         self.assertIsNotNone(command_line)
         self.assertEqual(str(native_run_python), command_line[0])
+        self.assertNotIn("--offline", command_line)
+        self.assertNotIn("--no-validate", command_line)
+
+    def test_native_runner_does_not_receive_orchestrator_only_options(self):
+        self.assertEqual(
+            ["--project-dir", "/tmp/app"],
+            cli._strip_orchestrator_only_args(  # noqa: SLF001
+                ["--project-dir", "/tmp/app", "--offline", "--no-validate", "--local-repository", "/tmp/m2"]
+            ),
+        )
 
     def test_native_application_classpath_filters_only_manifested_native_image_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4321,7 +4392,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("FROM example/static-base:1", captured["dockerfile"])
         self.assertIn("--static --libc=musl", captured["dockerfile"])
         self.assertIn("--initialize-at-run-time=example.Foo", captured["dockerfile"])
-        self.assertIn("COPY app/config/ /workspace/app/__pyronaut__/classes/", captured["dockerfile"])
+        self.assertIn("COPY app/config/ /workspace/app/config/", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build", captured["context_files"])
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
         self.assertIn("Docker image build complete: example/demo:1.2.3-native", stdout.getvalue())
@@ -4848,6 +4919,26 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("--include-python", native_command)
         self.assertEqual(str((project_dir / "runtime" / "python-base").resolve()), native_command[native_command.index("--output") + 1])
 
+    def test_java_source_tree_wins_over_transitive_python_runtime(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "java-project"
+            (project_dir / "src-java").mkdir(parents=True)
+            (project_dir / "src-java" / "App.java").write_text("class App {}", encoding="utf-8")
+            (project_dir / "__pyronaut__").mkdir()
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                "micronaut-context-python-5.2.0.jar\n", encoding="utf-8"
+            )
+            (project_dir / "__pyronaut__" / "classes").mkdir()
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"java-project\"\n", encoding="utf-8"
+            )
+
+            self.assertFalse(cli._is_python_runtime_project(project_dir))  # noqa: SLF001
+            self.assertNotIn(
+                "micronaut-context-python-5.2.0.jar",
+                cli._build_native_application_classpath_entries("run", project_dir),  # noqa: SLF001
+            )
+
     def test_native_wheel_reuses_configured_local_base_image(self):
         executed = []
 
@@ -4894,6 +4985,10 @@ additional-test-resources = ["test-fixtures"]
 
         def runner_with_env(command_line, env):
             executed.append((command_line, env))
+            if command_line and command_line[0] == "/tmp/pyronaut-native-build":
+                output = Path(command_line[command_line.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("binary", encoding="utf-8")
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4918,7 +5013,10 @@ additional-test-resources = ["test-fixtures"]
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertFalse(any(command[0] == "/tmp/pyronaut-native-build" for command, _ in executed))
+        native_command = next(command for command, _ in executed if command[0] == "/tmp/pyronaut-native-build")
+        self.assertIn("--default-base-image", native_command)
+        self.assertIn("--default-base-image-path", native_command)
+        self.assertEqual(str(base), native_command[native_command.index("--default-base-image-path") + 1])
 
     def test_native_build_passes_processed_user_packages_to_native_builder(self):
         executed = []
@@ -5322,6 +5420,22 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         self.assertEqual("https://example.invalid/graalvm-dev.tar.gz", spec.download_url)
         self.assertTrue(spec.explicit)
 
+    def test_detect_graalvm_distribution_recognizes_community_dev_build(self):
+        metadata = cli._detect_graalvm_distribution(
+            'openjdk version "25.0.4.1"\nOpenJDK Runtime Environment GraalVM CE 25.3.4.1-dev+0.1',
+            Path("/tmp/graalvm-community-25.3.4.1-dev+0.1"),
+            "25.0.4.1",
+        )
+        self.assertEqual("dev", metadata)
+
+    def test_default_graalvm_download_distribution_is_ee(self):
+        spec = cli._ToolchainSpec(None, None, 25)
+        with patch.object(cli.platform, "system", return_value="Linux"), \
+                patch.object(cli.platform, "machine", return_value="aarch64"):
+            url = cli._resolve_graalvm_archive_url(spec)
+        self.assertIn("gds.oracle.com/download/graal/25i2/latest/", url)
+        self.assertIn("graalvm-jdk-25i2-25_linux-aarch64_bin.tar.gz", url)
+
     def test_read_pyproject_toolchain_spec_uses_packaged_default_when_not_explicit(self):
         packaged = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5472,6 +5586,240 @@ java-version = 25
             "https://api.github.com/repos/graalvm/oracle-graalvm-ea-builds/releases/tags/jdk-25e1-25.0.3-ea.32",
             requested_urls[0],
         )
+
+    def test_ensure_native_image_downloads_versioned_bundle_with_progress_and_reuses_cache(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            settings_dir = home / ".pyronaut"
+            settings_dir.mkdir()
+            (settings_dir / "settings.toml").write_text(
+                "[native-images]\n"
+                "base-url = \"https://example.invalid/bundles/\"\n"
+                "version = \"0.0.1.dev18704471\"\n",
+                encoding="utf-8",
+            )
+            payload = io.BytesIO()
+            with tarfile.open(fileobj=payload, mode="w:gz") as archive:
+                content = b"native-pyronaut-dev"
+                info = tarfile.TarInfo("pyronaut-dev")
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+                resource = b"generated-resource"
+                resource_info = tarfile.TarInfo("resources/application.properties")
+                resource_info.size = len(resource)
+                archive.addfile(resource_info, io.BytesIO(resource))
+                manifest = b"io.micronaut:example\n"
+                manifest_info = tarfile.TarInfo("native-provided-classpath.txt")
+                manifest_info.size = len(manifest)
+                archive.addfile(manifest_info, io.BytesIO(manifest))
+            archive_bytes = payload.getvalue()
+            calls = []
+            requested_urls = []
+
+            class Response:
+                headers = {"Content-Length": str(len(archive_bytes))}
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, _exc_type, _exc, _tb):
+                    return False
+
+                def read(self, size):
+                    if not archive_bytes:
+                        return b""
+                    value = archive_bytes[:size]
+                    self.__class__.remaining = archive_bytes[size:]
+                    return value
+
+            Response.remaining = archive_bytes
+
+            class Opener:
+                def open(self, _url):
+                    calls.append(True)
+                    requested_urls.append(_url)
+                    Response.remaining = archive_bytes
+                    response = Response()
+                    response.read = lambda size: self._read(response, size)
+                    return response
+
+                @staticmethod
+                def _read(response, size):
+                    value = Response.remaining[:size]
+                    Response.remaining = Response.remaining[size:]
+                    return value
+
+            stderr = io.StringIO()
+            with patch.object(cli.Path, "home", return_value=home), \
+                    patch.object(cli.urllib.request, "build_opener", return_value=Opener()), \
+                    patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                    redirect_stderr(stderr):
+                first = cli._ensure_native_image(
+                    "pyronaut-dev",
+                    platform_name="linux",
+                    machine_name="aarch64",
+                )
+                with patch.object(Path, "chmod", side_effect=AssertionError("cache hit touched executable")):
+                    second = cli._ensure_native_image(
+                        "pyronaut-dev",
+                        platform_name="linux",
+                        machine_name="aarch64",
+                    )
+
+            self.assertEqual(first, second)
+            self.assertEqual(
+                home / ".pyronaut" / "bin" / "0.0.1.dev18704471" / "linux-aarch64" / "pyronaut-dev",
+                first,
+            )
+            self.assertEqual(b"native-pyronaut-dev", first.read_bytes())
+            self.assertEqual(b"generated-resource", (first.parent / "resources/application.properties").read_bytes())
+            self.assertEqual(b"io.micronaut:example\n", (first.parent / "native-provided-classpath.txt").read_bytes())
+            self.assertTrue(first.stat().st_mode & 0o111)
+            self.assertEqual(1, len(calls))
+            self.assertEqual(
+                "https://example.invalid/bundles/pyronaut-dev-linux-aarch64-0.0.1.dev18704471.tar.gz",
+                requested_urls[0],
+            )
+            self.assertIn("0%", stderr.getvalue())
+            self.assertIn("100%", stderr.getvalue())
+
+    def test_native_image_platform_maps_supported_operating_systems_and_architectures(self):
+        self.assertEqual(("linux", "amd64"), cli._native_image_platform(platform_name="Linux", machine_name="x86_64"))
+        self.assertEqual(("linux", "aarch64"), cli._native_image_platform(platform_name="linux", machine_name="arm64"))
+        self.assertEqual(("macos", "aarch64"), cli._native_image_platform(platform_name="Darwin", machine_name="aarch64"))
+        with self.assertRaises(RuntimeError):
+            cli._native_image_platform(platform_name="Windows", machine_name="x86_64")
+
+    def test_ensure_native_image_uses_bundle_from_local_checkout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            checkout = root / "pyronaut"
+            distribution = checkout / "pyronaut-dev" / "build" / "distributions"
+            distribution.mkdir(parents=True)
+            archive_path = distribution / "pyronaut-dev-macos-aarch64-0.0.1-SNAPSHOT.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                content = b"local-native-image"
+                info = tarfile.TarInfo("pyronaut-dev")
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+                resource = b"local-resource"
+                resource_info = tarfile.TarInfo("resources/application.properties")
+                resource_info.size = len(resource)
+                archive.addfile(resource_info, io.BytesIO(resource))
+            settings_dir = root / ".pyronaut"
+            settings_dir.mkdir()
+            (settings_dir / "settings.toml").write_text(
+                f'[native-images]\nbase-url = "{checkout}"\nversion = "0.0.1-SNAPSHOT"\n',
+                encoding="utf-8",
+            )
+            with patch.object(cli.Path, "home", return_value=root), \
+                    patch.object(cli, "_download_native_image_archive", side_effect=AssertionError("downloaded local bundle")):
+                executable = cli._ensure_native_image(
+                    "pyronaut-dev",
+                    platform_name="darwin",
+                    machine_name="arm64",
+                )
+
+            self.assertEqual(b"local-native-image", executable.read_bytes())
+            self.assertEqual(b"local-resource", (executable.parent / "resources/application.properties").read_bytes())
+            metadata = cli.json.loads(executable.with_name("pyronaut-dev.json").read_text(encoding="utf-8"))
+            self.assertEqual(archive_path.resolve().as_uri(), metadata["url"])
+
+    def test_native_image_download_uses_pyronaut_proxy_settings_and_bypass(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            settings_dir = home / ".pyronaut"
+            settings_dir.mkdir()
+            (settings_dir / "settings.toml").write_text(
+                '[proxy]\nurl = "http://proxy.example:3128"\nnonProxyHosts = "localhost|*.internal"\n',
+                encoding="utf-8",
+            )
+            proxy_names = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy")
+            with patch.object(cli.Path, "home", return_value=home), patch.dict(
+                os.environ, {name: "" for name in proxy_names}, clear=False
+            ):
+                self.assertEqual(
+                    ("http://proxy.example:3128", "localhost|*.internal"),
+                    cli._download_proxy("https://downloads.example/native.tar.gz"),
+                )
+                self.assertTrue(cli._proxy_bypasses_host("localhost", "localhost|*.internal"))
+                self.assertTrue(cli._proxy_bypasses_host("service.internal", "localhost|*.internal"))
+
+    def test_maven_proxy_fallback_supports_default_xml_namespace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            maven_dir = home / ".m2"
+            maven_dir.mkdir()
+            (maven_dir / "settings.xml").write_text(
+                """<?xml version="1.0"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <proxies><proxy><active>true</active><protocol>http</protocol>
+    <host>proxy.example</host><port>3128</port>
+    <nonProxyHosts>*.oracle.com|localhost</nonProxyHosts>
+  </proxy></proxies>
+</settings>
+""",
+                encoding="utf-8",
+            )
+            proxy_names = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy")
+            with patch.object(cli.Path, "home", return_value=home), patch.dict(
+                os.environ, {name: "" for name in proxy_names}, clear=False
+            ):
+                self.assertEqual(
+                    ("http://proxy.example:3128", "*.oracle.com|localhost"),
+                    cli._download_proxy("https://downloads.example/native.tar.gz"),
+                )
+
+    def test_graalvm_sdk_download_uses_shared_progress_reporting(self):
+        payload = b"graalvm-sdk"
+
+        class Response:
+            headers = {"Content-Length": str(len(payload))}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self, _size):
+                value, self.remaining = self.remaining, b""
+                return value
+
+        class Opener:
+            def open(self, _url):
+                response = Response()
+                response.remaining = payload
+                return response
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "graalvm.tar.gz"
+            stderr = io.StringIO()
+            with patch.object(cli.urllib.request, "build_opener", return_value=Opener()), \
+                    patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                    redirect_stderr(stderr):
+                cli._download_graalvm_archive("https://example.invalid/graalvm.tar.gz", destination)
+
+            self.assertEqual(payload, destination.read_bytes())
+            self.assertIn("Downloading GraalVM SDK... 0%", stderr.getvalue())
+            self.assertIn("Downloading GraalVM SDK... 100%", stderr.getvalue())
+
+    def test_default_docker_base_image_forces_linux_bundle_selection(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            requested = []
+
+            def ensure(image_name, **kwargs):
+                requested.append((image_name, kwargs))
+                return project_dir / image_name
+
+            with patch.object(cli, "_ensure_native_image", side_effect=ensure):
+                cli._bundled_default_base_image(project_dir, platform_name="linux")
+
+            self.assertEqual(
+                [("pyronaut-run", {"platform_name": "linux"})],
+                requested,
+            )
 
     def test_tui_smoke_delegates_install_process_run(self):
         executed = []

@@ -1418,6 +1418,13 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void explicitRepositoryListDoesNotImplicitlyActivateMavenCentral() {
+        var repositories = MavenClasspathResolver.toRepositories(List.of("mavenLocal"), false);
+
+        assertEquals(List.of("mavenLocal"), repositories.stream().map(repository -> repository.getId()).toList());
+    }
+
+    @Test
     void snapshotCoreVersionUsesMavenLocalForStaleRepositoryConfiguration() throws Exception {
         Path repository = defaultLocalRepository();
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");

@@ -33,6 +33,7 @@ import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -95,8 +96,17 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     @CommandLine.Option(names = "--default-base-image", description = "Build the bundled Crema runtime without project dependencies")
     boolean defaultBaseImage;
 
+    @CommandLine.Option(names = "--default-base-image-path", description = "Use a downloaded prebuilt default Crema runtime")
+    Path defaultBaseImagePath;
+
     @CommandLine.Option(names = "--include-python", description = "Include the Python and Truffle production runtime")
     boolean includePython;
+
+    @CommandLine.Option(names = "--no-sbom", description = "Do not embed or export a native-image SBOM")
+    boolean noSbom;
+
+    @CommandLine.Option(names = "--offline", description = "Do not download reachability metadata")
+    boolean offline;
 
     @CommandLine.Option(names = "--user-package", description = "Application package to preserve in a closed-world native image")
     List<String> userPackages = new ArrayList<>();
@@ -138,6 +148,12 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             rejectMainClassOverride();
+            if (defaultBaseImagePath != null && !defaultBaseImage) {
+                throw new IllegalStateException("--default-base-image-path requires --default-base-image");
+            }
+            if (defaultBaseImage && defaultBaseImagePath != null) {
+                return copyPrebuiltBaseImage(root);
+            }
             Path classesDir = root.resolve(DEFAULT_CLASSES_DIR).normalize();
             if (!Files.isDirectory(classesDir)) {
                 System.err.println("Missing processed classes directory: " + classesDir + ". Run pyronaut process first.");
@@ -197,7 +213,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 .workingDirectory(root)
                 .includePython(includePython)
                 .emitBuildReport(false)
-                .includeSbom(true)
+                .includeSbom(!noSbom)
                 .addClasspath(nativeClasspath)
             .mainClass(APPLICATION_MAIN_CLASS)
             .preservePackages(userPackages);
@@ -234,6 +250,26 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
     }
 
+    private Integer copyPrebuiltBaseImage(Path root) throws IOException {
+        Path source = defaultBaseImagePath.toAbsolutePath().normalize();
+        if (!Files.isRegularFile(source)) {
+            throw new IllegalStateException("Prebuilt default base image does not exist: " + source);
+        }
+        Path outputPath = root.resolve(output).normalize();
+        Path outputParent = outputPath.getParent();
+        if (outputParent != null) {
+            Files.createDirectories(outputParent);
+        }
+        if (!source.equals(outputPath)) {
+            Files.copy(source, outputPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+        if (!outputPath.toFile().setExecutable(true, false)) {
+            throw new IOException("Unable to mark prebuilt default base image executable: " + outputPath);
+        }
+        System.out.println("Prebuilt default base image copied: " + outputPath);
+        return SUCCESS;
+    }
+
     private Integer buildBaseImage(Path root,
                                    List<Path> runtimeClasspath,
                                    boolean bundledOnly) throws IOException, InterruptedException {
@@ -261,7 +297,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .nativeImageExecutable(Path.of(nativeImageExecutable))
             .workingDirectory(root)
             .includePython(includePython)
-            .includeSbom(true)
+            .includeSbom(!noSbom)
             .addClasspath(baseClasspath)
             .addNativeImageArguments(configurationArguments);
         if (verbose) {
@@ -413,6 +449,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Path extractedRoot = cacheKeyRoot.resolve("repository");
 
         boolean downloaded = false;
+        if (!Files.isDirectory(extractedRoot) && offline) {
+            throw new IllegalStateException("Reachability metadata is not cached for " + sourceUri + " and --offline was specified");
+        }
         if (!Files.isDirectory(extractedRoot)) {
             Files.createDirectories(cacheKeyRoot);
             try {

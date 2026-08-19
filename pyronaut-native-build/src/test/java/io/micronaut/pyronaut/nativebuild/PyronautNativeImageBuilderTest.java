@@ -91,7 +91,7 @@ class PyronautNativeImageBuilderTest {
         assertFalse(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
         assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.classic.*"));
         assertTrue(command.contains("-H:Preserve=package=org.graalvm.polyglot"));
-        assertTrue(command.contains("-H:Preserve=package=org.apache.commons.logging.*"));
+        assertFalse(command.contains("-H:Preserve=package=org.apache.commons.logging.*"));
     }
 
     private List<String> build(Path classpathEntry, boolean emitBuildReport, boolean includeSbom) throws Exception {
