@@ -135,9 +135,12 @@ tasks {
         archiveFileName.set("pyronaut-run-python-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
         compression = Compression.GZIP
         from(cremaOutput)
-        from(layout.buildDirectory.dir("native/nativeCompile/resources")) {
-            into("resources")
+        // Crema/native-image emits platform libraries beside the executable;
+        // include them in the same bundle directory.
+        from(layout.buildDirectory.dir("native/nativeCompile")) {
+            include("*.so", "*.dylib")
         }
+        from(layout.buildDirectory.dir("native/nativeCompile/resources"))
         from(layout.buildDirectory.dir("generated/native-classpaths")) {
             include("native-compile-classpath.txt", "native-provided-classpath.txt")
         }

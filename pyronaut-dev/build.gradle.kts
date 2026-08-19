@@ -718,9 +718,12 @@ tasks {
         archiveFileName.set("pyronaut-dev-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
         compression = Compression.GZIP
         from(nativeCompileTask.flatMap { it.outputFile })
-        from(layout.buildDirectory.dir("native/nativeCompile/resources")) {
-            into("resources")
+        // GraalVM native-image may emit runtime libraries beside the
+        // executable. Keep them at the bundle root with the launcher.
+        from(layout.buildDirectory.dir("native/nativeCompile")) {
+            include("*.so", "*.dylib")
         }
+        from(layout.buildDirectory.dir("native/nativeCompile/resources"))
         from(layout.buildDirectory.dir("generated/native-classpaths")) {
             include("native-compile-classpath.txt", "native-provided-classpath.txt")
         }
