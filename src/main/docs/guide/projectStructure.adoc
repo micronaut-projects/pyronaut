@@ -56,7 +56,7 @@ is Oracle GraalVM Enterprise Edition (EE). Select `ce` or `dev` explicitly in
 [source,toml]
 ----
 [native-images]
-base-url = "https://artifactory.oci.oraclecorp.com/graalvm-pyronaut-dev-generic-local/download/pyronaut/bundles/"
+base-url = "https://foobar.com/download/pyronaut/bundles/"
 version = "0.0.1.dev18704471"
 ----
 
