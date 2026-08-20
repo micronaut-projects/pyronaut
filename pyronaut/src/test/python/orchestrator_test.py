@@ -1751,6 +1751,7 @@ type = "native"
             native_dev.chmod(0o755)
             project_dir = Path(temp_dir) / "demo"
             cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
             (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
             (project_dir / "app-config").mkdir(parents=True, exist_ok=True)
             (project_dir / "test-resources").mkdir(parents=True, exist_ok=True)
@@ -1792,6 +1793,7 @@ test-resources = "test-resources"
             self.assertIn("/tmp/runtime.jar", classpath)
             self.assertIn("/tmp/build.jar", classpath)
             self.assertIn(str((project_dir / "__pyronaut__" / "test-classes").resolve()), classpath)
+            self.assertIn(str((project_dir / "__pyronaut__" / "classes").resolve()), classpath)
             self.assertIn(str((project_dir / "app-config").resolve()), classpath)
             self.assertIn(str((project_dir / "test-resources").resolve()), classpath)
             self.assertEqual("http://localhost:1234", properties["micronaut.test.resources.server.uri"])

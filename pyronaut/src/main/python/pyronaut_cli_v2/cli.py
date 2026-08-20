@@ -1565,13 +1565,13 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
         ):
             if manifest.exists():
                 entries.extend(_read_manifest_entries(manifest))
-        test_classes_dir = cache_dir / "test-classes"
         classes_dir = cache_dir / "classes"
+        test_classes_dir = cache_dir / "test-classes"
+        if classes_dir.is_dir():
+            entries.append(str(classes_dir.resolve()))
         if test_classes_dir.is_dir():
             entries.append(str(test_classes_dir.resolve()))
-        elif classes_dir.is_dir():
-            entries.append(str(classes_dir.resolve()))
-        else:
+        if not classes_dir.is_dir() and not test_classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
         _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
         for resource_dir in layout.additional_resources_dirs:
