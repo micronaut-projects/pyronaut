@@ -5,6 +5,12 @@ plugins {
     id 'io.micronaut.build.internal.pyronaut-base'
     id "io.micronaut.build.internal.module"
 }
+
+def micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.platform.version")
+
+dependencies {
+    api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
+}
 micronautBuild {
     descriptor {
         parentModuleId = "io.micronaut.pyronaut:micronaut-pyronaut"

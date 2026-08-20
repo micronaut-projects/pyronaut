@@ -16,6 +16,51 @@ repositories {
     }
 }
 
+// The platform BOM aligns Micronaut modules. These remaining transitive
+// libraries are outside that BOM, so keep their versions identical across all
+// CLI tools packaged into the wheel.
+def pyronautCliDependencyVersions = [
+    "org.jetbrains:annotations": libs.versions.annotations.get(),
+    "commons-codec:commons-codec": libs.versions.commons.codec.get(),
+    "com.ibm.icu:icu4j": libs.versions.icu4j.get(),
+    "org.graalvm.shadowed:icu4j": libs.versions.graalvm.icu4j.get()
+]
+def graalvmRuntimeGroups = [
+    "org.graalvm.js",
+    "org.graalvm.polyglot",
+    "org.graalvm.python",
+    "org.graalvm.regex",
+    "org.graalvm.sdk",
+    "org.graalvm.shadowed",
+    "org.graalvm.tools",
+    "org.graalvm.truffle"
+]
+
+def pyronautCliProjectNames = [
+    "micronaut-pyronaut",
+    "micronaut-pyronaut-install",
+    "micronaut-pyronaut-processor",
+    "micronaut-pyronaut-dev",
+    "micronaut-pyronaut-run",
+    "micronaut-pyronaut-run-python",
+    "micronaut-pyronaut-test",
+    "micronaut-pyronaut-native-build",
+    "micronaut-pyronaut-validate-config",
+    "micronaut-pyronaut-test-resources-server",
+    "micronaut-pyronaut-tui"
+]
+
+subprojects.findAll { it.name in pyronautCliProjectNames }.each { cliProject ->
+    cliProject.configurations.configureEach {
+        resolutionStrategy.force(pyronautCliDependencyVersions.collect { module, version -> "${module}:${version}" })
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group in graalvmRuntimeGroups) {
+                details.useVersion(libs.versions.graalpy.get())
+            }
+        }
+    }
+}
+
 def disabledSonatypePublishingTasks = [
     "publishToSonatype",
     "closeSonatypeStagingRepository",
