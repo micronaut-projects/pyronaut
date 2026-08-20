@@ -259,7 +259,7 @@ tasks.register("prepareWheelSources", Sync) {
             }
         }
 
-        def originReport = new File(sharedLib, "jar-origins.txt")
+        def originReport = new File(toolsRoot, "shared/jar-origins.txt")
         originReport.text = sharedOrigins.keySet().sort().collect { jarName ->
             "${jarName}\t${sharedOrigins[jarName].unique().sort().join('; ')}"
         }.join(System.lineSeparator()) + System.lineSeparator()
