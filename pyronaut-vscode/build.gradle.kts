@@ -1,10 +1,23 @@
 import org.gradle.api.tasks.Exec
+import java.io.File
 
 plugins {
     base
 }
 
-val npmExecutable = providers.gradleProperty("pyronaut.vscode.npm").orElse("npm")
+fun findExecutableOnPath(name: String): String? =
+    System.getenv("PATH")
+        ?.split(File.pathSeparator)
+        ?.asSequence()
+        ?.map { File(it, name) }
+        ?.firstOrNull { it.isFile && it.canExecute() }
+        ?.absolutePath
+
+val detectedNpm = findExecutableOnPath("npm")
+    ?: findExecutableOnPath("node")?.let { File(it).parentFile.resolve("npm") }
+        ?.takeIf { it.isFile && it.canExecute() }
+        ?.absolutePath
+val npmExecutable = providers.gradleProperty("pyronaut.vscode.npm").orElse(detectedNpm ?: "npm")
 val nodeExecutable = providers.gradleProperty("pyronaut.vscode.node")
 
 fun Exec.npmCommand(vararg args: String) {
