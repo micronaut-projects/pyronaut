@@ -1066,18 +1066,15 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
-        # Newer micronaut-core releases honor this property when the native
-        # launcher starts. Direct source execution must use the static bean
-        # definitions embedded in pyronaut-dev, as 0.0.x did, rather than
-        # making the Crema URLClassLoader rediscover launcher classes.
-        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
         if not _control_panel_requested(Path.cwd().resolve(), args):
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     elif command == "run":
-        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
         jvm_args.append("-Dmicronaut.control-panel.enabled=false")
-    elif command == "test":
-        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
+    if command in {"dev", "run", "test"}:
+        # Native GraalPy cannot dispatch optional ImageSingleton lookups.
+        # Set this explicitly because the native image may provide a default
+        # value before the Java launcher can apply its fallback.
+        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=false")
     if command in {"dev", "test"}:
         jvm_args.append("-Dpyronaut.dev.direct.restartable=true")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
@@ -6284,12 +6281,6 @@ def _pyronaut_dev_native_command_line(
     if selected_environment is not None:
         jvm_args.append(f"-Dmicronaut.environments={selected_environment}")
     direct_source = _looks_like_direct_source_invocation(args)
-    if direct_source:
-        # Preserve the 0.0.x native-launcher behavior for direct Java/Python
-        # sources. The embedded bean-definition index is authoritative; do
-        # not make the Crema URLClassLoader rediscover launcher classes from
-        # an application classpath.
-        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
     # External-project `run`/`test` preflight invokes the native `process`
     # command without a source selector. It still needs the compiler manifest
     # (notably micronaut-context-python and micronaut-inject-python) on the
