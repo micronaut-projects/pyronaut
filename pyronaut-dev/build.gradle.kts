@@ -38,7 +38,11 @@ dependencies {
     implementation(project(":micronaut-pyronaut-processor"))
     implementation(mnSerde.micronaut.serde.processor)
     implementation(mnValidation.micronaut.validation.processor)
-    implementation("io.micronaut.data:micronaut-data-processor")
+    implementation("io.micronaut.data:micronaut-data-processor") {
+        // The processor only needs the generated parser runtime. Do not ship
+        // the ANTLR tool and its legacy runtime/template dependencies.
+        exclude(group = "org.antlr", module = "antlr4")
+    }
     implementation("io.micronaut.security:micronaut-security-processor")
     implementation("io.micronaut.micrometer:micronaut-micrometer-annotation")
     implementation("io.micronaut.jaxrs:micronaut-jaxrs-processor")
@@ -93,7 +97,9 @@ dependencies {
     api(mnValidation.micronaut.validation)
 
     // testing API
-    api(mnTest.micronaut.test.junit5)
+    api(mnTest.micronaut.test.junit5) {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+    }
     api(mnTest.junit.jupiter.api)
 
     implementation(mnTest.junit.jupiter.engine)

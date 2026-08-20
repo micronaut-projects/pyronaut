@@ -23,7 +23,9 @@ dependencies {
     runtimeOnly(libs.micronaut.test.resources.client)
     runtimeOnly("io.projectreactor:reactor-core")
     runtimeOnly(mnTest.junit.jupiter.engine)
-    runtimeOnly(mnTest.micronaut.test.junit5)
+    runtimeOnly(mnTest.micronaut.test.junit5) {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+    }
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
@@ -33,7 +35,9 @@ dependencies {
     testRuntimeOnly(libs.micronaut.toml)
     testRuntimeOnly(libs.micronaut.test.resources.client)
     testRuntimeOnly("io.projectreactor:reactor-core")
-    testRuntimeOnly(mnTest.micronaut.test.junit5)
+    testRuntimeOnly(mnTest.micronaut.test.junit5) {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+    }
 }
 
 configurations.configureEach {

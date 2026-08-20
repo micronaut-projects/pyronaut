@@ -14,7 +14,12 @@ dependencies {
     implementation(mn.micronaut.http.server)
     implementation(libs.micronaut.test.resources.build.tools)
     implementation(libs.micronaut.test.resources.core)
-    implementation(libs.micronaut.test.resources.control.panel)
+    implementation(libs.micronaut.test.resources.control.panel) {
+        // The server does not render Handlebars templates, so it does not
+        // need the optional Nashorn JavaScript engine pulled by the control
+        // panel UI.
+        exclude(group = "org.openjdk.nashorn", module = "nashorn-core")
+    }
     implementation(libs.micronaut.test.resources.server)
     implementation(mnSerde.micronaut.serde.jackson)
     implementation(mnLogging.logback.classic)
