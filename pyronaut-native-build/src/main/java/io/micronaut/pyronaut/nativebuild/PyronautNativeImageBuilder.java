@@ -167,7 +167,6 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=reactor.util.*",
 
             /* other runtime APIs */
-            "-H:Preserve=package=org.apache.commons.logging.*",
             "-H:Preserve=package=javax.xml.namespace.*",
             "-H:Preserve=package=org.reactivestreams.*",
 
@@ -299,8 +298,7 @@ public final class PyronautNativeImageBuilder {
         "--enable-native-access=org.graalvm.truffle",
         "-H:Preserve=package=ch.qos.logback.classic.*",
         "-H:Preserve=package=ch.qos.logback.core.*",
-        "-H:Preserve=package=org.graalvm.polyglot",
-        "-H:Preserve=package=org.apache.commons.logging.*"
+        "-H:Preserve=package=org.graalvm.polyglot"
     );
 
     private final Path output;

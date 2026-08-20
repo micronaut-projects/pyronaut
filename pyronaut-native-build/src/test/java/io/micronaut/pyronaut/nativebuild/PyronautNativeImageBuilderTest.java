@@ -70,9 +70,6 @@ class PyronautNativeImageBuilderTest {
     void addsPythonClasspathAndTruffleAccessOnlyWhenPythonIsEnabled() throws Exception {
         Path javaClasspathEntry = tempDir.resolve("runtime.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(javaClasspathEntry))) {
-            output.putNextEntry(new ZipEntry("org/apache/commons/logging/Log.class"));
-            output.write(0);
-            output.closeEntry();
         }
         Path pythonClasspathEntry = Files.createFile(tempDir.resolve("python-runtime.jar"));
         List<String> command = new ArrayList<>();
