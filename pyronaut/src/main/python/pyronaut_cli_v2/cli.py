@@ -1077,6 +1077,8 @@ def _build_direct_source_native_jvm_args(
     elif command == "run":
         jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
         jvm_args.append("-Dmicronaut.control-panel.enabled=false")
+    elif command == "test":
+        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
     if command in {"dev", "test"}:
         jvm_args.append("-Dpyronaut.dev.direct.restartable=true")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
