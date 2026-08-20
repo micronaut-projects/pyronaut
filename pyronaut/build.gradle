@@ -202,6 +202,11 @@ tasks.register("prepareWheelSources", Sync) {
         def sharedLib = new File(toolsRoot, "shared/lib")
         sharedLib.mkdirs()
         def sharedByName = [:]
+        def sharedOrigins = [:].withDefault { [] }
+        def originProjects = delegatedCliProjects.collectEntries { cliProject ->
+            def command = cliProject.command
+            [(command): cliProject.path]
+        }
         toolsRoot.listFiles()?.findAll { it.isDirectory() && it.name != "shared" }.each { toolDir ->
             def classpathEntries = []
             def toolLib = new File(toolDir, "lib")
@@ -221,6 +226,10 @@ tasks.register("prepareWheelSources", Sync) {
                     return
                 }
                 sourceDir.listFiles()?.findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }.each { artifact ->
+                    if (artifact.name.endsWith(".jar")) {
+                        def origin = originProjects[toolDir.name] ?: toolDir.name
+                        sharedOrigins[artifact.name] << "${origin} (${artifact.absolutePath})"
+                    }
                     def existing = sharedByName[artifact.name]
                     if (existing != null) {
                         if (Files.mismatch(existing.toPath(), artifact.toPath()) != -1L) {
@@ -249,6 +258,11 @@ tasks.register("prepareWheelSources", Sync) {
                 }
             }
         }
+
+        def originReport = new File(sharedLib, "jar-origins.txt")
+        originReport.text = sharedOrigins.keySet().sort().collect { jarName ->
+            "${jarName}\t${sharedOrigins[jarName].unique().sort().join('; ')}"
+        }.join(System.lineSeparator()) + System.lineSeparator()
 
         def toolchainDefaultsFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/toolchain-defaults.properties").asFile
         if (graalVmDevTag.present) {
