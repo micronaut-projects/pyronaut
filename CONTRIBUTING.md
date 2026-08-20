@@ -18,6 +18,29 @@ Micronaut pyronaut can be imported into IntelliJ IDEA by opening the `build.grad
 
 Micronaut pyronaut tests currently require Docker to be installed.
 
+On Linux with a running Docker daemon, the native runner base images can be
+built with:
+
+```bash
+./gradlew :micronaut-pyronaut-run:buildDockerImage
+./gradlew :micronaut-pyronaut-run-python:buildDockerImage
+```
+
+The tasks create `pyronaut-run:<version>`/`pyronaut-run:latest` and
+`pyronaut-run-python:<version>`/`pyronaut-run-python:latest`. They are skipped
+when the host is not Linux or Docker is unavailable. Use either image as
+`PYRONAUT_BASE_IMAGE` in a consumer Dockerfile:
+
+```dockerfile
+ARG PYRONAUT_BASE_IMAGE
+FROM ${PYRONAUT_BASE_IMAGE}
+WORKDIR /app
+COPY app/config /app/config
+COPY app/__pyronaut__/classes /app/__pyronaut__/classes
+COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
+ENTRYPOINT ["/opt/pyronaut/bin/pyronaut-run", "--project-dir", "/app"]
+```
+
 ## Running Tests
 
 To run the tests, use `./gradlew check`.
