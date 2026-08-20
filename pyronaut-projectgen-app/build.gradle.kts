@@ -1,6 +1,6 @@
 plugins {
     id("io.micronaut.minimal.application") version "4.6.1"
-    id("com.gradleup.shadow") version "8.3.9"
+    id("com.gradleup.shadow") version "8.3.11"
 }
 version = "0.1"
 group = "io.micronaut.pyronaut.starter"
