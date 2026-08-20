@@ -11,6 +11,15 @@ def micronautPlatformVersion = providers.gradleProperty("pyronaut.micronaut.plat
 dependencies {
     api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
 }
+
+// GraalPy's Python embedding artifact pulls this optional legacy crypto
+// support module transitively. Pyronaut does not use it, and keeping it out
+// of every module's graph avoids shipping the unnecessary Bouncy Castle
+// runtime alongside Micronaut's Python integration.
+configurations.configureEach {
+    exclude(group: "org.graalvm.python", module: "python-bouncycastle-support")
+}
+
 micronautBuild {
     descriptor {
         parentModuleId = "io.micronaut.pyronaut:micronaut-pyronaut"
