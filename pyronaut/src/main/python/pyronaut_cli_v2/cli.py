@@ -33,7 +33,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"install", "process", "dev", "run", "test", "build", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -41,7 +41,6 @@ COMMAND_TO_EXECUTABLE = {
     "dev": "pyronaut-dev",
     "run": "pyronaut-run",
     "test": "pyronaut-test",
-    "create": "pyronaut-create",
     "validate-config": "pyronaut-validate-config",
     "test-resources-server": "pyronaut-test-resources-server",
 }
@@ -565,7 +564,7 @@ def run(
             )
             return test_exit_code
 
-        if command in {"install", "process", "create", "validate-config"}:
+        if command in {"install", "process", "validate-config"}:
             return _delegate(
                 command,
                 forwarded_args,
@@ -6626,7 +6625,7 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_build_usage(stream=None) -> None:

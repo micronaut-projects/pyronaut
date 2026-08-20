@@ -50,7 +50,6 @@ dependencies {
     implementation(project(":micronaut-pyronaut-install"))
     implementation(project(":micronaut-pyronaut-config-model"))
     // TODO: this drags in a huge graph of dependencies so exclude for now
-//    implementation(project(":micronaut-pyronaut-create-app"))
     implementation(project(":micronaut-pyronaut-run-python"))
     implementation(project(":micronaut-pyronaut-test"))
     implementation(project(":micronaut-pyronaut-test-resources-server"))

@@ -6833,7 +6833,7 @@ java-version = 25
             executed,
         )
 
-    def test_create_delegates_without_project_preflight(self):
+    def test_create_command_is_not_supported(self):
         executed = []
 
         def runner(command_line):
@@ -6847,10 +6847,8 @@ java-version = 25
             platform_name="linux",
         )
 
-        self.assertEqual(0, exit_code)
-        self.assertEqual([["/tmp/pyronaut-create", "demo", "--features", "data-jdbc,mysql"]], executed)
-        self.assertFalse(any("pyronaut-install" in cmd[0] for cmd in executed))
-        self.assertFalse(any("pyronaut-processor" in cmd[0] for cmd in executed))
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertEqual([], executed)
 
     def test_test_resources_server_returns_precondition_when_executable_missing(self):
         stderr = io.StringIO()

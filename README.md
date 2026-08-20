@@ -26,7 +26,6 @@ that make Python applications work with Micronaut:
 - `pyronaut-dev`: runs applications in development mode with automatic
   install/process preflight.
 - `pyronaut-run` and `pyronaut-test`: run applications and pytest-backed tests.
-- `pyronaut-create`: generates new Pyronaut applications from project
   templates.
 - `pyronaut-validate-config`: validates Micronaut configuration for run, test,
   and production scenarios.
@@ -34,7 +33,6 @@ that make Python applications work with Micronaut:
   development and tests.
 - `pyronaut-native-build`: builds native executables.
 - `pyronaut-tui`: interactive terminal UI over the same CLI workflow.
-- `pyronaut-projectgen` and `pyronaut-projectgen-app`: project generation
   support.
 - `pyronaut-pytest`, `pyronaut-requests`, `pyronaut-logging`, and
   `pyronaut-logback`: runtime and testing support libraries.

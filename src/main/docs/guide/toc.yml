@@ -30,10 +30,6 @@ testing:
   testResources:
     title: Test Resources & Docker
     dockerSetup: Docker Requirements
-pyronautProjectgen:
-  title: Pyronaut Project Generator
-  create: Creating Projects
-  features: Project Generator Features
 pyronautRequests:
   title: Pyronaut Requests
   requestsTesting: Using Requests for Testing
