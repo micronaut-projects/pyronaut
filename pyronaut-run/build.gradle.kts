@@ -1,8 +1,10 @@
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.bundling.Compression
 import org.gradle.api.tasks.bundling.Tar
 import java.nio.file.Files
+import java.util.concurrent.TimeUnit
 
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
@@ -88,6 +90,25 @@ val pythonCremaOutput = pythonRunProject.layout.buildDirectory.file("native/nati
 val nativeBuildExecutable = nativeBuildProject.layout.buildDirectory.file(
     "install/micronaut-pyronaut-native-build/bin/pyronaut-native-build"
 )
+val dockerContext = layout.buildDirectory.dir("docker/pyronaut-run")
+val dockerAvailable = providers.provider<Boolean> {
+    if (!System.getProperty("os.name").lowercase().contains("linux")) {
+        false
+    } else {
+        try {
+            val process = ProcessBuilder("docker", "info")
+                .redirectErrorStream(true)
+                .start()
+            try {
+                process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0
+            } finally {
+                process.destroyForcibly()
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+}
 val writeNativeClasspathManifest by tasks.registering {
     val outputDirectory = layout.buildDirectory.dir("generated/native-classpaths")
     outputs.dir(outputDirectory)
@@ -143,6 +164,48 @@ tasks {
         dependsOn(buildCremaNativeImage)
         dependsOn(writeNativeClasspathManifest)
         onlyIf { false }
+    }
+    val prepareDockerImage = register<Sync>("prepareDockerImage") {
+        group = "docker"
+        description = "Stages the pyronaut-run native executable for Docker image creation"
+        dependsOn(buildCremaNativeImage)
+        from(cremaOutput)
+        into(dockerContext)
+        rename { "pyronaut-run" }
+        doLast {
+            val dockerfile = dockerContext.get().file("Dockerfile").asFile
+            dockerfile.writeText(
+                """
+                FROM gcr.io/distroless/base
+                WORKDIR /opt/pyronaut
+                COPY pyronaut-run /opt/pyronaut/bin/pyronaut-run
+                """.trimIndent() + "\n"
+            )
+        }
+    }
+    register<Exec>("buildDockerImage") {
+        group = "docker"
+        description = "Builds the pyronaut-run native Docker base image"
+        dependsOn(dockerAvailable.map { available: Boolean ->
+            if (available) listOf(prepareDockerImage) else emptyList<Any>()
+        })
+        onlyIf {
+            if (!dockerAvailable.get()) {
+                logger.lifecycle("Skipping pyronaut-run Docker image: Linux and a running Docker daemon are required.")
+                false
+            } else {
+                true
+            }
+        }
+        inputs.dir(dockerContext)
+        doFirst {
+            commandLine(
+                "docker", "build",
+                "-t", "pyronaut-run:${project.version}",
+                "-t", "pyronaut-run:latest",
+                dockerContext.get().asFile.absolutePath
+            )
+        }
     }
     val nativeBundle = register<Tar>("nativeBundle") {
         group = "distribution"
