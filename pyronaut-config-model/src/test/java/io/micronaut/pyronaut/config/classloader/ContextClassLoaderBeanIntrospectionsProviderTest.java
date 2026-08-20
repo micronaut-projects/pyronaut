@@ -59,6 +59,39 @@ class ContextClassLoaderBeanIntrospectionsProviderTest {
         assertTrue(references.stream().anyMatch(reference -> TestBean.class.getName().equals(reference.getName())));
     }
 
+    @Test
+    void discoversReferencesFromContextWhenRuntimeLoaderDiffers() throws Exception {
+        URL memoryResource = new URL(
+            null,
+            "mem:/CLASS_OUTPUT/" + SERVICE_PATH + "/" + TestIntrospectionReference.class.getName(),
+            new URLStreamHandler() {
+                @Override
+                protected URLConnection openConnection(URL url) throws IOException {
+                    throw new IOException("mem resources are not opened");
+                }
+            }
+        );
+        ClassLoader contextClassLoader = new ClassLoader(getClass().getClassLoader()) {
+            @Override
+            public Enumeration<URL> getResources(String name) throws IOException {
+                if (SERVICE_PATH.equals(name)) {
+                    return Collections.enumeration(List.of(memoryResource));
+                }
+                return super.getResources(name);
+            }
+        };
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        thread.setContextClassLoader(contextClassLoader);
+        try {
+            List<BeanIntrospectionReference<Object>> references =
+                new ContextClassLoaderBeanIntrospectionsProvider().provide(new ClassLoader(getClass().getClassLoader()) { });
+            assertTrue(references.stream().anyMatch(reference -> TestBean.class.getName().equals(reference.getName())));
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
     public static final class TestIntrospectionReference implements BeanIntrospectionReference<Object> {
         @Override
         public boolean isPresent() {

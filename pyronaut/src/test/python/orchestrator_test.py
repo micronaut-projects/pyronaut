@@ -1373,6 +1373,45 @@ type = "native"
         self.assertNotIn("/tmp/org.graalvm.polyglot-coverage-25.1.3.pom", entries)
         self.assertIn("/tmp/micronaut-views-core-6.0.0.jar", entries)
 
+    def test_native_application_classpath_keeps_serde_runtime_jars(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            (native_dev.parent / "native-provided-classpath.txt").write_text(
+                "io.micronaut.serde:micronaut-serde-api\n"
+                "io.micronaut.serde:micronaut-serde-jackson\n"
+                "io.micronaut.serde:micronaut-serde-support\n"
+                "io.micrometer:micrometer-core\n",
+                encoding="utf-8",
+            )
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "classes").mkdir()
+            (cache_dir / "resolved-runtime-dependencies").write_text(
+                "\n".join(
+                    [
+                        "/tmp/micronaut-serde-api-3.1.0.jar",
+                        "/tmp/micronaut-serde-jackson-3.1.0.jar",
+                        "/tmp/micronaut-serde-support-3.1.0.jar",
+                        "/tmp/micrometer-core-1.16.5.jar",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classpath = cli._build_native_application_classpath("run", project_dir, str(native_dev))  # noqa: SLF001
+
+        entries = classpath.split(os.pathsep)
+        self.assertEqual(5, len(entries))
+        self.assertTrue(all(any(name in entry for entry in entries) for name in (
+            "micronaut-serde-api-3.1.0.jar",
+            "micronaut-serde-jackson-3.1.0.jar",
+            "micronaut-serde-support-3.1.0.jar",
+            "micrometer-core-1.16.5.jar",
+        )))
+
     def test_native_application_classpath_keeps_control_panel_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"

@@ -167,6 +167,7 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=reactor.util.*",
 
             /* other runtime APIs */
+            "-H:Preserve=package=org.apache.commons.logging.*",
             "-H:Preserve=package=javax.xml.namespace.*",
             "-H:Preserve=package=org.reactivestreams.*",
 

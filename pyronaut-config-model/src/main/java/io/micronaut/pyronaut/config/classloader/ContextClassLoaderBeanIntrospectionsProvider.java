@@ -69,15 +69,25 @@ public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanI
 
     private static List<BeanIntrospectionReference<Object>> discoverRuntimeReferences(ClassLoader classLoader) {
         List<BeanIntrospectionReference<Object>> references = new ArrayList<>();
+        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         try {
-            Enumeration<URL> resources = classLoader.getResources(SERVICE_PATH);
-            while (resources.hasMoreElements()) {
-                collectReferences(resources.nextElement(), classLoader, references);
+            discoverRuntimeReferences(classLoader, classLoader, references);
+            if (contextClassLoader != null && contextClassLoader != classLoader) {
+                discoverRuntimeReferences(contextClassLoader, contextClassLoader, references);
             }
         } catch (IOException e) {
             throw new IllegalStateException("Unable to discover bean introspections from runtime classloader", e);
         }
         return references;
+    }
+
+    private static void discoverRuntimeReferences(ClassLoader resourcesClassLoader,
+                                                   ClassLoader referenceClassLoader,
+                                                   List<BeanIntrospectionReference<Object>> references) throws IOException {
+        Enumeration<URL> resources = resourcesClassLoader.getResources(SERVICE_PATH);
+        while (resources.hasMoreElements()) {
+            collectReferences(resources.nextElement(), referenceClassLoader, references);
+        }
     }
 
     private static void collectReferences(URL resource, ClassLoader classLoader, List<BeanIntrospectionReference<Object>> references) throws IOException {
@@ -149,8 +159,14 @@ public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanI
     @SuppressWarnings("unchecked")
     private static void addReference(String className, ClassLoader classLoader, List<BeanIntrospectionReference<Object>> references) {
         Object instance = instantiateReference(className, classLoader);
-        if (instance instanceof BeanIntrospectionReference<?> reference && reference.isPresent()) {
-            references.add((BeanIntrospectionReference<Object>) reference);
+        if (instance instanceof BeanIntrospectionReference<?> reference) {
+            try {
+                if (reference.isPresent()) {
+                    references.add((BeanIntrospectionReference<Object>) reference);
+                }
+            } catch (Throwable ignored) {
+                // Optional integrations can reference classes absent from the application classpath.
+            }
         }
     }
 

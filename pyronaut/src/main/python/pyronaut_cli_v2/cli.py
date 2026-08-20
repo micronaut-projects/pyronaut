@@ -1830,9 +1830,17 @@ def _is_native_launcher_provided_artifact(
         return command != "dev"
     if command == "dev" and _versioned_jar_artifact_id(file_name) == "micronaut-management":
         return False
+    coordinate = _artifact_coordinate(entry)
+    if coordinate is not None and coordinate.startswith("io.micronaut.serde:"):
+        # Serde jars carry runtime bean definitions (JacksonObjectMapper and
+        # SerdeRegistry); native embedding does not replace those resources.
+        return False
+    if coordinate == "io.micrometer:micrometer-core":
+        # Native launcher metadata may list Micrometer transitively, but the
+        # application still needs SimpleMeterRegistry at runtime.
+        return False
     if _is_native_test_resources_client_artifact(file_name):
         return True
-    coordinate = _artifact_coordinate(entry)
     if file_name in launcher_provided_names:
         return True
     artifact_id = _versioned_jar_artifact_id(file_name)
@@ -6297,8 +6305,12 @@ def _pyronaut_dev_native_command_line(
         # of the application's runtime classpath.
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
     effective_classpath_command = classpath_command or command
-    if effective_classpath_command in {"dev", "run", "test"}:
-        classpath = _build_native_application_classpath(effective_classpath_command, project_dir, executable_path)
+    if effective_classpath_command in {"dev", "run", "test", "validate-config"}:
+        # Configuration validation resolves application-backed beans (for
+        # example the default Serde ObjectMapper), so it needs the runtime
+        # dependency classpath even though it does not launch the app.
+        classpath_command = "run" if effective_classpath_command == "validate-config" else effective_classpath_command
+        classpath = _build_native_application_classpath(classpath_command, project_dir, executable_path)
         if effective_classpath_command == "dev" and _control_panel_requested(project_dir, args):
             control_panel = _direct_control_panel_classpath_entries(executable_path)
             if control_panel:

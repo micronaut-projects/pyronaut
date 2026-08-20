@@ -141,8 +141,14 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
 
     private static void addReference(String className, ClassLoader classLoader, List<BeanDefinitionReference<?>> references, boolean requirePresent) {
         Object instance = instantiateReference(className, classLoader);
-        if (instance instanceof BeanDefinitionReference<?> reference && (!requirePresent || reference.isPresent())) {
-            references.add(reference);
+        if (instance instanceof BeanDefinitionReference<?> reference) {
+            try {
+                if (!requirePresent || reference.isPresent()) {
+                    references.add(reference);
+                }
+            } catch (Throwable ignored) {
+                // Optional integrations can reference classes absent from the application classpath.
+            }
         }
     }
 
