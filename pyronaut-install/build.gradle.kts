@@ -19,7 +19,9 @@ dependencies {
     implementation(libs.maven.resolver.connector.basic)
     implementation(libs.maven.resolver.transport.file)
     implementation(libs.maven.resolver.transport.jdk)
-    implementation(libs.maven.resolver.supplier.mvn3)
+    implementation(libs.maven.resolver.supplier.mvn3) {
+        exclude(group = "org.apache.maven.resolver", module = "maven-resolver-transport-apache")
+    }
     implementation(libs.micronaut.test.resources.build.tools)
     implementation(libs.micronaut.test.resources.core)
     implementation(libs.tomlj)

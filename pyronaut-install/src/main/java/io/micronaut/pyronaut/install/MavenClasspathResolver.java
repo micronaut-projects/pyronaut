@@ -53,6 +53,9 @@ import org.eclipse.aether.transfer.TransferEvent;
 import org.eclipse.aether.transfer.TransferListener;
 import org.eclipse.aether.supplier.RepositorySystemSupplier;
 import org.eclipse.aether.supplier.SessionBuilderSupplier;
+import org.eclipse.aether.spi.connector.transport.TransporterFactory;
+import org.eclipse.aether.transport.file.FileTransporterFactory;
+import org.eclipse.aether.transport.jdk.JdkTransporterFactory;
 import org.eclipse.aether.util.artifact.JavaScopes;
 import org.eclipse.aether.util.filter.DependencyFilterUtils;
 import org.eclipse.aether.util.repository.AuthenticationBuilder;
@@ -1023,7 +1026,15 @@ final class MavenClasspathResolver {
     }
 
     private static RepositorySystem newRepositorySystem() {
-        return new RepositorySystemSupplier().get();
+        return new RepositorySystemSupplier() {
+            @Override
+            protected Map<String, TransporterFactory> createTransporterFactories() {
+                Map<String, TransporterFactory> factories = new LinkedHashMap<>();
+                factories.put(FileTransporterFactory.NAME, new FileTransporterFactory());
+                factories.put(JdkTransporterFactory.NAME, new JdkTransporterFactory(getChecksumExtractor(), getPathProcessor()));
+                return factories;
+            }
+        }.get();
     }
 
     static List<RemoteRepository> toRepositories(List<String> configuredRepositories, boolean forceUpdates) {

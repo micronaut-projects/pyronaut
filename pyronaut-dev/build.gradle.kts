@@ -67,9 +67,41 @@ dependencies {
 
     // Bundled only for --control-panel direct development launches. These
     // artifacts are intentionally outside the normal launcher runtime graph.
-    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-core:${libs.versions.micronaut.control.panel.get()}")
-    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-management:${libs.versions.micronaut.control.panel.get()}")
-    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-ui:${libs.versions.micronaut.control.panel.get()}")
+    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-core:${libs.versions.micronaut.control.panel.get()}") {
+        exclude(group = "io.projectreactor", module = "reactor-core")
+        exclude(group = "org.openjdk.nashorn", module = "nashorn-core")
+        exclude(group = "org.jspecify", module = "jspecify")
+        exclude(group = "io.micronaut", module = "micronaut-inject")
+        exclude(group = "io.micronaut", module = "micronaut-discovery-core")
+        exclude(group = "io.micronaut", module = "micronaut-json-core")
+        exclude(group = "io.micronaut", module = "micronaut-router")
+        exclude(group = "io.micronaut", module = "micronaut-core")
+        exclude(group = "io.micronaut", module = "micronaut-http-server")
+        exclude(group = "io.micronaut", module = "micronaut-management")
+        exclude(group = "io.micronaut.reactor", module = "micronaut-reactor")
+    }
+    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-management:${libs.versions.micronaut.control.panel.get()}") {
+        exclude(group = "io.projectreactor", module = "reactor-core")
+        exclude(group = "org.openjdk.nashorn", module = "nashorn-core")
+        exclude(group = "org.jspecify", module = "jspecify")
+        exclude(group = "io.micronaut.controlpanel", module = "micronaut-control-panel-core")
+        exclude(group = "io.micronaut", module = "micronaut-inject")
+        exclude(group = "io.micronaut", module = "micronaut-core")
+        exclude(group = "io.micronaut", module = "micronaut-http-server")
+        exclude(group = "io.micronaut", module = "micronaut-management")
+        exclude(group = "io.micronaut.reactor", module = "micronaut-reactor")
+    }
+    "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-ui:${libs.versions.micronaut.control.panel.get()}") {
+        exclude(group = "io.projectreactor", module = "reactor-core")
+        exclude(group = "io.micronaut.controlpanel", module = "micronaut-control-panel-core")
+        exclude(group = "org.jspecify", module = "jspecify")
+        exclude(group = "org.openjdk.nashorn", module = "nashorn-core")
+        exclude(group = "io.micronaut", module = "micronaut-inject")
+        exclude(group = "io.micronaut", module = "micronaut-core")
+        exclude(group = "io.micronaut", module = "micronaut-http-server")
+        exclude(group = "io.micronaut", module = "micronaut-management")
+        exclude(group = "io.micronaut.reactor", module = "micronaut-reactor")
+    }
 
 
     // runtime build in modules
