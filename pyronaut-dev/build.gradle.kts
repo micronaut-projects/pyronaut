@@ -49,6 +49,10 @@ dependencies {
     implementation("io.micronaut.sourcegen:micronaut-sourcegen-generator-java")
     implementation("io.micronaut.sourcegen:micronaut-sourcegen-model")
     implementation(mnOpenapi.micronaut.openapi)
+    // The native processor image must contain the optional OpenAPI ADOC
+    // converter and its pegdown classes; application-only processor jars
+    // cannot be loaded later through a native URLClassLoader.
+    implementation("io.micronaut.openapi:micronaut-openapi-adoc")
 
     // CLI modules
     implementation(project(":micronaut-pyronaut-install"))
