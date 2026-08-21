@@ -476,6 +476,9 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=tools.jackson.core.*",
     "-H:Preserve=package=tools.jackson.databind.*",
     "-H:Preserve=package=io.swagger.v3.oas.models.*",
+    // OpenAPI ADOC loads pegdown AST/parser types reflectively.
+    "-H:Preserve=package=org.pegdown.*",
+    "-H:Preserve=package=org.parboiled.*",
     "-H:IncludeResources=templates/.*",
     "-H:Preserve=package=io.micronaut.test.*",
     "-H:Preserve=package=io.micronaut.testresources.*",
