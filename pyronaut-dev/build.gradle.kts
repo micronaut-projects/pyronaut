@@ -511,6 +511,7 @@ val nativeImageRuntimeArgs = listOf(
     // OpenAPI ADOC loads pegdown AST/parser types reflectively.
     "-H:Preserve=package=org.pegdown.*",
     "-H:Preserve=package=org.parboiled.*",
+    "-H:IncludeResources=template/.*",
     "-H:IncludeResources=templates/.*",
     "-H:Preserve=package=io.micronaut.test.*",
     "-H:Preserve=package=io.micronaut.testresources.*",
