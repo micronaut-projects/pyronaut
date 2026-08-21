@@ -1,4 +1,4 @@
-![Pyronaut Logo](media/pyronaut.png)
+<img src="media/pyronaut_logo.svg" alt="Pyronaut Logo" width="300">
 
 # Pyronaut
 
