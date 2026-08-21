@@ -68,7 +68,9 @@ class PyronautNativeImageBuilderTest {
 
     @Test
     void addsPythonClasspathAndTruffleAccessOnlyWhenPythonIsEnabled() throws Exception {
-        Path javaClasspathEntry = Files.createFile(tempDir.resolve("runtime.jar"));
+        Path javaClasspathEntry = tempDir.resolve("runtime.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(javaClasspathEntry))) {
+        }
         Path pythonClasspathEntry = Files.createFile(tempDir.resolve("python-runtime.jar"));
         List<String> command = new ArrayList<>();
         PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
@@ -91,7 +93,6 @@ class PyronautNativeImageBuilderTest {
         assertFalse(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
         assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.classic.*"));
         assertTrue(command.contains("-H:Preserve=package=org.graalvm.polyglot"));
-        assertFalse(command.contains("-H:Preserve=package=org.apache.commons.logging.*"));
     }
 
     private List<String> build(Path classpathEntry, boolean emitBuildReport, boolean includeSbom) throws Exception {

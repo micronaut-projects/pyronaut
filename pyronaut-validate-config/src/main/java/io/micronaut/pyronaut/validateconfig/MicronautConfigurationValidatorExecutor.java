@@ -15,6 +15,8 @@
  */
 package io.micronaut.pyronaut.validateconfig;
 
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.json.JsonMapper;
 import io.micronaut.jsonschema.configuration.validator.ConfigurationError;
 import io.micronaut.jsonschema.configuration.validator.ConfigurationJsonSchemaValidator;
@@ -26,11 +28,13 @@ import io.micronaut.jsonschema.configuration.validator.cli.JsonSchemaConfigurati
 import io.micronaut.jsonschema.configuration.validator.report.HtmlConfigurationErrorReporter;
 import io.micronaut.jsonschema.configuration.validator.report.JsonConfigurationErrorReporter;
 import io.micronaut.jsonschema.configuration.validator.report.SystemErrConfigurationErrorReporter;
+import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -41,9 +45,33 @@ import java.util.Set;
 
 final class MicronautConfigurationValidatorExecutor implements PyronautValidateConfigMain.ConfigurationValidatorExecutor {
     private static final String DEFAULT_ENVIRONMENT_LOGGER = "org.slf4j.simpleLogger.log.io.micronaut.context.env.DefaultEnvironment";
+    private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
 
     @Override
     public PyronautValidateConfigMain.ValidationExecutionResult validate(PyronautValidateConfigMain.ValidationSettings settings) throws Exception {
+        List<URL> validationClasspath = validationClasspath(settings.classpath());
+        ClassLoader previousClassLoader = Thread.currentThread().getContextClassLoader();
+        String previousIntrospectionProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+        BeanIntrospectionsProvider previousProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
+        try (URLClassLoader validationClassLoader = new URLClassLoader(validationClasspath.toArray(URL[]::new), previousClassLoader)) {
+            System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, "true");
+            Thread.currentThread().setContextClassLoader(validationClassLoader);
+            return validate(settings, validationClasspath);
+        } finally {
+            Thread.currentThread().setContextClassLoader(previousClassLoader);
+            BeanIntrospectionProviders.set(previousProvider);
+            if (previousIntrospectionProperty == null) {
+                System.clearProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+            } else {
+                System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionProperty);
+            }
+        }
+    }
+
+    private PyronautValidateConfigMain.ValidationExecutionResult validate(
+        PyronautValidateConfigMain.ValidationSettings settings,
+        List<URL> validationClasspath
+    ) throws Exception {
         Files.createDirectories(settings.outputDir());
         suppressDefaultEnvironmentLogging();
         if (!settings.resourcesDirs().isEmpty()) {
@@ -61,11 +89,11 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
 
         ConfigurationJsonSchemaValidator validator = new ConfigurationJsonSchemaValidator();
         validator.setFailOnNotPresent(settings.failOnNotPresent());
-        if (!settings.suppressions().isEmpty()) {
-            validator.setSuppressionPatterns(settings.suppressions());
-        }
+        List<String> suppressions = new ArrayList<>(settings.suppressions());
+        suppressions.add(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
+        suppressions.add("micronaut.introspections");
+        validator.setSuppressionPatterns(suppressions);
 
-        List<URL> validationClasspath = validationClasspath(settings.classpath());
         JsonSchemaConfigurationValidator facade = new JsonSchemaConfigurationValidator(
             validationClasspath,
             settings.environments(),

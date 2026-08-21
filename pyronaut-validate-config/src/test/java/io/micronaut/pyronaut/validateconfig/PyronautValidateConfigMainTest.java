@@ -1,5 +1,8 @@
 package io.micronaut.pyronaut.validateconfig;
 
+import io.micronaut.core.beans.BeanIntrospectionProviders;
+import io.micronaut.core.beans.BeanIntrospectionsProvider;
+import io.micronaut.jsonschema.configuration.validator.report.JsonConfigurationErrorReporter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
@@ -168,6 +171,44 @@ class PyronautValidateConfigMainTest {
 
             assertEquals(List.of(projectJar.toUri().toURL(), nativeJar.toUri().toURL()), urls);
         } finally {
+            restoreProperty("pyronaut.dev.native.provided.artifacts", previousArtifacts);
+            restoreProperty("pyronaut.dev.native.provided.jars", previousJars);
+        }
+    }
+
+    @Test
+    void jsonReportUsesIntrospectionsFromValidationClasspath() throws Exception {
+        Path project = prepareProject();
+        Path runtimeJar = Files.createFile(project.resolve("runtime.jar"));
+        Files.writeString(project.resolve("__pyronaut__/resolved-runtime-dependencies"), runtimeJar + "\n");
+        Path validatorJar = Path.of(JsonConfigurationErrorReporter.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        String previousArtifacts = System.getProperty("pyronaut.dev.native.provided.artifacts");
+        String previousJars = System.getProperty("pyronaut.dev.native.provided.jars");
+        BeanIntrospectionsProvider previousProvider = BeanIntrospectionProviders.set(classLoader -> List.of());
+        try {
+            System.setProperty("pyronaut.dev.native.provided.artifacts", "io.micronaut.jsonschema:micronaut-json-schema-configuration-validator");
+            System.setProperty("pyronaut.dev.native.provided.jars", validatorJar.toString());
+            new MicronautConfigurationValidatorExecutor().validate(
+                new PyronautValidateConfigMain.ValidationSettings(
+                    true,
+                    false,
+                    false,
+                    false,
+                    "reachable",
+                    PyronautValidateConfigMain.ReportFormat.JSON,
+                    project.resolve("__pyronaut__/reports"),
+                    project,
+                    List.of(),
+                    List.of(runtimeJar.toString()),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    "production"
+                )
+            );
+            assertTrue(Files.size(project.resolve("__pyronaut__/reports/configuration-errors.json")) > 0);
+        } finally {
+            BeanIntrospectionProviders.set(previousProvider);
             restoreProperty("pyronaut.dev.native.provided.artifacts", previousArtifacts);
             restoreProperty("pyronaut.dev.native.provided.jars", previousJars);
         }

@@ -1066,18 +1066,15 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
-        # Newer micronaut-core releases honor this property when the native
-        # launcher starts. Direct source execution must use the static bean
-        # definitions embedded in pyronaut-dev, as 0.0.x did, rather than
-        # making the Crema URLClassLoader rediscover launcher classes.
-        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
         if not _control_panel_requested(Path.cwd().resolve(), args):
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     elif command == "run":
-        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
         jvm_args.append("-Dmicronaut.control-panel.enabled=false")
-    elif command == "test":
-        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
+    if command in {"dev", "run", "test"}:
+        # Native GraalPy cannot dispatch optional ImageSingleton lookups.
+        # Set this explicitly because the native image may provide a default
+        # value before the Java launcher can apply its fallback.
+        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=false")
     if command in {"dev", "test"}:
         jvm_args.append("-Dpyronaut.dev.direct.restartable=true")
     if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
@@ -1568,13 +1565,13 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
         ):
             if manifest.exists():
                 entries.extend(_read_manifest_entries(manifest))
-        test_classes_dir = cache_dir / "test-classes"
         classes_dir = cache_dir / "classes"
+        test_classes_dir = cache_dir / "test-classes"
+        if classes_dir.is_dir():
+            entries.append(str(classes_dir.resolve()))
         if test_classes_dir.is_dir():
             entries.append(str(test_classes_dir.resolve()))
-        elif classes_dir.is_dir():
-            entries.append(str(classes_dir.resolve()))
-        else:
+        if not classes_dir.is_dir() and not test_classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
         _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
         for resource_dir in layout.additional_resources_dirs:
@@ -1830,9 +1827,17 @@ def _is_native_launcher_provided_artifact(
         return command != "dev"
     if command == "dev" and _versioned_jar_artifact_id(file_name) == "micronaut-management":
         return False
+    coordinate = _artifact_coordinate(entry)
+    if coordinate is not None and coordinate.startswith("io.micronaut.serde:"):
+        # Serde jars carry runtime bean definitions (JacksonObjectMapper and
+        # SerdeRegistry); native embedding does not replace those resources.
+        return False
+    if coordinate == "io.micrometer:micrometer-core":
+        # Native launcher metadata may list Micrometer transitively, but the
+        # application still needs SimpleMeterRegistry at runtime.
+        return False
     if _is_native_test_resources_client_artifact(file_name):
         return True
-    coordinate = _artifact_coordinate(entry)
     if file_name in launcher_provided_names:
         return True
     artifact_id = _versioned_jar_artifact_id(file_name)
@@ -6276,12 +6281,6 @@ def _pyronaut_dev_native_command_line(
     if selected_environment is not None:
         jvm_args.append(f"-Dmicronaut.environments={selected_environment}")
     direct_source = _looks_like_direct_source_invocation(args)
-    if direct_source:
-        # Preserve the 0.0.x native-launcher behavior for direct Java/Python
-        # sources. The embedded bean-definition index is authoritative; do
-        # not make the Crema URLClassLoader rediscover launcher classes from
-        # an application classpath.
-        jvm_args.append("-Dmicronaut.graalvm.imagesingletons.enabled=true")
     # External-project `run`/`test` preflight invokes the native `process`
     # command without a source selector. It still needs the compiler manifest
     # (notably micronaut-context-python and micronaut-inject-python) on the
@@ -6297,8 +6296,12 @@ def _pyronaut_dev_native_command_line(
         # of the application's runtime classpath.
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
     effective_classpath_command = classpath_command or command
-    if effective_classpath_command in {"dev", "run", "test"}:
-        classpath = _build_native_application_classpath(effective_classpath_command, project_dir, executable_path)
+    if effective_classpath_command in {"dev", "run", "test", "validate-config"}:
+        # Configuration validation resolves application-backed beans (for
+        # example the default Serde ObjectMapper), so it needs the runtime
+        # dependency classpath even though it does not launch the app.
+        classpath_command = "run" if effective_classpath_command == "validate-config" else effective_classpath_command
+        classpath = _build_native_application_classpath(classpath_command, project_dir, executable_path)
         if effective_classpath_command == "dev" and _control_panel_requested(project_dir, args):
             control_panel = _direct_control_panel_classpath_entries(executable_path)
             if control_panel:

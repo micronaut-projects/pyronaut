@@ -49,6 +49,10 @@ dependencies {
     implementation("io.micronaut.sourcegen:micronaut-sourcegen-generator-java")
     implementation("io.micronaut.sourcegen:micronaut-sourcegen-model")
     implementation(mnOpenapi.micronaut.openapi)
+    // The native processor image must contain the optional OpenAPI ADOC
+    // converter and its pegdown classes; application-only processor jars
+    // cannot be loaded later through a native URLClassLoader.
+    implementation("io.micronaut.openapi:micronaut-openapi-adoc")
 
     // CLI modules
     implementation(project(":micronaut-pyronaut-install"))
@@ -504,6 +508,9 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=tools.jackson.core.*",
     "-H:Preserve=package=tools.jackson.databind.*",
     "-H:Preserve=package=io.swagger.v3.oas.models.*",
+    // OpenAPI ADOC loads pegdown AST/parser types reflectively.
+    "-H:Preserve=package=org.pegdown.*",
+    "-H:Preserve=package=org.parboiled.*",
     "-H:IncludeResources=templates/.*",
     "-H:Preserve=package=io.micronaut.test.*",
     "-H:Preserve=package=io.micronaut.testresources.*",
@@ -516,7 +523,6 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=com.github.javaparser.*",
     "-H:Preserve=package=ch.qos.logback.*",
     "-H:Preserve=package=org.graalvm.polyglot",
-    "-H:Preserve=package=org.apache.commons.logging.*",
     "-H:-PrintRestrictHeapAccessWarnings",
     "-H:IncludeResources=pyronaut-test-resources-logback\\.xml",
 
