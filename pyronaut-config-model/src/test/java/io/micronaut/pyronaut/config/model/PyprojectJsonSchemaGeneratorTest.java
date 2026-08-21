@@ -26,6 +26,9 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"platform\""));
         assertTrue(schema.contains("\"ide-stubs\""));
         assertTrue(schema.contains("\"control-panel\""));
+        assertTrue(schema.contains("\"packaging\""));
+        assertTrue(schema.contains("\"fat-jar\""));
+        assertTrue(schema.contains("\"docker-crema\""));
         assertTrue(schema.contains("\"production-enabled\""));
         assertTrue(schema.contains("\"ide\""));
         assertTrue(schema.contains("\"python-test\""));
@@ -43,8 +46,8 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"validate-dependency-injection\""));
         assertTrue(schema.contains("\"client-timeout\""));
         assertTrue(schema.contains("\"additionalProperties\": false"));
-        assertTrue(schema.contains("\"default\": \"jvm\""));
-        assertTrue(schema.contains("\"enum\": [\"jvm\", \"native\"]"));
+        assertTrue(schema.contains("\"default\": \"wheel-jvm\""));
+        assertTrue(schema.contains("\"enum\": [\"fat-jar\", \"wheel-jvm\", \"wheel-native\", \"wheel-crema\", \"docker-jvm\", \"docker-native\", \"docker-crema\"]"));
         assertTrue(schema.contains("\"default\": \"jvm\""));
         assertTrue(schema.contains("\"enum\": [\"jvm\", \"native\"]"));
     }

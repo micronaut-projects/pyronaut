@@ -4226,6 +4226,147 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("Wheel build complete", stdout.getvalue())
         self.assertIn("Install with:", stdout.getvalue())
 
+    def test_build_jar_delegates_with_ordered_classpath_and_normalized_output(self):
+        executed = []
+        captured_classpath = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            if command_line and command_line[0] == "/tmp/pyronaut-jar-build":
+                classpath_file = Path(command_line[command_line.index("--classpath-file") + 1])
+                captured_classpath.extend(classpath_file.read_text(encoding="utf-8").splitlines())
+                output = Path(command_line[command_line.index("--output") + 1])
+                output.write_bytes(b"jar")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ, {"PYRONAUT_RUN_JAR": "/tmp/pyronaut-run.jar"}
+        ):
+            project_dir = Path(temp_dir) / "jar-demo"
+            classes = project_dir / "__pyronaut__" / "classes"
+            resources = project_dir / "config"
+            classes.mkdir(parents=True)
+            resources.mkdir()
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                "/tmp/application-runtime.jar\n", encoding="utf-8"
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"demo app\"\nversion = \"1.2+build\"\n\n"
+                "[tool.pyronaut.packaging]\nformat = \"fat-jar\"\n",
+                encoding="utf-8",
+            )
+            exit_code = cli.run(
+                ["build", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+            jar_command, jar_env = executed[3]
+            self.assertEqual(0, exit_code)
+            self.assertEqual("/tmp/pyronaut-jar-build", jar_command[0])
+            self.assertEqual(str(classes.resolve()), jar_command[jar_command.index("--classes-dir") + 1])
+            self.assertEqual(str(resources.resolve()), jar_command[jar_command.index("--resource-dir") + 1])
+            self.assertEqual(
+                str(project_dir.resolve() / "dist" / "demo-app-1.2-build.jar"),
+                jar_command[jar_command.index("--output") + 1],
+            )
+            self.assertEqual(["/tmp/application-runtime.jar", "/tmp/pyronaut-run.jar"], captured_classpath)
+            self.assertEqual("/tmp/graalvm-jdk-25", jar_env["JAVA_HOME"])
+
+    def test_fat_jar_uses_external_build_classes_resources_and_runtime(self):
+        captured = {}
+
+        def runner_with_env(command_line, env):
+            captured["command"] = command_line
+            captured["classpath"] = Path(
+                command_line[command_line.index("--classpath-file") + 1]
+            ).read_text(encoding="utf-8").splitlines()
+            Path(command_line[command_line.index("--output") + 1]).write_bytes(b"jar")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            os.environ, {"PYRONAUT_RUN_JAR": "/tmp/pyronaut-run.jar"}
+        ):
+            project_dir = Path(temp_dir).resolve()
+            classes = project_dir / "target" / "pyronaut" / "classes"
+            resources = project_dir / "src" / "main" / "resources"
+            classes.mkdir(parents=True)
+            resources.mkdir(parents=True)
+            (project_dir / "pom.xml").write_text("<project/>", encoding="utf-8")
+            (project_dir / "target" / "pyronaut" / "project-layout.properties").write_text(
+                f"runtimeClasspath=/tmp/external-runtime.jar\nmainResources={resources}\n",
+                encoding="utf-8",
+            )
+            exit_code = cli._run_fat_jar_build(  # noqa: SLF001 - external packaging integration
+                project_dir=project_dir,
+                project_name="external",
+                project_version="1.0",
+                runner=runner_with_env,
+                resolver=self._resolver(),
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        command = captured["command"]
+        self.assertEqual(0, exit_code)
+        self.assertEqual(str(classes), command[command.index("--classes-dir") + 1])
+        self.assertEqual(str(resources), command[command.index("--resource-dir") + 1])
+        self.assertEqual([str(Path("/tmp/external-runtime.jar").resolve()), "/tmp/pyronaut-run.jar"], captured["classpath"])
+
+    def test_jar_flag_rejects_packaging_shaping_options(self):
+        for conflicting in ("--jvm", "--native", "--docker", "--base-image", "--base-image=default", "--main-class=example.Main"):
+            with self.subTest(conflicting=conflicting), tempfile.TemporaryDirectory() as temp_dir:
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    exit_code = cli.run(
+                        ["build", "--jar", conflicting, "--project-dir", temp_dir],
+                        runner_with_env=lambda *_args: 0,
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                    )
+                self.assertEqual(cli.USAGE_ERROR, exit_code)
+                self.assertIn("--jar cannot be combined", stderr.getvalue())
+
+    def test_resolves_all_configured_packaging_formats_and_flag_precedence(self):
+        expected = {
+            "fat-jar": "fat-jar",
+            "wheel-jvm": "wheel-jvm",
+            "wheel-native": "wheel-native",
+            "wheel-crema": "wheel-crema",
+            "docker-jvm": "docker-jvm",
+            "docker-native": "docker-native",
+            "docker-crema": "docker-crema",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            for configured, resolved in expected.items():
+                (project_dir / "pyproject.toml").write_text(
+                    f"[tool.pyronaut.packaging]\nformat = {configured!r}\n", encoding="utf-8"
+                )
+                self.assertEqual(resolved, cli._resolve_packaging_format(project_dir, []))  # noqa: SLF001
+                self.assertEqual("wheel-jvm", cli._resolve_packaging_format(project_dir, ["--jvm"]))  # noqa: SLF001
+                self.assertEqual("docker-native", cli._resolve_packaging_format(project_dir, ["--native", "--docker"]))  # noqa: SLF001
+
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.packaging]\nformat = \"jar\"\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "Invalid tool.pyronaut.packaging.format"):
+                cli._resolve_packaging_format(project_dir, [])  # noqa: SLF001
+
+            for configured in ("FAT-JAR", ""):
+                (project_dir / "pyproject.toml").write_text(
+                    f"[tool.pyronaut.packaging]\nformat = {configured!r}\n", encoding="utf-8"
+                )
+                with self.assertRaisesRegex(ValueError, "Invalid tool.pyronaut.packaging.format"):
+                    cli._resolve_packaging_format(project_dir, ["--jvm"])  # noqa: SLF001
+
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.build]\nmode = \"native\"\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "Unsupported configuration 'tool.pyronaut.build.mode'"):
+                cli._resolve_packaging_format(project_dir, ["--jar"])  # noqa: SLF001
+
     def test_build_help_prints_usage_without_validation_or_build_execution(self):
         executed = []
         stdout = io.StringIO()
@@ -4597,6 +4738,9 @@ additional-test-resources = ["test-fixtures"]
                         "name = \"demo-app\"",
                         "version = \"1.2.3\"",
                         "",
+                        "[tool.pyronaut.packaging]",
+                        "format = \"docker-crema\"",
+                        "",
                         "[tool.pyronaut.build.docker]",
                         "base-image = \"registry.example.com/acme/runtime:1\"",
                         "dockerfile-native = \"docker/DockerfileNative\"",
@@ -4607,7 +4751,7 @@ additional-test-resources = ["test-fixtures"]
             )
 
             exit_code = cli.run(
-                ["build", "--native", "--docker", "--project-dir", str(project_dir)],
+                ["build", "--project-dir", str(project_dir)],
                 runner_with_env=runner_with_env,
                 resolver=self._resolver(),
                 platform_name="linux",
@@ -4619,6 +4763,61 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("FROM ${PYRONAUT_BASE_IMAGE}", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/classes", captured["context_files"])
         self.assertNotIn("app/__pyronaut__/tools/pyronaut-native-build", captured["context_files"])
+
+    def test_closed_world_native_format_rejects_configured_reusable_base(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.packaging]\nformat = \"wheel-native\"\n\n"
+                "[tool.pyronaut.build]\nbase-image = \"runtime/base\"\n",
+                encoding="utf-8",
+            )
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["build", "--project-dir", str(project_dir)],
+                    runner_with_env=lambda *_args: 0,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertIn("cannot use a configured reusable base image", stderr.getvalue())
+
+    def test_docker_crema_uses_bundled_default_when_only_a_local_wheel_base_is_configured(self):
+        captured: dict[str, object] = {}
+
+        def runner_with_env(command_line, env):
+            if len(command_line) >= 2 and command_line[1] == "build":
+                dockerfile = Path(command_line[command_line.index("-f") + 1])
+                captured["dockerfile"] = dockerfile.name
+                captured["contents"] = dockerfile.read_text(encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            cli.shutil, "which", return_value="/usr/bin/docker"
+        ):
+            project_dir = Path(temp_dir) / "docker-crema-default"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True)
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"demo\"\nversion = \"1.0\"\n\n"
+                "[tool.pyronaut.packaging]\nformat = \"docker-crema\"\n\n"
+                "[tool.pyronaut.build]\nbase-image = \"runtime/local-wheel-base\"\n",
+                encoding="utf-8",
+            )
+            bundled = project_dir / "bundled-pyronaut-run"
+            bundled.write_bytes(b"native-runner")
+
+            with patch.object(cli, "_bundled_default_base_image", return_value=bundled):
+                exit_code = cli.run(
+                    ["build", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("DockerfileNativeDefault", captured["dockerfile"])
+        self.assertIn("COPY bundled-base/pyronaut-run", captured["contents"])
 
     def test_prepare_jvm_build_wheel_staging_rewrites_manifest_and_generates_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4877,7 +5076,7 @@ additional-test-resources = ["test-fixtures"]
 
         self.assertFalse(cli._stop_managed_process(BrokenProcess()))
 
-    def test_build_mode_from_pyproject_defaults_to_native(self):
+    def test_packaging_format_from_pyproject_defaults_to_native_wheel(self):
         executed = []
 
         def runner_with_env(command_line, env):
@@ -4895,7 +5094,7 @@ additional-test-resources = ["test-fixtures"]
             cache_dir.mkdir(parents=True, exist_ok=True)
             (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
             (project_dir / "pyproject.toml").write_text(
-                "[tool.pyronaut.build]\nmode = \"native\"\n",
+                "[tool.pyronaut.packaging]\nformat = \"wheel-native\"\n",
                 encoding="utf-8",
             )
 
@@ -4911,7 +5110,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual("/tmp/pyronaut-native-build", executed[3][0][0])
         self.assertEqual("wheel", executed[4][0][3])
 
-    def test_build_mode_defaults_to_native_from_toolchain_type(self):
+    def test_build_output_default_is_independent_from_toolchain_type(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "native-toolchain-default"
             project_dir.mkdir(parents=True)
@@ -4920,7 +5119,7 @@ additional-test-resources = ["test-fixtures"]
                 encoding="utf-8",
             )
 
-            self.assertEqual("native", cli._resolve_build_mode(project_dir, []))  # noqa: SLF001 - precedence coverage
+            self.assertEqual("jvm", cli._resolve_build_mode(project_dir, []))  # noqa: SLF001 - precedence coverage
             self.assertEqual("jvm", cli._resolve_build_mode(project_dir, ["--jvm"]))  # noqa: SLF001 - precedence coverage
 
     def test_build_base_image_uses_python_runner_and_configured_output(self):
@@ -4997,7 +5196,9 @@ additional-test-resources = ["test-fixtures"]
             (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
             (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
             (project_dir / "pyproject.toml").write_text(
-                "[project]\nname = \"demo\"\nversion = \"1.0\"\n\n[tool.pyronaut.build]\nbase-image = \"runtime/base\"\n",
+                "[project]\nname = \"demo\"\nversion = \"1.0\"\n\n"
+                "[tool.pyronaut.packaging]\nformat = \"wheel-crema\"\n\n"
+                "[tool.pyronaut.build]\nbase-image = \"runtime/base\"\n",
                 encoding="utf-8",
             )
 
@@ -5009,7 +5210,7 @@ additional-test-resources = ["test-fixtures"]
                 java_home_provider=lambda: "/tmp/graalvm-jdk-25",
             )
             wheel_exit = cli.run(
-                ["build", "--native", "--project-dir", str(project_dir)],
+                ["build", "--project-dir", str(project_dir)],
                 runner_with_env=runner_with_env,
                 resolver=self._resolver(),
                 platform_name="linux",
@@ -5039,7 +5240,8 @@ additional-test-resources = ["test-fixtures"]
             (classes / "Application.class").write_text("", encoding="utf-8")
             (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
             (project_dir / "pyproject.toml").write_text(
-                "[project]\nname = \"demo\"\nversion = \"1.0\"\n\n[tool.pyronaut.build]\nmode = \"native\"\n",
+                "[project]\nname = \"demo\"\nversion = \"1.0\"\n\n"
+                "[tool.pyronaut.packaging]\nformat = \"wheel-crema\"\n",
                 encoding="utf-8",
             )
             base = project_dir / "bundled-pyronaut-run"
@@ -5076,7 +5278,9 @@ additional-test-resources = ["test-fixtures"]
             classes.mkdir(parents=True, exist_ok=True)
             (classes / "Application.class").write_text("", encoding="utf-8")
             (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
-            (project_dir / "pyproject.toml").write_text("[tool.pyronaut.build]\nmode = \"native\"\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.packaging]\nformat = \"wheel-native\"\n", encoding="utf-8"
+            )
             exit_code = cli.run(
                 ["build", "--project-dir", str(project_dir)],
                 runner_with_env=runner_with_env,
@@ -5127,6 +5331,36 @@ additional-test-resources = ["test-fixtures"]
             self.assertTrue((staging_project / "src-java" / "App.java").is_file())
             self.assertTrue((staging_project / "__pyronaut__" / "resolved-runtime-dependencies").is_file())
             self.assertTrue((staging_project / "__pyronaut__" / "resolved-test-dependencies").is_file())
+
+    def test_build_direct_source_jar_is_copied_to_requested_project_dist(self):
+        def fake_delegate(command, args, runner, resolver, **kwargs):
+            project_dir = Path(args[args.index("--project-dir") + 1])
+            cache = project_dir / "__pyronaut__"
+            (cache / "classes").mkdir(parents=True, exist_ok=True)
+            for name in ("resolved-build-dependencies", "resolved-runtime-dependencies", "resolved-test-dependencies"):
+                (cache / name).write_text("/tmp/runtime.jar\n", encoding="utf-8")
+            return 0
+
+        def fake_build(**kwargs):
+            self.assertIn("--jar", kwargs["args"])
+            staging = Path(kwargs["args"][kwargs["args"].index("--project-dir") + 1])
+            dist = staging / "dist"
+            dist.mkdir()
+            (dist / "hello-1.2.3.jar").write_bytes(b"jar")
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "App.java").write_text("package example; class App {}\n", encoding="utf-8")
+            with patch.object(cli, "_delegate", side_effect=fake_delegate), patch.object(cli, "_run_build", side_effect=fake_build):
+                exit_code = cli.run(
+                    ["build", "App.java", "--jar", "--name", "hello", "--version", "1.2.3", "--project-dir", str(project_dir)],
+                    runner_with_env=lambda *_args: 0,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+            self.assertEqual(0, exit_code)
+            self.assertEqual(b"jar", (project_dir / "dist" / "hello-1.2.3.jar").read_bytes())
 
     def test_build_mode_flag_with_separate_value_uses_native(self):
         executed = []
@@ -5328,7 +5562,7 @@ additional-test-resources = ["test-fixtures"]
                 )
 
         self.assertEqual(cli.USAGE_ERROR, exit_code)
-        self.assertIn("Invalid build mode in pyproject.toml", stderr.getvalue())
+        self.assertIn("Unsupported configuration 'tool.pyronaut.build.mode'", stderr.getvalue())
 
     def test_build_native_requires_processed_classes(self):
         stderr = io.StringIO()

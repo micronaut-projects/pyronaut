@@ -28,9 +28,13 @@ import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -53,6 +57,8 @@ public class PyronautRunMain implements Callable<Integer> {
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
     private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
+    private static final String PACKAGED_JAR_PROPERTY = "pyronaut.packaged.jar";
+    private static final String APPLICATION_CLASSES_INDEX = "META-INF/pyronaut/application-classes.idx";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
     private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
@@ -146,7 +152,14 @@ public class PyronautRunMain implements Callable<Integer> {
         PyprojectModel model;
         try {
             configureEnv(System.getenv());
-            if (ExternalProjectLayout.isExternal(root)) {
+            if (isPackagedJar()) {
+                // A runnable JAR is self-contained. Do not let files in the
+                // current working directory replace or augment its indexed
+                // application, even when it is launched from a Maven,
+                // Gradle, or another Pyronaut project.
+                model = null;
+                layout = new ResolvedProjectLayout(root.resolve(classesDir).normalize(), List.of());
+            } else if (ExternalProjectLayout.isExternal(root)) {
                 ExternalProjectLayout external = ExternalProjectLayout.read(root);
                 layout = resolveExternalProjectLayout(root, external);
                 Path projectToml = root.resolve("project.toml");
@@ -182,7 +195,7 @@ public class PyronautRunMain implements Callable<Integer> {
         try (layout) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
-            if (ExternalProjectLayout.isExternal(root)) {
+            if (!isPackagedJar() && ExternalProjectLayout.isExternal(root)) {
                 applyExternalPythonDefault(applicationClassLoader, System.getenv());
             }
             boolean defaultLoggingConfigurationApplied = runConfigurer.shouldInitializeApplicationDefaults(applicationClassLoader);
@@ -325,6 +338,9 @@ public class PyronautRunMain implements Callable<Integer> {
         Path pyronautDir = root.resolve(DEFAULT_PYRONAUT_DIR).normalize();
         Path resolvedClassesDir = root.resolve(classesDir).normalize();
         if (!Files.isDirectory(resolvedClassesDir)) {
+            if (isPackagedJar()) {
+                return new ResolvedProjectLayout(resolvedClassesDir, List.of());
+            }
             throw new IllegalStateException("Missing processed classes directory: " + resolvedClassesDir + ". Run pyronaut process first.");
         }
 
@@ -426,7 +442,12 @@ public class PyronautRunMain implements Callable<Integer> {
         void initializeApplicationDefaults();
     }
 
-    /** Resolved classpath and temporary resources for an external project. */
+    /**
+     * Resolved classpath and temporary resources for an external project.
+     *
+     * @param processedClassesRoot processed application classes root
+     * @param classpathUrls ordered application classpath URLs
+     */
     public record ResolvedProjectLayout(Path processedClassesRoot, List<URL> classpathUrls) implements AutoCloseable {
         public ResolvedProjectLayout {
             classpathUrls = List.copyOf(classpathUrls);
@@ -451,6 +472,13 @@ public class PyronautRunMain implements Callable<Integer> {
     }
 
     private static List<String> discoverApplicationPackages(Path classesDirectory) {
+        if (isPackagedJar()) {
+            return packagedApplicationClassNames(resolveApplicationClassLoader()).stream()
+                .map(PyronautRunMain::topLevelPackage)
+                .filter(name -> !name.isBlank())
+                .distinct()
+                .toList();
+        }
         try (Stream<Path> stream = Files.list(classesDirectory)) {
             return stream
                 .filter(Files::isDirectory)
@@ -464,9 +492,15 @@ public class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    private static List<Class<?>> discoverApplicationClasses(Path classesDirectory, ClassLoader classLoader) {
+    static List<Class<?>> discoverApplicationClasses(Path classesDirectory, ClassLoader classLoader) {
         if (classLoader == null) {
             return List.of();
+        }
+        if (isPackagedJar()) {
+            return packagedApplicationClassNames(classLoader).stream()
+                .map(className -> loadApplicationClass(className, classLoader))
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         }
         try (Stream<Path> stream = Files.walk(classesDirectory)) {
             return stream
@@ -488,6 +522,34 @@ public class PyronautRunMain implements Callable<Integer> {
         }
     }
 
+    static List<String> packagedApplicationClassNames(ClassLoader classLoader) {
+        if (classLoader == null) {
+            return List.of();
+        }
+        try (InputStream input = classLoader.getResourceAsStream(APPLICATION_CLASSES_INDEX)) {
+            if (input == null) {
+                throw new IllegalStateException("Missing packaged application class index: " + APPLICATION_CLASSES_INDEX);
+            }
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+                return reader.lines()
+                    .map(String::trim)
+                    .filter(name -> !name.isBlank())
+                    .toList();
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read packaged application class index: " + e.getMessage(), e);
+        }
+    }
+
+    private static String topLevelPackage(String className) {
+        int separator = className.indexOf('.');
+        return separator < 1 ? "" : className.substring(0, separator);
+    }
+
+    private static boolean isPackagedJar() {
+        return Boolean.getBoolean(PACKAGED_JAR_PROPERTY);
+    }
+
     private static Class<?> loadApplicationClass(String className, ClassLoader classLoader) {
         try {
             return Class.forName(className, true, classLoader);
@@ -496,7 +558,7 @@ public class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    static void main(String[] args) {
+    public static void main(String[] args) {
         PyronautRuntimeProperties.disableGraalVmImageSingletons();
         loadRunConfigurer().initializeLauncher();
         int exitCode = new CommandLine(new PyronautRunMain()).execute(args);

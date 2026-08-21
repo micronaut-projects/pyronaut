@@ -97,6 +97,46 @@ class PyronautRunMainTest {
     }
 
     @Test
+    void packagedJarUsesApplicationClassIndexAndIgnoresWorkingDirectoryProject() throws Exception {
+        String property = "pyronaut.packaged.jar";
+        String previous = System.getProperty(property);
+        Path resources = tempDir.resolve("packaged-resources");
+        Path index = resources.resolve("META-INF/pyronaut/application-classes.idx");
+        Files.createDirectories(index.getParent());
+        Files.writeString(index, SampleApp.class.getName() + "\n", StandardCharsets.UTF_8);
+        Path workingDirectory = tempDir.resolve("external-project");
+        Files.createDirectories(workingDirectory.resolve("__pyronaut__/classes/example"));
+        Files.writeString(workingDirectory.resolve("__pyronaut__/classes/example/Stale.class"), "not-a-class");
+        Files.writeString(workingDirectory.resolve("pom.xml"), "<project/>");
+        try (java.net.URLClassLoader classLoader = new java.net.URLClassLoader(
+            new URL[] {resources.toUri().toURL()}, PyronautRunMainTest.class.getClassLoader()
+        )) {
+            System.setProperty(property, "true");
+            PyronautRunMain.ResolvedProjectLayout layout = new PyronautRunMain().resolveProjectLayout(
+                tempDir, Path.of("missing/classes"), Path.of("missing/config")
+            );
+            assertTrue(layout.classpathUrls().isEmpty());
+            assertEquals(List.of(SampleApp.class.getName()), PyronautRunMain.packagedApplicationClassNames(classLoader));
+            assertEquals(
+                List.of(SampleApp.class),
+                PyronautRunMain.discoverApplicationClasses(
+                    workingDirectory.resolve("__pyronaut__/classes"), classLoader
+                )
+            );
+
+            PyronautRunMain runMain = new PyronautRunMain(
+                new PyprojectModelReader(),
+                ignored -> { },
+                (ignored, applicationArgs) -> false
+            );
+            runMain.projectDir = workingDirectory;
+            assertEquals(0, runMain.call());
+        } finally {
+            restoreProperty(property, previous);
+        }
+    }
+
+    @Test
     void externalLayoutAddsResolvedRuntimeAndMainResources() throws Exception {
         Path project = tempDir.resolve("external-layout");
         Path classes = Files.createDirectories(project.resolve("target/pyronaut/classes"));

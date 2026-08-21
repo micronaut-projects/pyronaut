@@ -174,6 +174,7 @@ final class MavenClasspathResolver {
             null,
             PyronautManagedVersions.micronautPlatformVersion(),
             List.of(),
+            null,
             new PyprojectModel.Dependencies(List.of(), List.of(), List.of(), List.of()),
             null,
             new PyprojectModel.ControlPanel(enabled, "/control-panel", false),
