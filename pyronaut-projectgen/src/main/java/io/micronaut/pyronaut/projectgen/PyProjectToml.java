@@ -37,6 +37,8 @@ import java.util.stream.StreamSupport;
 class PyProjectToml implements Feature {
     private static final String TEMPLATE_NAME = "pyproject.toml";
     private static final String TEMPLATE_PATH = TEMPLATE_NAME;
+    private static final String MICRONAUT_SNAPSHOT_REPOSITORY =
+        "https://central.sonatype.com/repository/maven-snapshots/";
 
     @Override
     public String getName() {
@@ -92,10 +94,15 @@ class PyProjectToml implements Feature {
         if (!settings.repositories().isEmpty()) {
             return settings.repositories();
         }
-        if (settings.micronautVersion() != null && settings.micronautVersion().endsWith("-SNAPSHOT")) {
-            return List.of("mavenLocal", "mavenCentral");
+        if (isSnapshot(PyronautManagedVersions.micronautCoreVersion())
+            || isSnapshot(settings.micronautVersion())) {
+            return List.of("mavenLocal", MICRONAUT_SNAPSHOT_REPOSITORY, "mavenCentral");
         }
         return List.of("mavenCentral");
+    }
+
+    private static boolean isSnapshot(String version) {
+        return version != null && version.endsWith("-SNAPSHOT");
     }
 
     private static DependencyScopes dependencyScopes(Iterable<Dependency> dependencies) {

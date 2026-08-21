@@ -56,7 +56,7 @@ TOML application configuration instead of generating Gradle or Maven build files
 - Test configuration renders to `tests-config/application-test.toml`.
 - Other environment configuration renders to `config/application-<env>.toml`.
 
-The default repository list is `["mavenCentral"]`. Snapshot Micronaut versions add `mavenLocal` first so local Pyronaut artifacts can be resolved during development.
+The default repository list is `["mavenCentral"]`. Snapshot Micronaut core or platform versions add `mavenLocal`, the Micronaut snapshot repository, and then Maven Central so locally published Pyronaut artifacts and published Micronaut snapshots can be resolved during development.
 
 ## Feature Compatibility
 

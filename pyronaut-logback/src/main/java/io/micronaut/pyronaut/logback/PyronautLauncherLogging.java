@@ -36,7 +36,6 @@ public final class PyronautLauncherLogging {
     private static final String LOGBACK_NOP_STATUS_LISTENER = "ch.qos.logback.core.status.NopStatusListener";
     private static final String LOGBACK_CONFIGURATION_FILE_PROPERTY = "logback.configurationFile";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
-    static final String APPLICATION_DEFAULTS_MARKER = "pyronaut.application.logging.defaults";
     static final String PYTHON_LOGGING_CONFIGURED = "pyronaut.python.logging.configured";
     private static final String FALLBACK_STREAM_PROPERTY = "pyronaut.logging.fallback-stream";
     private static final String FALLBACK_STREAM_ENVIRONMENT = "PYRONAUT_LOGGING_FALLBACK_STREAM";

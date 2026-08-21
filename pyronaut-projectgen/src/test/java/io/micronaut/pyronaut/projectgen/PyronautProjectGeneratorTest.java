@@ -70,6 +70,10 @@ class PyronautProjectGeneratorTest {
         assertTrue(pyproject.contains("[tool.pyronaut]"));
         assertTrue(pyproject.contains("core.version = '" + PyronautManagedVersions.micronautCoreVersion() + "'"));
         assertTrue(pyproject.contains("platform.version = '" + PyronautManagedVersions.micronautPlatformVersion() + "'"));
+        if (PyronautManagedVersions.micronautCoreVersion().endsWith("-SNAPSHOT")
+            || PyronautManagedVersions.micronautPlatformVersion().endsWith("-SNAPSHOT")) {
+            assertTrue(pyproject.contains("repositories = ['mavenLocal', 'https://central.sonatype.com/repository/maven-snapshots/', 'mavenCentral']"));
+        }
         assertFalse(pyproject.contains("[tool.pyronaut]\nversion = "));
     }
 

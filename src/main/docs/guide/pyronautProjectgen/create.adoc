@@ -62,4 +62,4 @@ pyronaut create demo --micronaut-version 5.0.0-SNAPSHOT --repository mavenLocal,
 ----
 
 When no repositories are specified, generated projects use `mavenCentral`.
-If the selected Micronaut platform version is a snapshot, the generated repository list starts with `mavenLocal` and then falls back to `mavenCentral` so locally published Pyronaut artifacts can be resolved during development.
+If the selected Micronaut core or platform version is a snapshot, the generated repository list uses `mavenLocal`, the Micronaut snapshot repository, and then `mavenCentral` so locally published Pyronaut artifacts and published Micronaut snapshots can be resolved during development.
