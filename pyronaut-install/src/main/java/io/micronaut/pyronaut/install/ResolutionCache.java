@@ -32,7 +32,7 @@ import java.util.Map;
  */
 final class ResolutionCache {
     private static final String HASH_FILE = "pyproject.sha256";
-    private static final String INSTALL_CACHE_VERSION = "test-resources-server-classpath-v1";
+    private static final String INSTALL_CACHE_VERSION = "test-resources-server-classpath-v2";
 
     private ResolutionCache() {
     }
@@ -66,7 +66,7 @@ final class ResolutionCache {
     static String externalInstallHash(Path projectRoot, Path localRepositoryPath) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update("external-install-v3-development-support".getBytes(StandardCharsets.UTF_8));
+            digest.update("external-install-v4-complete-test-resources-server-classpath".getBytes(StandardCharsets.UTF_8));
             for (String name : List.of("project.toml", "pom.xml", "mvnw", "settings.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradle.properties")) {
                 Path file = projectRoot.resolve(name);
                 if (Files.isRegularFile(file)) {

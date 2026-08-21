@@ -154,20 +154,27 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 boolean showProgress = !"off".equalsIgnoreCase(progress);
                 if (!refresh && !noCache && Files.exists(hashFile) && Files.exists(ExternalProjectLayout.file(root))
                     && hash.equals(Files.readString(hashFile).trim())) {
+                    boolean completeCache = false;
                     try {
                         ExternalProjectLayout cachedLayout = ExternalProjectLayout.read(root);
-                        editorSupport.ensureExternalWritten(root, cacheDir, cachedLayout.testResourcesEnabled());
-                        AnnotationProcessorOptionDiscovery.refresh(cacheDir,
-                            cachedLayout.annotationProcessorClasspath().isEmpty() ? cachedLayout.buildClasspath() : cachedLayout.annotationProcessorClasspath());
-                        editorSupport.ensureExternalApplicationSchema(cacheDir, cachedLayout.mainResources(),
-                            cachedLayout.runtimeClasspath().stream().map(Path::toString).toList());
+                        Path testResourcesManifest = cacheDir.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile());
+                        completeCache = externalCacheComplete(cachedLayout, testResourcesManifest);
+                        if (completeCache) {
+                            editorSupport.ensureExternalWritten(root, cacheDir, cachedLayout.testResourcesEnabled());
+                            AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+                                cachedLayout.annotationProcessorClasspath().isEmpty() ? cachedLayout.buildClasspath() : cachedLayout.annotationProcessorClasspath());
+                            editorSupport.ensureExternalApplicationSchema(cacheDir, cachedLayout.mainResources(),
+                                cachedLayout.runtimeClasspath().stream().map(Path::toString).toList());
+                        }
                     } catch (Exception discoveryFailure) {
                         // Option discovery is best effort; dependency installation remains usable.
                     }
-                    if (showProgress) {
-                        System.err.println(buildName + " dependencies already configured (cache hit). Use --refresh to resolve again.");
+                    if (completeCache) {
+                        if (showProgress) {
+                            System.err.println(buildName + " dependencies already configured (cache hit). Use --refresh to resolve again.");
+                        }
+                        return InstallExitCode.SUCCESS.code();
                     }
-                    return InstallExitCode.SUCCESS.code();
                 }
                 if (showProgress) {
                     System.err.println("Resolving dependencies for " + buildName + " project...");
@@ -183,6 +190,8 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 if (layout.testResourcesEnabled()) {
                     Files.write(cacheDir.resolve("resolved-test-resources-server-dependencies"),
                         layout.testResourcesClasspath().stream().map(Path::toString).toList());
+                } else {
+                    Files.deleteIfExists(cacheDir.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile()));
                 }
                 Files.createDirectories(cacheDir);
                 Files.writeString(hashFile, hash);
@@ -203,14 +212,21 @@ public final class PyronautInstallMain implements Callable<Integer> {
             PyprojectModel model = modelReader.readFile(pyproject);
             Path cacheDir = root.resolve(DEFAULT_PYRONAUT_DIR);
             Path localRepo = resolveLocalRepository(root);
+            boolean testResourcesServerEnabled = resolver.resolvesTestResourcesServer(model);
+            List<InstallScope> activeScopes = testResourcesServerEnabled
+                ? scopes
+                : scopes.stream().filter(installScope -> installScope != InstallScope.TEST_RESOURCES_SERVER).toList();
+            if (!testResourcesServerEnabled) {
+                Files.deleteIfExists(cacheDir.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile()));
+            }
             editorSupport.ensureWritten(root, cacheDir, model.pyronaut().sources());
             String hash = ResolutionCache.installHash(pyproject, localRepo);
             try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
                 if (dependencies) {
-                    return renderDependencyTrees(root, scopes, progressReporter);
+                    return renderDependencyTrees(root, activeScopes, progressReporter);
                 }
                 boolean bypassRequested = refresh || noCache;
-                if (!bypassRequested && ResolutionCache.cacheHit(cacheDir, hash, scopes)) {
+                if (!bypassRequested && ResolutionCache.cacheHit(cacheDir, hash, activeScopes)) {
                     try {
                         AnnotationProcessorOptionDiscovery.refresh(cacheDir,
                             readManifestClasspath(cacheDir.resolve(InstallScope.BUILD.manifestFile())));
@@ -218,7 +234,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                         // Option discovery is best effort; dependency installation remains usable.
                     }
                     progressReporter.cacheHit();
-                    if (scopes.contains(InstallScope.RUNTIME)) {
+                    if (activeScopes.contains(InstallScope.RUNTIME)) {
                         editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(),
                             readManifestClasspath(cacheDir.resolve(InstallScope.RUNTIME.manifestFile())).stream().map(Path::toString).toList(),
                             AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
@@ -236,23 +252,22 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 Map<InstallScope, List<String>> resolved = new EnumMap<>(InstallScope.class);
                 Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> resolvedEditorArtifacts = new EnumMap<>(InstallScope.class);
                 Map<InstallScope, Future<MavenClasspathResolver.ResolvedScopeDetails>> futures = new EnumMap<>(InstallScope.class);
-                for (InstallScope installScope : scopes) {
+                for (InstallScope installScope : activeScopes) {
                     progressReporter.startScope(installScope);
                 }
                 RuntimeException firstFailure = null;
                 try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                    for (InstallScope installScope : scopes) {
+                    for (InstallScope installScope : activeScopes) {
                         futures.put(installScope, executor.submit(() -> resolver.resolveScopeDetails(
                             model,
                             installScope,
                             localRepo,
                             offline,
                             bypassRequested,
-                            false,
                             progressListener(progressReporter, installScope)
                         )));
                     }
-                    for (InstallScope installScope : scopes) {
+                    for (InstallScope installScope : activeScopes) {
                         try {
                             MavenClasspathResolver.ResolvedScopeDetails details = futures.get(installScope).get();
                             List<String> classpath = manifestClasspath(installScope, details.classpath());
@@ -316,6 +331,14 @@ public final class PyronautInstallMain implements Callable<Integer> {
             System.err.println("Unexpected install failure: " + e.getMessage());
             return InstallExitCode.INTERNAL_ERROR.code();
         }
+    }
+
+    static boolean externalCacheComplete(ExternalProjectLayout layout, Path testResourcesManifest) throws IOException {
+        if (layout.testResourcesEnabled()) {
+            return Files.isRegularFile(testResourcesManifest);
+        }
+        Files.deleteIfExists(testResourcesManifest);
+        return true;
     }
 
     private static DependencyProgressListener progressListener(InstallProgressReporter reporter, InstallScope scope) {
@@ -407,7 +430,6 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     localRepo,
                     offline,
                     refresh || noCache,
-                    false,
                     progressListener(progressReporter, installScope)
                 )));
             }

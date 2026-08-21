@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.install;
 
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Supported dependency installation scopes.
@@ -25,14 +26,33 @@ public enum InstallScope {
     RUNTIME("runtime", "resolved-runtime-dependencies"),
     DEVELOPMENT_RUNTIME("development-runtime", "resolved-development-runtime-dependencies"),
     TEST("test", "resolved-test-dependencies"),
-    TEST_RESOURCES_SERVER("test-resources-server", "resolved-test-resources-server-dependencies");
+    TEST_RESOURCES_SERVER(
+        "test-resources-server",
+        "resolved-test-resources-server-dependencies",
+        List.of(
+            "io.micronaut:micronaut-http-server",
+            "io.micronaut.testresources:micronaut-test-resources-core",
+            "io.micronaut.testresources:micronaut-test-resources-control-panel",
+            "io.micronaut.testresources:micronaut-test-resources-server",
+            "io.micronaut.serde:micronaut-serde-jackson",
+            "ch.qos.logback:logback-classic",
+            "org.slf4j:jul-to-slf4j",
+            "io.micronaut:micronaut-http-server-netty"
+        )
+    );
 
     private final String cliValue;
     private final String manifestFile;
+    private final List<String> defaultDependencies;
 
     InstallScope(String cliValue, String manifestFile) {
+        this(cliValue, manifestFile, List.of());
+    }
+
+    InstallScope(String cliValue, String manifestFile, List<String> defaultDependencies) {
         this.cliValue = cliValue;
         this.manifestFile = manifestFile;
+        this.defaultDependencies = List.copyOf(defaultDependencies);
     }
 
     public String cliValue() {
@@ -41,6 +61,15 @@ public enum InstallScope {
 
     public String manifestFile() {
         return manifestFile;
+    }
+
+    /**
+     * Dependencies supplied by Pyronaut whenever this scope is resolved.
+     *
+     * @return immutable default Maven coordinates
+     */
+    public List<String> defaultDependencies() {
+        return defaultDependencies;
     }
 
     static InstallScope fromCliValue(String value) {

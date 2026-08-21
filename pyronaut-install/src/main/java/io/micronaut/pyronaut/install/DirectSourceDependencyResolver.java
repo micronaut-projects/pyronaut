@@ -19,6 +19,7 @@ import io.micronaut.core.annotation.Internal;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarations;
+import io.micronaut.testresources.buildtools.VersionInfo;
 import io.micronaut.testresources.core.TestResourcesResolver;
 import java.io.IOException;
 import java.net.URL;
@@ -43,7 +44,7 @@ import java.util.Set;
 public final class DirectSourceDependencyResolver {
     private static final String HASH_FILE = "direct-source-declarations.sha256";
     private static final String LAUNCH_METADATA_FILE = "direct-source-launch.properties";
-    private static final String LAUNCH_CACHE_VERSION = "3";
+    private static final String LAUNCH_CACHE_VERSION = "4-complete-test-resources-server-classpath";
     private final MavenClasspathResolver resolver;
 
     /** Creates a resolver using the configured Maven environment. */
@@ -230,6 +231,9 @@ public final class DirectSourceDependencyResolver {
             && Files.isRegularFile(metadata)) {
             boolean required = readTestResourcesRequired(metadata);
             if (!required || Files.isRegularFile(serverManifest)) {
+                if (!required) {
+                    Files.deleteIfExists(serverManifest);
+                }
                 return new LaunchResult(
                     read(buildManifest),
                     read(runtimeManifest),
@@ -245,17 +249,22 @@ public final class DirectSourceDependencyResolver {
         MavenClasspathResolver.ResolvedScopeDetails serverDetails = null;
         if (effectiveTestResourcesEligibility && runtimeProperties != null && !runtimeProperties.isEmpty()) {
             PyprojectModel enabledModel = model(build, runtime, test, boms, exclusions, repositories, enabledTestResources());
-            serverDetails = resolver.resolveScopeDetails(
+            serverDetails = resolver.resolveTestResourcesProviderDetails(
                 enabledModel,
-                InstallScope.TEST_RESOURCES_SERVER,
                 localRepository,
                 false,
-                false,
-                true
+                false
             );
             required = requiresTestResources(serverDetails.classpath(), runtimeProperties);
             if (required) {
                 baseModel = enabledModel;
+                serverDetails = resolver.resolveScopeDetails(
+                    enabledModel,
+                    InstallScope.TEST_RESOURCES_SERVER,
+                    localRepository,
+                    false,
+                    false
+                );
             }
         }
 
@@ -337,6 +346,11 @@ public final class DirectSourceDependencyResolver {
         List<String> inputs = new ArrayList<>();
         inputs.add("launch-cache-version=" + LAUNCH_CACHE_VERSION);
         inputs.add("test-resources-eligible=" + testResourcesEligible);
+        inputs.add("test-resources-platform-version=" + PyronautManagedVersions.micronautPlatformVersion());
+        inputs.add("test-resources-build-tools-version=" + VersionInfo.getVersion());
+        InstallScope.TEST_RESOURCES_SERVER.defaultDependencies().stream()
+            .map(dependency -> "test-resources-default=" + dependency)
+            .forEach(inputs::add);
         if (runtimeProperties != null) {
             runtimeProperties.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
