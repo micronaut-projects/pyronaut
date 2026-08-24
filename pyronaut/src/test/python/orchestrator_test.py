@@ -1488,6 +1488,24 @@ type = "native"
         self.assertIn(str(main_resources.resolve()), entries)
         self.assertIn(str(test_resources.resolve()), entries)
 
+    def test_external_test_classpath_prefers_test_vfs_over_production_vfs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "external"
+            cache_dir = project_dir / "build" / "pyronaut"
+            classes_dir = cache_dir / "classes"
+            test_classes_dir = cache_dir / "test-classes"
+            classes_dir.mkdir(parents=True)
+            test_classes_dir.mkdir(parents=True)
+            (project_dir / "build.gradle").write_text("plugins { id 'java' }\n", encoding="utf-8")
+            (cache_dir / "project-layout.properties").write_text(
+                f"testClasspath=/tmp/test.jar\n",
+                encoding="utf-8",
+            )
+
+            entries = cli._build_native_application_classpath_entries("test", project_dir)
+
+        self.assertLess(entries.index(str(test_classes_dir.resolve())), entries.index(str(classes_dir.resolve())))
+
     def test_external_process_classpath_does_not_require_processed_classes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
