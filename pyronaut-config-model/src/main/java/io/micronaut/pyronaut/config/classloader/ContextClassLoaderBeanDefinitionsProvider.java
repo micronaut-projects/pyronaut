@@ -20,17 +20,22 @@ import io.micronaut.core.io.service.MicronautMetaServiceLoaderUtils;
 import io.micronaut.core.reflect.ClassUtils;
 import io.micronaut.inject.BeanDefinitionReference;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.JarURLConnection;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Stream;
@@ -75,15 +80,50 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
 
     private static List<BeanDefinitionReference<?>> discoverRuntimeReferences(ClassLoader classLoader) {
         List<BeanDefinitionReference<?>> references = new ArrayList<>();
+        Set<String> discoveredResources = new HashSet<>();
         try {
             Enumeration<URL> resources = classLoader.getResources(SERVICE_PATH);
             while (resources.hasMoreElements()) {
-                collectReferences(resources.nextElement(), classLoader, references);
+                URL resource = resources.nextElement();
+                discoveredResources.add(resource.toExternalForm());
+                collectReferences(resource, classLoader, references);
             }
         } catch (IOException e) {
             throw new IllegalStateException("Unable to discover bean definitions from runtime classloader", e);
         }
+        discoverClasspathReferences(classLoader, references, discoveredResources);
         return references;
+    }
+
+    private static void discoverClasspathReferences(ClassLoader classLoader,
+                                                    List<BeanDefinitionReference<?>> references,
+                                                    Set<String> discoveredResources) {
+        String classpath = System.getProperty("java.class.path", "");
+        for (String entry : classpath.split(Pattern.quote(File.pathSeparator))) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            try {
+                Path path = Path.of(entry);
+                URL resource;
+                if (Files.isDirectory(path)) {
+                    Path serviceDirectory = path.resolve(SERVICE_PATH);
+                    if (!Files.isDirectory(serviceDirectory)) {
+                        continue;
+                    }
+                    resource = serviceDirectory.toUri().toURL();
+                } else if (Files.isRegularFile(path) && entry.endsWith(".jar")) {
+                    resource = new URL("jar:" + path.toUri().toURL() + "!/" + SERVICE_PATH);
+                } else {
+                    continue;
+                }
+                if (discoveredResources.add(resource.toExternalForm())) {
+                    collectReferences(resource, classLoader, references);
+                }
+            } catch (InvalidPathException | IOException ignored) {
+                // The classloader remains the source of truth for malformed or inaccessible entries.
+            }
+        }
     }
 
     private static void collectReferences(URL resource, ClassLoader classLoader, List<BeanDefinitionReference<?>> references) throws IOException {
