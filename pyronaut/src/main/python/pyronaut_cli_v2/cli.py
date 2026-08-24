@@ -1494,10 +1494,13 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
             # Test classes contain generated test metadata, while production
             # classes contain the application beans and main entry point. Both
             # are required for MicronautTest discovery and startup.
+            if test_classes_dir.is_dir():
+                # Test processing merges production and test sources. Put its
+                # VFS first so package initializers include test-only Java
+                # imports instead of being shadowed by production output.
+                entries.append(str(test_classes_dir.resolve()))
             if classes_dir.is_dir():
                 entries.append(str(classes_dir.resolve()))
-            if test_classes_dir.is_dir():
-                entries.append(str(test_classes_dir.resolve()))
         else:
             if not classes_dir.is_dir():
                 # Pure Java external projects may have no Python sources, so
@@ -1567,10 +1570,10 @@ def _build_native_application_classpath_entries(command: str, project_dir: Path)
                 entries.extend(_read_manifest_entries(manifest))
         classes_dir = cache_dir / "classes"
         test_classes_dir = cache_dir / "test-classes"
-        if classes_dir.is_dir():
-            entries.append(str(classes_dir.resolve()))
         if test_classes_dir.is_dir():
             entries.append(str(test_classes_dir.resolve()))
+        if classes_dir.is_dir():
+            entries.append(str(classes_dir.resolve()))
         if not classes_dir.is_dir() and not test_classes_dir.is_dir():
             raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
         _add_classpath_dir(entries, _resolve_layout_dir(project_dir, layout.resources_dir))
