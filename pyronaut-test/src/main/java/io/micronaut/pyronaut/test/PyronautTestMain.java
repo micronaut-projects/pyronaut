@@ -592,11 +592,11 @@ public final class PyronautTestMain implements Callable<Integer> {
         addManifestEntries(urls, pyronautDir.resolve("resolved-test-dependencies"), parentClasspath);
         addManifestEntries(urls, pyronautDir.resolve("resolved-runtime-dependencies"), parentClasspath);
         addManifestEntries(urls, pyronautDir.resolve("resolved-build-dependencies"), parentClasspath);
-        if (hasTestClassesDir) {
-            addPathIfDirectory(urls, resolvedTestClassesDir);
-        } else {
-            addPathIfDirectory(urls, resolvedClassesDir);
-        }
+        // Tests can resolve production-generated facades (for example an
+        // HTTP client declared in test sources whose implementation is a
+        // production bean), so expose both processed output roots.
+        addPathIfDirectory(urls, resolvedClassesDir);
+        addPathIfDirectory(urls, resolvedTestClassesDir);
         addPathIfDirectory(urls, configDir);
         addResourceDirectories(urls, additionalResourceDirs);
         addPathIfDirectory(urls, testResourcesDir);

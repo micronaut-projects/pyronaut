@@ -313,7 +313,7 @@ class PyronautTestMainTest {
     }
 
     @Test
-    void excludesClassesDirectoryWhenTestClassesDirectoryIsPresent() throws Exception {
+    void includesClassesDirectoryWhenTestClassesDirectoryIsPresent() throws Exception {
         Path project = setupProject();
         compileGeneratedTestClass(project.resolve("__pyronaut__/classes"));
         Files.createDirectories(project.resolve("__pyronaut__/test-classes"));
@@ -322,7 +322,7 @@ class PyronautTestMainTest {
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
-        assertEquals(7, command.call());
+        assertEquals(0, command.call());
     }
 
     @Test
