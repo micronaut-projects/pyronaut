@@ -2007,11 +2007,11 @@ def _seed_bundled_pyronaut_maven_repository(
     repository = local_repository or _read_env(LOCAL_REPOSITORY_ENV)
     if repository is None:
         return
-    lib_dir = Path(install_executable).resolve().parent.parent / "lib"
-    if not lib_dir.is_dir():
-        return
+    launcher_dir = Path(install_executable).resolve().parent.parent
+    lib_dirs = (launcher_dir / "lib", _launcher_shared_lib_dir(install_executable))
     target_root = Path(repository).expanduser().resolve()
-    for jar in sorted(lib_dir.glob("micronaut-pyronaut-*.jar")):
+    jars = {jar for lib_dir in lib_dirs if lib_dir.is_dir() for jar in lib_dir.glob("micronaut-pyronaut-*.jar")}
+    for jar in sorted(jars):
         match = re.match(r"^(micronaut-pyronaut-[^-].*)-(\d+[^/]*)\.jar$", jar.name)
         if match is None:
             continue
