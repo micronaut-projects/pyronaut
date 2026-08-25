@@ -346,7 +346,11 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     }
 
     private static boolean isProductionRunnerClasspathEntry(Path path, boolean includePython) {
-        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        Path fileName = path.getFileName();
+        if (fileName == null) {
+            return false;
+        }
+        String name = fileName.toString().toLowerCase(Locale.ROOT);
         String location = path.toString().toLowerCase(Locale.ROOT);
         if (name.contains("pyronaut-native-build")
             || name.contains("graalvm-reachability-metadata")

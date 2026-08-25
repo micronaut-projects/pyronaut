@@ -129,6 +129,34 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void ignoresRootClasspathEntries() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+        String classpath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("java.class.path", classpath + java.io.File.pathSeparator + "/");
+            PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+            assertEquals(0, new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image"));
+        } finally {
+            System.setProperty("java.class.path", classpath);
+        }
+        assertEquals(1, executed.size());
+    }
+
+    @Test
     void usesExplicitUserPackagesForClosedWorldImagesOnly() throws Exception {
         Path project = prepareProject("""
             [project]

@@ -4434,6 +4434,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("--static --libc=musl", captured["dockerfile"])
         self.assertIn("--initialize-at-run-time=example.Foo", captured["dockerfile"])
         self.assertIn("COPY app/config/ /workspace/app/config/", captured["dockerfile"])
+        self.assertIn("COPY app/__pyronaut__/m2-repository/ /workspace/app/__pyronaut__/m2-repository/", captured["dockerfile"])
+        self.assertNotIn("COPY app/__pyronaut__/m2-repository/example/runtime.jar", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build", captured["context_files"])
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
         self.assertIn("Docker image build complete: example/demo:1.2.3-native", stdout.getvalue())

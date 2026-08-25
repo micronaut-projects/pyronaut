@@ -3247,15 +3247,9 @@ def _manifest_docker_copy_lines(context_dir: Path, *, destination_root: str = "/
     lines = [
         f"COPY app/__pyronaut__/resolved-runtime-dependencies {destination_root}/__pyronaut__/resolved-runtime-dependencies",
     ]
-    if not manifest.is_file():
-        return lines
-    for entry in manifest.read_text(encoding="utf-8").splitlines():
-        value = entry.strip()
-        if not value or Path(value).is_absolute():
-            continue
-        source = context_dir / "app" / value
-        if source.is_file():
-            lines.append(f"COPY app/{value} {destination_root}/{value}")
+    repository = context_dir / "app" / "__pyronaut__" / "m2-repository"
+    if repository.is_dir():
+        lines.append(f"COPY app/__pyronaut__/m2-repository/ {destination_root}/__pyronaut__/m2-repository/")
     return lines
 
 
