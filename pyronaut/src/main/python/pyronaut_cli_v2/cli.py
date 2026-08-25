@@ -5505,6 +5505,78 @@ def _native_image_local_archive(
     return archive
 
 
+def _github_release_asset(
+    base_url: str,
+    version: str,
+    archive_name: str,
+) -> tuple[str, dict[str, str]] | None:
+    parsed = urllib.parse.urlparse(base_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if not _is_github_release_url(base_url):
+        return None
+
+    owner, repository = parts[:2]
+    tag = version if version.startswith("v") else f"v{version}"
+    token = next(
+        (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN") if os.environ.get(name)),
+        None,
+    )
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    def get_json(url: str) -> object | None:
+        proxy, bypass = _download_proxy(url)
+        parsed_url = urllib.parse.urlparse(url)
+        host = parsed_url.hostname or ""
+        host_with_port = parsed_url.netloc.rsplit("@", 1)[-1]
+        bypassed = _proxy_bypasses_host(host, bypass) or _proxy_bypasses_host(host_with_port, bypass)
+        proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+        try:
+            with opener.open(urllib.request.Request(url, headers=headers)) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise RuntimeError(f"Unable to read GitHub release metadata from {url}: HTTP {exc.code}") from exc
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError(f"Unable to read GitHub release metadata from {url}: {exc}") from exc
+
+    api_root = f"https://api.github.com/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repository)}"
+    release = get_json(f"{api_root}/releases/tags/{urllib.parse.quote(tag)}")
+    if release is None:
+        releases = get_json(f"{api_root}/releases?per_page=100")
+        if isinstance(releases, list):
+            release = next(
+                (candidate for candidate in releases if isinstance(candidate, dict) and candidate.get("tag_name") == tag),
+                None,
+            )
+    if not isinstance(release, dict):
+        token_hint = "; check GH_TOKEN read access" if not token else ""
+        raise RuntimeError(f"GitHub release '{tag}' was not found at {base_url}{token_hint}")
+
+    assets = release.get("assets", [])
+    asset = next(
+        (candidate for candidate in assets if isinstance(candidate, dict) and candidate.get("name") == archive_name),
+        None,
+    )
+    if not isinstance(asset, dict) or not isinstance(asset.get("url"), str):
+        raise RuntimeError(f"GitHub release '{tag}' has no asset named '{archive_name}'")
+    download_headers = dict(headers)
+    download_headers["Accept"] = "application/octet-stream"
+    return asset["url"], download_headers
+
+
+def _is_github_release_url(base_url: str) -> bool:
+    parsed = urllib.parse.urlparse(base_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    return parsed.hostname in {"github.com", "www.github.com"} and len(parts) == 3 and parts[2] == "releases"
+
+
 def _native_image_cache_path(
     image_name: str,
     *,
@@ -5536,7 +5608,12 @@ def _native_image_cache_lock(lock_path: Path):
                 pass
 
 
-def _download_url_with_progress(url: str, destination: Path, label: str) -> None:
+def _download_url_with_progress(
+    url: str,
+    destination: Path,
+    label: str,
+    headers: dict[str, str] | None = None,
+) -> None:
     proxy, bypass = _download_proxy(url)
     parsed_url = urllib.parse.urlparse(url)
     host = parsed_url.hostname or ""
@@ -5545,7 +5622,8 @@ def _download_url_with_progress(url: str, destination: Path, label: str) -> None
     proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
     opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
 
-    with opener.open(url) as response, destination.open("wb") as output:
+    request = urllib.request.Request(url, headers=headers or {}) if headers else url
+    with opener.open(request) as response, destination.open("wb") as output:
         total = int(response.headers.get("Content-Length", "0") or "0")
         downloaded = 0
         last_percent = -1
@@ -5561,8 +5639,13 @@ def _download_url_with_progress(url: str, destination: Path, label: str) -> None
         print(f"\r{label}... 100%", file=sys.stderr, flush=True)
 
 
-def _download_native_image_archive(url: str, destination: Path, image_name: str) -> None:
-    _download_url_with_progress(url, destination, f"Downloading {image_name}")
+def _download_native_image_archive(
+    url: str,
+    destination: Path,
+    image_name: str,
+    headers: dict[str, str] | None = None,
+) -> None:
+    _download_url_with_progress(url, destination, f"Downloading {image_name}", headers=headers)
 
 
 def _extract_native_image_archive(archive: Path, destination: Path, image_name: str) -> None:
@@ -5613,7 +5696,11 @@ def _ensure_native_image(
     os_segment, arch = _native_image_platform(platform_name=platform_name, machine_name=machine_name)
     archive_name = f"{image_name}-{os_segment}-{arch}-{version}.tar.gz"
     local_archive = _native_image_local_archive(base_url, image_name, archive_name)
-    url = local_archive.resolve().as_uri() if local_archive is not None else urllib.parse.urljoin(base_url, archive_name)
+    github_release = _is_github_release_url(base_url)
+    download_headers: dict[str, str] | None = None
+    url = local_archive.resolve().as_uri() if local_archive is not None else None
+    if url is None and not github_release:
+        url = urllib.parse.urljoin(base_url, archive_name)
     executable = _native_image_cache_path(
         image_name,
         version=version,
@@ -5623,7 +5710,7 @@ def _ensure_native_image(
     metadata = executable.with_name(executable.name + ".json")
     lock = executable.with_name(executable.name + ".lock")
     expected_metadata: dict[str, object] = {
-        "url": url,
+        "source": base_url,
         "version": version,
         "platform": f"{os_segment}-{arch}",
         # Version 3 isolates per-image manifests/resources in the shared
@@ -5651,7 +5738,12 @@ def _ensure_native_image(
                 cached_metadata = json.loads(metadata.read_text(encoding="utf-8"))
             except (OSError, ValueError, TypeError):
                 cached_metadata = None
-            if cached_metadata == expected_metadata:
+            cache_hit = (
+                isinstance(cached_metadata, dict)
+                and all(cached_metadata.get(key) == value for key, value in expected_metadata.items())
+                and (github_release or cached_metadata.get("url") == url)
+            )
+            if cache_hit:
                 # Do not touch an already-executable Mach-O on macOS. A
                 # redundant chmod can invalidate/retrigger Gatekeeper's
                 # ad-hoc signature validation and adds several seconds to
@@ -5666,10 +5758,17 @@ def _ensure_native_image(
             archive = temp_root / archive_name
             extracted = temp_root / "bundle" / image_name
             try:
+                if github_release:
+                    github_asset = _github_release_asset(base_url, version, archive_name)
+                    if github_asset is None:
+                        raise RuntimeError(f"Unsupported GitHub release URL: {base_url}")
+                    url, download_headers = github_asset
+                assert url is not None
+                expected_metadata["url"] = url
                 if local_archive is not None:
                     shutil.copy2(local_archive, archive)
                 else:
-                    _download_native_image_archive(url, archive, image_name)
+                    _download_native_image_archive(url, archive, image_name, headers=download_headers)
                 _extract_native_image_archive(archive, extracted, image_name)
             except Exception as exc:
                 raise RuntimeError(f"Failed downloading {image_name} from {url}: {exc}") from exc

@@ -5724,6 +5724,90 @@ java-version = 25
             self.assertIn("0%", stderr.getvalue())
             self.assertIn("100%", stderr.getvalue())
 
+    def test_github_release_url_resolves_public_and_private_assets(self):
+        archive_name = "pyronaut-dev-linux-amd64-0.0.1.tar.gz"
+        release = {"tag_name": "v0.0.1", "draft": True, "assets": [{"name": archive_name, "url": "https://api.github.com/assets/7"}]}
+
+        class Response:
+            def __init__(self, value):
+                self.value = value
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(self.value).encode()
+
+        class Opener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, request):
+                self.requests.append(request)
+                return Response(release)
+
+        for token in (None, "read-only-token"):
+            opener = Opener()
+            environment = {"GH_TOKEN": token or ""}
+            with patch.dict(os.environ, environment, clear=False), \
+                    patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                    patch.object(cli.urllib.request, "build_opener", return_value=opener):
+                result = cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.0.1",
+                    archive_name,
+                )
+
+            self.assertEqual("https://api.github.com/assets/7", result[0])
+            request_headers = dict(opener.requests[0].header_items())
+            if token:
+                self.assertEqual("Bearer read-only-token", request_headers["Authorization"])
+            else:
+                self.assertNotIn("Authorization", request_headers)
+
+    def test_github_release_url_reports_missing_version_or_asset(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return b"[]"
+
+        class Opener:
+            def open(self, _request):
+                return Response()
+
+        with patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                patch.object(cli.urllib.request, "build_opener", return_value=Opener()):
+            with self.assertRaisesRegex(RuntimeError, "release 'v0.0.1' was not found"):
+                cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.0.1",
+                    "missing.tar.gz",
+                )
+
+        release = {"tag_name": "v0.0.1", "assets": []}
+        with patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                patch.object(cli.urllib.request, "build_opener", return_value=type("Opener", (), {
+                    "open": lambda _self, _request: type("Response", (), {
+                        "__enter__": lambda self: self,
+                        "__exit__": lambda self, *_args: False,
+                        "read": lambda self: cli.json.dumps(release).encode(),
+                    })(),
+                })()):
+            with self.assertRaisesRegex(RuntimeError, "has no asset named 'missing.tar.gz'"):
+                cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.0.1",
+                    "missing.tar.gz",
+                )
+
     def test_native_image_platform_maps_supported_operating_systems_and_architectures(self):
         self.assertEqual(("linux", "amd64"), cli._native_image_platform(platform_name="Linux", machine_name="x86_64"))
         self.assertEqual(("linux", "aarch64"), cli._native_image_platform(platform_name="linux", machine_name="arm64"))

@@ -50,7 +50,18 @@ If you rebuild the wheel and want to retest with the latest local artifact:
 python -m pip install --force-reinstall pyronaut/build/wheel/dist/pyronaut-*.whl
 ```
 
-The SDK wheel delegates to JVM launchers. Native images are downloaded on demand for native-configured projects and direct-source execution, then cached under `~/.pyronaut/bin`. The default bundle base URL is `https://gds.oracle.com/download/pyronaut/bundles/`; use `[native-images]` in `~/.pyronaut/settings.toml` to select a private base URL or pinned CI version. `pyronaut process` stays on JIT by default unless the project opts into:
+The SDK wheel delegates to JVM launchers. Native images are downloaded on demand for native-configured projects and direct-source execution, then cached under `~/.pyronaut/bin`. The default bundle base URL is `https://gds.oracle.com/download/pyronaut/bundles/`; use `[native-images]` in `~/.pyronaut/settings.toml` to select a private base URL or pinned CI version. GitHub Releases are also supported:
+
+```toml
+[native-images]
+base-url = "https://github.com/micronaut-projects/pyronaut/releases"
+version = "0.0.1"
+```
+
+For a private repository or draft release, set a read-only `GH_TOKEN` (or
+`GITHUB_TOKEN`) with repository contents read access. The CLI currently supports
+Linux and macOS; Windows bundles may be published by CI but are not consumed
+by this CLI yet. `pyronaut process` stays on JIT by default unless the project opts into:
 
 ```toml
 [tool.pyronaut.processor]
