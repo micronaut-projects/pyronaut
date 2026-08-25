@@ -101,6 +101,7 @@ _DEFAULT_RESOURCES_DIR = "config"
 _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RESET = "\033[0m"
+_allow_draft_release = False
 
 
 def _print_version() -> None:
@@ -192,6 +193,10 @@ def run(
     input_reader: Callable[[float | None], str | None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    global _allow_draft_release
+    _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
+    argv = [value for value in argv if value != "--allow-draft-release"]
+
     if monotonic is None:
         monotonic = time.monotonic
     if sleep is None:
@@ -5426,6 +5431,10 @@ def _installed_pyronaut_version() -> str:
     return "unknown"
 
 
+def _native_image_distribution_version(version: str) -> str:
+    return version[:-5] + "-SNAPSHOT" if version.endswith(".dev0") else version
+
+
 def _native_image_platform(
     *,
     platform_name: str | None = None,
@@ -5480,7 +5489,7 @@ def _native_image_configuration() -> tuple[str, str]:
     version = configured.get("version", _installed_pyronaut_version())
     if not isinstance(version, str) or not version.strip():
         raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].version must be a non-empty string")
-    version = version.strip()
+    version = _native_image_distribution_version(version.strip())
     if any(character in version for character in "/\\"):
         raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].version must not contain path separators")
     return (base_url.rstrip("/") + "/") if parsed_base_url.scheme in {"http", "https"} else base_url, version
@@ -5509,6 +5518,8 @@ def _github_release_asset(
     base_url: str,
     version: str,
     archive_name: str,
+    *,
+    allow_draft: bool = False,
 ) -> tuple[str, dict[str, str]] | None:
     parsed = urllib.parse.urlparse(base_url)
     parts = [part for part in parsed.path.split("/") if part]
@@ -5548,13 +5559,23 @@ def _github_release_asset(
 
     api_root = f"https://api.github.com/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repository)}"
     release = get_json(f"{api_root}/releases/tags/{urllib.parse.quote(tag)}")
+    if isinstance(release, dict) and release.get("draft") and not allow_draft:
+        release = None
     if release is None:
         releases = get_json(f"{api_root}/releases?per_page=100")
         if isinstance(releases, list):
             release = next(
-                (candidate for candidate in releases if isinstance(candidate, dict) and candidate.get("tag_name") == tag),
+                (
+                    candidate
+                    for candidate in releases
+                    if isinstance(candidate, dict)
+                    and candidate.get("tag_name") == tag
+                    and (allow_draft or not candidate.get("draft", False))
+                ),
                 None,
             )
+    if isinstance(release, dict) and release.get("draft") and not allow_draft:
+        release = None
     if not isinstance(release, dict):
         token_hint = "; check GH_TOKEN read access" if not token else ""
         raise RuntimeError(f"GitHub release '{tag}' was not found at {base_url}{token_hint}")
@@ -5759,7 +5780,12 @@ def _ensure_native_image(
             extracted = temp_root / "bundle" / image_name
             try:
                 if github_release:
-                    github_asset = _github_release_asset(base_url, version, archive_name)
+                    github_asset = _github_release_asset(
+                        base_url,
+                        version,
+                        archive_name,
+                        allow_draft=_allow_draft_release,
+                    )
                     if github_asset is None:
                         raise RuntimeError(f"Unsupported GitHub release URL: {base_url}")
                     url, download_headers = github_asset
@@ -6729,7 +6755,7 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_build_usage(stream=None) -> None:

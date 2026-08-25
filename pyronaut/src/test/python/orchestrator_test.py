@@ -5759,6 +5759,7 @@ java-version = 25
                     "https://github.com/micronaut-projects/pyronaut/releases",
                     "0.0.1",
                     archive_name,
+                    allow_draft=True,
                 )
 
             self.assertEqual("https://api.github.com/assets/7", result[0])
@@ -5767,6 +5768,43 @@ java-version = 25
                 self.assertEqual("Bearer read-only-token", request_headers["Authorization"])
             else:
                 self.assertNotIn("Authorization", request_headers)
+
+    def test_github_release_url_ignores_draft_without_explicit_flag(self):
+        archive_name = "pyronaut-dev-linux-amd64-0.0.1.tar.gz"
+        responses = [
+            {"tag_name": "v0.0.1", "draft": True, "assets": [{"name": archive_name, "url": "draft"}]},
+            [{"tag_name": "v0.0.1", "draft": True, "assets": [{"name": archive_name, "url": "draft"}]}],
+        ]
+
+        class Response:
+            def __init__(self, value):
+                self.value = value
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(self.value).encode()
+
+        class Opener:
+            def open(self, _request):
+                return Response(responses.pop(0))
+
+        with patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                patch.object(cli.urllib.request, "build_opener", return_value=Opener()):
+            with self.assertRaisesRegex(RuntimeError, "release 'v0.0.1' was not found"):
+                cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.0.1",
+                    archive_name,
+                )
+
+    def test_native_image_distribution_version_maps_wheel_snapshot(self):
+        self.assertEqual("0.0.1-SNAPSHOT", cli._native_image_distribution_version("0.0.1.dev0"))
+        self.assertEqual("0.0.1", cli._native_image_distribution_version("0.0.1"))
 
     def test_github_release_url_reports_missing_version_or_asset(self):
         class Response:
