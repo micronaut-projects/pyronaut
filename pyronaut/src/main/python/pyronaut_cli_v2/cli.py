@@ -2004,7 +2004,7 @@ def _seed_bundled_pyronaut_maven_repository(
     """
     if install_executable is None:
         return
-    repository = local_repository
+    repository = local_repository or _read_env(LOCAL_REPOSITORY_ENV)
     if repository is None:
         return
     lib_dir = Path(install_executable).resolve().parent.parent / "lib"
