@@ -4286,6 +4286,7 @@ additional-test-resources = ["test-fixtures"]
             runtime_jar.write_text("", encoding="utf-8")
             (project_dir / "__pyronaut__" / "classes" / "example").mkdir(parents=True, exist_ok=True)
             (project_dir / "__pyronaut__" / "classes" / "example" / "Demo.class").write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes" / "application.toml").write_text("greeting = 'embedded'\n", encoding="utf-8")
             (project_dir / "__pyronaut__" / "classes" / "application.toml").write_text("greeting = 'hello'\n", encoding="utf-8")
             (project_dir / "config").mkdir(parents=True, exist_ok=True)
             (project_dir / "config" / "application.toml").write_text("micronaut.server.port = 8080\n", encoding="utf-8")
@@ -4386,6 +4387,9 @@ additional-test-resources = ["test-fixtures"]
             )
             (project_dir / "config").mkdir()
             (project_dir / "config" / "application.toml").write_text("greeting = 'hello'\n", encoding="utf-8")
+            metadata = project_dir / "config" / "META-INF" / "native-image" / "demo"
+            metadata.mkdir(parents=True)
+            (metadata / "resource-config.json").write_text("{}\n", encoding="utf-8")
             native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
 
             def resolver(command_name):
@@ -4434,9 +4438,10 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("FROM example/static-base:1", captured["dockerfile"])
         self.assertIn("--static --libc=musl", captured["dockerfile"])
         self.assertIn("--initialize-at-run-time=example.Foo", captured["dockerfile"])
-        self.assertIn("COPY app/config/ /workspace/app/config/", captured["dockerfile"])
+        self.assertIn("COPY app/native-build-config/ /workspace/app/config/", captured["dockerfile"])
         self.assertIn("COPY app/config/ /app/config/", captured["dockerfile"])
         self.assertNotIn("app/__pyronaut__/classes/application.toml", captured["context_files"])
+        self.assertIn("app/native-build-config/META-INF/native-image/demo/resource-config.json", captured["context_files"])
         self.assertIn("COPY app/__pyronaut__/m2-repository/ /workspace/app/__pyronaut__/m2-repository/", captured["dockerfile"])
         self.assertNotIn("COPY app/__pyronaut__/m2-repository/example/runtime.jar", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build", captured["context_files"])

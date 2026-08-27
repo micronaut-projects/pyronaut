@@ -3145,6 +3145,7 @@ def _prepare_native_docker_context(
         raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
     _exclude_native_configuration_resources(pyronaut_dir / "classes")
+    _stage_native_build_configuration(project_dir, app_dir)
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
     delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
@@ -3231,6 +3232,7 @@ def _prepare_crema_native_docker_context(
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
     _exclude_native_configuration_resources(pyronaut_dir / "classes")
+    _stage_native_build_configuration(project_dir, app_dir)
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
     runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
@@ -3253,6 +3255,16 @@ def _exclude_native_configuration_resources(classes_dir: Path) -> None:
             continue
         if resource.name.startswith("application.") or resource.name.startswith("application-"):
             resource.unlink()
+
+
+def _stage_native_build_configuration(project_dir: Path, app_dir: Path) -> None:
+    """Stage native-image metadata without embedding runtime application config."""
+    target = app_dir / "native-build-config"
+    target.mkdir(parents=True, exist_ok=True)
+    _copytree_if_exists(
+        project_dir / "config" / "META-INF" / "native-image",
+        target / "META-INF" / "native-image",
+    )
 
 
 def _manifest_docker_copy_lines(context_dir: Path, *, destination_root: str = "/app") -> list[str]:
@@ -3314,7 +3326,7 @@ def _write_native_dockerfile(
 FROM {builder_image} AS builder
 WORKDIR /workspace
 COPY app/pyproject.toml /workspace/app/pyproject.toml
-COPY app/config/ /workspace/app/config/
+COPY app/native-build-config/ /workspace/app/config/
 COPY app/__pyronaut__/classes /workspace/app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /workspace/app/__pyronaut__/schemas
 COPY app/__pyronaut__/tools/shared /workspace/app/__pyronaut__/tools/shared
@@ -3367,6 +3379,7 @@ def _write_crema_base_dockerfile(
 FROM {builder_image} AS builder
 WORKDIR /workspace
 COPY app/ /workspace/app/
+RUN rm -rf /workspace/app/config && cp -a /workspace/app/native-build-config/. /workspace/app/config/
 RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
 RUN {shlex.join(build_command)}
 
