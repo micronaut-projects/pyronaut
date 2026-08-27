@@ -5069,6 +5069,17 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("--default-base-image-path", native_command)
         self.assertEqual(str(base), native_command[native_command.index("--default-base-image-path") + 1])
 
+    def test_bundled_default_dockerfile_includes_pyproject(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dockerfile = Path(temp_dir) / "DockerfileNativeDefault"
+            cli._write_bundled_application_dockerfile(  # noqa: SLF001
+                target=dockerfile,
+                runtime_image="example/runtime:1",
+                runner_name="pyronaut-run-python",
+            )
+
+            self.assertIn("COPY app/pyproject.toml /app/pyproject.toml", dockerfile.read_text(encoding="utf-8"))
+
     def test_native_build_passes_processed_user_packages_to_native_builder(self):
         executed = []
 

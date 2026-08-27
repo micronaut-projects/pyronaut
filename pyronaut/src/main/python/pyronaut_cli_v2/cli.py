@@ -3389,6 +3389,7 @@ COPY --from=builder {output_binary} /opt/pyronaut/bin/{runner_name}
 
 FROM pyronaut-base
 WORKDIR /app
+COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
@@ -3408,6 +3409,7 @@ COPY bundled-base/{runner_name} /opt/pyronaut/bin/{runner_name}
 
 FROM pyronaut-base
 WORKDIR /app
+COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
