@@ -157,6 +157,14 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void ignoresNonGradlePathsWhoseParentWalkReachesRoot() throws Exception {
+        var method = PyronautNativeBuildMain.class.getDeclaredMethod("isGradleVersionDirectory", Path.class);
+        method.setAccessible(true);
+
+        assertFalse((boolean) method.invoke(null, Path.of("/private/tmp/pyronaut/a")));
+    }
+
+    @Test
     void usesExplicitUserPackagesForClosedWorldImagesOnly() throws Exception {
         Path project = prepareProject("""
             [project]

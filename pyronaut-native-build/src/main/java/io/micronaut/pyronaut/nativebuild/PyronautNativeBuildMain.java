@@ -882,10 +882,12 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Path groupDirectory = artifactDirectory == null ? null : artifactDirectory.getParent();
         Path filesDirectory = groupDirectory == null ? null : groupDirectory.getParent();
         Path modulesDirectory = filesDirectory == null ? null : filesDirectory.getParent();
-        return filesDirectory != null
-            && "files-2.1".equals(filesDirectory.getFileName().toString())
-            && modulesDirectory != null
-            && "modules-2".equals(modulesDirectory.getFileName().toString());
+        Path filesName = filesDirectory == null ? null : filesDirectory.getFileName();
+        Path modulesName = modulesDirectory == null ? null : modulesDirectory.getFileName();
+        return filesName != null
+            && "files-2.1".equals(filesName.toString())
+            && modulesName != null
+            && "modules-2".equals(modulesName.toString());
     }
 
     private static List<Path> readManifest(Path root, Path file) {
