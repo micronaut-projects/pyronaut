@@ -3144,6 +3144,7 @@ def _prepare_native_docker_context(
     if not runtime_manifest.exists():
         raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _exclude_native_configuration_resources(pyronaut_dir / "classes")
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
     delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
@@ -3169,6 +3170,7 @@ def _prepare_bundled_docker_context(*, project_dir: Path, context_dir: Path) -> 
     if not classes_dir.is_dir():
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _exclude_native_configuration_resources(pyronaut_dir / "classes")
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
 
@@ -3228,6 +3230,7 @@ def _prepare_crema_native_docker_context(
     if not classes_dir.is_dir():
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _exclude_native_configuration_resources(pyronaut_dir / "classes")
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
     runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
@@ -3240,6 +3243,16 @@ def _prepare_crema_native_docker_context(
             exclude_python=not _is_python_runtime_project(project_dir),
             launcher_executable=resolver(NATIVE_BUILD_EXECUTABLE),
         )
+
+
+def _exclude_native_configuration_resources(classes_dir: Path) -> None:
+    """Native Docker images load application configuration from ``/app/config``."""
+    suffixes = {".properties", ".toml", ".yaml", ".yml"}
+    for resource in classes_dir.iterdir() if classes_dir.is_dir() else ():
+        if resource.suffix not in suffixes:
+            continue
+        if resource.name.startswith("application.") or resource.name.startswith("application-"):
+            resource.unlink()
 
 
 def _manifest_docker_copy_lines(context_dir: Path, *, destination_root: str = "/app") -> list[str]:
