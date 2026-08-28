@@ -3278,6 +3278,15 @@ def _manifest_docker_copy_lines(context_dir: Path, *, destination_root: str = "/
     return lines
 
 
+def _additional_resource_docker_copy_lines(context_dir: Path, *, destination_root: str = "/app") -> list[str]:
+    layout = _read_pyproject_sources(context_dir / "app")
+    return [
+        f"COPY app/{resource_dir}/ {destination_root}/{resource_dir}/"
+        for resource_dir in layout.additional_resources_dirs
+        if (context_dir / "app" / resource_dir).is_dir()
+    ]
+
+
 def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str,
                           runtime_copies: Sequence[str]) -> None:
     dockerfile = f"""\
@@ -3305,6 +3314,7 @@ def _write_native_dockerfile(
     static_native: bool,
     passthrough_args: Sequence[str],
     runtime_copies: Sequence[str],
+    resource_copies: Sequence[str],
 ) -> None:
     output_binary = f"/workspace/app/__pyronaut__/native/{project_name}"
     build_command = [
@@ -3322,6 +3332,7 @@ def _write_native_dockerfile(
     if static_native:
         build_command.extend(["--static", "--libc=musl"])
     builder_runtime_copies = "\n".join(line.replace(" /app/", " /workspace/app/") for line in runtime_copies)
+    builder_resource_copies = "\n".join(line.replace(" /app/", " /workspace/app/") for line in resource_copies)
     dockerfile = f"""\
 FROM {builder_image} AS builder
 WORKDIR /workspace
@@ -3332,6 +3343,7 @@ COPY app/__pyronaut__/schemas /workspace/app/__pyronaut__/schemas
 COPY app/__pyronaut__/tools/shared /workspace/app/__pyronaut__/tools/shared
 COPY app/__pyronaut__/tools/pyronaut-native-build /workspace/app/__pyronaut__/tools/pyronaut-native-build
 {builder_runtime_copies}
+{builder_resource_copies}
 RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
 RUN {shlex.join(build_command)}
 
@@ -3340,6 +3352,7 @@ WORKDIR /app
 COPY --from=builder /workspace/app/__pyronaut__/native/ /app/
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
+{chr(10).join(resource_copies)}
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT ["/app/{project_name}", "--project-dir", "/app"]
@@ -3601,6 +3614,7 @@ def _run_docker_build(
                         static_native=static_native,
                         passthrough_args=[*_extract_native_build_passthrough_args(args), *_native_user_package_args(project_dir)],
                         runtime_copies=_manifest_docker_copy_lines(context_dir),
+                        resource_copies=_additional_resource_docker_copy_lines(context_dir),
                     )
         else:
             runner_name = _prepare_jvm_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
