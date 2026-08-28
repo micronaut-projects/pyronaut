@@ -4494,6 +4494,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("demo-app:1.2.3-native", docker_commands[1])
         self.assertIn("--base-image", dockerfiles[0])
         self.assertIn("FROM pyronaut-base", dockerfiles[0])
+        self.assertIn("COPY --from=builder /workspace/base/ /opt/pyronaut/bin/", dockerfiles[0])
         self.assertIn("COPY app/__pyronaut__/classes /app/__pyronaut__/classes", dockerfiles[0])
 
     def test_build_docker_uses_custom_dockerfiles_from_pyproject(self):

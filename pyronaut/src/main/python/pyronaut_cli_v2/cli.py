@@ -3337,7 +3337,7 @@ RUN {shlex.join(build_command)}
 
 FROM {runtime_image}
 WORKDIR /app
-COPY --from=builder {output_binary} /app/{project_name}
+COPY --from=builder /workspace/app/__pyronaut__/native/ /app/
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
@@ -3385,7 +3385,7 @@ RUN {shlex.join(build_command)}
 
 FROM {runtime_image} AS pyronaut-base
 WORKDIR /opt/pyronaut
-COPY --from=builder {output_binary} /opt/pyronaut/bin/{runner_name}
+COPY --from=builder /workspace/base/ /opt/pyronaut/bin/
 
 FROM pyronaut-base
 WORKDIR /app
