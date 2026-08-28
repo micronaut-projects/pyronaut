@@ -4390,6 +4390,9 @@ additional-test-resources = ["test-fixtures"]
             metadata = project_dir / "config" / "META-INF" / "native-image" / "demo"
             metadata.mkdir(parents=True)
             (metadata / "resource-config.json").write_text("{}\n", encoding="utf-8")
+            migration = project_dir / "config" / "db" / "migration"
+            migration.mkdir(parents=True)
+            (migration / "V1__schema.sql").write_text("CREATE TABLE demo (id INT);\n", encoding="utf-8")
             native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
 
             def resolver(command_name):
@@ -4442,6 +4445,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("COPY app/config/ /app/config/", captured["dockerfile"])
         self.assertNotIn("app/__pyronaut__/classes/application.toml", captured["context_files"])
         self.assertIn("app/native-build-config/META-INF/native-image/demo/resource-config.json", captured["context_files"])
+        self.assertIn("app/native-build-config/db/migration/V1__schema.sql", captured["context_files"])
+        self.assertNotIn("app/native-build-config/application.toml", captured["context_files"])
         self.assertIn("COPY app/__pyronaut__/m2-repository/ /workspace/app/__pyronaut__/m2-repository/", captured["dockerfile"])
         self.assertNotIn("COPY app/__pyronaut__/m2-repository/example/runtime.jar", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build", captured["context_files"])

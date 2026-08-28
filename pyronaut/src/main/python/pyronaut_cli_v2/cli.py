@@ -3270,13 +3270,20 @@ def _exclude_native_configuration_resources(classes_dir: Path) -> None:
 
 
 def _stage_native_build_configuration(project_dir: Path, app_dir: Path) -> None:
-    """Stage native-image metadata without embedding runtime application config."""
+    """Stage native build resources without embedding runtime application config."""
+    source = project_dir / "config"
     target = app_dir / "native-build-config"
     target.mkdir(parents=True, exist_ok=True)
-    _copytree_if_exists(
-        project_dir / "config" / "META-INF" / "native-image",
-        target / "META-INF" / "native-image",
-    )
+    for entry in source.iterdir() if source.is_dir() else ():
+        if entry.is_file() and (
+            entry.name.startswith("application.") or entry.name.startswith("application-")
+        ):
+            continue
+        destination = target / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, destination, dirs_exist_ok=True)
+        else:
+            shutil.copy2(entry, destination)
 
 
 def _manifest_docker_copy_lines(context_dir: Path, *, destination_root: str = "/app") -> list[str]:
