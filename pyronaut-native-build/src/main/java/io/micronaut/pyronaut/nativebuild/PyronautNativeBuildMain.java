@@ -512,6 +512,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Set<String> resources = new LinkedHashSet<>();
         collectClasspathResources(resources, classesDir, true);
         collectClasspathResources(resources, configDir, false);
+        resources.removeIf(PyronautNativeBuildMain::isRuntimeApplicationConfiguration);
         collectJarResources(resources, runtimeClasspath);
         if (resources.isEmpty()) {
             return null;
@@ -520,6 +521,11 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Files.createDirectories(generatedDir);
         Files.writeString(generatedDir.resolve("resource-config.json"), buildResourceConfig(List.copyOf(resources)), StandardCharsets.UTF_8);
         return generatedDir;
+    }
+
+    private static boolean isRuntimeApplicationConfiguration(String resource) {
+        String fileName = Path.of(resource).getFileName().toString();
+        return fileName.matches("application(?:-[^.]+)?\\.(?:properties|toml|yaml|yml)");
     }
 
     private static List<Path> projectNativeImageConfigurationDirs(Path configDir) throws IOException {
@@ -851,8 +857,11 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
     private static List<Path> findPomCandidates(Path artifact, Path parent) {
         List<Path> candidates = new ArrayList<>();
+        String fileName = artifact.getFileName().toString();
+        int extension = fileName.lastIndexOf('.');
+        String pomName = (extension > 0 ? fileName.substring(0, extension) : fileName) + ".pom";
         try (var files = Files.list(parent)) {
-            files.filter(path -> path.getFileName().toString().endsWith(".pom"))
+            files.filter(path -> path.getFileName().toString().equals(pomName))
                 .forEach(candidates::add);
         } catch (IOException ignored) {
             // Continue with Gradle cache discovery below.

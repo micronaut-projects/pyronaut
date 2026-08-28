@@ -463,7 +463,7 @@ class PyronautNativeBuildMainTest {
         String resourceConfig = Files.readString(generatedDir.resolve("resource-config.json"));
         assertTrue(resourceConfig.contains("\\\\QMETA-INF/GRAALPY-VFS/micronaut-application/fileslist.txt\\\\E"));
         assertTrue(resourceConfig.contains("\\\\QMETA-INF/GRAALPY-VFS/micronaut-application/src/logback/__init__.py\\\\E"));
-        assertTrue(resourceConfig.contains("\\\\Qapplication.toml\\\\E"));
+        assertFalse(resourceConfig.contains("\\\\Qapplication.toml\\\\E"));
         assertTrue(resourceConfig.contains("\\\\Qnested/extra.txt\\\\E"));
 
         String directories = nativeCommand.stream()
