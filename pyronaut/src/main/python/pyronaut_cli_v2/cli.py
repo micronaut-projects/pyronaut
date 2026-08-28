@@ -3163,17 +3163,29 @@ def _prepare_native_docker_context(
     _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / "pyronaut-native-build")
 
 
-def _prepare_bundled_docker_context(*, project_dir: Path, context_dir: Path) -> None:
-    """Stage only application material for a prebuilt default runner image."""
+def _prepare_bundled_docker_context(
+    *, project_dir: Path, context_dir: Path, launcher_executable: str,
+) -> None:
+    """Stage application material and dependencies for a prebuilt default runner."""
     app_dir = _prepare_common_docker_app_context(project_dir, context_dir)
     pyronaut_dir = app_dir / "__pyronaut__"
     classes_dir = project_dir / "__pyronaut__" / "classes"
     if not classes_dir.is_dir():
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+    runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+    if not runtime_manifest.exists():
+        raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
     _exclude_native_configuration_resources(pyronaut_dir / "classes")
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
+    _stage_manifest_artifacts(
+        source=runtime_manifest,
+        target=pyronaut_dir / "resolved-runtime-dependencies",
+        project_dir=project_dir,
+        pyronaut_dir=pyronaut_dir,
+        launcher_executable=launcher_executable,
+    )
 
 
 def _stage_python_runner_runtime_dependencies(
@@ -3413,6 +3425,7 @@ ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
 
 def _write_bundled_application_dockerfile(
     *, target: Path, runtime_image: str, runner_name: str,
+    runtime_copies: Sequence[str], resource_copies: Sequence[str],
 ) -> None:
     """Build the application layer directly on top of a bundled runner."""
     target.write_text(
@@ -3424,6 +3437,8 @@ FROM pyronaut-base
 WORKDIR /app
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
+{chr(10).join(runtime_copies)}
+{chr(10).join(resource_copies)}
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT [\"/opt/pyronaut/bin/{runner_name}\", \"--project-dir\", \"/app\"]
@@ -3562,7 +3577,9 @@ def _run_docker_build(
                 if bundled is None or not bundled.is_file():
                     print("The default native base image is not available for this platform.", file=sys.stderr)
                     return PRECONDITION_FAILED
-                _prepare_bundled_docker_context(project_dir=project_dir, context_dir=context_dir)
+                _prepare_bundled_docker_context(
+                    project_dir=project_dir, context_dir=context_dir, launcher_executable=str(bundled),
+                )
                 bundled_dir = context_dir / "bundled-base"
                 bundled_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(bundled, bundled_dir / runner_name)
@@ -3572,6 +3589,8 @@ def _run_docker_build(
                     target=dockerfile,
                     runtime_image=runtime_image,
                     runner_name=runner_name,
+                    runtime_copies=_manifest_docker_copy_lines(context_dir),
+                    resource_copies=_additional_resource_docker_copy_lines(context_dir),
                 )
             elif (base_image := _configured_docker_base_image(project_dir, docker_config)) is not None:
                 _prepare_crema_native_docker_context(

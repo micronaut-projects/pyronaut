@@ -5077,9 +5077,41 @@ additional-test-resources = ["test-fixtures"]
                 target=dockerfile,
                 runtime_image="example/runtime:1",
                 runner_name="pyronaut-run-python",
+                runtime_copies=[
+                    "COPY app/__pyronaut__/resolved-runtime-dependencies /app/__pyronaut__/resolved-runtime-dependencies",
+                    "COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/",
+                ],
+                resource_copies=["COPY app/views/ /app/views/"],
             )
 
-            self.assertIn("COPY app/pyproject.toml /app/pyproject.toml", dockerfile.read_text(encoding="utf-8"))
+            content = dockerfile.read_text(encoding="utf-8")
+            self.assertIn("COPY app/pyproject.toml /app/pyproject.toml", content)
+            self.assertIn("COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/", content)
+            self.assertIn("COPY app/views/ /app/views/", content)
+
+    def test_bundled_docker_context_stages_runtime_dependencies(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "project"
+            context_dir = Path(temp_dir) / "context"
+            classes_dir = project_dir / "__pyronaut__" / "classes"
+            classes_dir.mkdir(parents=True)
+            (classes_dir / "Application.class").write_text("", encoding="utf-8")
+            dependency = project_dir / "ojdbc11.jar"
+            dependency.write_text("jar", encoding="utf-8")
+            manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+            manifest.write_text(str(dependency) + "\n", encoding="utf-8")
+            launcher = project_dir / "pyronaut-run-python"
+            launcher.write_text("binary", encoding="utf-8")
+
+            cli._prepare_bundled_docker_context(  # noqa: SLF001
+                project_dir=project_dir,
+                context_dir=context_dir,
+                launcher_executable=str(launcher),
+            )
+
+            staged_manifest = context_dir / "app" / "__pyronaut__" / "resolved-runtime-dependencies"
+            self.assertIn("__pyronaut__/m2-repository/ojdbc11.jar", staged_manifest.read_text(encoding="utf-8"))
+            self.assertTrue((context_dir / "app" / "__pyronaut__" / "m2-repository" / "ojdbc11.jar").is_file())
 
     def test_native_build_passes_processed_user_packages_to_native_builder(self):
         executed = []
