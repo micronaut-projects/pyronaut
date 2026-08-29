@@ -800,10 +800,6 @@ graalvmNative {
         named("main") {
             imageName.set("pyronaut-dev")
             sharedLibrary.set(false)
-            // Pass the heap setting to native-image itself. Gradle's
-            // org.gradle.jvmargs only controls the Gradle daemon and does
-            // not increase the heap available to the native-image process.
-            buildArgs.add("-J-Xmx28g")
             buildArgs.addAll(nativeImageCLibraryPathArgs)
             buildArgs.addAll(nativeImageRuntimeArgs)
             buildArgs.addAll(nativeImageBuildReportArgs)
