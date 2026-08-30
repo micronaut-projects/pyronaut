@@ -182,7 +182,6 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=org.xml.sax.helpers",
             "-H:Preserve=package=org.xml.sax",
             "-H:Preserve=package=tools.jackson.core.*",
-            "-H:Preserve=package=ch.qos.logback.*",
             "-H:-PrintRestrictHeapAccessWarnings",
 
 // Jakarta
