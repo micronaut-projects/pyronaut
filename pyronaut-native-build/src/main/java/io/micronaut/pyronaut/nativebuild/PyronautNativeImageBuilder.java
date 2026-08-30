@@ -299,7 +299,6 @@ public final class PyronautNativeImageBuilder {
         "--enable-native-access=org.graalvm.truffle",
         "-H:Preserve=package=ch.qos.logback.classic.*",
         "-H:Preserve=package=ch.qos.logback.core.*",
-        "-H:Preserve=package=org.graalvm.home",
         "-H:Preserve=package=org.graalvm.polyglot"
     );
 

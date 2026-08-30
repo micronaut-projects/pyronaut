@@ -94,7 +94,6 @@ class PyronautNativeImageBuilderTest {
         assertFalse(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
         assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.classic.*"));
         assertTrue(command.contains("-Dmicronaut.graalvm.imagesingletons.enabled=false"));
-        assertTrue(command.contains("-H:Preserve=package=org.graalvm.home"));
         assertTrue(command.contains("-H:Preserve=package=org.graalvm.polyglot"));
     }
 
