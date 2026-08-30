@@ -5090,6 +5090,7 @@ additional-test-resources = ["test-fixtures"]
             )
 
             content = dockerfile.read_text(encoding="utf-8")
+            self.assertIn("COPY bundled-base/ /opt/pyronaut/bin/", content)
             self.assertIn("COPY app/pyproject.toml /app/pyproject.toml", content)
             self.assertIn("COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/", content)
             self.assertIn("COPY app/views/ /app/views/", content)

@@ -3438,7 +3438,7 @@ def _write_bundled_application_dockerfile(
     target.write_text(
         f"""FROM {runtime_image} AS pyronaut-base
 WORKDIR /opt/pyronaut
-COPY bundled-base/{runner_name} /opt/pyronaut/bin/{runner_name}
+COPY bundled-base/ /opt/pyronaut/bin/
 
 FROM pyronaut-base
 WORKDIR /app
@@ -3588,8 +3588,7 @@ def _run_docker_build(
                     project_dir=project_dir, context_dir=context_dir, launcher_executable=str(bundled),
                 )
                 bundled_dir = context_dir / "bundled-base"
-                bundled_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(bundled, bundled_dir / runner_name)
+                shutil.copytree(bundled.parent, bundled_dir, dirs_exist_ok=True)
                 (bundled_dir / runner_name).chmod(0o755)
                 dockerfile = context_dir / "DockerfileNativeDefault"
                 _write_bundled_application_dockerfile(
