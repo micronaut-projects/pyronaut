@@ -215,6 +215,9 @@ class PyronautNativeBuildMainTest {
             """);
         Path runtimeJar = createJar(project.resolve("__pyronaut__/m2-repository/example/runtime.jar"));
         overwriteRuntimeManifest(project, List.of(runtimeJar.toString()));
+        Path configDir = project.resolve("config/META-INF/native-image/demo");
+        Files.createDirectories(configDir);
+        Files.writeString(configDir.resolve("resource-config.json"), "{\"resources\":{\"includes\":[]}}");
 
         List<List<String>> executed = new ArrayList<>();
         var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
@@ -240,6 +243,7 @@ class PyronautNativeBuildMainTest {
         assertFalse(nativeCommand.contains("--no-fallback"));
         assertTrue(nativeCommand.contains(PyronautRunMain.class.getName()));
         assertTrue(nativeCommand.get(nativeCommand.indexOf("-cp") + 1).contains(runtimeJar.toString()));
+        assertTrue(nativeCommand.stream().anyMatch(argument -> argument.equals("-H:ConfigurationFileDirectories=" + configDir)));
     }
 
     @Test

@@ -279,6 +279,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             : new ArrayList<>(excludeRunnerProvidedModules(runtimeClasspath, runnerClasspath));
         baseClasspath.addAll(runnerClasspath);
         List<String> configurationArguments = new ArrayList<>();
+        List<Path> configurationDirs = new ArrayList<>();
         if (!bundledOnly) {
             Path pyproject = root.resolve("pyproject.toml");
             PyprojectModel model = Files.isRegularFile(pyproject) ? modelReader.readProjectDirectory(root) : null;
@@ -289,6 +290,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             NativeImageConfigurationSupport.addBundledConfigurationExclusions(
                 configurationArguments, baseClasspath, metadataSelection.modules(), PyronautNativeBuildMain::gavFromClasspathEntry, verbose
             );
+            configurationDirs.addAll(projectNativeImageConfigurationDirs(root.resolve(DEFAULT_CONFIG_DIR).normalize()));
         }
         PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
             root.resolve(output).normalize(),
@@ -300,6 +302,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .includeSbom(!noSbom)
             .addClasspath(baseClasspath)
             .addNativeImageArguments(configurationArguments);
+        if (!configurationDirs.isEmpty()) {
+            builder.addNativeImageArgument("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
+        }
         if (verbose) {
             builder.addNativeImageArgument("--verbose");
         }
