@@ -44,7 +44,8 @@ class PyronautNativeImageBuilderTest {
         assertFalse(defaultCommand.contains("--no-fallback"));
         assertFalse(defaultCommand.contains("-H:Preserve=package=org.graalvm.*"));
         assertTrue(defaultCommand.contains("-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management,module=java.naming,module=java.rmi"));
-        assertFalse(defaultCommand.contains("-H:Preserve=package=org.xml.sax"));
+        assertTrue(defaultCommand.contains("-H:Preserve=package=java.util.*"));
+        assertTrue(defaultCommand.contains("-H:Preserve=package=org.xml.sax"));
         assertTrue(defaultCommand.contains("--initialize-at-build-time=io.micronaut.core.io"));
         assertTrue(reportingCommand.contains("--emit"));
         assertTrue(reportingCommand.contains("build-report"));

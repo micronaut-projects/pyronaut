@@ -555,6 +555,7 @@ public final class PyronautNativeImageBuilder {
                 }
                 String packageName = selector.substring("package=".length());
                 if (isJdkPackage(packageName)) {
+                    arguments.add("-H:Preserve=" + selector);
                     continue;
                 }
                 String packagePrefix = packageName.endsWith(".*")
