@@ -5113,6 +5113,18 @@ additional-test-resources = ["test-fixtures"]
             self.assertIn("COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/", content)
             self.assertIn("COPY app/views/ /app/views/", content)
 
+    def test_crema_application_dockerfile_includes_additional_resources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dockerfile = Path(temp_dir) / "DockerfileNativeCrema"
+            cli._write_crema_application_dockerfile(  # noqa: SLF001
+                target=dockerfile,
+                base_image="example/base:1",
+                runner_name="pyronaut-run-python",
+                resource_copies=["COPY app/views/ /app/views/"],
+            )
+
+            self.assertIn("COPY app/views/ /app/views/", dockerfile.read_text(encoding="utf-8"))
+
     def test_bundled_docker_context_stages_runtime_dependencies(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "project"
