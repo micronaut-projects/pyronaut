@@ -26,6 +26,11 @@ dependencies {
 //    implementation(mnSerde.micronaut.serde.jackson)
 //    implementation(mnLogging.logback.classic)
     compileOnly(mnLogging.logback.classic)
+    // ServerUtils logs while the launcher starts, connects to, or stops the
+    // separately resolved test-resources server. Keep the server runtime
+    // dependencies install-time resolved, but provide a backend for the
+    // launcher JVM itself.
+    runtimeOnly(mnLogging.logback.classic)
 //    runtimeOnly(libs.slf4j.jul.to.slf4j)
 //    runtimeOnly(mn.micronaut.http.server.netty)
 
