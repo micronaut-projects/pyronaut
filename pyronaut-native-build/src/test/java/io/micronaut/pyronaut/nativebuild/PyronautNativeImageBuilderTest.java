@@ -72,6 +72,9 @@ class PyronautNativeImageBuilderTest {
     void addsPythonClasspathAndTruffleAccessOnlyWhenPythonIsEnabled() throws Exception {
         Path javaClasspathEntry = tempDir.resolve("runtime.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(javaClasspathEntry))) {
+            output.putNextEntry(new ZipEntry("ch/qos/logback/classic/Logger.class"));
+            output.write(0);
+            output.closeEntry();
         }
         Path pythonClasspathEntry = Files.createFile(tempDir.resolve("python-runtime.jar"));
         List<String> command = new ArrayList<>();
@@ -93,9 +96,7 @@ class PyronautNativeImageBuilderTest {
         assertTrue(command.contains("--enable-native-access=org.graalvm.truffle"));
         assertFalse(command.contains("--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary"));
         assertFalse(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
-        assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.classic.*"));
-        assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.core.*"));
-        assertFalse(command.contains("-H:Preserve=package=ch.qos.logback.*"));
+        assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.*"));
         assertTrue(command.contains("-Dmicronaut.graalvm.imagesingletons.enabled=false"));
         assertTrue(command.contains("-H:Preserve=package=org.graalvm.polyglot"));
     }

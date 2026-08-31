@@ -186,6 +186,7 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=org.xml.sax.helpers",
             "-H:Preserve=package=org.xml.sax",
             "-H:Preserve=package=tools.jackson.core.*",
+            "-H:Preserve=package=ch.qos.logback.*",
             "-H:-PrintRestrictHeapAccessWarnings",
 
 // Jakarta
@@ -300,8 +301,6 @@ public final class PyronautNativeImageBuilder {
 
     private static final List<String> PYTHON_ARGUMENTS = List.of(
         "--enable-native-access=org.graalvm.truffle",
-        "-H:Preserve=package=ch.qos.logback.classic.*",
-        "-H:Preserve=package=ch.qos.logback.core.*",
         "-H:Preserve=package=org.graalvm.polyglot"
     );
 
