@@ -44,7 +44,9 @@ class PyronautNativeImageBuilderTest {
         assertFalse(defaultCommand.contains("--no-fallback"));
         assertFalse(defaultCommand.contains("-H:Preserve=package=org.graalvm.*"));
         assertTrue(defaultCommand.contains("-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management,module=java.naming,module=java.rmi"));
-        assertFalse(defaultCommand.contains("-H:Preserve=package=org.xml.sax"));
+        assertTrue(defaultCommand.contains("-H:Preserve=package=java.util.*"));
+        assertFalse(defaultCommand.contains("-H:Preserve=package=java.applet.*"));
+        assertTrue(defaultCommand.contains("-H:Preserve=package=org.xml.sax"));
         assertTrue(defaultCommand.contains("--initialize-at-build-time=io.micronaut.core.io"));
         assertTrue(reportingCommand.contains("--emit"));
         assertTrue(reportingCommand.contains("build-report"));
@@ -70,6 +72,9 @@ class PyronautNativeImageBuilderTest {
     void addsPythonClasspathAndTruffleAccessOnlyWhenPythonIsEnabled() throws Exception {
         Path javaClasspathEntry = tempDir.resolve("runtime.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(javaClasspathEntry))) {
+            output.putNextEntry(new ZipEntry("ch/qos/logback/classic/Logger.class"));
+            output.write(0);
+            output.closeEntry();
         }
         Path pythonClasspathEntry = Files.createFile(tempDir.resolve("python-runtime.jar"));
         List<String> command = new ArrayList<>();
@@ -91,7 +96,8 @@ class PyronautNativeImageBuilderTest {
         assertTrue(command.contains("--enable-native-access=org.graalvm.truffle"));
         assertFalse(command.contains("--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary"));
         assertFalse(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
-        assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.classic.*"));
+        assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.*"));
+        assertTrue(command.contains("-Dmicronaut.graalvm.imagesingletons.enabled=false"));
         assertTrue(command.contains("-H:Preserve=package=org.graalvm.polyglot"));
     }
 

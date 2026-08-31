@@ -100,7 +100,7 @@ final class MavenClasspathResolver {
     private static final String JUNIT_JUPITER_ENGINE_MODULE = "org.junit.jupiter:junit-jupiter-engine";
     private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
     private static final String PYRONAUT_BOM_ARTIFACT = "micronaut-pyronaut-bom";
-    private static final String SONATYPE_SNAPSHOTS_REPOSITORY = "https://s01.oss.sonatype.org/content/repositories/snapshots/";
+    private static final String SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/";
     private static final Set<String> EXTRA_FORBIDDEN_SERVER_MODULES = Set.of(
         "io.micronaut.testresources:micronaut-test-resources-build-tools",
         "io.micronaut.testresources:micronaut-test-resources-client"

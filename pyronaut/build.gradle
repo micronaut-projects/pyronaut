@@ -165,6 +165,7 @@ tasks.register("prepareWheelSources", Sync) {
     // the wheel is rebuilt so runtime fixes are not masked by stale output.
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run-python").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-requests").tasks.named("jar"))
     from("src/main/python") {
         into("src")
     }
@@ -176,6 +177,9 @@ tasks.register("prepareWheelSources", Sync) {
         from(project(cliProject.path).layout.buildDirectory.dir("install/${installDirName}")) {
             into("src/pyronaut_cli_v2/tools/${cliProject.command}")
         }
+    }
+    from(project(":micronaut-pyronaut-requests").tasks.named("jar")) {
+        into("src/pyronaut_cli_v2/tools/shared/lib")
     }
 
     doLast {

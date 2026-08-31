@@ -112,6 +112,7 @@ _DEFAULT_RESOURCES_DIR = "config"
 _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RESET = "\033[0m"
+_allow_draft_release = False
 
 
 def _print_version() -> None:
@@ -203,6 +204,10 @@ def run(
     input_reader: Callable[[float | None], str | None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    global _allow_draft_release
+    _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
+    argv = [value for value in argv if value != "--allow-draft-release"]
+
     if monotonic is None:
         monotonic = time.monotonic
     if sleep is None:
@@ -2013,14 +2018,14 @@ def _seed_bundled_pyronaut_maven_repository(
     """
     if install_executable is None:
         return
-    repository = local_repository
+    repository = local_repository or _read_env(LOCAL_REPOSITORY_ENV)
     if repository is None:
         return
-    lib_dir = Path(install_executable).resolve().parent.parent / "lib"
-    if not lib_dir.is_dir():
-        return
+    launcher_dir = Path(install_executable).resolve().parent.parent
+    lib_dirs = (launcher_dir / "lib", _launcher_shared_lib_dir(install_executable))
     target_root = Path(repository).expanduser().resolve()
-    for jar in sorted(lib_dir.glob("micronaut-pyronaut-*.jar")):
+    jars = {jar for lib_dir in lib_dirs if lib_dir.is_dir() for jar in lib_dir.glob("micronaut-pyronaut-*.jar")}
+    for jar in sorted(jars):
         match = re.match(r"^(micronaut-pyronaut-[^-].*)-(\d+[^/]*)\.jar$", jar.name)
         if match is None:
             continue
@@ -3244,6 +3249,8 @@ def _prepare_native_docker_context(
     if not runtime_manifest.exists():
         raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _exclude_native_configuration_resources(pyronaut_dir / "classes")
+    _stage_native_build_configuration(project_dir, app_dir)
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
     delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
@@ -3261,16 +3268,29 @@ def _prepare_native_docker_context(
     _stage_delegate_distribution(delegate_executable, pyronaut_dir / "tools" / "pyronaut-native-build")
 
 
-def _prepare_bundled_docker_context(*, project_dir: Path, context_dir: Path) -> None:
-    """Stage only application material for a prebuilt default runner image."""
+def _prepare_bundled_docker_context(
+    *, project_dir: Path, context_dir: Path, launcher_executable: str,
+) -> None:
+    """Stage application material and dependencies for a prebuilt default runner."""
     app_dir = _prepare_common_docker_app_context(project_dir, context_dir)
     pyronaut_dir = app_dir / "__pyronaut__"
     classes_dir = project_dir / "__pyronaut__" / "classes"
     if not classes_dir.is_dir():
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
+    runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+    if not runtime_manifest.exists():
+        raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _exclude_native_configuration_resources(pyronaut_dir / "classes")
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
+    _stage_manifest_artifacts(
+        source=runtime_manifest,
+        target=pyronaut_dir / "resolved-runtime-dependencies",
+        project_dir=project_dir,
+        pyronaut_dir=pyronaut_dir,
+        launcher_executable=launcher_executable,
+    )
 
 
 def _stage_python_runner_runtime_dependencies(
@@ -3328,6 +3348,8 @@ def _prepare_crema_native_docker_context(
     if not classes_dir.is_dir():
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
     _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _exclude_native_configuration_resources(pyronaut_dir / "classes")
+    _stage_native_build_configuration(project_dir, app_dir)
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
     runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
@@ -3342,21 +3364,51 @@ def _prepare_crema_native_docker_context(
         )
 
 
+def _exclude_native_configuration_resources(classes_dir: Path) -> None:
+    """Native Docker images load application configuration from ``/app/config``."""
+    suffixes = {".properties", ".toml", ".yaml", ".yml"}
+    for resource in classes_dir.iterdir() if classes_dir.is_dir() else ():
+        if resource.suffix not in suffixes:
+            continue
+        if resource.name.startswith("application.") or resource.name.startswith("application-"):
+            resource.unlink()
+
+
+def _stage_native_build_configuration(project_dir: Path, app_dir: Path) -> None:
+    """Stage native build resources without embedding runtime application config."""
+    source = project_dir / "config"
+    target = app_dir / "native-build-config"
+    target.mkdir(parents=True, exist_ok=True)
+    for entry in source.iterdir() if source.is_dir() else ():
+        if entry.is_file() and (
+            entry.name.startswith("application.") or entry.name.startswith("application-")
+        ):
+            continue
+        destination = target / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, destination, dirs_exist_ok=True)
+        else:
+            shutil.copy2(entry, destination)
+
+
 def _manifest_docker_copy_lines(context_dir: Path, *, destination_root: str = "/app") -> list[str]:
     manifest = context_dir / "app" / "__pyronaut__" / "resolved-runtime-dependencies"
     lines = [
         f"COPY app/__pyronaut__/resolved-runtime-dependencies {destination_root}/__pyronaut__/resolved-runtime-dependencies",
     ]
-    if not manifest.is_file():
-        return lines
-    for entry in manifest.read_text(encoding="utf-8").splitlines():
-        value = entry.strip()
-        if not value or Path(value).is_absolute():
-            continue
-        source = context_dir / "app" / value
-        if source.is_file():
-            lines.append(f"COPY app/{value} {destination_root}/{value}")
+    repository = context_dir / "app" / "__pyronaut__" / "m2-repository"
+    if repository.is_dir():
+        lines.append(f"COPY app/__pyronaut__/m2-repository/ {destination_root}/__pyronaut__/m2-repository/")
     return lines
+
+
+def _additional_resource_docker_copy_lines(context_dir: Path, *, destination_root: str = "/app") -> list[str]:
+    layout = _read_pyproject_sources(context_dir / "app")
+    return [
+        f"COPY app/{resource_dir}/ {destination_root}/{resource_dir}/"
+        for resource_dir in layout.additional_resources_dirs
+        if (context_dir / "app" / resource_dir).is_dir()
+    ]
 
 
 def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str,
@@ -3386,6 +3438,7 @@ def _write_native_dockerfile(
     static_native: bool,
     passthrough_args: Sequence[str],
     runtime_copies: Sequence[str],
+    resource_copies: Sequence[str],
 ) -> None:
     output_binary = f"/workspace/app/__pyronaut__/native/{project_name}"
     build_command = [
@@ -3403,24 +3456,27 @@ def _write_native_dockerfile(
     if static_native:
         build_command.extend(["--static", "--libc=musl"])
     builder_runtime_copies = "\n".join(line.replace(" /app/", " /workspace/app/") for line in runtime_copies)
+    builder_resource_copies = "\n".join(line.replace(" /app/", " /workspace/app/") for line in resource_copies)
     dockerfile = f"""\
 FROM {builder_image} AS builder
 WORKDIR /workspace
 COPY app/pyproject.toml /workspace/app/pyproject.toml
-COPY app/config/ /workspace/app/config/
+COPY app/native-build-config/ /workspace/app/config/
 COPY app/__pyronaut__/classes /workspace/app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /workspace/app/__pyronaut__/schemas
 COPY app/__pyronaut__/tools/shared /workspace/app/__pyronaut__/tools/shared
 COPY app/__pyronaut__/tools/pyronaut-native-build /workspace/app/__pyronaut__/tools/pyronaut-native-build
 {builder_runtime_copies}
+{builder_resource_copies}
 RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
 RUN {shlex.join(build_command)}
 
 FROM {runtime_image}
 WORKDIR /app
-COPY --from=builder {output_binary} /app/{project_name}
+COPY --from=builder /workspace/app/__pyronaut__/native/ /app/
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
+{chr(10).join(resource_copies)}
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT ["/app/{project_name}", "--project-dir", "/app"]
@@ -3460,15 +3516,17 @@ def _write_crema_base_dockerfile(
 FROM {builder_image} AS builder
 WORKDIR /workspace
 COPY app/ /workspace/app/
+RUN rm -rf /workspace/app/config && cp -a /workspace/app/native-build-config/. /workspace/app/config/
 RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
 RUN {shlex.join(build_command)}
 
 FROM {runtime_image} AS pyronaut-base
 WORKDIR /opt/pyronaut
-COPY --from=builder {output_binary} /opt/pyronaut/bin/{runner_name}
+COPY --from=builder /workspace/base/ /opt/pyronaut/bin/
 
 FROM pyronaut-base
 WORKDIR /app
+COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
@@ -3479,16 +3537,20 @@ ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
 
 def _write_bundled_application_dockerfile(
     *, target: Path, runtime_image: str, runner_name: str,
+    runtime_copies: Sequence[str], resource_copies: Sequence[str],
 ) -> None:
     """Build the application layer directly on top of a bundled runner."""
     target.write_text(
         f"""FROM {runtime_image} AS pyronaut-base
 WORKDIR /opt/pyronaut
-COPY bundled-base/{runner_name} /opt/pyronaut/bin/{runner_name}
+COPY bundled-base/ /opt/pyronaut/bin/
 
 FROM pyronaut-base
 WORKDIR /app
+COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
+{chr(10).join(runtime_copies)}
+{chr(10).join(resource_copies)}
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT [\"/opt/pyronaut/bin/{runner_name}\", \"--project-dir\", \"/app\"]
@@ -3627,16 +3689,19 @@ def _run_docker_build(
                 if bundled is None or not bundled.is_file():
                     print("The default native base image is not available for this platform.", file=sys.stderr)
                     return PRECONDITION_FAILED
-                _prepare_bundled_docker_context(project_dir=project_dir, context_dir=context_dir)
+                _prepare_bundled_docker_context(
+                    project_dir=project_dir, context_dir=context_dir, launcher_executable=str(bundled),
+                )
                 bundled_dir = context_dir / "bundled-base"
-                bundled_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(bundled, bundled_dir / runner_name)
+                shutil.copytree(bundled.parent, bundled_dir, dirs_exist_ok=True)
                 (bundled_dir / runner_name).chmod(0o755)
                 dockerfile = context_dir / "DockerfileNativeDefault"
                 _write_bundled_application_dockerfile(
                     target=dockerfile,
                     runtime_image=runtime_image,
                     runner_name=runner_name,
+                    runtime_copies=_manifest_docker_copy_lines(context_dir),
+                    resource_copies=_additional_resource_docker_copy_lines(context_dir),
                 )
             elif (base_image := _configured_docker_base_image(project_dir, docker_config)) is not None:
                 _prepare_crema_native_docker_context(
@@ -3679,6 +3744,7 @@ def _run_docker_build(
                         static_native=static_native,
                         passthrough_args=[*_extract_native_build_passthrough_args(args), *_native_user_package_args(project_dir)],
                         runtime_copies=_manifest_docker_copy_lines(context_dir),
+                        resource_copies=_additional_resource_docker_copy_lines(context_dir),
                     )
         else:
             runner_name = _prepare_jvm_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
@@ -5575,6 +5641,10 @@ def _installed_pyronaut_version() -> str:
     return "unknown"
 
 
+def _native_image_distribution_version(version: str) -> str:
+    return version[:-5] + "-SNAPSHOT" if version.endswith(".dev0") else version
+
+
 def _native_image_platform(
     *,
     platform_name: str | None = None,
@@ -5629,7 +5699,7 @@ def _native_image_configuration() -> tuple[str, str]:
     version = configured.get("version", _installed_pyronaut_version())
     if not isinstance(version, str) or not version.strip():
         raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].version must be a non-empty string")
-    version = version.strip()
+    version = _native_image_distribution_version(version.strip())
     if any(character in version for character in "/\\"):
         raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].version must not contain path separators")
     return (base_url.rstrip("/") + "/") if parsed_base_url.scheme in {"http", "https"} else base_url, version
@@ -5652,6 +5722,90 @@ def _native_image_local_archive(
             f"Native image bundle not found at {archive}. Build {image_name} with Gradle or configure a matching version."
         )
     return archive
+
+
+def _github_release_asset(
+    base_url: str,
+    version: str,
+    archive_name: str,
+    *,
+    allow_draft: bool = False,
+) -> tuple[str, dict[str, str]] | None:
+    parsed = urllib.parse.urlparse(base_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if not _is_github_release_url(base_url):
+        return None
+
+    owner, repository = parts[:2]
+    tag = version if version.startswith("v") else f"v{version}"
+    token = next(
+        (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN") if os.environ.get(name)),
+        None,
+    )
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    def get_json(url: str) -> object | None:
+        proxy, bypass = _download_proxy(url)
+        parsed_url = urllib.parse.urlparse(url)
+        host = parsed_url.hostname or ""
+        host_with_port = parsed_url.netloc.rsplit("@", 1)[-1]
+        bypassed = _proxy_bypasses_host(host, bypass) or _proxy_bypasses_host(host_with_port, bypass)
+        proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+        try:
+            with opener.open(urllib.request.Request(url, headers=headers)) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise RuntimeError(f"Unable to read GitHub release metadata from {url}: HTTP {exc.code}") from exc
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError(f"Unable to read GitHub release metadata from {url}: {exc}") from exc
+
+    api_root = f"https://api.github.com/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repository)}"
+    release = get_json(f"{api_root}/releases/tags/{urllib.parse.quote(tag)}")
+    if isinstance(release, dict) and release.get("draft") and not allow_draft:
+        release = None
+    if release is None:
+        releases = get_json(f"{api_root}/releases?per_page=100")
+        if isinstance(releases, list):
+            release = next(
+                (
+                    candidate
+                    for candidate in releases
+                    if isinstance(candidate, dict)
+                    and candidate.get("tag_name") == tag
+                    and (allow_draft or not candidate.get("draft", False))
+                ),
+                None,
+            )
+    if isinstance(release, dict) and release.get("draft") and not allow_draft:
+        release = None
+    if not isinstance(release, dict):
+        token_hint = "; check GH_TOKEN read access" if not token else ""
+        raise RuntimeError(f"GitHub release '{tag}' was not found at {base_url}{token_hint}")
+
+    assets = release.get("assets", [])
+    asset = next(
+        (candidate for candidate in assets if isinstance(candidate, dict) and candidate.get("name") == archive_name),
+        None,
+    )
+    if not isinstance(asset, dict) or not isinstance(asset.get("url"), str):
+        raise RuntimeError(f"GitHub release '{tag}' has no asset named '{archive_name}'")
+    download_headers = dict(headers)
+    download_headers["Accept"] = "application/octet-stream"
+    return asset["url"], download_headers
+
+
+def _is_github_release_url(base_url: str) -> bool:
+    parsed = urllib.parse.urlparse(base_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    return parsed.hostname in {"github.com", "www.github.com"} and len(parts) == 3 and parts[2] == "releases"
 
 
 def _native_image_cache_path(
@@ -5685,7 +5839,12 @@ def _native_image_cache_lock(lock_path: Path):
                 pass
 
 
-def _download_url_with_progress(url: str, destination: Path, label: str) -> None:
+def _download_url_with_progress(
+    url: str,
+    destination: Path,
+    label: str,
+    headers: dict[str, str] | None = None,
+) -> None:
     proxy, bypass = _download_proxy(url)
     parsed_url = urllib.parse.urlparse(url)
     host = parsed_url.hostname or ""
@@ -5694,7 +5853,8 @@ def _download_url_with_progress(url: str, destination: Path, label: str) -> None
     proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
     opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
 
-    with opener.open(url) as response, destination.open("wb") as output:
+    request = urllib.request.Request(url, headers=headers or {}) if headers else url
+    with opener.open(request) as response, destination.open("wb") as output:
         total = int(response.headers.get("Content-Length", "0") or "0")
         downloaded = 0
         last_percent = -1
@@ -5710,8 +5870,13 @@ def _download_url_with_progress(url: str, destination: Path, label: str) -> None
         print(f"\r{label}... 100%", file=sys.stderr, flush=True)
 
 
-def _download_native_image_archive(url: str, destination: Path, image_name: str) -> None:
-    _download_url_with_progress(url, destination, f"Downloading {image_name}")
+def _download_native_image_archive(
+    url: str,
+    destination: Path,
+    image_name: str,
+    headers: dict[str, str] | None = None,
+) -> None:
+    _download_url_with_progress(url, destination, f"Downloading {image_name}", headers=headers)
 
 
 def _extract_native_image_archive(archive: Path, destination: Path, image_name: str) -> None:
@@ -5762,7 +5927,11 @@ def _ensure_native_image(
     os_segment, arch = _native_image_platform(platform_name=platform_name, machine_name=machine_name)
     archive_name = f"{image_name}-{os_segment}-{arch}-{version}.tar.gz"
     local_archive = _native_image_local_archive(base_url, image_name, archive_name)
-    url = local_archive.resolve().as_uri() if local_archive is not None else urllib.parse.urljoin(base_url, archive_name)
+    github_release = _is_github_release_url(base_url)
+    download_headers: dict[str, str] | None = None
+    url = local_archive.resolve().as_uri() if local_archive is not None else None
+    if url is None and not github_release:
+        url = urllib.parse.urljoin(base_url, archive_name)
     executable = _native_image_cache_path(
         image_name,
         version=version,
@@ -5772,7 +5941,7 @@ def _ensure_native_image(
     metadata = executable.with_name(executable.name + ".json")
     lock = executable.with_name(executable.name + ".lock")
     expected_metadata: dict[str, object] = {
-        "url": url,
+        "source": base_url,
         "version": version,
         "platform": f"{os_segment}-{arch}",
         # Version 3 isolates per-image manifests/resources in the shared
@@ -5800,7 +5969,12 @@ def _ensure_native_image(
                 cached_metadata = json.loads(metadata.read_text(encoding="utf-8"))
             except (OSError, ValueError, TypeError):
                 cached_metadata = None
-            if cached_metadata == expected_metadata:
+            cache_hit = (
+                isinstance(cached_metadata, dict)
+                and all(cached_metadata.get(key) == value for key, value in expected_metadata.items())
+                and (github_release or cached_metadata.get("url") == url)
+            )
+            if cache_hit:
                 # Do not touch an already-executable Mach-O on macOS. A
                 # redundant chmod can invalidate/retrigger Gatekeeper's
                 # ad-hoc signature validation and adds several seconds to
@@ -5815,10 +5989,22 @@ def _ensure_native_image(
             archive = temp_root / archive_name
             extracted = temp_root / "bundle" / image_name
             try:
+                if github_release:
+                    github_asset = _github_release_asset(
+                        base_url,
+                        version,
+                        archive_name,
+                        allow_draft=_allow_draft_release,
+                    )
+                    if github_asset is None:
+                        raise RuntimeError(f"Unsupported GitHub release URL: {base_url}")
+                    url, download_headers = github_asset
+                assert url is not None
+                expected_metadata["url"] = url
                 if local_archive is not None:
                     shutil.copy2(local_archive, archive)
                 else:
-                    _download_native_image_archive(url, archive, image_name)
+                    _download_native_image_archive(url, archive, image_name, headers=download_headers)
                 _extract_native_image_archive(archive, extracted, image_name)
             except Exception as exc:
                 raise RuntimeError(f"Failed downloading {image_name} from {url}: {exc}") from exc
@@ -6779,7 +6965,7 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_build_usage(stream=None) -> None:

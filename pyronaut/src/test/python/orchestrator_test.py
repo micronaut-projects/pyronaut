@@ -4445,6 +4445,8 @@ additional-test-resources = ["test-fixtures"]
             runtime_jar.write_text("", encoding="utf-8")
             (project_dir / "__pyronaut__" / "classes" / "example").mkdir(parents=True, exist_ok=True)
             (project_dir / "__pyronaut__" / "classes" / "example" / "Demo.class").write_text("", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes" / "application.toml").write_text("greeting = 'embedded'\n", encoding="utf-8")
+            (project_dir / "__pyronaut__" / "classes" / "application.toml").write_text("greeting = 'hello'\n", encoding="utf-8")
             (project_dir / "config").mkdir(parents=True, exist_ok=True)
             (project_dir / "config" / "application.toml").write_text("micronaut.server.port = 8080\n", encoding="utf-8")
             (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
@@ -4544,6 +4546,12 @@ additional-test-resources = ["test-fixtures"]
             )
             (project_dir / "config").mkdir()
             (project_dir / "config" / "application.toml").write_text("greeting = 'hello'\n", encoding="utf-8")
+            metadata = project_dir / "config" / "META-INF" / "native-image" / "demo"
+            metadata.mkdir(parents=True)
+            (metadata / "resource-config.json").write_text("{}\n", encoding="utf-8")
+            migration = project_dir / "config" / "db" / "migration"
+            migration.mkdir(parents=True)
+            (migration / "V1__schema.sql").write_text("CREATE TABLE demo (id INT);\n", encoding="utf-8")
             native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
 
             def resolver(command_name):
@@ -4592,7 +4600,14 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("FROM example/static-base:1", captured["dockerfile"])
         self.assertIn("--static --libc=musl", captured["dockerfile"])
         self.assertIn("--initialize-at-run-time=example.Foo", captured["dockerfile"])
-        self.assertIn("COPY app/config/ /workspace/app/config/", captured["dockerfile"])
+        self.assertIn("COPY app/native-build-config/ /workspace/app/config/", captured["dockerfile"])
+        self.assertIn("COPY app/config/ /app/config/", captured["dockerfile"])
+        self.assertNotIn("app/__pyronaut__/classes/application.toml", captured["context_files"])
+        self.assertIn("app/native-build-config/META-INF/native-image/demo/resource-config.json", captured["context_files"])
+        self.assertIn("app/native-build-config/db/migration/V1__schema.sql", captured["context_files"])
+        self.assertNotIn("app/native-build-config/application.toml", captured["context_files"])
+        self.assertIn("COPY app/__pyronaut__/m2-repository/ /workspace/app/__pyronaut__/m2-repository/", captured["dockerfile"])
+        self.assertNotIn("COPY app/__pyronaut__/m2-repository/example/runtime.jar", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build", captured["context_files"])
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
         self.assertIn("Docker image build complete: example/demo:1.2.3-native", stdout.getvalue())
@@ -4643,6 +4658,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("demo-app:1.2.3-native", docker_commands[1])
         self.assertIn("--base-image", dockerfiles[0])
         self.assertIn("FROM pyronaut-base", dockerfiles[0])
+        self.assertIn("COPY --from=builder /workspace/base/ /opt/pyronaut/bin/", dockerfiles[0])
         self.assertIn("COPY app/__pyronaut__/classes /app/__pyronaut__/classes", dockerfiles[0])
 
     def test_build_docker_uses_custom_dockerfiles_from_pyproject(self):
@@ -5278,6 +5294,50 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("--default-base-image", native_command)
         self.assertIn("--default-base-image-path", native_command)
         self.assertEqual(str(base), native_command[native_command.index("--default-base-image-path") + 1])
+
+    def test_bundled_default_dockerfile_includes_pyproject(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dockerfile = Path(temp_dir) / "DockerfileNativeDefault"
+            cli._write_bundled_application_dockerfile(  # noqa: SLF001
+                target=dockerfile,
+                runtime_image="example/runtime:1",
+                runner_name="pyronaut-run-python",
+                runtime_copies=[
+                    "COPY app/__pyronaut__/resolved-runtime-dependencies /app/__pyronaut__/resolved-runtime-dependencies",
+                    "COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/",
+                ],
+                resource_copies=["COPY app/views/ /app/views/"],
+            )
+
+            content = dockerfile.read_text(encoding="utf-8")
+            self.assertIn("COPY bundled-base/ /opt/pyronaut/bin/", content)
+            self.assertIn("COPY app/pyproject.toml /app/pyproject.toml", content)
+            self.assertIn("COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/", content)
+            self.assertIn("COPY app/views/ /app/views/", content)
+
+    def test_bundled_docker_context_stages_runtime_dependencies(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "project"
+            context_dir = Path(temp_dir) / "context"
+            classes_dir = project_dir / "__pyronaut__" / "classes"
+            classes_dir.mkdir(parents=True)
+            (classes_dir / "Application.class").write_text("", encoding="utf-8")
+            dependency = project_dir / "ojdbc11.jar"
+            dependency.write_text("jar", encoding="utf-8")
+            manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+            manifest.write_text(str(dependency) + "\n", encoding="utf-8")
+            launcher = project_dir / "pyronaut-run-python"
+            launcher.write_text("binary", encoding="utf-8")
+
+            cli._prepare_bundled_docker_context(  # noqa: SLF001
+                project_dir=project_dir,
+                context_dir=context_dir,
+                launcher_executable=str(launcher),
+            )
+
+            staged_manifest = context_dir / "app" / "__pyronaut__" / "resolved-runtime-dependencies"
+            self.assertIn("__pyronaut__/m2-repository/ojdbc11.jar", staged_manifest.read_text(encoding="utf-8"))
+            self.assertTrue((context_dir / "app" / "__pyronaut__" / "m2-repository" / "ojdbc11.jar").is_file())
 
     def test_native_build_passes_processed_user_packages_to_native_builder(self):
         executed = []
@@ -5975,6 +6035,128 @@ java-version = 25
             )
             self.assertIn("0%", stderr.getvalue())
             self.assertIn("100%", stderr.getvalue())
+
+    def test_github_release_url_resolves_public_and_private_assets(self):
+        archive_name = "pyronaut-dev-linux-amd64-0.0.1.tar.gz"
+        release = {"tag_name": "v0.0.1", "draft": True, "assets": [{"name": archive_name, "url": "https://api.github.com/assets/7"}]}
+
+        class Response:
+            def __init__(self, value):
+                self.value = value
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(self.value).encode()
+
+        class Opener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, request):
+                self.requests.append(request)
+                return Response(release)
+
+        for token in (None, "read-only-token"):
+            opener = Opener()
+            environment = {"GH_TOKEN": token or ""}
+            with patch.dict(os.environ, environment, clear=False), \
+                    patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                    patch.object(cli.urllib.request, "build_opener", return_value=opener):
+                result = cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.0.1",
+                    archive_name,
+                    allow_draft=True,
+                )
+
+            self.assertEqual("https://api.github.com/assets/7", result[0])
+            request_headers = dict(opener.requests[0].header_items())
+            if token:
+                self.assertEqual("Bearer read-only-token", request_headers["Authorization"])
+            else:
+                self.assertNotIn("Authorization", request_headers)
+
+    def test_github_release_url_ignores_draft_without_explicit_flag(self):
+        archive_name = "pyronaut-dev-linux-amd64-0.0.1.tar.gz"
+        responses = [
+            {"tag_name": "v0.0.1", "draft": True, "assets": [{"name": archive_name, "url": "draft"}]},
+            [{"tag_name": "v0.0.1", "draft": True, "assets": [{"name": archive_name, "url": "draft"}]}],
+        ]
+
+        class Response:
+            def __init__(self, value):
+                self.value = value
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(self.value).encode()
+
+        class Opener:
+            def open(self, _request):
+                return Response(responses.pop(0))
+
+        with patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                patch.object(cli.urllib.request, "build_opener", return_value=Opener()):
+            with self.assertRaisesRegex(RuntimeError, "release 'v0.0.1' was not found"):
+                cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.0.1",
+                    archive_name,
+                )
+
+    def test_native_image_distribution_version_maps_wheel_snapshot(self):
+        self.assertEqual("0.0.1-SNAPSHOT", cli._native_image_distribution_version("0.0.1.dev0"))
+        self.assertEqual("0.0.1", cli._native_image_distribution_version("0.0.1"))
+
+    def test_github_release_url_reports_missing_version_or_asset(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return b"[]"
+
+        class Opener:
+            def open(self, _request):
+                return Response()
+
+        with patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                patch.object(cli.urllib.request, "build_opener", return_value=Opener()):
+            with self.assertRaisesRegex(RuntimeError, "release 'v0.0.1' was not found"):
+                cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.0.1",
+                    "missing.tar.gz",
+                )
+
+        release = {"tag_name": "v0.0.1", "assets": []}
+        with patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                patch.object(cli.urllib.request, "build_opener", return_value=type("Opener", (), {
+                    "open": lambda _self, _request: type("Response", (), {
+                        "__enter__": lambda self: self,
+                        "__exit__": lambda self, *_args: False,
+                        "read": lambda self: cli.json.dumps(release).encode(),
+                    })(),
+                })()):
+            with self.assertRaisesRegex(RuntimeError, "has no asset named 'missing.tar.gz'"):
+                cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.0.1",
+                    "missing.tar.gz",
+                )
 
     def test_native_image_platform_maps_supported_operating_systems_and_architectures(self):
         self.assertEqual(("linux", "amd64"), cli._native_image_platform(platform_name="Linux", machine_name="x86_64"))

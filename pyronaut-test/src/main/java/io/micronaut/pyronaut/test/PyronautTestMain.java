@@ -523,11 +523,11 @@ public final class PyronautTestMain implements Callable<Integer> {
                 urls.add(entry.toUri().toURL());
             }
         }
-        if (Files.isDirectory(resolvedClassesDir)) {
-            urls.add(resolvedClassesDir.toUri().toURL());
-        }
         if (Files.isDirectory(resolvedTestClassesDir)) {
             urls.add(resolvedTestClassesDir.toUri().toURL());
+        }
+        if (Files.isDirectory(resolvedClassesDir)) {
+            urls.add(resolvedClassesDir.toUri().toURL());
         }
         for (Path resource : external.mainResources()) {
             if (Files.isDirectory(resource)) {

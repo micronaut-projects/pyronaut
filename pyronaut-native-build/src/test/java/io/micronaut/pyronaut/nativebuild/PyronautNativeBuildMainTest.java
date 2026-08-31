@@ -129,6 +129,42 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void ignoresRootClasspathEntries() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+        String classpath = System.getProperty("java.class.path");
+        try {
+            System.setProperty("java.class.path", classpath + java.io.File.pathSeparator + "/");
+            PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+            assertEquals(0, new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image"));
+        } finally {
+            System.setProperty("java.class.path", classpath);
+        }
+        assertEquals(1, executed.size());
+    }
+
+    @Test
+    void ignoresNonGradlePathsWhoseParentWalkReachesRoot() throws Exception {
+        var method = PyronautNativeBuildMain.class.getDeclaredMethod("isGradleVersionDirectory", Path.class);
+        method.setAccessible(true);
+
+        assertFalse((boolean) method.invoke(null, Path.of("/private/tmp/pyronaut/a")));
+    }
+
+    @Test
     void usesExplicitUserPackagesForClosedWorldImagesOnly() throws Exception {
         Path project = prepareProject("""
             [project]
@@ -179,6 +215,9 @@ class PyronautNativeBuildMainTest {
             """);
         Path runtimeJar = createJar(project.resolve("__pyronaut__/m2-repository/example/runtime.jar"));
         overwriteRuntimeManifest(project, List.of(runtimeJar.toString()));
+        Path configDir = project.resolve("config/META-INF/native-image/demo");
+        Files.createDirectories(configDir);
+        Files.writeString(configDir.resolve("resource-config.json"), "{\"resources\":{\"includes\":[]}}");
 
         List<List<String>> executed = new ArrayList<>();
         var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
@@ -204,6 +243,7 @@ class PyronautNativeBuildMainTest {
         assertFalse(nativeCommand.contains("--no-fallback"));
         assertTrue(nativeCommand.contains(PyronautRunMain.class.getName()));
         assertTrue(nativeCommand.get(nativeCommand.indexOf("-cp") + 1).contains(runtimeJar.toString()));
+        assertTrue(nativeCommand.stream().anyMatch(argument -> argument.equals("-H:ConfigurationFileDirectories=" + configDir)));
     }
 
     @Test
@@ -427,7 +467,7 @@ class PyronautNativeBuildMainTest {
         String resourceConfig = Files.readString(generatedDir.resolve("resource-config.json"));
         assertTrue(resourceConfig.contains("\\\\QMETA-INF/GRAALPY-VFS/micronaut-application/fileslist.txt\\\\E"));
         assertTrue(resourceConfig.contains("\\\\QMETA-INF/GRAALPY-VFS/micronaut-application/src/logback/__init__.py\\\\E"));
-        assertTrue(resourceConfig.contains("\\\\Qapplication.toml\\\\E"));
+        assertFalse(resourceConfig.contains("\\\\Qapplication.toml\\\\E"));
         assertTrue(resourceConfig.contains("\\\\Qnested/extra.txt\\\\E"));
 
         String directories = nativeCommand.stream()

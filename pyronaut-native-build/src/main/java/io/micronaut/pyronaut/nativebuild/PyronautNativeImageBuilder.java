@@ -38,6 +38,10 @@ public final class PyronautNativeImageBuilder {
     /** The fixed production launcher entry point. */
     public static final String DEFAULT_MAIN_CLASS = "io.micronaut.pyronaut.run.PyronautRunMain";
 
+    private static final List<String> PRESERVED_JDK_MODULES = List.of(
+        "java.base", "java.sql", "java.xml", "java.management", "java.naming", "java.rmi"
+    );
+
     private static final List<String> COMMON_ARGUMENTS = List.of(
             "-Os",
             "--add-modules=java.net.http,java.naming,java.rmi",
@@ -47,6 +51,7 @@ public final class PyronautNativeImageBuilder {
             "-H:+AllowJRTFileSystem",
             "-H:+SharedArenaSupport",
             "-H:-SupportCompileInIsolates",
+            "-Dmicronaut.graalvm.imagesingletons.enabled=false",
             "--enable-http",
             "--enable-https",
             // Modules
@@ -296,8 +301,6 @@ public final class PyronautNativeImageBuilder {
 
     private static final List<String> PYTHON_ARGUMENTS = List.of(
         "--enable-native-access=org.graalvm.truffle",
-        "-H:Preserve=package=ch.qos.logback.classic.*",
-        "-H:Preserve=package=ch.qos.logback.core.*",
         "-H:Preserve=package=org.graalvm.polyglot"
     );
 
@@ -554,7 +557,8 @@ public final class PyronautNativeImageBuilder {
                     continue;
                 }
                 String packageName = selector.substring("package=".length());
-                if (isJdkPackage(packageName)) {
+                if (containsJdkPackage(packageName)) {
+                    arguments.add("-H:Preserve=" + selector);
                     continue;
                 }
                 String packagePrefix = packageName.endsWith(".*")
@@ -568,13 +572,14 @@ public final class PyronautNativeImageBuilder {
         return arguments;
     }
 
-    private static boolean isJdkPackage(String packageName) {
-        return packageName.startsWith("java.")
-            || packageName.startsWith("javax.")
-            || packageName.startsWith("sun.")
-            || packageName.startsWith("jdk.internal.")
-            || packageName.startsWith("org.w3c.")
-            || packageName.startsWith("org.xml.");
+    private static boolean containsJdkPackage(String packageName) {
+        String packagePrefix = packageName.endsWith(".*")
+            ? packageName.substring(0, packageName.length() - 2)
+            : packageName;
+        return ModuleLayer.boot().modules().stream()
+            .filter(module -> PRESERVED_JDK_MODULES.contains(module.getName()))
+            .flatMap(module -> module.getPackages().stream())
+            .anyMatch(candidate -> candidate.equals(packagePrefix) || candidate.startsWith(packagePrefix + "."));
     }
 
     private static boolean containsPackage(Collection<Path> classpath, String packageName) {

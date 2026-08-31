@@ -279,6 +279,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             : new ArrayList<>(excludeRunnerProvidedModules(runtimeClasspath, runnerClasspath));
         baseClasspath.addAll(runnerClasspath);
         List<String> configurationArguments = new ArrayList<>();
+        List<Path> configurationDirs = new ArrayList<>();
         if (!bundledOnly) {
             Path pyproject = root.resolve("pyproject.toml");
             PyprojectModel model = Files.isRegularFile(pyproject) ? modelReader.readProjectDirectory(root) : null;
@@ -289,6 +290,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             NativeImageConfigurationSupport.addBundledConfigurationExclusions(
                 configurationArguments, baseClasspath, metadataSelection.modules(), PyronautNativeBuildMain::gavFromClasspathEntry, verbose
             );
+            configurationDirs.addAll(projectNativeImageConfigurationDirs(root.resolve(DEFAULT_CONFIG_DIR).normalize()));
         }
         PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
             root.resolve(output).normalize(),
@@ -300,6 +302,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .includeSbom(!noSbom)
             .addClasspath(baseClasspath)
             .addNativeImageArguments(configurationArguments);
+        if (!configurationDirs.isEmpty()) {
+            builder.addNativeImageArgument("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
+        }
         if (verbose) {
             builder.addNativeImageArgument("--verbose");
         }
@@ -346,7 +351,11 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     }
 
     private static boolean isProductionRunnerClasspathEntry(Path path, boolean includePython) {
-        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        Path fileName = path.getFileName();
+        if (fileName == null) {
+            return false;
+        }
+        String name = fileName.toString().toLowerCase(Locale.ROOT);
         String location = path.toString().toLowerCase(Locale.ROOT);
         if (name.contains("pyronaut-native-build")
             || name.contains("graalvm-reachability-metadata")
@@ -508,6 +517,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Set<String> resources = new LinkedHashSet<>();
         collectClasspathResources(resources, classesDir, true);
         collectClasspathResources(resources, configDir, false);
+        resources.removeIf(PyronautNativeBuildMain::isRuntimeApplicationConfiguration);
         collectJarResources(resources, runtimeClasspath);
         if (resources.isEmpty()) {
             return null;
@@ -516,6 +526,11 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Files.createDirectories(generatedDir);
         Files.writeString(generatedDir.resolve("resource-config.json"), buildResourceConfig(List.copyOf(resources)), StandardCharsets.UTF_8);
         return generatedDir;
+    }
+
+    private static boolean isRuntimeApplicationConfiguration(String resource) {
+        String fileName = Path.of(resource).getFileName().toString();
+        return fileName.matches("application(?:-[^.]+)?\\.(?:properties|toml|yaml|yml)");
     }
 
     private static List<Path> projectNativeImageConfigurationDirs(Path configDir) throws IOException {
@@ -847,8 +862,11 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
     private static List<Path> findPomCandidates(Path artifact, Path parent) {
         List<Path> candidates = new ArrayList<>();
+        String fileName = artifact.getFileName().toString();
+        int extension = fileName.lastIndexOf('.');
+        String pomName = (extension > 0 ? fileName.substring(0, extension) : fileName) + ".pom";
         try (var files = Files.list(parent)) {
-            files.filter(path -> path.getFileName().toString().endsWith(".pom"))
+            files.filter(path -> path.getFileName().toString().equals(pomName))
                 .forEach(candidates::add);
         } catch (IOException ignored) {
             // Continue with Gradle cache discovery below.
@@ -878,10 +896,12 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Path groupDirectory = artifactDirectory == null ? null : artifactDirectory.getParent();
         Path filesDirectory = groupDirectory == null ? null : groupDirectory.getParent();
         Path modulesDirectory = filesDirectory == null ? null : filesDirectory.getParent();
-        return filesDirectory != null
-            && "files-2.1".equals(filesDirectory.getFileName().toString())
-            && modulesDirectory != null
-            && "modules-2".equals(modulesDirectory.getFileName().toString());
+        Path filesName = filesDirectory == null ? null : filesDirectory.getFileName();
+        Path modulesName = modulesDirectory == null ? null : modulesDirectory.getFileName();
+        return filesName != null
+            && "files-2.1".equals(filesName.toString())
+            && modulesName != null
+            && "modules-2".equals(modulesName.toString());
     }
 
     private static List<Path> readManifest(Path root, Path file) {
