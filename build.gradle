@@ -45,6 +45,7 @@ def pyronautCliProjectNames = [
     "micronaut-pyronaut-run-python",
     "micronaut-pyronaut-test",
     "micronaut-pyronaut-native-build",
+    "micronaut-pyronaut-jar-build",
     "micronaut-pyronaut-validate-config",
     "micronaut-pyronaut-test-resources-server",
     "micronaut-pyronaut-tui"

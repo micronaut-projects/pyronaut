@@ -64,7 +64,18 @@ JAVA_DELEGATE_JAR_ENV = {
     "test": "PYRONAUT_TEST_JAR",
 }
 NATIVE_BUILD_EXECUTABLE = "pyronaut-native-build"
+JAR_BUILD_EXECUTABLE = "pyronaut-jar-build"
 PYTHON_RUN_EXECUTABLE = "pyronaut-run-python"
+PACKAGING_FORMATS = {
+    "fat-jar",
+    "wheel-jvm",
+    "wheel-native",
+    "wheel-crema",
+    "docker-jvm",
+    "docker-native",
+    "docker-crema",
+}
+DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
 _DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i2"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
@@ -2364,27 +2375,46 @@ def _run_build(
     project_dir = Path(_extract_project_dir(args)).resolve()
     verbose = _extract_build_verbose(args)
     try:
-        mode = _resolve_build_mode(project_dir, args)
+        packaging_format = _resolve_packaging_format(project_dir, args)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
-    docker_build = _extract_build_docker(args)
+    fat_jar = packaging_format == "fat-jar"
+    mode = "jvm" if packaging_format in {"fat-jar", "wheel-jvm", "docker-jvm"} else "native"
+    docker_build = packaging_format.startswith("docker-")
     static_native = _extract_build_static(args)
     base_image_build = _extract_build_base_image(args)
-    requested_default_base_image = _extract_build_default_base_image(args)
-    configured_default_base_image = (_read_pyproject_build_base_image(project_dir) or "").strip().lower() == "default"
-    default_base_image = requested_default_base_image or (configured_default_base_image and not base_image_build)
+    configured_base_image = _read_pyproject_build_base_image(project_dir)
+    configured_default_base_image = (configured_base_image or "").strip().lower() == "default"
+    configured_docker_base_image = None
+    if docker_build:
+        configured_docker_base_image = _configured_docker_base_image(
+            project_dir, _read_pyproject_build_docker_config(project_dir)
+        )
+    if packaging_format == "wheel-crema":
+        default_base_image = configured_base_image is None or configured_default_base_image
+    elif packaging_format == "docker-crema":
+        # Local executable bases and OCI image bases are separate settings.
+        # A local wheel base must not silently turn docker-crema into a
+        # closed-world container build.
+        default_base_image = configured_docker_base_image is None
+    else:
+        default_base_image = False
     if base_image_build and default_base_image:
         print("--base-image and --base-image=default cannot be combined", file=sys.stderr)
         return USAGE_ERROR
-    if default_base_image and mode == "jvm":
-        print("--base-image=default is only supported for native builds", file=sys.stderr)
-        return USAGE_ERROR
     if base_image_build:
-        if _extract_build_mode_flag(args) == "jvm":
-            print("--base-image cannot be combined with JVM mode", file=sys.stderr)
-            return USAGE_ERROR
         mode = "native"
+    reusable_base_configured = configured_base_image is not None or (
+        packaging_format == "docker-native" and configured_docker_base_image is not None
+    )
+    if packaging_format in {"wheel-native", "docker-native"} and reusable_base_configured and not base_image_build:
+        print(
+            f"{packaging_format} cannot use a configured reusable base image; select "
+            f"{'docker-crema' if docker_build else 'wheel-crema'} instead",
+            file=sys.stderr,
+        )
+        return USAGE_ERROR
     try:
         project_name, project_version = project_metadata or _read_pyproject_project_metadata(project_dir)
         main_class = _extract_main_class(args)
@@ -2427,6 +2457,16 @@ def _run_build(
             java_home_provider=java_home_provider,
         )
 
+    if fat_jar:
+        return _run_fat_jar_build(
+            project_dir=project_dir,
+            project_name=project_name,
+            project_version=project_version,
+            runner=runner,
+            resolver=resolver,
+            java_home_provider=java_home_provider,
+        )
+
     if docker_build:
         return _run_docker_build(
             args=args,
@@ -2463,19 +2503,17 @@ def _run_build(
         output_dir = project_dir / "__pyronaut__" / "native"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_binary = output_dir / project_name
-        try:
-            configured_base = _configured_local_base_image(project_dir)
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            return PRECONDITION_FAILED
-        configured_default_base = (_read_pyproject_build_base_image(project_dir) or "").strip().lower() == "default"
+        configured_base = None
+        if packaging_format == "wheel-crema" and configured_base_image is not None and not configured_default_base_image:
+            configured_path = Path(configured_base_image)
+            configured_base = configured_path if configured_path.is_absolute() else (project_dir / configured_path).resolve()
         if default_base_image:
             try:
                 configured_base = _bundled_default_base_image(project_dir)
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
                 return PRECONDITION_FAILED
-        if (default_base_image or configured_default_base) and configured_base is None:
+        if default_base_image and configured_base is None:
             print("The default native base image is not available for this platform.", file=sys.stderr)
             return PRECONDITION_FAILED
         if default_base_image:
@@ -2599,6 +2637,82 @@ def _run_build(
         print(f"Install with: {python_exec} -m pip install {dist_dir}/*.whl")
         print(f"Run the project with: {project_name}")
     return exit_code
+
+
+def _run_fat_jar_build(
+    *,
+    project_dir: Path,
+    project_name: str,
+    project_version: str,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    delegate_executable = resolver(JAR_BUILD_EXECUTABLE)
+    if delegate_executable is None:
+        print(f"Missing delegated executable: {JAR_BUILD_EXECUTABLE}", file=sys.stderr)
+        return PRECONDITION_FAILED
+
+    cache_dir = _pyronaut_output_dir(project_dir)
+    classes_dir = cache_dir / "classes"
+    if not classes_dir.is_dir():
+        print(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.", file=sys.stderr)
+        return PRECONDITION_FAILED
+
+    try:
+        classpath = [
+            entry for entry in _build_delegate_classpath("run", project_dir, resolver).split(os.pathsep)
+            if entry and (Path(entry).is_dir() or Path(entry).suffix.lower() == ".jar")
+        ]
+        env = _build_non_test_resources_env("build", java_home_provider)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+
+    external = _read_external_layout(project_dir)
+    if external is not None:
+        resource_directories = [Path(entry) for entry in external.get("mainResources", []) if Path(entry).is_dir()]
+    else:
+        layout = _read_pyproject_sources(project_dir)
+        configured_resources = [layout.resources_dir, *layout.additional_resources_dirs]
+        resource_directories = [
+            resolved for configured in configured_resources
+            if (resolved := _resolve_layout_dir(project_dir, configured)).is_dir()
+        ]
+
+    dist_dir = project_dir / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    output = dist_dir / f"{_jar_file_component(project_name)}-{_jar_file_component(project_version)}.jar"
+    with tempfile.TemporaryDirectory(prefix="pyronaut-build-jar-") as temporary:
+        classpath_file = Path(temporary) / "classpath.txt"
+        classpath_file.write_text("".join(f"{entry}\n" for entry in classpath), encoding="utf-8")
+        command = [
+            delegate_executable,
+            "--output", str(output),
+            "--classes-dir", str(classes_dir),
+            "--classpath-file", str(classpath_file),
+            "--name", project_name,
+            "--version", project_version,
+            "--main-class", "io.micronaut.pyronaut.run.PyronautRunMain",
+        ]
+        for resource_directory in resource_directories:
+            command.extend(["--resource-dir", str(resource_directory)])
+        if _delegation_trace_enabled():
+            print(shlex.join(command), file=sys.stderr)
+        exit_code = runner(command, env)
+    if exit_code != SUCCESS:
+        return exit_code
+    if not output.is_file():
+        print(f"FAT JAR build reported success but no artifact was produced at: {output}", file=sys.stderr)
+        return PRECONDITION_FAILED
+    print(f"FAT JAR build complete: {output}")
+    return SUCCESS
+
+
+def _jar_file_component(value: str) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z._-]+", "-", value.strip())
+    normalized = re.sub(r"-+", "-", normalized).strip("-.")
+    return normalized or "application"
 
 
 def _read_pyproject_project_metadata(project_dir: Path) -> tuple[str, str]:
@@ -2886,18 +3000,6 @@ def _is_python_runtime_project(project_dir: Path) -> bool:
             if "micronaut-context-python" in runtime_manifest.read_text(encoding="utf-8"):
                 return True
     return False
-
-
-def _configured_local_base_image(project_dir: Path) -> Path | None:
-    configured = _read_pyproject_build_base_image(project_dir)
-    if configured is not None:
-        if configured.strip().lower() == "default":
-            return _bundled_default_base_image(project_dir)
-        path = Path(configured)
-        return path if path.is_absolute() else (project_dir / path).resolve()
-    launcher = "pyronaut-run-python" if _is_python_runtime_project(project_dir) else "pyronaut-run"
-    default_base = project_dir / "__pyronaut__" / "native" / "base" / launcher
-    return default_base if default_base.is_file() else None
 
 
 def _bundled_default_base_image(
@@ -3735,38 +3837,76 @@ def _default_dev_source(args: Sequence[str]) -> str | None:
 
 
 def _resolve_build_mode(project_dir: Path, args: Sequence[str]) -> str:
-    explicit = _extract_build_mode_flag(args)
-    if explicit is not None:
-        return explicit
+    packaging_format = _resolve_packaging_format(project_dir, args)
+    return "jvm" if packaging_format in {"fat-jar", "wheel-jvm", "docker-jvm"} else "native"
 
-    configured = _read_pyproject_build_mode(project_dir)
-    if configured is not None:
-        return configured
-    return _read_pyproject_toolchain_type(project_dir)
+
+def _resolve_packaging_format(project_dir: Path, args: Sequence[str]) -> str:
+    # Parse and validate the configured value even when command-line flags
+    # override it. This keeps removed keys and invalid enum values rejected
+    # when lifecycle validation is explicitly disabled.
+    configured = _read_pyproject_packaging_format(project_dir)
+    jar = _extract_flag(args, "--jar")
+    explicit_mode = _extract_build_mode_flag(args)
+    docker = _extract_build_docker(args)
+    static = _extract_build_static(args)
+    base_image_build = _extract_build_base_image(args)
+    default_base = _extract_build_default_base_image(args)
+
+    if jar:
+        conflicts = explicit_mode is not None or docker or static or base_image_build or default_base or _has_main_class_option(args)
+        if conflicts:
+            raise ValueError("--jar cannot be combined with --main-class, JVM/native, Docker, static, or base-image options")
+        return "fat-jar"
+
+    if base_image_build:
+        if explicit_mode == "jvm":
+            raise ValueError("--base-image cannot be combined with JVM mode")
+        return "docker-native" if docker else "wheel-native"
+
+    if explicit_mode is not None or docker or static or default_base:
+        mode = explicit_mode or ("native" if default_base else "jvm")
+        if default_base and mode == "jvm":
+            raise ValueError("--base-image=default is only supported for native builds")
+        if mode == "jvm":
+            return "docker-jvm" if docker else "wheel-jvm"
+        if default_base:
+            return "docker-crema" if docker else "wheel-crema"
+        return "docker-native" if docker else "wheel-native"
+
+    if configured == "fat-jar" and _has_main_class_option(args):
+        raise ValueError("--main-class is not supported for fat-jar packaging; PyronautRunMain is always used")
+    return configured
 
 
 def _extract_build_mode_flag(args: Sequence[str]) -> str | None:
+    selected: str | None = None
     index = 0
     while index < len(args):
         token = args[index]
         if token == "--native":
-            return "native"
-        if token == "--jvm":
-            return "jvm"
-        if token == "--mode":
+            value = "native"
+        elif token == "--jvm":
+            value = "jvm"
+        elif token == "--mode":
             if index + 1 >= len(args):
                 raise ValueError("Missing value for --mode. Use native|jvm")
             value = args[index + 1].strip().lower()
-            if value in {"native", "jvm"}:
-                return value
-            raise ValueError("Invalid value for --mode. Use native|jvm")
-        if token.startswith("--mode="):
+            index += 1
+            if value not in {"native", "jvm"}:
+                raise ValueError("Invalid value for --mode. Use native|jvm")
+        elif token.startswith("--mode="):
             value = token.split("=", 1)[1].strip().lower()
-            if value in {"native", "jvm"}:
-                return value
-            raise ValueError("Invalid value for --mode. Use native|jvm")
+            if value not in {"native", "jvm"}:
+                raise ValueError("Invalid value for --mode. Use native|jvm")
+        else:
+            index += 1
+            continue
+        if selected is not None and selected != value:
+            raise ValueError("Conflicting build modes; select only one of --native, --jvm, or --mode")
+        selected = value
         index += 1
-    return None
+    return selected
 
 
 def _read_pyproject_pyronaut_table(project_dir: Path) -> dict[str, object] | None:
@@ -3986,20 +4126,26 @@ def _toolchain_type_from_pyronaut_table(pyronaut: dict[str, object] | None) -> s
     raise ValueError("Invalid toolchain type in pyproject.toml. Use tool.pyronaut.toolchain.type = 'jvm' or 'native'")
 
 
-def _read_pyproject_build_mode(project_dir: Path) -> str | None:
+def _read_pyproject_packaging_format(project_dir: Path) -> str:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
-        return None
+        return DEFAULT_PACKAGING_FORMAT
     build = pyronaut.get("build")
-    if not isinstance(build, dict):
-        return None
-    mode = build.get("mode")
-    if not isinstance(mode, str):
-        return None
-    normalized = mode.strip().lower()
-    if normalized in {"native", "jvm"}:
-        return normalized
-    raise ValueError("Invalid build mode in pyproject.toml. Use tool.pyronaut.build.mode = 'native' or 'jvm'")
+    if isinstance(build, dict) and "mode" in build:
+        raise ValueError("Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'")
+    packaging = pyronaut.get("packaging")
+    if packaging is None:
+        return DEFAULT_PACKAGING_FORMAT
+    if not isinstance(packaging, dict):
+        raise ValueError("Invalid [tool.pyronaut.packaging]: expected a table")
+    value = packaging.get("format", DEFAULT_PACKAGING_FORMAT)
+    if not isinstance(value, str):
+        raise ValueError("Invalid tool.pyronaut.packaging.format: expected a string")
+    normalized = value.strip()
+    if normalized not in PACKAGING_FORMATS:
+        options = ", ".join(sorted(PACKAGING_FORMATS))
+        raise ValueError(f"Invalid tool.pyronaut.packaging.format '{value}'. Use one of: {options}")
+    return normalized
 
 
 def _read_pyproject_processor_mode(project_dir: Path) -> str:
@@ -4245,7 +4391,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token == "--":
             passthrough.extend(args[index + 1:])
             break
-        if token in {"--native", "--jvm", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--base-image", "--base-image=default"}:
+        if token in {"--native", "--jvm", "--jar", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--base-image", "--base-image=default"}:
             index += 1
             continue
         if token in {"--mode", "--main-class", "--project-dir", "--base-image-output", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src"}:
@@ -6640,7 +6786,7 @@ def _print_build_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut build [--project-dir <dir>] [--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--base-image|--base-image=default] [--base-image-output <path>] [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
+        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--base-image|--base-image=default] [--base-image-output <path>] [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
     )
 
 

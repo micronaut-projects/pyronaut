@@ -57,6 +57,7 @@ public record PyprojectModel(Project project,
      * @param coreVersion Micronaut Core BOM version
      * @param platformVersion Micronaut Platform BOM version
      * @param repositories configured repositories
+     * @param packaging packaging defaults
      * @param dependencies dependency scopes
      * @param run runtime execution settings
      * @param controlPanel control panel settings
@@ -73,6 +74,7 @@ public record PyprojectModel(Project project,
     public record Pyronaut(String coreVersion,
                            String platformVersion,
                            List<String> repositories,
+                           Packaging packaging,
                            Dependencies dependencies,
                            Run run,
                            ControlPanel controlPanel,
@@ -85,6 +87,127 @@ public record PyprojectModel(Project project,
                            Validation validation,
                            TestResources testResources,
                            boolean controlPanelConfigured) {
+        public Pyronaut {
+            packaging = packaging == null ? new Packaging(null) : packaging;
+            if (build != null && !packaging.format().legacyMode().equals(build.mode())) {
+                build = new Build(
+                    packaging.format().legacyMode(),
+                    build.pythonBytecodeEnabled(),
+                    build.baseImage(),
+                    build.metadata(),
+                    build.docker()
+                );
+            }
+        }
+
+        /**
+         * Compatibility constructor for callers compiled against the model before packaging formats were introduced.
+         *
+         * @param coreVersion Micronaut Core BOM version
+         * @param platformVersion Micronaut Platform BOM version
+         * @param repositories configured repositories
+         * @param dependencies dependency scopes
+         * @param run runtime execution settings
+         * @param controlPanel control panel settings
+         * @param build build defaults/settings
+         * @param processor processor execution settings
+         * @param test test execution settings
+         * @param sources project source/resource directory settings
+         * @param toolchain toolchain resolution settings
+         * @param ideStubs IDE stub generation settings
+         * @param validation validation settings
+         * @param testResources test resources settings
+         * @param controlPanelConfigured whether the control-panel section was explicitly configured
+        */
+        @Deprecated(forRemoval = true)
+        @SuppressWarnings("checkstyle:ParameterNumber")
+        public Pyronaut(String coreVersion,
+                        String platformVersion,
+                        List<String> repositories,
+                        Dependencies dependencies,
+                        Run run,
+                        ControlPanel controlPanel,
+                        Build build,
+                        Processor processor,
+                        Test test,
+                        Sources sources,
+                        Toolchain toolchain,
+                        IdeStubs ideStubs,
+                        Validation validation,
+                        TestResources testResources,
+                        boolean controlPanelConfigured) {
+            this(coreVersion, platformVersion, repositories, packagingFromLegacyBuild(build), dependencies, run,
+                controlPanel, build, processor, test, sources, toolchain, ideStubs, validation, testResources,
+                controlPanelConfigured);
+        }
+
+        private static Packaging packagingFromLegacyBuild(Build build) {
+            return new Packaging(build != null && "native".equalsIgnoreCase(build.mode())
+                ? PackagingFormat.WHEEL_NATIVE
+                : PackagingFormat.WHEEL_JVM);
+        }
+    }
+
+    /**
+     * tool.pyronaut.packaging table.
+     *
+     * @param format default packaging format
+     */
+    public record Packaging(PackagingFormat format) {
+        public Packaging {
+            format = format == null ? PackagingFormat.WHEEL_JVM : format;
+        }
+    }
+
+    /**
+     * Supported production packaging formats.
+     */
+    public enum PackagingFormat {
+        FAT_JAR("fat-jar", "jvm"),
+        WHEEL_JVM("wheel-jvm", "jvm"),
+        WHEEL_NATIVE("wheel-native", "native"),
+        WHEEL_CREMA("wheel-crema", "native"),
+        DOCKER_JVM("docker-jvm", "jvm"),
+        DOCKER_NATIVE("docker-native", "native"),
+        DOCKER_CREMA("docker-crema", "native");
+
+        private final String value;
+        private final String legacyMode;
+
+        PackagingFormat(String value, String legacyMode) {
+            this.value = value;
+            this.legacyMode = legacyMode;
+        }
+
+        /**
+         * @return the {@code pyproject.toml} value
+         */
+        public String value() {
+            return value;
+        }
+
+        /**
+         * @return the legacy JVM/native build mode represented by this format
+         */
+        public String legacyMode() {
+            return legacyMode;
+        }
+
+        /**
+         * Resolves a configuration value.
+         *
+         * @param value configuration value
+         * @return resolved format
+         * @throws IllegalArgumentException when the value is unsupported
+         */
+        public static PackagingFormat fromValue(String value) {
+            for (PackagingFormat format : values()) {
+                if (format.value.equals(value)) {
+                    return format;
+                }
+            }
+            throw new IllegalArgumentException("Unsupported packaging format: " + value);
+        }
     }
 
     /**
@@ -278,7 +401,7 @@ public record PyprojectModel(Project project,
     /**
      * tool.pyronaut.build table.
      *
-     * @param mode default build mode (for example jvm or native)
+     * @param mode legacy default build mode, derived from {@link Packaging#format()}
      * @param pythonBytecodeEnabled whether generated Python resources include bytecode caches
      * @param baseImage local reusable native runtime image path
      * @param metadata native image metadata settings
@@ -295,6 +418,16 @@ public record PyprojectModel(Project project,
 
         public Build(String mode, Metadata metadata, Docker docker) {
             this(mode, false, null, metadata, docker);
+        }
+
+        /**
+         * @return the legacy JVM/native build mode
+         * @deprecated Use {@link Pyronaut#packaging()} and {@link Packaging#format()}.
+         */
+        @Deprecated(forRemoval = true)
+        @Override
+        public String mode() {
+            return mode;
         }
     }
 

@@ -168,11 +168,11 @@ public final class PyprojectConfigSpec {
     public static final FieldSpec PYRONAUT_DEPENDENCIES_ARTIFACT_EXCLUSIONS = stringArrayMap(
         "tool.pyronaut.dependencies.artifact-exclusions", "Transitive exclusions keyed by direct group:artifact dependency."
     );
-    public static final FieldSpec PYRONAUT_BUILD_MODE = enumString(
-        "tool.pyronaut.build.mode",
-        "Default build mode.",
-        "jvm",
-        List.of("jvm", "native")
+    public static final FieldSpec PYRONAUT_PACKAGING_FORMAT = enumString(
+        "tool.pyronaut.packaging.format",
+        "Default production packaging format.",
+        "wheel-jvm",
+        List.of("fat-jar", "wheel-jvm", "wheel-native", "wheel-crema", "docker-jvm", "docker-native", "docker-crema")
     );
     public static final FieldSpec PYRONAUT_BUILD_BASE_IMAGE = string(
         "tool.pyronaut.build.base-image",
@@ -808,7 +808,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_DEPENDENCIES_BOMS,
         PYRONAUT_DEPENDENCIES_EXCLUSIONS,
         PYRONAUT_DEPENDENCIES_ARTIFACT_EXCLUSIONS,
-        PYRONAUT_BUILD_MODE,
+        PYRONAUT_PACKAGING_FORMAT,
         PYRONAUT_BUILD_BASE_IMAGE,
         PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED,
         PYRONAUT_PROCESSOR_MODE,
@@ -911,6 +911,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.platform", true),
         section("tool.pyronaut.dependencies", true),
         section("tool.pyronaut.dependencies.artifact-exclusions", false),
+        section("tool.pyronaut.packaging", true),
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.processor", true),
         section("tool.pyronaut.test", true),
