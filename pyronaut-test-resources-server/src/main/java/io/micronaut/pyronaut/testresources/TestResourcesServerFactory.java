@@ -27,7 +27,6 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -112,34 +111,33 @@ final class TestResourcesServerFactory implements ServerFactory {
     }
 
     static List<String> selfModuleClasspathEntries() {
+        try {
+            var codeSource = TestResourcesServerFactory.class.getProtectionDomain().getCodeSource();
+            if (codeSource != null && codeSource.getLocation() != null) {
+                Path location = Path.of(codeSource.getLocation().toURI()).toAbsolutePath().normalize();
+                if (Files.exists(location)) {
+                    return List.of(location.toString());
+                }
+            }
+        } catch (Exception ignored) {
+            // Native launchers do not necessarily expose a protection-domain code source.
+        }
         String classpath = System.getProperty("java.class.path", "");
         String command = ProcessHandle.current().info().command().orElse("");
         return selfModuleClasspathEntries(classpath, command);
     }
 
     static List<String> selfModuleClasspathEntries(String classpath, String commandPath) {
-        LinkedHashSet<Path> launcherLibDirs = new LinkedHashSet<>();
         if (!classpath.isBlank()) {
-            List<Path> entries = Stream.of(classpath.split(File.pathSeparator))
+            List<String> entries = Stream.of(classpath.split(File.pathSeparator))
                 .map(String::trim)
                 .filter(entry -> !entry.isEmpty())
                 .map(entry -> Path.of(entry).toAbsolutePath().normalize())
+                .filter(TestResourcesServerFactory::isWrapperModuleEntry)
+                .map(Path::toString)
                 .toList();
-            for (Path entry : entries) {
-                String normalized = entry.toString();
-                if (normalized.contains("micronaut-pyronaut-test-resources-server") && entry.getParent() != null) {
-                    launcherLibDirs.add(entry.getParent());
-                }
-            }
-            LinkedHashSet<String> resolvedEntries = new LinkedHashSet<>();
-            for (Path entry : entries) {
-                Path parent = entry.getParent();
-                if (parent != null && launcherLibDirs.contains(parent)) {
-                    resolvedEntries.add(entry.toString());
-                }
-            }
-            if (!resolvedEntries.isEmpty()) {
-                return orderSelfModuleClasspathEntries(resolvedEntries);
+            if (!entries.isEmpty()) {
+                return entries;
             }
         }
         return discoverExecutableSiblingLibEntries(commandPath);
@@ -161,44 +159,30 @@ final class TestResourcesServerFactory implements ServerFactory {
             candidates.add(parent.resolve("lib").toAbsolutePath().normalize());
         }
         for (Path libDir : candidates) {
-            List<String> entries = listJarEntries(libDir);
+            List<String> entries = listWrapperJarEntries(libDir);
             if (!entries.isEmpty()) {
-                return orderSelfModuleClasspathEntries(entries);
+                return entries;
             }
         }
         return List.of();
     }
 
-    private static List<String> orderSelfModuleClasspathEntries(Iterable<String> entries) {
-        List<String> normalEntries = new ArrayList<>();
-        List<String> serverEntries = new ArrayList<>();
-        for (String entry : entries) {
-            if (isBundledTestResourcesServerJar(entry)) {
-                serverEntries.add(entry);
-            } else {
-                normalEntries.add(entry);
-            }
-        }
-        normalEntries.addAll(serverEntries);
-        return List.copyOf(normalEntries);
-    }
-
-    private static boolean isBundledTestResourcesServerJar(String entry) {
-        if (entry == null || entry.isBlank()) {
+    private static boolean isWrapperModuleEntry(Path entry) {
+        if (entry == null || entry.getFileName() == null) {
             return false;
         }
-        String filename = Path.of(entry).getFileName().toString();
-        return filename.startsWith("micronaut-test-resources-server-")
+        String filename = entry.getFileName().toString();
+        return filename.startsWith("micronaut-pyronaut-test-resources-server-")
             && filename.endsWith(".jar");
     }
 
-    private static List<String> listJarEntries(Path libDir) {
+    private static List<String> listWrapperJarEntries(Path libDir) {
         if (!Files.isDirectory(libDir)) {
             return List.of();
         }
         try (Stream<Path> stream = Files.list(libDir)) {
             return stream
-                .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                .filter(TestResourcesServerFactory::isWrapperModuleEntry)
                 .sorted()
                 .map(path -> path.toAbsolutePath().normalize().toString())
                 .toList();

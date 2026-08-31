@@ -140,7 +140,7 @@ class TestResourcesServerFactoryTest {
     }
 
     @Test
-    void selfModuleClasspathEntriesIncludeSiblingJarsFromLauncherLibDirectory() throws Exception {
+    void selfModuleClasspathEntriesIncludeOnlyWrapperJarFromLauncherLibDirectory() throws Exception {
         Path launcherLibDir = tempDir.resolve("launcher/lib").toAbsolutePath().normalize();
         Files.createDirectories(launcherLibDir);
         Path wrapperJar = launcherLibDir.resolve("micronaut-pyronaut-test-resources-server-current.jar");
@@ -165,12 +165,7 @@ class TestResourcesServerFactoryTest {
             System.setProperty("java.class.path", classpath);
 
             assertEquals(
-                List.of(
-                    wrapperJar.toString(),
-                    controlPanelJar.toString(),
-                    coreJar.toString(),
-                    bundledServerJar.toString()
-                ),
+                List.of(wrapperJar.toString()),
                 TestResourcesServerFactory.selfModuleClasspathEntries(classpath, "")
             );
         } finally {
@@ -183,7 +178,7 @@ class TestResourcesServerFactoryTest {
     }
 
     @Test
-    void selfModuleClasspathEntriesIncludeSiblingJarsFromNativeExecutableLayout() throws Exception {
+    void selfModuleClasspathEntriesIncludeOnlyWrapperJarFromNativeExecutableLayout() throws Exception {
         Path installRoot = tempDir.resolve("tool/pyronaut-test-resources-server");
         Path nativeDir = installRoot.resolve("native");
         Path libDir = installRoot.resolve("lib");
@@ -200,14 +195,8 @@ class TestResourcesServerFactoryTest {
         Files.writeString(coreJar, "", java.nio.charset.StandardCharsets.UTF_8);
 
         assertEquals(
-            new java.util.LinkedHashSet<>(List.of(
-                wrapperJar.toAbsolutePath().normalize().toString(),
-                controlPanelJar.toAbsolutePath().normalize().toString(),
-                coreJar.toAbsolutePath().normalize().toString()
-            )),
-            new java.util.LinkedHashSet<>(
-                TestResourcesServerFactory.selfModuleClasspathEntries("", nativeBinary.toAbsolutePath().normalize().toString())
-            )
+            List.of(wrapperJar.toAbsolutePath().normalize().toString()),
+            TestResourcesServerFactory.selfModuleClasspathEntries("", nativeBinary.toAbsolutePath().normalize().toString())
         );
     }
 
