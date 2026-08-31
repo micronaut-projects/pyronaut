@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@SuppressWarnings("removal")
 class PyprojectModelReaderTest {
 
     @TempDir
@@ -43,6 +44,7 @@ class PyprojectModelReaderTest {
         assertEquals(Boolean.FALSE, model.pyronaut().controlPanel().enabled());
         assertEquals("/control-panel", model.pyronaut().controlPanel().path());
         assertEquals(Boolean.FALSE, model.pyronaut().controlPanel().productionEnabled());
+        assertEquals(PyprojectModel.PackagingFormat.WHEEL_JVM, model.pyronaut().packaging().format());
         assertEquals("jvm", model.pyronaut().build().mode());
         assertEquals(Boolean.TRUE, model.pyronaut().build().pythonBytecodeEnabled());
         assertEquals("jvm", model.pyronaut().processor().mode());
@@ -112,6 +114,105 @@ class PyprojectModelReaderTest {
         PyprojectModel model = reader.readFile(file);
 
         assertEquals(Boolean.TRUE, model.pyronaut().build().pythonBytecodeEnabled());
+    }
+
+    @Test
+    void packagingDefaultsToJvmWheel() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, "[project]\nname = \"demo\"\n");
+
+        PyprojectModel model = reader.readFile(file);
+
+        assertEquals(PyprojectModel.PackagingFormat.WHEEL_JVM, model.pyronaut().packaging().format());
+        assertEquals("jvm", model.pyronaut().build().mode());
+    }
+
+    @Test
+    void parsesEveryPackagingFormat() throws IOException {
+        for (PyprojectModel.PackagingFormat format : PyprojectModel.PackagingFormat.values()) {
+            Path file = tempDir.resolve("pyproject.toml");
+            Files.writeString(file, """
+                [project]
+                name = "demo"
+
+                [tool.pyronaut.packaging]
+                format = "%s"
+                """.formatted(format.value()));
+
+            PyprojectModel model = reader.readFile(file);
+
+            assertEquals(format, model.pyronaut().packaging().format());
+            assertEquals(format.legacyMode(), model.pyronaut().build().mode());
+        }
+    }
+
+    @Test
+    void javaCompatibilityModelDerivesLegacyModeFromPackagingFormat() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, "[project]\nname = \"demo\"\n");
+        PyprojectModel.Pyronaut defaults = reader.readFile(file).pyronaut();
+        PyprojectModel.Build contradictoryBuild = new PyprojectModel.Build(
+            "jvm",
+            defaults.build().pythonBytecodeEnabled(),
+            defaults.build().baseImage(),
+            defaults.build().metadata(),
+            defaults.build().docker()
+        );
+
+        PyprojectModel.Pyronaut canonical = new PyprojectModel.Pyronaut(
+            defaults.coreVersion(), defaults.platformVersion(), defaults.repositories(),
+            new PyprojectModel.Packaging(PyprojectModel.PackagingFormat.DOCKER_NATIVE),
+            defaults.dependencies(), defaults.run(), defaults.controlPanel(), contradictoryBuild,
+            defaults.processor(), defaults.test(), defaults.sources(), defaults.toolchain(), defaults.ideStubs(),
+            defaults.validation(), defaults.testResources(), defaults.controlPanelConfigured()
+        );
+        assertEquals("native", canonical.build().mode());
+
+        PyprojectModel.Pyronaut compatibility = new PyprojectModel.Pyronaut(
+            defaults.coreVersion(), defaults.platformVersion(), defaults.repositories(), defaults.dependencies(),
+            defaults.run(), defaults.controlPanel(), contradictoryBuild, defaults.processor(), defaults.test(),
+            defaults.sources(), defaults.toolchain(), defaults.ideStubs(), defaults.validation(),
+            defaults.testResources(), defaults.controlPanelConfigured()
+        );
+        assertEquals(PyprojectModel.PackagingFormat.WHEEL_JVM, compatibility.packaging().format());
+        assertEquals("jvm", compatibility.build().mode());
+    }
+
+    @Test
+    void rejectsLegacyBuildMode() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build]
+            mode = "native"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+
+        assertEquals(
+            "Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'",
+            exception.getMessage()
+        );
+    }
+
+    @Test
+    void rejectsPackagingAliasesCaseVariantsAndBlankValues() throws IOException {
+        for (String value : List.of("jar", "FAT-JAR", "")) {
+            Path file = tempDir.resolve("pyproject.toml");
+            Files.writeString(file, """
+                [project]
+                name = "demo"
+
+                [tool.pyronaut.packaging]
+                format = "%s"
+                """.formatted(value));
+
+            PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+
+            assertTrue(exception.getMessage().contains("fat-jar"), exception.getMessage());
+        }
     }
 
     @Test
@@ -314,7 +415,10 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
-        assertEquals("Invalid type for 'tool.pyronaut.build.mode': expected string", exception.getMessage());
+        assertEquals(
+            "Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'",
+            exception.getMessage()
+        );
     }
 
     @Test
@@ -331,7 +435,10 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
-        assertEquals("Invalid value for 'tool.pyronaut.build.mode': expected one of [jvm, native]", exception.getMessage());
+        assertEquals(
+            "Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'",
+            exception.getMessage()
+        );
     }
 
     @Test
@@ -684,8 +791,8 @@ class PyprojectModelReaderTest {
 
             [tool.pyronaut]
 
-            [tool.pyronaut.build]
-            mode = "native"
+            [tool.pyronaut.packaging]
+            format = "wheel-native"
 
             [tool.pyronaut.build.metadata]
             enabled = false

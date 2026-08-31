@@ -256,6 +256,7 @@ final class DirectSourceDependencyResolverTest {
         assertFalse(fullyConfigured.cacheHit());
         assertFalse(fullyConfigured.testResourcesRequired());
         assertFalse(Files.exists(cacheDirectory.resolve("resolved-test-resources-server-dependencies")));
+        Files.writeString(cacheDirectory.resolve("resolved-test-resources-server-dependencies"), "/stale/server.jar\n");
         assertTrue(resolver.resolveForLaunch(
             cacheDirectory,
             List.of("io.micronaut.data:micronaut-data-processor"),
@@ -272,6 +273,7 @@ final class DirectSourceDependencyResolverTest {
             ),
             true
         ).cacheHit());
+        assertFalse(Files.exists(cacheDirectory.resolve("resolved-test-resources-server-dependencies")));
 
         assertTrue(resolver.resolveForLaunch(
             cacheDirectory,

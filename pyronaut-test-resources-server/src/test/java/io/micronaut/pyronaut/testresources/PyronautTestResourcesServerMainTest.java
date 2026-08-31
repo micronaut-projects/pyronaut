@@ -15,6 +15,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautTestResourcesServerMainTest {
@@ -118,11 +119,16 @@ class PyronautTestResourcesServerMainTest {
     }
 
     @Test
-    void classpathEntriesPreferServerRuntimeBeforeProjectInferredDependencies() throws Exception {
+    void classpathEntriesCombineWrapperAndResolvedManifest() throws Exception {
         Path manifest = tempDir.resolve("resolved-test-resources-server-dependencies");
         Path projectLoggingApi = tempDir.resolve("project-libs/logging-api.jar").toAbsolutePath().normalize();
         Path inferredProvider = tempDir.resolve("project-libs/test-resources-provider.jar").toAbsolutePath().normalize();
         Path inferredDriver = tempDir.resolve("project-libs/database-driver.jar").toAbsolutePath().normalize();
+        Files.createDirectories(projectLoggingApi.getParent());
+        Files.createDirectories(tempDir.resolve("sdk"));
+        for (Path entry : List.of(projectLoggingApi, inferredProvider, inferredDriver)) {
+            Files.writeString(entry, "");
+        }
         Files.writeString(
             manifest,
             String.join(
@@ -137,19 +143,41 @@ class PyronautTestResourcesServerMainTest {
         Path serverLoggingApi = tempDir.resolve("sdk/logging-api.jar").toAbsolutePath().normalize();
         Path serverLoggingBackend = tempDir.resolve("sdk/logging-backend.jar").toAbsolutePath().normalize();
         Path serverCore = tempDir.resolve("sdk/micronaut-core.jar").toAbsolutePath().normalize();
+        for (Path entry : List.of(serverLoggingApi, serverLoggingBackend, serverCore)) {
+            Files.writeString(entry, "");
+        }
 
         List<File> entries = PyronautTestResourcesServerMain.DefaultServerManager.classpathEntries(
             manifest,
             List.of(serverLoggingApi.toString(), serverLoggingBackend.toString(), serverCore.toString(), inferredProvider.toString())
         );
 
-        assertEquals(serverLoggingApi.toFile(), entries.get(0));
-        assertEquals(serverLoggingBackend.toFile(), entries.get(1));
-        assertEquals(serverCore.toFile(), entries.get(2));
-        assertEquals(inferredProvider.toFile(), entries.get(3));
-        assertEquals(projectLoggingApi.toFile(), entries.get(4));
-        assertEquals(inferredDriver.toFile(), entries.get(5));
+        assertEquals(serverLoggingApi.toRealPath().toFile(), entries.get(0));
+        assertEquals(serverLoggingBackend.toRealPath().toFile(), entries.get(1));
+        assertEquals(serverCore.toRealPath().toFile(), entries.get(2));
+        assertEquals(inferredProvider.toRealPath().toFile(), entries.get(3));
+        assertEquals(projectLoggingApi.toRealPath().toFile(), entries.get(4));
+        assertEquals(inferredDriver.toRealPath().toFile(), entries.get(5));
         assertEquals(6, entries.size());
+    }
+
+    @Test
+    void classpathEntriesRejectStaleManifestEntries() throws Exception {
+        Path wrapper = Files.writeString(tempDir.resolve("micronaut-pyronaut-test-resources-server.jar"), "");
+        Path missing = tempDir.resolve("missing-server-runtime.jar");
+        Path manifest = tempDir.resolve("resolved-test-resources-server-dependencies");
+        Files.writeString(manifest, missing.toString());
+
+        IllegalStateException failure = assertThrows(
+            IllegalStateException.class,
+            () -> PyronautTestResourcesServerMain.DefaultServerManager.classpathEntries(
+                manifest,
+                List.of(wrapper.toString())
+            )
+        );
+
+        assertTrue(failure.getMessage().contains(missing.toString()));
+        assertTrue(failure.getMessage().contains("pyronaut install"));
     }
 
     @Test

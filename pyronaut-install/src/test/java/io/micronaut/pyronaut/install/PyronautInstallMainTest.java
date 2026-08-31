@@ -110,7 +110,7 @@ class PyronautInstallMainTest {
         assertTrue(Files.exists(runtimeManifest));
         assertTrue(Files.exists(developmentRuntimeManifest));
         assertTrue(Files.exists(testManifest));
-        assertTrue(Files.exists(testResourcesServerManifest));
+        assertFalse(Files.exists(testResourcesServerManifest));
 
         List<String> buildEntries = Files.readAllLines(buildManifest, StandardCharsets.UTF_8);
         List<String> runtimeEntries = Files.readAllLines(runtimeManifest, StandardCharsets.UTF_8);
@@ -659,6 +659,7 @@ class PyronautInstallMainTest {
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
+        writeTestResourcesServerDefaultsBom(repository);
 
         Path project = tempDir.resolve("project-test-resources-enabled");
         Files.createDirectories(project);
@@ -681,7 +682,9 @@ class PyronautInstallMainTest {
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client")));
-        assertFalse(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-core")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-control-panel")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-testcontainers")));
     }
 
@@ -695,6 +698,15 @@ class PyronautInstallMainTest {
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-jdbc-mysql", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-jdbc-postgresql", "2.9.0");
+        writeArtifact(repository, "org.openjdk.nashorn", "nashorn-core", "15.4");
+        writeArtifactWithDependencies(
+            repository,
+            "io.micronaut.testresources",
+            "micronaut-test-resources-control-panel",
+            "2.9.0",
+            List.of(new DependencyCoordinate("org.openjdk.nashorn", "nashorn-core", "15.4"))
+        );
+        writeTestResourcesServerDefaultsBom(repository);
 
         Path project = tempDir.resolve("project-test-resources-server-manifest");
         Files.createDirectories(project);
@@ -713,6 +725,7 @@ class PyronautInstallMainTest {
             ]
             build = []
             test = []
+            boms = ["com.example:test-resources-server-defaults-bom:1.0.0"]
 
             [tool.pyronaut.testResources]
             enabled = true
@@ -734,12 +747,15 @@ class PyronautInstallMainTest {
             project.resolve("__pyronaut__").resolve("resolved-test-resources-server-dependencies"),
             StandardCharsets.UTF_8
         );
-        assertFalse(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-core")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-control-panel")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-testcontainers")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-jdbc-mysql")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-jdbc-postgresql")));
         assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("mysql-connector-j")));
         assertTrue(serverEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-build-tools")));
+        assertTrue(serverEntries.stream().noneMatch(entry -> entry.contains("nashorn-core")));
     }
 
     @Test
@@ -764,6 +780,9 @@ class PyronautInstallMainTest {
         List<String> testEntries = Files.readAllLines(cacheDir.resolve("resolved-test-dependencies"), StandardCharsets.UTF_8);
         assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-client")));
         assertTrue(testEntries.stream().noneMatch(entry -> entry.contains("micronaut-test-resources-client")));
+        assertFalse(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        assertFalse(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
     }
 
     @Test
@@ -1490,13 +1509,13 @@ class PyronautInstallMainTest {
             "io.micronaut.platform",
             "micronaut-platform",
             "5.0.0",
-            List.of(
+            withTestResourcesServerDefaults("5.0.0", List.of(
                 new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0"),
                 new ManagedDependency("org.junit.platform", "junit-platform-launcher", "1.12.2"),
                 new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2"),
                 new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0"),
                 new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0")
-            )
+            ))
         );
 
         writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0");
@@ -1508,6 +1527,7 @@ class PyronautInstallMainTest {
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
+        writeTestResourcesServerDefaultArtifacts(repository, "5.0.0");
 
         Path project = tempDir.resolve("project-managed");
         Files.createDirectories(project);
@@ -1603,11 +1623,11 @@ class PyronautInstallMainTest {
             "io.micronaut.platform",
             "micronaut-platform",
             "5.0.0",
-            List.of(
+            withTestResourcesServerDefaults("5.0.0", List.of(
                 new ManagedDependency("io.opentelemetry", "opentelemetry-bom", "1.54.1"),
                 new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "2.9.0"),
                 new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0")
-            )
+            ))
         );
 
         writeArtifact(repository, "io.micronaut", "micronaut-context-python", "5.0.0");
@@ -1617,6 +1637,7 @@ class PyronautInstallMainTest {
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
+        writeTestResourcesServerDefaultArtifacts(repository, "5.0.0");
 
         Path project = tempDir.resolve("project-nested-managed-bom");
         Files.createDirectories(project);
@@ -1818,7 +1839,7 @@ class PyronautInstallMainTest {
             "io.micronaut.platform",
             "micronaut-platform",
             "5.0.0-RC1",
-            List.of(
+            withTestResourcesServerDefaults("5.0.0-RC1", List.of(
                 new ManagedDependency("io.micronaut", "micronaut-context-python", "5.0.0-RC2"),
                 new ManagedDependency("io.micronaut.test", "micronaut-test-junit5", "5.0.0-RC1"),
                 new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "4.0.0-RC1"),
@@ -1826,7 +1847,7 @@ class PyronautInstallMainTest {
                 new ManagedDependency("io.micronaut.toml", "micronaut-toml", "3.0.0-RC1"),
                 new ManagedDependency("org.junit.platform", "junit-platform-launcher", "1.12.2"),
                 new ManagedDependency("org.junit.jupiter", "junit-jupiter-engine", "5.12.2")
-            )
+            ))
         );
 
         writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.1.0-SNAPSHOT");
@@ -1841,6 +1862,7 @@ class PyronautInstallMainTest {
         writeArtifact(repository, "io.micronaut.toml", "micronaut-toml", "3.0.0-RC1");
         writeArtifact(repository, "org.junit.platform", "junit-platform-launcher", "1.12.2");
         writeArtifact(repository, "org.junit.jupiter", "junit-jupiter-engine", "5.12.2");
+        writeTestResourcesServerDefaultArtifacts(repository, "5.0.0-RC1");
 
         Path project = tempDir.resolve("project-split-core-platform");
         Files.createDirectories(project);
@@ -1884,7 +1906,8 @@ class PyronautInstallMainTest {
         assertFalse(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("2.9.0")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-junit5") && entry.contains("5.0.0-RC1")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("4.0.0-RC1")));
-        assertFalse(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-server")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-core")));
     }
 
     @Test
@@ -1904,9 +1927,9 @@ class PyronautInstallMainTest {
             "io.micronaut.platform",
             "micronaut-platform",
             "5.0.0",
-            List.of(
+            withTestResourcesServerDefaults("5.0.0", List.of(
                 new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "4.0.0-M1")
-            )
+            ))
         );
 
         writeArtifact(repository, "io.micronaut", "micronaut-inject-python", "5.0.0");
@@ -1915,6 +1938,7 @@ class PyronautInstallMainTest {
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "4.0.0-M1");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "4.0.0-M1");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "4.0.0-M1");
+        writeTestResourcesServerDefaultArtifacts(repository, "5.0.0");
 
         Path project = tempDir.resolve("project-managed-test-resources-version");
         Files.createDirectories(project);
@@ -2009,7 +2033,7 @@ class PyronautInstallMainTest {
         assertTrue(Files.exists(cacheDir.resolve("resolved-build-dependencies")));
         assertTrue(Files.exists(cacheDir.resolve("resolved-runtime-dependencies")));
         assertTrue(Files.exists(cacheDir.resolve("resolved-test-dependencies")));
-        assertTrue(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
+        assertFalse(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
     }
 
     @Test
@@ -2195,7 +2219,7 @@ class PyronautInstallMainTest {
         assertTrue(Files.exists(cacheDir.resolve("resolved-build-dependencies")));
         assertTrue(Files.exists(cacheDir.resolve("resolved-runtime-dependencies")));
         assertTrue(Files.exists(cacheDir.resolve("resolved-test-dependencies")));
-        assertTrue(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
+        assertFalse(Files.exists(cacheDir.resolve("resolved-test-resources-server-dependencies")));
     }
 
     @Test
@@ -3833,9 +3857,44 @@ class PyronautInstallMainTest {
     }
 
     private static String pyprojectWithTestResources(Path repository, boolean enabled) {
-        return pyprojectBase(repository) + "\n" + "[tool.pyronaut.test-resources]\n"
+        String defaultsBom = enabled
+            ? "\nboms = [\"com.example:test-resources-server-defaults-bom:1.0.0\"]\n"
+            : "";
+        return pyprojectBase(repository) + defaultsBom + "\n" + "[tool.pyronaut.test-resources]\n"
             + "enabled = " + enabled + "\n"
             + "version = \"2.9.0\"\n";
+    }
+
+    private static void writeTestResourcesServerDefaultsBom(Path repository) throws IOException {
+        List<ManagedDependency> dependencies = InstallScope.TEST_RESOURCES_SERVER.defaultDependencies().stream()
+            .map(dependency -> dependency.split(":"))
+            .filter(parts -> !"io.micronaut.testresources".equals(parts[0]))
+            .map(parts -> new ManagedDependency(parts[0], parts[1], "1.0.0"))
+            .toList();
+        writeBom(repository, "com.example", "test-resources-server-defaults-bom", "1.0.0", dependencies);
+        for (ManagedDependency dependency : dependencies) {
+            writeArtifactRaw(repository, dependency.groupId(), dependency.artifactId(), dependency.version(), new byte[]{0});
+        }
+    }
+
+    private static List<ManagedDependency> withTestResourcesServerDefaults(String version,
+                                                                            List<ManagedDependency> dependencies) {
+        List<ManagedDependency> result = new ArrayList<>(dependencies);
+        InstallScope.TEST_RESOURCES_SERVER.defaultDependencies().stream()
+            .map(dependency -> dependency.split(":"))
+            .filter(parts -> !"io.micronaut.testresources".equals(parts[0]))
+            .map(parts -> new ManagedDependency(parts[0], parts[1], version))
+            .forEach(result::add);
+        return List.copyOf(result);
+    }
+
+    private static void writeTestResourcesServerDefaultArtifacts(Path repository, String version) throws IOException {
+        for (String dependency : InstallScope.TEST_RESOURCES_SERVER.defaultDependencies()) {
+            String[] parts = dependency.split(":");
+            if (!"io.micronaut.testresources".equals(parts[0])) {
+                writeArtifactRaw(repository, parts[0], parts[1], version, new byte[]{0});
+            }
+        }
     }
 
     private static void writeArtifact(Path repository, String groupId, String artifactId, String version) throws IOException {
@@ -3844,6 +3903,11 @@ class PyronautInstallMainTest {
 
     private static void writeArtifact(Path repository, String groupId, String artifactId, String version, byte[] jarBytes) throws IOException {
         writeArtifactRaw(repository, groupId, artifactId, version, jarBytes);
+        if ("io.micronaut.testresources".equals(groupId)
+            && "micronaut-test-resources-server".equals(artifactId)) {
+            writeArtifactRaw(repository, groupId, "micronaut-test-resources-core", version, new byte[]{0});
+            writeArtifactRaw(repository, groupId, "micronaut-test-resources-control-panel", version, new byte[]{0});
+        }
         ensureDefaultControlPanelArtifact(repository);
     }
 

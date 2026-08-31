@@ -17,6 +17,9 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout.ProjectKind;
+import io.micronaut.testresources.buildtools.MavenDependency;
+import io.micronaut.testresources.buildtools.TestResourcesClasspath;
+import io.micronaut.testresources.buildtools.VersionInfo;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +30,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 /** Resolves the root Java source layout exposed by Maven or Gradle. */
@@ -463,11 +472,17 @@ final class ExternalBuildResolver {
         Path output = cache.resolve("external-" + scope + ".classpath");
         Files.deleteIfExists(output);
         Path initScript = null;
+        Path temporaryPom = null;
         try {
             List<String> command = new ArrayList<>();
             if (kind == ProjectKind.MAVEN) {
                 Path wrapper = root.resolve("mvnw");
                 command.add(Files.isRegularFile(wrapper) ? wrapper.toString() : "mvn");
+                if ("testResources".equals(scope)) {
+                    temporaryPom = writeMavenTestResourcesPom(root, offline, localRepository);
+                    command.add("-f");
+                    command.add(temporaryPom.toString());
+                }
                 command.add("dependency:build-classpath");
                 command.add("-Dmdep.outputFile=" + output);
                 command.add("-DincludeScope=" + ("test".equals(scope) ? "test" : ("build".equals(scope) ? "compile" : "runtime")));
@@ -479,7 +494,10 @@ final class ExternalBuildResolver {
                 Files.deleteIfExists(initScript);
                 String configuration = "test".equals(scope) ? "testRuntimeClasspath" : "testResources".equals(scope) ? "testResourcesService" : "build".equals(scope) ? "compileClasspath" : "annotationProcessor".equals(scope) ? "annotationProcessor" : "runtimeClasspath";
                 String outputPath = output.toString().replace("\\", "\\\\");
-                Files.writeString(initScript, "gradle.beforeProject { p -> if (p.parent == null) { p.tasks.register('__pyronautWriteClasspath') { doLast { def c = p.configurations.findByName('" + configuration + "'); if (c == null) { c = p.configurations.findByName('compileClasspath') }; if (c != null) { p.file('" + outputPath + "').text = c.resolve().collect { it.absolutePath }.join(File.pathSeparator) } } } } }", StandardCharsets.UTF_8);
+                String testResourcesDefaults = "testResources".equals(scope)
+                    ? gradleTestResourcesDefaults()
+                    : "";
+                Files.writeString(initScript, "gradle.beforeProject { p -> if (p.parent == null) { p.tasks.register('__pyronautWriteClasspath') { doLast { def c = p.configurations.findByName('" + configuration + "'); if (c == null) { c = p.configurations.findByName('compileClasspath') }; " + testResourcesDefaults + " if (c != null) { p.file('" + outputPath + "').text = c.resolve().collect { it.absolutePath }.join(File.pathSeparator) } } } } }", StandardCharsets.UTF_8);
                 command.add("--init-script");
                 command.add(initScript.toString());
                 command.add("__pyronautWriteClasspath");
@@ -507,7 +525,227 @@ final class ExternalBuildResolver {
             if (initScript != null) {
                 Files.deleteIfExists(initScript);
             }
+            if (temporaryPom != null) {
+                Files.deleteIfExists(temporaryPom);
+            }
         }
+    }
+
+    private static Path writeMavenTestResourcesPom(Path root,
+                                                   boolean offline,
+                                                   Path localRepository) throws IOException {
+        Path effectivePom = writeEffectiveMavenPom(root, offline, localRepository);
+        return prepareMavenTestResourcesPom(effectivePom);
+    }
+
+    static Path prepareMavenTestResourcesPom(Path effectivePom) throws IOException {
+        org.w3c.dom.Document document = parseMavenModel(effectivePom);
+        if (document == null || document.getDocumentElement() == null) {
+            throw new IOException("Unable to prepare the effective Maven model for Test Resources resolution");
+        }
+        Element project = document.getDocumentElement();
+        Element dependencies = directChild(project, "dependencies");
+        if (dependencies == null) {
+            dependencies = element(document, project, "dependencies");
+            project.appendChild(dependencies);
+        }
+
+        List<MavenDependency> applicationDependencies = directMavenDependencies(dependencies);
+        String testResourcesVersion = testResourcesVersion(document);
+        if (testResourcesVersion == null || testResourcesVersion.isBlank()) {
+            testResourcesVersion = VersionInfo.getVersion();
+        }
+        List<MavenDependency> inferred = TestResourcesClasspath.inferTestResourcesClasspath(
+            applicationDependencies,
+            testResourcesVersion
+        );
+        Map<String, Element> applicationDependencyElements = new LinkedHashMap<>();
+        for (Element dependency : directDependencyElements(dependencies)) {
+            applicationDependencyElements.put(dependencyKey(dependency), dependency);
+            dependencies.removeChild(dependency);
+        }
+        Map<String, Element> existing = new LinkedHashMap<>();
+        for (String coordinate : InstallScope.TEST_RESOURCES_SERVER.defaultDependencies()) {
+            String[] parts = coordinate.split(":");
+            String version = "io.micronaut.testresources".equals(parts[0]) ? testResourcesVersion : null;
+            addMavenDependency(
+                document,
+                dependencies,
+                existing,
+                applicationDependencyElements.get(parts[0] + ":" + parts[1]),
+                parts[0],
+                parts[1],
+                version
+            );
+        }
+        for (MavenDependency dependency : inferred) {
+            addMavenDependency(
+                document,
+                dependencies,
+                existing,
+                applicationDependencyElements.get(dependency.getGroup() + ":" + dependency.getArtifact()),
+                dependency.getGroup(),
+                dependency.getArtifact(),
+                dependency.getVersion()
+            );
+        }
+
+        try {
+            var transformer = TransformerFactory.newInstance().newTransformer();
+            transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+            transformer.transform(new DOMSource(document), new StreamResult(effectivePom.toFile()));
+        } catch (Exception e) {
+            throw new IOException("Unable to write the temporary Maven Test Resources model", e);
+        }
+        return effectivePom;
+    }
+
+    private static List<MavenDependency> directMavenDependencies(Element dependencies) {
+        List<MavenDependency> result = new ArrayList<>();
+        for (Element dependency : directDependencyElements(dependencies)) {
+            String group = childText(dependency, "groupId");
+            String artifact = childText(dependency, "artifactId");
+            String version = childText(dependency, "version");
+            if (group != null && artifact != null) {
+                result.add(new MavenDependency(group, artifact, version));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static String testResourcesVersion(org.w3c.dom.Document document) {
+        NodeList dependencies = document.getElementsByTagName("dependency");
+        for (int index = 0; index < dependencies.getLength(); index++) {
+            if (!(dependencies.item(index) instanceof Element dependency)) {
+                continue;
+            }
+            if ("io.micronaut.testresources".equals(childText(dependency, "groupId"))) {
+                String artifact = childText(dependency, "artifactId");
+                if ("micronaut-test-resources-server".equals(artifact)
+                    || "micronaut-test-resources-client".equals(artifact)) {
+                    String version = childText(dependency, "version");
+                    if (version != null && !version.isBlank()) {
+                        return version;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static void addMavenDependency(org.w3c.dom.Document document,
+                                           Element dependencies,
+                                           Map<String, Element> existing,
+                                           Element selectedDependency,
+                                           String group,
+                                           String artifact,
+                                           String version) {
+        String key = group + ":" + artifact;
+        if (existing.containsKey(key)) {
+            return;
+        }
+        if (selectedDependency != null) {
+            Element dependency = (Element) document.importNode(selectedDependency, true);
+            if ("io.micronaut.testresources:micronaut-test-resources-control-panel".equals(key)) {
+                addMavenExclusion(document, dependency, "org.openjdk.nashorn", "nashorn-core");
+            }
+            dependencies.appendChild(dependency);
+            existing.put(key, dependency);
+            return;
+        }
+        Element dependency = element(document, dependencies, "dependency");
+        appendText(document, dependency, "groupId", group);
+        appendText(document, dependency, "artifactId", artifact);
+        if (version != null && !version.isBlank()) {
+            appendText(document, dependency, "version", version);
+        }
+        if ("io.micronaut.testresources:micronaut-test-resources-control-panel".equals(key)) {
+            addMavenExclusion(document, dependency, "org.openjdk.nashorn", "nashorn-core");
+        }
+        dependencies.appendChild(dependency);
+        existing.put(key, dependency);
+    }
+
+    private static void addMavenExclusion(org.w3c.dom.Document document,
+                                          Element dependency,
+                                          String group,
+                                          String artifact) {
+        Element exclusions = directChild(dependency, "exclusions");
+        if (exclusions == null) {
+            exclusions = element(document, dependency, "exclusions");
+            dependency.appendChild(exclusions);
+        }
+        NodeList children = exclusions.getChildNodes();
+        for (int index = 0; index < children.getLength(); index++) {
+            if (children.item(index) instanceof Element exclusion
+                && "exclusion".equals(exclusion.getLocalName() == null ? exclusion.getNodeName() : exclusion.getLocalName())
+                && group.equals(childText(exclusion, "groupId"))
+                && artifact.equals(childText(exclusion, "artifactId"))) {
+                    return;
+            }
+        }
+        Element exclusion = element(document, exclusions, "exclusion");
+        appendText(document, exclusion, "groupId", group);
+        appendText(document, exclusion, "artifactId", artifact);
+        exclusions.appendChild(exclusion);
+    }
+
+    private static List<Element> directDependencyElements(Element dependencies) {
+        List<Element> result = new ArrayList<>();
+        NodeList children = dependencies.getChildNodes();
+        for (int index = 0; index < children.getLength(); index++) {
+            if (children.item(index) instanceof Element element && "dependency".equals(element.getLocalName() == null ? element.getNodeName() : element.getLocalName())) {
+                result.add(element);
+            }
+        }
+        return result;
+    }
+
+    private static String dependencyKey(Element dependency) {
+        return childText(dependency, "groupId") + ":" + childText(dependency, "artifactId");
+    }
+
+    private static Element directChild(Element parent, String name) {
+        NodeList children = parent.getChildNodes();
+        for (int index = 0; index < children.getLength(); index++) {
+            if (children.item(index) instanceof Element element && name.equals(element.getLocalName() == null ? element.getNodeName() : element.getLocalName())) {
+                return element;
+            }
+        }
+        return null;
+    }
+
+    private static String childText(Element parent, String name) {
+        Element child = directChild(parent, name);
+        if (child == null || child.getTextContent() == null) {
+            return null;
+        }
+        String value = child.getTextContent().trim();
+        return value.isEmpty() ? null : value;
+    }
+
+    private static Element element(org.w3c.dom.Document document, Node parent, String name) {
+        String namespace = parent.getNamespaceURI();
+        return namespace == null ? document.createElement(name) : document.createElementNS(namespace, name);
+    }
+
+    private static void appendText(org.w3c.dom.Document document, Element parent, String name, String value) {
+        Element child = element(document, parent, name);
+        child.setTextContent(value);
+        parent.appendChild(child);
+    }
+
+    private static String gradleTestResourcesDefaults() {
+        String defaults = InstallScope.TEST_RESOURCES_SERVER.defaultDependencies().stream()
+            .map(value -> "'" + value + "'")
+            .collect(java.util.stream.Collectors.joining(", "));
+        return "if (c != null) { "
+            + "def trDependency = c.allDependencies.find { it.group == 'io.micronaut.testresources' && it.name == 'micronaut-test-resources-server' }; "
+            + "def trVersion = trDependency?.version; "
+            + "[" + defaults + "].each { notation -> "
+            + "if (notation.startsWith('io.micronaut.testresources:') && trVersion) { notation = notation + ':' + trVersion }; "
+            + "p.dependencies.add(c.name, notation) }; "
+            + "c.exclude(group: 'org.openjdk.nashorn', module: 'nashorn-core') };";
     }
 
     private static List<Path> mergeClasspath(List<Path> primary, List<Path> additional) {

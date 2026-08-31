@@ -102,11 +102,13 @@ public final class PyprojectModelReader {
         List<String> runtime = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_RUNTIME);
         List<String> developmentRuntime = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_DEVELOPMENT_RUNTIME);
         List<String> build = readStringList(parsed, PyprojectConfigSpec.PYRONAUT_DEPENDENCIES_BUILD);
+        PyprojectModel.Packaging packaging = resolvePackaging(parsed);
 
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
             readString(parsed, PyprojectConfigSpec.PYRONAUT_CORE_VERSION),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_PLATFORM_VERSION),
             readStringList(parsed, PyprojectConfigSpec.PYRONAUT_REPOSITORIES),
+            packaging,
             new PyprojectModel.Dependencies(
                 runtime,
                 developmentRuntime,
@@ -119,7 +121,7 @@ public final class PyprojectModelReader {
             new PyprojectModel.Run(readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_RUN_BANNER_ENABLED)),
             resolveControlPanel(parsed),
             new PyprojectModel.Build(
-                resolveBuildMode(parsed),
+                packaging.format().legacyMode(),
                 readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED),
                 readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_BASE_IMAGE),
                 resolveBuildMetadata(parsed),
@@ -221,19 +223,25 @@ public final class PyprojectModelReader {
         return new PyprojectModelException("Invalid type for '" + key + "': expected " + expected, e);
     }
 
-    private static String resolveBuildMode(TomlParseResult parsed) {
-        String mode = readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_MODE);
-        if (mode == null || mode.isBlank()) {
-            return (String) PyprojectConfigSpec.PYRONAUT_BUILD_MODE.defaultValue();
+    private static PyprojectModel.Packaging resolvePackaging(TomlParseResult parsed) {
+        if (parsed.contains("tool.pyronaut.build.mode")) {
+            throw new PyprojectModelException(
+                "Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'"
+            );
         }
-        String normalized = mode.trim().toLowerCase();
-        if (PyprojectConfigSpec.PYRONAUT_BUILD_MODE.enumValues().contains(normalized)) {
-            return normalized;
+        String value = readString(parsed, PyprojectConfigSpec.PYRONAUT_PACKAGING_FORMAT);
+        if (value == null) {
+            value = (String) PyprojectConfigSpec.PYRONAUT_PACKAGING_FORMAT.defaultValue();
+        } else {
+            value = value.trim();
+            if (!PyprojectConfigSpec.PYRONAUT_PACKAGING_FORMAT.enumValues().contains(value)) {
+                throw new PyprojectModelException(
+                    "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_PACKAGING_FORMAT.canonicalPath()
+                        + "': expected one of " + PyprojectConfigSpec.PYRONAUT_PACKAGING_FORMAT.enumValues()
+                );
+            }
         }
-        throw new PyprojectModelException(
-            "Invalid value for '" + PyprojectConfigSpec.PYRONAUT_BUILD_MODE.canonicalPath()
-                + "': expected one of " + PyprojectConfigSpec.PYRONAUT_BUILD_MODE.enumValues()
-        );
+        return new PyprojectModel.Packaging(PyprojectModel.PackagingFormat.fromValue(value));
     }
 
     private static PyprojectModel.Metadata resolveBuildMetadata(TomlParseResult parsed) {

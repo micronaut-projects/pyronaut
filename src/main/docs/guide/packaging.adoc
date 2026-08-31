@@ -1,46 +1,88 @@
 = Packaging & Deployment
 
 `pyronaut build` packages the processed application for distribution. The
-selected mode comes from `--jvm` or `--native`, then
-`tool.pyronaut.build.mode`, then `tool.pyronaut.toolchain.type`. Use
-`--docker` to create a container image instead of a host artifact.
+default is `wheel-jvm`; configure another default with
+`tool.pyronaut.packaging.format`. An explicit packaging flag takes precedence
+over that setting. `tool.pyronaut.toolchain.type` only controls how Pyronaut's
+CLI tooling executes and does not select a build output.
 
 == Choosing a package type
 
 [cols="1,1,2",options="header"]
 |===
-|Package type |Command |Best fit and trade-off
+|Format |Equivalent command |Best fit and trade-off
 
-|JVM wheel
+|`fat-jar`
+|`pyronaut build --jar`
+|One JVM-hosted artifact runnable with `java -jar`. It includes the selected
+Java or Python production runtime and is typically larger than a wheel.
+
+|`wheel-jvm`
 |`pyronaut build --jvm`
 |The default Python distribution. It has the shortest build time and is a good
 choice when a JVM is already available in the deployment environment.
 
-|JVM Docker image
+|`docker-jvm`
 |`pyronaut build --jvm --docker`
 |A portable container form of the JVM wheel. JVM deployment generally offers
 the best peak throughput after warm-up, at the cost of JVM startup time and a
 larger memory footprint.
 
-|Application native executable
+|`wheel-native`
 |`pyronaut build --native`
 |Produces a standalone executable with fast startup and low memory use. Each
 application build performs native-image analysis, which is comparatively slow,
 and application code must satisfy native-image's closed-world requirements,
 including reachability metadata or reflection configuration where needed.
 
-|Application native Docker image
+|`docker-native`
 |`pyronaut build --native --docker`
 |Builds the native executable in a Linux container and packages it in a small
 runtime image. Choose this when the target platform is a container platform.
 
-|Crema base image
-|`pyronaut build --base-image`
-|Builds a reusable native production launcher. It balances JVM and fully native
-deployment: the native launcher gives native startup characteristics, while
-processed application code is loaded at runtime rather than being subject to a
-new closed-world analysis for every application build.
+|`wheel-crema`
+|`pyronaut build --native --base-image=default`
+|A wheel using a reusable native production runtime. A configured custom base
+is preferred; otherwise Pyronaut uses the bundled default.
+
+|`docker-crema`
+|`pyronaut build --native --base-image=default --docker`
+|A container with a reusable custom or bundled Crema base and an application
+layer.
 |===
+
+`pyronaut build --base-image` remains a separate operation that creates a
+reusable base; it does not select a final packaging format.
+
+== Runnable FAT JARs
+
+Build one executable JAR with:
+
+[source,bash]
+----
+pyronaut build --jar
+java -jar dist/hello-pyronaut-0.1.0.jar argument1 argument2
+----
+
+The artifact is written as `dist/<project-name>-<version>.jar`; unsafe filename
+characters are replaced with `-`. Both Java and Python applications require a
+compatible GraalVM JDK, as they use the same production runtime selected for a
+JVM wheel. Python FAT JARs therefore include GraalPy and are larger than their
+Java equivalents. The command supports Pyronaut projects, direct Java or Python
+sources, and external Maven or Gradle projects.
+
+The outer JAR contains a small launcher plus an indexed `PYRONAUT-INF` layout.
+Application classes and resources precede dependencies, followed by dependency
+roots in resolved-classpath order. Duplicate classes use first-root-wins
+semantics. Resources, including `META-INF/services` descriptors, remain
+enumerable across every root. Multi-release JAR selection and package manifest
+metadata such as sealing are preserved. The launcher reads entries directly
+from the artifact and does not extract them to disk.
+
+Packaging is reproducible: entry ordering and timestamps are deterministic and
+source paths are not recorded. Dependency signature files and stale JAR indexes
+are omitted because repackaging invalidates them. Sign the completed FAT JAR if
+artifact signing is required.
 
 == Wheels and JVM containers
 
@@ -129,6 +171,9 @@ executable, generated native classpath manifests, and the native-image
 
 [source,toml]
 ----
+[tool.pyronaut.packaging]
+format = "wheel-crema"
+
 [tool.pyronaut.build]
 base-image = "default"
 ----
@@ -145,8 +190,10 @@ multiple builds:
 
 [source,toml]
 ----
+[tool.pyronaut.packaging]
+format = "wheel-crema"
+
 [tool.pyronaut.build]
-mode = "native"
 base-image = "build/pyronaut-base/pyronaut-run-python"
 ----
 
@@ -164,13 +211,26 @@ layer:
 [source,bash]
 ----
 pyronaut build --native --docker --base-image
-pyronaut build --native --docker
+----
+
+[source,toml]
+----
+[tool.pyronaut.packaging]
+format = "docker-crema"
+----
+
+[source,bash]
+----
+pyronaut build
 ----
 
 To reuse a base produced in CI or another project, configure its image name:
 
 [source,toml]
 ----
+[tool.pyronaut.packaging]
+format = "docker-crema"
+
 [tool.pyronaut.build.docker]
 base-image = "registry.example.com/acme/pyronaut-runtime:1"
 ----
@@ -188,6 +248,7 @@ Docker, and base-image flows as a regular project:
 ----
 pyronaut build App.java --native --name hello-java --version 1.0.0
 pyronaut build App.py --docker --base-image=default
+pyronaut build App.java --jar --name hello-java --version 1.0.0
 ----
 
 Sources compile to disk under `__pyronaut__/direct-source-build`. Use

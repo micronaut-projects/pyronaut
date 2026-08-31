@@ -57,14 +57,15 @@ additional-resources = ["views", "assets"]
 additional-test-resources = ["tests-fixtures"]
 ----
 
-== Build, Processor, and Test Modes
+== Packaging, Processor, and Test Modes
 
-Pyronaut supports separate defaults for build, processing, and test execution:
+Choose what `pyronaut build` produces when no packaging-shaping command-line
+option is present:
 
 [source,toml]
 ----
-[tool.pyronaut.build]
-mode = "jvm" # jvm|native
+[tool.pyronaut.packaging]
+format = "wheel-jvm"
 
 [tool.pyronaut.processor]
 mode = "jvm" # jvm|native
@@ -77,12 +78,23 @@ mode = "jvm" # jvm|native
 engine = "both" # junit|pytest|both
 ----
 
+`format` accepts exactly `fat-jar`, `wheel-jvm`, `wheel-native`,
+`wheel-crema`, `docker-jvm`, `docker-native`, or `docker-crema`. It defaults to
+`wheel-jvm`. Command-line flags such as `--jar`, `--jvm`, `--native`, and
+`--docker` override the configured format for that invocation.
+
+The former `tool.pyronaut.build.mode` setting is no longer accepted. Migrate
+`mode = "jvm"` to `format = "wheel-jvm"`, and `mode = "native"` to either
+`format = "wheel-native"` for a closed-world build or `format = "wheel-crema"`
+for a reusable native runtime.
+
 The test engine defaults to `both`. Use `junit` for JUnit Jupiter tests, `pytest` for pytest tests, or `both` to execute both types.
 
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
-Set `base-image = "default"` there to package native applications against the
-bundled language-specific production runtime. Set a filesystem path instead to
-reuse a custom base created by `pyronaut build --base-image`.
+For a Crema format, set `base-image = "default"` to use the bundled
+language-specific production runtime, or set a filesystem path to reuse a
+custom base created by `pyronaut build --base-image`. A closed-world
+`wheel-native` or `docker-native` format rejects a configured reusable base.
 See the CLI reference for the full build option surface.
 See <<incrementalProcessing,Incremental Processing>> before enabling incremental processing, the compiler daemon, or the optimistic Python dependency policy.
 
@@ -122,3 +134,5 @@ version = "25i2"
 
 Development builds can use `distribution = "dev"` with a `release-tag` or explicit `download-url`.
 Use `type = "native"` to route supported CLI lifecycle commands through the native `pyronaut-dev` uber CLI.
+It selects how CLI tooling executes; it does not select the output of
+`pyronaut build`. Use `[tool.pyronaut.packaging]` for the build default.

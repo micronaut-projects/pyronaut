@@ -101,4 +101,33 @@ class ExternalBuildResolverTest {
         assertFalse(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.MAVEN, pom));
     }
 
+    @Test
+    void preparesCompleteMavenServerClasspathWithoutApplicationRuntime() throws Exception {
+        var root = Files.createTempDirectory("pyronaut-maven-test-resources-classpath");
+        var effectivePom = root.resolve("effective-pom.xml");
+        Files.writeString(effectivePom, """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>example</groupId><artifactId>application</artifactId><version>1.0</version>
+              <dependencies>
+                <dependency><groupId>com.mysql</groupId><artifactId>mysql-connector-j</artifactId><version>9.0.0</version></dependency>
+                <dependency><groupId>io.micronaut.data</groupId><artifactId>micronaut-data-jdbc</artifactId><version>4.0.0</version></dependency>
+                <dependency><groupId>com.example</groupId><artifactId>application-only</artifactId><version>1.0</version></dependency>
+                <dependency><groupId>io.micronaut.testresources</groupId><artifactId>micronaut-test-resources-server</artifactId><version>4.1.0</version></dependency>
+                <dependency><groupId>io.micronaut.testresources</groupId><artifactId>micronaut-test-resources-control-panel</artifactId><version>4.1.0</version></dependency>
+              </dependencies>
+            </project>
+            """);
+
+        ExternalBuildResolver.prepareMavenTestResourcesPom(effectivePom);
+
+        String generated = Files.readString(effectivePom);
+        assertFalse(generated.contains("application-only"));
+        assertTrue(generated.contains("micronaut-http-server"));
+        assertTrue(generated.contains("micronaut-test-resources-jdbc-mysql"));
+        assertTrue(generated.contains("micronaut-test-resources-server"));
+        assertTrue(generated.contains("4.1.0"));
+        assertTrue(generated.contains("nashorn-core"));
+    }
+
 }

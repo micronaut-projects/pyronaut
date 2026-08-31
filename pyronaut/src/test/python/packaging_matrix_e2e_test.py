@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 HELLO_BODY = "Hello World"
 SCENARIOS = (
-    "jvm-wheel", "native-wheel", "default-base-wheel", "custom-base-wheel",
+    "fat-jar", "jvm-wheel", "native-wheel", "default-base-wheel", "custom-base-wheel",
     "jvm-docker", "native-docker", "default-base-docker", "custom-base-docker",
 )
 
@@ -37,7 +37,7 @@ class ScenarioResult:
 
 class PackagingMatrixE2ETest(unittest.TestCase):
     def test_matrix_shape(self) -> None:
-        self.assertEqual(40, len(PackagingMatrixRunner._fixtures()) * len(SCENARIOS))
+        self.assertEqual(45, len(PackagingMatrixRunner._fixtures()) * len(SCENARIOS))
         self.assertEqual("Hello World", HELLO_BODY)
 
     @unittest.skipUnless(
@@ -149,18 +149,24 @@ class PackagingMatrixRunner:
             self._build(base_args, project, log, 3600)
             if scenario.endswith("wheel"):
                 self._configure_base(project, base)
-                self._build(self._build_args(project, direct, language, "native"), project, log, 3600)
+                self._build(self._build_args(project, direct, language, None), project, log, 3600)
                 return self._wheel(project, fixture, language, log, setup=direct)
             self._configure_docker_base(project, f"{image}:0.1.0-native-base")
-            self._build(self._build_args(project, direct, language, "native", docker=True), project, log, 3600)
+            self._build(self._build_args(project, direct, language, None), project, log, 3600)
             return f"{image}:0.1.0-native", self._docker(f"{image}:0.1.0-native", project, log)
         if scenario == "default-base-wheel":
             self._build(self._build_args(project, direct, language, "native", default_base=True), project, log, 3600)
             return self._wheel(project, fixture, language, log, setup=direct)
         if scenario == "default-base-docker":
             self._build(self._build_args(project, direct, language, "native", docker=True, default_base=True), project, log, 3600)
-            self._build(self._build_args(project, direct, language, "native", docker=True), project, log, 3600)
             return f"{image}:0.1.0-native", self._docker(f"{image}:0.1.0-native", project, log)
+        if scenario == "fat-jar":
+            self._build(self._build_args(project, direct, language, "jar"), project, log, 1800)
+            jars = sorted((project / "dist").glob("*.jar"))
+            if not jars:
+                raise RuntimeError("No FAT JAR was produced")
+            jar = jars[-1]
+            return str(jar), self._process(["java", "-jar", str(jar)], project, log)
         if scenario == "jvm-docker":
             self._build(self._build_args(project, direct, language, "jvm", docker=True), project, log, 1800)
             return f"{image}:0.1.0", self._docker(f"{image}:0.1.0", project, log)
@@ -171,11 +177,12 @@ class PackagingMatrixRunner:
         self._build(self._build_args(project, direct, language, mode), project, log, 3600)
         return self._wheel(project, fixture, language, log, setup=False)
 
-    def _build_args(self, project: Path, direct: bool, language: str, mode: str, *, docker: bool = False, base: bool = False, default_base: bool = False, output: Path | None = None) -> list[str]:
+    def _build_args(self, project: Path, direct: bool, language: str, mode: str | None, *, docker: bool = False, base: bool = False, default_base: bool = False, output: Path | None = None) -> list[str]:
         args = ["build"]
         if direct:
             args += ["App.py" if language == "python" else "App.java", "--name", _project_name(project), "--version", "0.1.0"]
-        args.append(f"--{mode}")
+        if mode is not None:
+            args.append(f"--{mode}")
         if docker:
             args.append("--docker")
         if base:
@@ -353,10 +360,12 @@ class PackagingMatrixRunner:
         pyproject = project / "pyproject.toml"
         text = pyproject.read_text(encoding="utf-8") if pyproject.exists() else ""
         text = _set_toml_key(text, "[tool.pyronaut.build]", "base-image", str(base))
+        text = _set_toml_key(text, "[tool.pyronaut.packaging]", "format", "wheel-crema")
         pyproject.write_text(text, encoding="utf-8")
         (project / "setup.toml").write_text(
             f'[project]\nname = "{_project_name(project)}"\nversion = "0.1.0"\n\n'
-            f'[tool.pyronaut.build]\nmode = "native"\nbase-image = "{base}"\n', encoding="utf-8"
+            f'[tool.pyronaut.packaging]\nformat = "wheel-crema"\n\n'
+            f'[tool.pyronaut.build]\nbase-image = "{base}"\n', encoding="utf-8"
         )
 
     @staticmethod
@@ -364,6 +373,7 @@ class PackagingMatrixRunner:
         pyproject = project / "pyproject.toml"
         text = pyproject.read_text(encoding="utf-8")
         text = _set_toml_key(text, "[tool.pyronaut.build.docker]", "base-image", image)
+        text = _set_toml_key(text, "[tool.pyronaut.packaging]", "format", "docker-crema")
         pyproject.write_text(text, encoding="utf-8")
 
     def _allocate_port(self) -> int:

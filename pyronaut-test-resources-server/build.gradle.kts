@@ -11,22 +11,31 @@ dependencies {
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mnPicocli.picocli)
     implementation(libs.micronaut.control.panel.core)
-    implementation(mn.micronaut.http.server)
+//    implementation(mn.micronaut.http.server)
     implementation(libs.micronaut.test.resources.build.tools)
-    implementation(libs.micronaut.test.resources.core)
-    implementation(libs.micronaut.test.resources.control.panel) {
+//    implementation(libs.micronaut.test.resources.core)
+    compileOnly(libs.micronaut.test.resources.core)
+    compileOnly(libs.micronaut.test.resources.control.panel) {
         // The server does not render Handlebars templates, so it does not
         // need the optional Nashorn JavaScript engine pulled by the control
         // panel UI.
         exclude(group = "org.openjdk.nashorn", module = "nashorn-core")
     }
-    implementation(libs.micronaut.test.resources.server)
-    implementation(mnSerde.micronaut.serde.jackson)
-    implementation(mnLogging.logback.classic)
-    runtimeOnly(libs.slf4j.jul.to.slf4j)
-    runtimeOnly(mn.micronaut.http.server.netty)
+//    implementation(libs.micronaut.test.resources.server)
+    compileOnly(libs.micronaut.test.resources.server)
+//    implementation(mnSerde.micronaut.serde.jackson)
+//    implementation(mnLogging.logback.classic)
+    compileOnly(mnLogging.logback.classic)
+//    runtimeOnly(libs.slf4j.jul.to.slf4j)
+//    runtimeOnly(mn.micronaut.http.server.netty)
 
     testImplementation(libs.docker.java.api)
+    testImplementation(libs.micronaut.test.resources.core)
+    testImplementation(libs.micronaut.test.resources.control.panel) {
+        exclude(group = "org.openjdk.nashorn", module = "nashorn-core")
+    }
+    testImplementation(libs.micronaut.test.resources.server)
+    testImplementation(mnLogging.logback.classic)
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
 }

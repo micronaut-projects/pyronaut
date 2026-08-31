@@ -313,7 +313,7 @@ class PyronautTestMainTest {
     }
 
     @Test
-    void excludesClassesDirectoryWhenTestClassesDirectoryIsPresent() throws Exception {
+    void includesClassesDirectoryWhenTestClassesDirectoryIsPresent() throws Exception {
         Path project = setupProject();
         compileGeneratedTestClass(project.resolve("__pyronaut__/classes"));
         Files.createDirectories(project.resolve("__pyronaut__/test-classes"));
@@ -322,7 +322,7 @@ class PyronautTestMainTest {
         command.projectDir = project;
         command.selectClasses = java.util.List.of("generated.GeneratedPassingTest");
 
-        assertEquals(7, command.call());
+        assertEquals(0, command.call());
     }
 
     @Test
@@ -598,10 +598,22 @@ class PyronautTestMainTest {
         List<String> urls = PyronautTestMain.resolveExternalProjectLayout(
             project, Path.of("build/pyronaut/classes"), Path.of("build/pyronaut/test-classes"), external
         ).classpathUrls().stream().map(Object::toString).toList();
-        assertTrue(urls.stream().anyMatch(url -> url.contains("build/pyronaut/classes")));
-        assertTrue(urls.stream().anyMatch(url -> url.contains("build/pyronaut/test-classes")));
+        int testClasses = indexOfContaining(urls, "build/pyronaut/test-classes");
+        int classes = indexOfContaining(urls, "build/pyronaut/classes");
+        assertTrue(testClasses >= 0);
+        assertTrue(classes >= 0);
+        assertTrue(testClasses < classes);
         assertTrue(urls.stream().anyMatch(url -> url.contains("main/resources")));
         assertTrue(urls.stream().anyMatch(url -> url.contains("test/resources")));
+    }
+
+    private static int indexOfContaining(List<String> values, String fragment) {
+        for (int i = 0; i < values.size(); i++) {
+            if (values.get(i).contains(fragment)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     @Test
