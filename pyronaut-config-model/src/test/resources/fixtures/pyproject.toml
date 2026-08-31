@@ -13,8 +13,8 @@ repositories = [
     "https://repo.gradle.org/gradle/libs-releases"
 ]
 
-[tool.pyronaut.build]
-mode = "jvm"
+[tool.pyronaut.packaging]
+format = "wheel-jvm"
 
 [tool.pyronaut.processor]
 mode = "jvm"

@@ -493,7 +493,9 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
                                            Iterable<String> selfClasspathEntries) throws IOException {
             if (manifestPath == null || !Files.exists(manifestPath)) {
                 throw new IllegalStateException(
-                    "Missing test resources server classpath manifest: " + (manifestPath == null ? "<null>" : manifestPath.toAbsolutePath())
+                    "Missing test resources server classpath manifest: "
+                        + (manifestPath == null ? "<null>" : manifestPath.toAbsolutePath())
+                        + ". Run pyronaut install again."
                 );
             }
             LinkedHashSet<File> entries = new LinkedHashSet<>();
@@ -501,16 +503,26 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
                 if (value == null || value.isBlank()) {
                     continue;
                 }
-                entries.add(Path.of(value).toAbsolutePath().normalize().toFile());
+                entries.add(requireClasspathEntry(value));
             }
             for (String line : Files.readAllLines(manifestPath, java.nio.charset.StandardCharsets.UTF_8)) {
                 String value = line == null ? "" : line.trim();
                 if (value.isEmpty()) {
                     continue;
                 }
-                entries.add(Path.of(value).toAbsolutePath().normalize().toFile());
+                entries.add(requireClasspathEntry(value));
             }
             return List.copyOf(entries);
+        }
+
+        private static File requireClasspathEntry(String value) throws IOException {
+            Path entry = Path.of(value).toAbsolutePath().normalize();
+            if (!Files.exists(entry)) {
+                throw new IllegalStateException(
+                    "Missing test resources server classpath entry: " + entry + ". Run pyronaut install again."
+                );
+            }
+            return entry.toRealPath().toFile();
         }
     }
 }

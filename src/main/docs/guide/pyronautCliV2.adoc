@@ -7,6 +7,7 @@ Pyronaut CLI v2 is a process-oriented toolchain. The `pyronaut` command is a Pyt
 - `pyronaut-dev`
 - `pyronaut-run`
 - `pyronaut-test`
+- `pyronaut-jar-build` (used by `pyronaut build --jar`)
 - `pyronaut-native-build` (used by `pyronaut build --native`)
 - `pyronaut-validate-config` (used by `pyronaut validate-config`)
 - `pyronaut-test-resources-server` (used by `pyronaut test-resources-server`)
@@ -357,25 +358,30 @@ Report artifacts:
 
 === `pyronaut build`
 
-Builds a JVM wheel, a native executable, or a Docker image for either mode.
+Builds a runnable FAT JAR, Python wheel, or Docker image.
 
-Build mode selection:
+Packaging selection:
 
+- `--jar` selects `fat-jar`
 - `--mode jvm|native`
 - `--jvm` (shortcut for JVM mode)
 - `--native` (shortcut for native mode)
-- `tool.pyronaut.build.mode` in `pyproject.toml`
-- `tool.pyronaut.toolchain.type` when no build mode is explicitly configured
+- `--docker` changes an explicit JVM/native selection to its Docker equivalent
+- `--base-image=default` changes a native selection to its Crema equivalent
+- `tool.pyronaut.packaging.format` when no packaging-shaping flag is present
 
-The precedence is command-line mode, then `tool.pyronaut.build.mode`, then
-`tool.pyronaut.toolchain.type`, then JVM mode. For example, setting
-`tool.pyronaut.toolchain.type = "native"` makes `pyronaut build` create a
-native build by default, while `pyronaut build --jvm` still explicitly creates
-a JVM wheel.
+The configured values are `fat-jar`, `wheel-jvm`, `wheel-native`,
+`wheel-crema`, `docker-jvm`, `docker-native`, and `docker-crema`; the default is
+`wheel-jvm`. Explicit flags take precedence. The spelling `jar` is not accepted
+in configuration. `tool.pyronaut.build.mode` has been removed: migrate JVM and
+native values to `wheel-jvm` and `wheel-native` (or the matching Docker/Crema
+format). `tool.pyronaut.toolchain.type` continues to select how CLI tools run,
+but no longer changes build output.
 
 Common options:
 
 - `--project-dir <dir>`
+- `--jar`: build one runnable FAT JAR
 - `--docker`: build a container image instead of a wheel/native binary on the host
 - `--static`: static native container build; only valid with `--native --docker`
 - `--base-image`: build a reusable Crema production runtime image
@@ -391,7 +397,26 @@ JVM mode:
 - Builds a wheel using `pip wheel`.
 - Outputs artifacts to `dist/`.
 
+FAT JAR (`pyronaut build --jar`):
+
+- Rejects `--main-class` and JVM/native, Docker, static, and base-image flags.
+- Packages application classes and resources before ordered runtime and
+  production-launcher dependencies.
+- Produces `dist/<project-name>-<version>.jar`, runnable with `java -jar`.
+- Uses an indexed class loader without extracting dependency entries.
+- Preserves multi-release and package-manifest behavior, enumerates duplicate
+  resources and services, and removes invalidated dependency signature/index
+  metadata.
+- Requires the same compatible GraalVM JDK as a JVM wheel; a Python application
+  includes the GraalPy runtime and consequently produces a larger artifact.
+
 Native mode always uses `io.micronaut.pyronaut.run.PyronautRunMain`; `--main-class` is not supported.
+
+`wheel-native` and `docker-native` are closed-world formats and reject a
+configured reusable base. `wheel-crema` and `docker-crema` use a configured
+custom base when present, otherwise the bundled language-specific default.
+Bare `--base-image` remains the separate operation for building a reusable
+base.
 
 The SDK wheel contains JVM launchers only. Native project commands download
 `pyronaut-dev` on demand, and native production runs download `pyronaut-run`
@@ -487,12 +512,15 @@ a custom base image's SBOM.
 
 For Docker, `pyronaut build --native --docker --base-image` first creates and
 tags `<image-name>:<project-version>-native-base` and then creates the final
-application image. Future Docker builds reuse that base when no explicit
-Docker base is configured. To share a base between projects or CI builds,
-configure its OCI image reference:
+application image. Select `docker-crema` for future builds that should reuse
+that recorded base. To share a base between projects or CI builds, configure
+its OCI image reference:
 
 [source,toml]
 ----
+[tool.pyronaut.packaging]
+format = "docker-crema"
+
 [tool.pyronaut.build.docker]
 base-image = "registry.example.com/acme/pyronaut-runtime:1"
 ----
@@ -516,7 +544,7 @@ PYRONAUT_PACKAGING_E2E=true \
   python -m unittest packaging_matrix_e2e_test
 ----
 
-The matrix runs JVM, native, default-base, custom-base, and Docker packaging
+The 45-case matrix runs FAT JAR, JVM, native, default-base, custom-base, and Docker packaging
 sequentially. It uses isolated copies under `~/dev/pyronaut-testing` by
 default. Set `PYRONAUT_PACKAGING_E2E_WORKSPACE` to change that location and
 `PYRONAUT_PACKAGING_E2E_CLI` to select the installed `pyronaut` executable.
@@ -725,7 +753,7 @@ Distribution sources:
 
 Behavior notes:
 
-- `tool.pyronaut.toolchain.type` controls how the `pyronaut` command executes CLI tooling and is also the default build mode when `tool.pyronaut.build.mode` and command-line build mode are absent.
+- `tool.pyronaut.toolchain.type` controls how the `pyronaut` command executes CLI tooling. Build output defaults are configured separately with `tool.pyronaut.packaging.format`.
 - Command-specific `tool.pyronaut.processor.mode` and `tool.pyronaut.test.mode` settings override the global toolchain type for those commands.
 - If no explicit toolchain is configured, Pyronaut CLI accepts any compatible GraalVM JDK 25+ already available on the machine.
 - If an explicit toolchain is configured, Pyronaut only reuses an installed JDK when the distribution, version, and Java major version match the requested spec.
@@ -769,8 +797,8 @@ Optional `pyproject.toml` settings:
 
 [source,toml]
 ----
-[tool.pyronaut.build]
-mode = "native"
+[tool.pyronaut.packaging]
+format = "wheel-native"
 
 [tool.pyronaut.build.metadata]
 enabled = true
