@@ -1,4 +1,9 @@
 {
+  "resources": [
+    {
+      "glob": "META-INF/pyronaut/version\\.properties"
+    }
+  ],
   "reflection": [
     {
       "type": "groovy.lang.Closure"
