@@ -333,7 +333,7 @@ final class MavenClasspathResolver {
         }
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener)) {
-            List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
+            List<Dependency> managedDependencies = new ArrayList<>(managedDependencies(model, repositories, session));
             if (progressListener != null) progressListener.reset();
             Map<String, String> managedVersions = new LinkedHashMap<>();
             for (Dependency dependency : managedDependencies) {
@@ -349,6 +349,12 @@ final class MavenClasspathResolver {
                 managedVersions,
                 includeDefaultDependencies
             ));
+            Set<String> explicitlyVersionedModules = coordinates.stream()
+                .filter(coordinate -> coordinate.split(":").length == 3)
+                .map(MavenClasspathResolver::moduleKey)
+                .collect(java.util.stream.Collectors.toSet());
+            managedDependencies.removeIf(dependency -> dependency.getArtifact() != null
+                && explicitlyVersionedModules.contains(dependency.getArtifact().getGroupId() + ":" + dependency.getArtifact().getArtifactId()));
             if (coordinates.isEmpty()) {
                 return new ResolvedScopeDetails(List.of(), null, List.of());
             }
