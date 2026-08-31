@@ -121,6 +121,14 @@ class PyronautInstallMainTest {
             true,
             true
         )), invocations);
+
+    }
+
+    @Test
+    void resolvesPyronautVersionFromResourceWhenPackageMetadataIsUnavailable() throws Exception {
+        String version = MavenClasspathResolver.resolvePyronautVersion(null, getClass().getResourceAsStream("/META-INF/pyronaut/version.properties"));
+
+        assertNotEquals("", version);
     }
 
     @Test

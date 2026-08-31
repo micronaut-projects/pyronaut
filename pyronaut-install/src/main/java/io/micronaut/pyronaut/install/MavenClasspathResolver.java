@@ -62,6 +62,7 @@ import org.eclipse.aether.util.repository.AuthenticationBuilder;
 import org.eclipse.aether.util.repository.DefaultProxySelector;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -72,6 +73,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Properties;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -100,6 +102,7 @@ final class MavenClasspathResolver {
     private static final String JUNIT_JUPITER_ENGINE_MODULE = "org.junit.jupiter:junit-jupiter-engine";
     private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
     private static final String PYRONAUT_BOM_ARTIFACT = "micronaut-pyronaut-bom";
+    private static final String PYRONAUT_VERSION_RESOURCE = "/META-INF/pyronaut/version.properties";
     private static final String SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/";
     private static final Set<String> EXTRA_FORBIDDEN_SERVER_MODULES = Set.of(
         "io.micronaut.testresources:micronaut-test-resources-build-tools",
@@ -742,11 +745,24 @@ final class MavenClasspathResolver {
     }
 
     private static String resolvePyronautVersion() {
-        Package pkg = MavenClasspathResolver.class.getPackage();
-        if (pkg == null) {
+        try (InputStream resource = MavenClasspathResolver.class.getResourceAsStream(PYRONAUT_VERSION_RESOURCE)) {
+            return resolvePyronautVersion(MavenClasspathResolver.class.getPackage(), resource);
+        } catch (IOException e) {
             return null;
         }
-        return pkg.getImplementationVersion();
+    }
+
+    static String resolvePyronautVersion(Package pkg, InputStream resource) throws IOException {
+        String packageVersion = pkg == null ? null : normalizedVersion(pkg.getImplementationVersion());
+        if (packageVersion != null) {
+            return packageVersion;
+        }
+        if (resource == null) {
+            return null;
+        }
+        Properties properties = new Properties();
+        properties.load(resource);
+        return normalizedVersion(properties.getProperty("version"));
     }
 
     private static boolean requiresPyronautManagedDependencies(PyprojectModel model) {

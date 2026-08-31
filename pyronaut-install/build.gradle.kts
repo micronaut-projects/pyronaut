@@ -42,4 +42,10 @@ tasks {
         applicationName = "pyronaut-install"
     }
 
+    processResources {
+        filesMatching("META-INF/pyronaut/version.properties") {
+            expand("pyronautVersion" to project.version)
+        }
+    }
+
 }
