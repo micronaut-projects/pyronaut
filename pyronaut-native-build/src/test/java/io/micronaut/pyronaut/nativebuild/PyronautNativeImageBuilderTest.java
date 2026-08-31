@@ -99,6 +99,7 @@ class PyronautNativeImageBuilderTest {
         assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.*"));
         assertTrue(command.contains("-Dmicronaut.graalvm.imagesingletons.enabled=false"));
         assertTrue(command.contains("-H:Preserve=package=org.graalvm.home.*"));
+        assertTrue(command.contains("-H:Preserve=package=org.graalvm.nativeimage"));
         assertTrue(command.contains("-H:Preserve=package=org.graalvm.polyglot"));
     }
 
