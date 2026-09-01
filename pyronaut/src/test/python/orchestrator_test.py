@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import io
 import os
 import subprocess
@@ -1156,12 +1157,17 @@ class OrchestratorTest(unittest.TestCase):
             executable.write_text("#!/bin/sh\n", encoding="utf-8")
             shared_jar = root / "tools" / "shared" / "lib" / "runtime.jar"
             shared_jar.parent.mkdir(parents=True)
-            shared_jar.write_text("shared", encoding="utf-8")
+            resolved_jar = root / "repository" / "runtime.jar"
+            resolved_jar.parent.mkdir(parents=True)
+            resolved_jar.write_text("shared", encoding="utf-8")
+            shared_jar.symlink_to(resolved_jar)
             target = root / "context" / "tools" / "pyronaut-run"
 
             cli._stage_delegate_distribution(str(executable), target)  # noqa: SLF001
 
-            self.assertEqual("shared", (target.parent / "shared" / "lib" / "runtime.jar").read_text(encoding="utf-8"))
+            staged_jar = target.parent / "shared" / "lib" / "runtime.jar"
+            self.assertEqual("shared", staged_jar.read_text(encoding="utf-8"))
+            self.assertFalse(staged_jar.is_symlink())
 
     def test_native_provided_jars_resolve_from_wheel_shared_lib_with_source_sibling(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -7343,6 +7349,152 @@ java-version = 25
 
         self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
         self.assertIn("Missing delegated executable: pyronaut-test-resources-server", stderr.getvalue())
+
+    def test_resolved_tool_executable_requires_complete_matching_cache(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            package = root / "package"
+            tools = package / "tools"
+            descriptor = tools / "pyronaut-run" / "bin" / "pyronaut-tool-classpath.tsv"
+            descriptor.parent.mkdir(parents=True)
+            descriptor.write_text("bundled\tmicronaut-pyronaut-run-1.0.jar\n", encoding="utf-8")
+            bundled_artifact = tools / "shared" / "lib" / "micronaut-pyronaut-run-1.0.jar"
+            bundled_artifact.parent.mkdir(parents=True)
+            bundled_artifact.write_bytes(b"run")
+            (tools / "tool-runtime.properties").write_text("sdk.version=1.2.3\n", encoding="utf-8")
+            (package / "version.properties").write_text("pyronaut=1.2.3\n", encoding="utf-8")
+
+            cache = root / "home" / ".pyronaut" / "tools" / "1.2.3" / "current"
+            executable = cache / "tools" / "pyronaut-run" / "bin" / "pyronaut-run"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            artifact = cache / "tools" / "shared" / "lib" / "micronaut-pyronaut-run-1.0.jar"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"run")
+            digest = hashlib.sha256()
+            digest.update(b"pyronaut-run\0")
+            digest.update(descriptor.read_bytes())
+            digest.update(b"\0")
+            (tools / "tool-runtime.properties").write_text(
+                f"sdk.version=1.2.3\ndescriptor.sha256={digest.hexdigest()}\n", encoding="utf-8"
+            )
+            (cache / "tool-runtime.properties").write_text(
+                f"sdk.version=1.2.3\ndescriptor.sha256={digest.hexdigest()}\n", encoding="utf-8"
+            )
+
+            with patch.object(cli, "__file__", str(package / "cli.py")), patch.dict(
+                os.environ, {"HOME": str(root / "home")}
+            ):
+                self.assertEqual(executable, cli._resolved_tool_executable("pyronaut-run"))
+                artifact.write_bytes(b"corrupt")
+                self.assertIsNone(cli._resolved_tool_executable("pyronaut-run"))
+                artifact.unlink()
+                corrupt = root / "corrupt.jar"
+                corrupt.write_bytes(b"corrupt")
+                artifact.symlink_to(corrupt)
+                self.assertIsNone(cli._resolved_tool_executable("pyronaut-run"))
+                artifact.unlink()
+                self.assertIsNone(cli._resolved_tool_executable("pyronaut-run"))
+
+    def test_tools_bootstrap_forwards_resolution_settings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package = Path(temp_dir) / "package"
+            tools = package / "tools"
+            tools.mkdir(parents=True)
+            (tools / "tool-runtime.properties").write_text("sdk.version=1.2.3\n", encoding="utf-8")
+            installer = Path(temp_dir) / "pyronaut-install"
+            installer.write_text("#!/bin/sh\n", encoding="utf-8")
+            completed = subprocess.CompletedProcess([], 0)
+
+            with (
+                patch.object(cli, "__file__", str(package / "cli.py")),
+                patch.object(cli, "_bundled_executable", return_value=installer),
+                patch.object(cli.subprocess, "run", return_value=completed) as run_process,
+                patch.object(cli, "_tool_bootstrap_local_repository", "/tmp/repository"),
+                patch.object(cli, "_tool_bootstrap_offline", True),
+                patch.object(cli, "_tool_bootstrap_refresh", True),
+                patch.object(cli, "_tool_bootstrap_progress", "off"),
+            ):
+                self.assertTrue(cli._bootstrap_resolved_tools())
+
+            command_line = run_process.call_args.args[0]
+            self.assertEqual(
+                [
+                    str(installer),
+                    "--resolve-tools-only",
+                    "--local-repository",
+                    "/tmp/repository",
+                    "--offline",
+                    "--refresh",
+                    "--progress",
+                    "off",
+                ],
+                command_line,
+            )
+            self.assertEqual(
+                tools.resolve(), Path(run_process.call_args.kwargs["env"]["PYRONAUT_PACKAGED_TOOLS_DIR"])
+            )
+            self.assertEqual(
+                Path.home() / ".pyronaut" / "tools",
+                Path(run_process.call_args.kwargs["env"]["PYRONAUT_TOOLS_CACHE_DIR"]),
+            )
+
+    def test_bundled_executable_selects_windows_batch_launcher(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package = Path(temp_dir) / "package"
+            with (
+                patch.object(cli, "__file__", str(package / "cli.py")),
+                patch.object(cli.sys, "platform", "win32"),
+            ):
+                self.assertEqual(
+                    package.resolve() / "tools" / "pyronaut-run" / "bin" / "pyronaut-run.bat",
+                    cli._bundled_executable("pyronaut-run"),
+                )
+
+    def test_resolve_executable_preserves_override_and_installer_precedence(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            installer = Path(temp_dir) / "pyronaut-install"
+            installer.write_text("#!/bin/sh\n", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"PYRONAUT_RUN_EXECUTABLE": "/custom/pyronaut-run"}),
+                patch.object(cli, "_resolved_tool_executable", return_value=Path("/cache/pyronaut-run")),
+            ):
+                self.assertEqual("/custom/pyronaut-run", cli._resolve_executable("pyronaut-run"))
+            with (
+                patch.dict(os.environ, {"PYRONAUT_INSTALL_EXECUTABLE": ""}),
+                patch.object(cli, "_bundled_executable", return_value=installer),
+                patch.object(cli, "_resolved_tool_executable") as resolved_tool,
+            ):
+                self.assertEqual(str(installer), cli._resolve_executable("pyronaut-install"))
+                resolved_tool.assert_not_called()
+
+    def test_resolve_executable_repairs_missing_cache_and_keeps_complete_distribution_fallback(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cached = root / "cache" / "pyronaut-run"
+            bundled = root / "bundled" / "bin" / "pyronaut-run"
+            cached.parent.mkdir(parents=True)
+            bundled.parent.mkdir(parents=True)
+            cached.write_text("#!/bin/sh\n", encoding="utf-8")
+            bundled.write_text("#!/bin/sh\n", encoding="utf-8")
+            cli._tool_bootstrap_attempted.clear()
+            with (
+                patch.dict(os.environ, {"PYRONAUT_RUN_EXECUTABLE": ""}),
+                patch.object(cli, "_resolved_tool_executable", side_effect=[None, cached]),
+                patch.object(cli, "_bootstrap_resolved_tools", return_value=True) as bootstrap,
+                patch.object(cli, "_bundled_executable", return_value=None),
+            ):
+                self.assertEqual(str(cached), cli._resolve_executable("pyronaut-run"))
+                bootstrap.assert_called_once_with()
+
+            cli._tool_bootstrap_attempted.clear()
+            with (
+                patch.dict(os.environ, {"PYRONAUT_RUN_EXECUTABLE": ""}),
+                patch.object(cli, "_resolved_tool_executable", return_value=None),
+                patch.object(cli, "_bootstrap_resolved_tools", return_value=False),
+                patch.object(cli, "_bundled_executable", return_value=bundled),
+            ):
+                self.assertEqual(str(bundled), cli._resolve_executable("pyronaut-run"))
 
     @staticmethod
     def _resolver():
