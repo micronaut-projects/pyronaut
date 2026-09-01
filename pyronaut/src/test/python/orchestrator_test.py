@@ -5344,6 +5344,27 @@ additional-test-resources = ["test-fixtures"]
 
             self.assertIn("COPY app/views/ /app/views/", dockerfile.read_text(encoding="utf-8"))
 
+    def test_native_dockerfile_layers_language_resources_separately(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dockerfile = Path(temp_dir) / "DockerfileNative"
+            cli._write_native_dockerfile(  # noqa: SLF001
+                target=dockerfile,
+                builder_image="example/builder:1",
+                runtime_image="example/runtime:1",
+                project_name="demo",
+                main_class="example.Main",
+                include_python=True,
+                verbose=False,
+                static_native=False,
+                passthrough_args=[],
+                runtime_copies=[],
+                resource_copies=[],
+            )
+
+            content = dockerfile.read_text(encoding="utf-8")
+            self.assertIn("mv /workspace/app/__pyronaut__/native/resources /workspace/native-language-resources", content)
+            self.assertIn("COPY --from=builder /workspace/native-language-resources/ /app/resources/", content)
+
     def test_bundled_docker_context_stages_runtime_dependencies(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "project"

@@ -3470,10 +3470,12 @@ COPY app/__pyronaut__/tools/pyronaut-native-build /workspace/app/__pyronaut__/to
 {builder_resource_copies}
 RUN chmod +x /workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build
 RUN {shlex.join(build_command)}
+RUN if [ -d /workspace/app/__pyronaut__/native/resources ]; then mv /workspace/app/__pyronaut__/native/resources /workspace/native-language-resources; else mkdir /workspace/native-language-resources; fi
 
 FROM {runtime_image}
 WORKDIR /app
 COPY --from=builder /workspace/app/__pyronaut__/native/ /app/
+COPY --from=builder /workspace/native-language-resources/ /app/resources/
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 {chr(10).join(resource_copies)}
