@@ -1,21 +1,39 @@
 = Introduction
 
-Pyronaut provides Micronaut application support for Python code running on GraalPy.
-It combines Micronaut dependency injection, configuration, HTTP, testing, and build tooling with Python source files and Python test workflows.
+Pyronaut provides a batteries-included framework for building Cloud ready Python applications based GraalPy, Micronaut and GraalVM.
+
+By running on the JVM or GraalVM Native Image, Pyronaut provides a solid, highly scalable foundation for Python applications that are easily observable, manageable and portable across operation systems.
+
+Pyronaut is built to scale from executable Python modules to larger projects that require more structure.
+
+The simplest Pyronaut application can be defined in a single Python module:
+
+.Pyronaut `app.py`
+[source,python]
+----
+from micronaut.http.annotation import Get
+
+@Get("/")
+def index() -> dict[str, str]:
+    return {"Hello": "World"}
+----
+
+And executed with `pyronaut run app.py`.
+
+Pyronaut surfaces all Micronaut features to the Python developer through decorators that enable advanced features like dependency injection, validation, serialization, data access, integration testing and more.
+
+Any Java side annotation can be represented in Python source code as a decorator enabling access to the entire Mironaut Platform API.
 
 The `pyronaut` command is the main entry point.
-It resolves Java dependencies from `pyproject.toml`, processes Python and Java sources, runs the application, executes configured JUnit and pytest tests, validates configuration, and builds deployable artifacts.
+
+Project configuration can be defined in `pyproject.toml`, the `pyronaut` command then uses this configuration to enable processing of Python and Java source code, testing with pytest or JUnit 5 and building production deployable artefacts like wheels, docker images etc.
 
 Typical Pyronaut projects contain:
 
 - Python application sources under `src`
 - Python tests under `tests`
 - Micronaut configuration under `config`
-- Java dependencies declared in `pyproject.toml`
+- Python and/or Java dependencies declared in `pyproject.toml`
 - Generated Pyronaut state under `__pyronaut__`
 
-Pyronaut applications can use Micronaut annotations from Python, for example `@Controller`, `@Get`, `@Singleton`, and serialization annotations exposed through generated IDE stubs.
-The same application can also include Java sources when a project needs Java classes or annotation processors alongside Python code.
-
-The current CLI is process-oriented: install, process, run, test, build, configuration validation, and test-resources operations are delegated to focused executables.
-This keeps local development and CI behavior deterministic while still presenting a single `pyronaut` command to users.
+IDE integration with Pylance and/or PyCharm is included out of the box with the `pyronaut install` command producing IDE-ready stubs that enable code completion in the user project.

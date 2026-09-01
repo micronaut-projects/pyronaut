@@ -5,6 +5,7 @@ installation: Installing Pyronaut
 gettingStarted:
   title: Getting Started
   fastApiTutorial: The FastAPI Tutorial
+how: How Pyronaut Works  
 projectStructure:
   title: Pyronaut Toolchain & Project Layout
 configuration:

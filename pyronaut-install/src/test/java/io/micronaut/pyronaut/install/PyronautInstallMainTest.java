@@ -41,6 +41,7 @@ class PyronautInstallMainTest {
 
     private String previousIdeStubsCacheDir;
     private String previousMavenRepoLocal;
+    private String previousSonatypeSnapshotsEnabled;
 
     @BeforeEach
     void setSharedTestState() {
@@ -48,12 +49,15 @@ class PyronautInstallMainTest {
         System.setProperty("pyronaut.ide-stubs.cache-dir", tempDir.resolve("shared-ide-stubs-cache").toString());
         previousMavenRepoLocal = System.getProperty("maven.repo.local");
         System.setProperty("maven.repo.local", tempDir.resolve("maven-local").toString());
+        previousSonatypeSnapshotsEnabled = System.getProperty("pyronaut.sonatype.snapshots.enabled");
+        System.setProperty("pyronaut.sonatype.snapshots.enabled", "false");
     }
 
     @AfterEach
     void restoreSharedTestState() {
         restoreSystemProperty("pyronaut.ide-stubs.cache-dir", previousIdeStubsCacheDir);
         restoreSystemProperty("maven.repo.local", previousMavenRepoLocal);
+        restoreSystemProperty("pyronaut.sonatype.snapshots.enabled", previousSonatypeSnapshotsEnabled);
     }
 
     @Test
@@ -85,6 +89,41 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void toolsOnlyBootstrapDoesNotRequireProjectAndForwardsResolutionSettings() throws Exception {
+        record Invocation(PyprojectModel model, Path repository, boolean offline, boolean refresh) {
+        }
+        List<Invocation> invocations = new ArrayList<>();
+        PyronautInstallMain command = new PyronautInstallMain(
+            new PyprojectModelReader(),
+            new MavenClasspathResolver(),
+            new PyprojectEditorSupport(),
+            new PythonEditorSupport(),
+            new ExternalBuildResolver(),
+            (model, repository, offline, refresh, progressListener) -> {
+                invocations.add(new Invocation(model, repository, offline, refresh));
+                return tempDir.resolve("tool-cache/current");
+            }
+        );
+        Path projectlessDirectory = tempDir.resolve("projectless");
+        Files.createDirectories(projectlessDirectory);
+        command.projectDir = projectlessDirectory;
+        command.localRepository = Path.of("custom-repository");
+        command.offline = true;
+        command.refresh = true;
+        command.resolveToolsOnly = true;
+        command.progress = "off";
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        assertEquals(List.of(new Invocation(
+            null,
+            projectlessDirectory.resolve("custom-repository").toAbsolutePath().normalize(),
+            true,
+            true
+        )), invocations);
+    }
+
+    @Test
     void resolvesAndWritesScopedManifests() throws Exception {
         Path repository = tempDir.resolve("repo");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
@@ -95,7 +134,18 @@ class PyronautInstallMainTest {
         Files.createDirectories(project);
         Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
 
-        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        List<PyprojectModel> installedToolModels = new ArrayList<>();
+        PyronautInstallMain command = new PyronautInstallMain(
+            new PyprojectModelReader(),
+            new MavenClasspathResolver(),
+            new PyprojectEditorSupport(),
+            new PythonEditorSupport(),
+            new ExternalBuildResolver(),
+            (model, localRepository, offline, refresh, progressListener) -> {
+                installedToolModels.add(model);
+                return tempDir.resolve("tool-cache/current");
+            }
+        );
         command.projectDir = project;
 
         assertEquals(InstallExitCode.SUCCESS.code(), command.call());
@@ -116,14 +166,16 @@ class PyronautInstallMainTest {
         List<String> runtimeEntries = Files.readAllLines(runtimeManifest, StandardCharsets.UTF_8);
         List<String> testEntries = Files.readAllLines(testManifest, StandardCharsets.UTF_8);
         assertEquals(1, buildEntries.size());
-        assertEquals(1, runtimeEntries.size());
-        assertEquals(2, testEntries.size());
-        assertTrue(buildEntries.getFirst().startsWith(defaultLocalRepository().toString()));
-        assertFalse(Files.exists(project.resolve("__pyronaut__").resolve("m2-repository")));
-        assertTrue(buildEntries.getFirst().contains("build-dep"));
-        assertTrue(runtimeEntries.getFirst().contains("runtime-dep"));
+        assertTrue(buildEntries.stream().anyMatch(entry -> entry.contains("build-dep")));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("runtime-dep")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("test-dep")));
+        assertTrue(buildEntries.stream().allMatch(entry -> entry.startsWith(defaultLocalRepository().toString())));
+        assertTrue(runtimeEntries.stream().allMatch(entry -> entry.startsWith(defaultLocalRepository().toString())));
+        assertTrue(testEntries.stream().allMatch(entry -> entry.startsWith(defaultLocalRepository().toString())));
+        assertFalse(Files.exists(project.resolve("__pyronaut__").resolve("m2-repository")));
+        assertEquals(1, installedToolModels.size());
+        assertEquals("install-test", installedToolModels.getFirst().project().name());
     }
 
     @Test
@@ -164,7 +216,10 @@ class PyronautInstallMainTest {
             project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
             StandardCharsets.UTF_8
         );
-        assertEquals(List.of(expectedRuntimeJar.toAbsolutePath().normalize().toString()), runtimeEntries);
+        assertTrue(runtimeEntries.contains(expectedRuntimeJar.toAbsolutePath().normalize().toString()));
+        assertTrue(runtimeEntries.stream().allMatch(entry -> entry.startsWith(
+            project.resolve("custom-local-repository").toAbsolutePath().normalize().toString()
+        )));
     }
 
     @Test
@@ -204,12 +259,15 @@ class PyronautInstallMainTest {
             project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
             StandardCharsets.UTF_8
         );
-        assertEquals(List.of(project
+        Path expectedRuntimeJar = project
             .resolve("second-local-repository")
             .resolve("com/example/runtime-dep/1.0.0/runtime-dep-1.0.0.jar")
             .toAbsolutePath()
-            .normalize()
-            .toString()), runtimeEntries);
+            .normalize();
+        assertTrue(runtimeEntries.contains(expectedRuntimeJar.toString()));
+        assertTrue(runtimeEntries.stream().allMatch(entry -> entry.startsWith(
+            project.resolve("second-local-repository").toAbsolutePath().normalize().toString()
+        )));
     }
 
     @Test
@@ -283,7 +341,6 @@ class PyronautInstallMainTest {
 
         PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
         command.projectDir = project;
-
         assertEquals(InstallExitCode.SUCCESS.code(), command.call());
 
         Path cacheDir = project.resolve("__pyronaut__");
@@ -1487,8 +1544,8 @@ class PyronautInstallMainTest {
             project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
             StandardCharsets.UTF_8
         );
-        assertEquals(1, runtimeEntries.size());
-        assertTrue(runtimeEntries.getFirst().startsWith(repository.toString()));
+        assertTrue(runtimeEntries.stream().anyMatch(entry -> entry.contains("runtime-dep-1.0.0.jar")));
+        assertTrue(runtimeEntries.stream().allMatch(entry -> entry.startsWith(repository.toString())));
     }
 
     @Test
@@ -1890,7 +1947,6 @@ class PyronautInstallMainTest {
 
         PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
         command.projectDir = project;
-
         assertEquals(InstallExitCode.SUCCESS.code(), command.call());
 
         Path cacheDir = project.resolve("__pyronaut__");

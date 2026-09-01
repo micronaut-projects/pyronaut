@@ -119,12 +119,25 @@ final class DirectSourceInstallTest {
             """.formatted(repository.toUri()));
         Files.writeString(project.resolve("AppTest.java"), "class AppTest {}\n");
 
-        PyronautInstallMain command = new PyronautInstallMain();
+        List<Path> toolRepositories = new java.util.ArrayList<>();
+        PyronautInstallMain command = new PyronautInstallMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            new MavenClasspathResolver(),
+            new PyprojectEditorSupport(),
+            new PythonEditorSupport(),
+            new ExternalBuildResolver(),
+            (model, localRepository, offline, refresh, progressListener) -> {
+                assertEquals(null, model);
+                toolRepositories.add(localRepository);
+                return tempDir.resolve("tool-cache/current");
+            }
+        );
         command.projectDir = project;
         command.localRepository = tempDir.resolve("maven-local");
         command.sources = List.of(Path.of("App.java"), Path.of("AppTest.java"));
 
         assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        assertEquals(List.of(tempDir.resolve("maven-local").toAbsolutePath().normalize()), toolRepositories);
 
         String eclipse = Files.readString(project.resolve(".classpath"));
         assertTrue(eclipse.contains("user-source"));

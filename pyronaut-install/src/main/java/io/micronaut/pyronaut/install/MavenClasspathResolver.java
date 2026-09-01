@@ -231,6 +231,72 @@ final class MavenClasspathResolver {
         );
     }
 
+    List<Path> resolveToolArtifacts(PyprojectModel model,
+                                    List<Artifact> artifacts,
+                                    Path localRepositoryPath,
+                                    boolean offline,
+                                    boolean forceUpdates) {
+        return resolveToolArtifacts(model, artifacts, localRepositoryPath, offline, forceUpdates, null);
+    }
+
+    List<Path> resolveToolArtifacts(PyprojectModel model,
+                                    List<Artifact> artifacts,
+                                    Path localRepositoryPath,
+                                    boolean offline,
+                                    boolean forceUpdates,
+                                    DependencyProgressListener progressListener) {
+        if (artifacts.isEmpty()) {
+            return List.of();
+        }
+        // Keep repository identities in offline mode so Maven Resolver's
+        // enhanced local repository manager can match _remote.repositories
+        // provenance. The offline session still prohibits every download.
+        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates);
+        ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener)) {
+            List<ArtifactRequest> requests = artifacts.stream()
+                .map(artifact -> new ArtifactRequest(artifact, repositories, null))
+                .toList();
+            if (progressListener != null) {
+                progressListener.reset();
+                progressListener.begin();
+                artifacts.forEach(artifact -> progressListener.artifactPlanned(artifact.toString()));
+            }
+            return repositorySystem.resolveArtifacts(session, requests).stream()
+                .map(ArtifactResult::getArtifact)
+                .map(Artifact::getPath)
+                .filter(Objects::nonNull)
+                .map(Path::toAbsolutePath)
+                .map(Path::normalize)
+                .toList();
+        } catch (ArtifactResolutionException e) {
+            if (progressListener != null) {
+                e.getResults().stream()
+                    .map(ArtifactResult::getRequest)
+                    .map(ArtifactRequest::getArtifact)
+                    .filter(Objects::nonNull)
+                    .forEach(artifact -> progressListener.artifactFailed(artifact.toString()));
+            }
+            List<String> unresolved = e.getResults().stream()
+                .filter(result -> !result.isResolved())
+                .map(ArtifactResult::getRequest)
+                .map(ArtifactRequest::getArtifact)
+                .filter(Objects::nonNull)
+                .map(Artifact::toString)
+                .distinct()
+                .toList();
+            String mode = offline ? " in offline mode" : "";
+            String details = unresolved.isEmpty() ? "" : ": " + String.join(", ", unresolved.stream().limit(8).toList());
+            if (unresolved.size() > 8) {
+                details += " (+" + (unresolved.size() - 8) + " more)";
+            }
+            if (proxyConfiguration != null) {
+                details += " (proxy " + proxyConfiguration.summary() + ")";
+            }
+            throw new PyprojectModelException("Failed to resolve required Pyronaut tool runtime artifacts" + mode + details, e);
+        }
+    }
+
     private ResolvedScopeDetails resolveScopeDetails(PyprojectModel model,
                                                      InstallScope scope,
                                                      Path localRepositoryPath,
@@ -266,7 +332,6 @@ final class MavenClasspathResolver {
                 }
                 managedVersions.putIfAbsent(artifact.getGroupId() + ":" + artifact.getArtifactId(), artifact.getVersion());
             }
-
             LinkedHashSet<String> coordinates = new LinkedHashSet<>(coordinatesForScope(
                 model,
                 scope,
@@ -1136,13 +1201,13 @@ final class MavenClasspathResolver {
             return repositories;
         }
         List<String> withSnapshots = new ArrayList<>(repositories.size() + 2);
+        withSnapshots.addAll(repositories);
         boolean localConfigured = repositories.stream()
             .anyMatch(repository -> repository != null && "mavenlocal".equals(repository.trim().toLowerCase(Locale.ROOT)));
         if (!localConfigured) {
             withSnapshots.add("mavenLocal");
         }
         withSnapshots.add(SONATYPE_SNAPSHOTS_REPOSITORY);
-        withSnapshots.addAll(repositories);
         return withSnapshots;
     }
 

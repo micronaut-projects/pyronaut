@@ -1,4 +1,6 @@
 
+import java.io.File
+
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
     id("application")
@@ -52,5 +54,26 @@ application {
 tasks {
     startScripts {
         applicationName = "pyronaut-test"
+    }
+
+    withType<Test>().configureEach {
+        useJUnitPlatform()
+        val pyEnv = providers.environmentVariable("PYENV_VERSION")
+        val vEnv = providers.environmentVariable("VIRTUAL_ENV")
+        val virtualEnv = vEnv.orNull?.let(::File)
+        val hasPythonExecutable = virtualEnv != null && (
+            File(virtualEnv, "bin/python").isFile ||
+                File(virtualEnv, "Scripts/python.exe").isFile
+            )
+        if (pyEnv.isPresent && vEnv.isPresent && hasPythonExecutable) {
+            environment("PYENV_VERSION", pyEnv.get())
+            environment("VIRTUAL_ENV", vEnv.get())
+        } else {
+            println("==================================================================")
+            println("= WARNING: Disabling Pyronaut test smoke tests without GraalPy =")
+            println("= virtual environment (set PYENV_VERSION and VIRTUAL_ENV).    =")
+            println("==================================================================")
+            enabled = false
+        }
     }
 }
