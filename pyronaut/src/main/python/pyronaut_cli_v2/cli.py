@@ -3494,6 +3494,7 @@ def _write_crema_base_dockerfile(
     verbose: bool,
     static_native: bool,
     passthrough_args: Sequence[str],
+    resource_copies: Sequence[str],
     bundled_only: bool = False,
 ) -> None:
     output_binary = f"/workspace/base/{runner_name}"
@@ -3528,6 +3529,7 @@ FROM pyronaut-base
 WORKDIR /app
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
+{chr(10).join(resource_copies)}
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas
 ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
@@ -3665,6 +3667,7 @@ def _run_docker_build(
                     verbose=verbose,
                     static_native=static_native,
                     passthrough_args=_extract_native_build_passthrough_args(args),
+                    resource_copies=_additional_resource_docker_copy_lines(context_dir),
                     bundled_only=False,
                 )
                 base_command = _build_docker_command(
