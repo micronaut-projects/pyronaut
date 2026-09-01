@@ -80,6 +80,9 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @CommandLine.Option(names = "--offline", description = "Use offline mode for repository access")
     boolean offline;
 
+    @CommandLine.Option(names = "--resolve-tools-only", hidden = true, description = "Resolve SDK launcher classpaths without installing a project")
+    boolean resolveToolsOnly;
+
     @CommandLine.Parameters(arity = "0..*", paramLabel = "SOURCE", description = "Direct .java/.py source files, directories, or glob patterns")
     List<Path> sources = List.of();
 
@@ -88,6 +91,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
     private final PyprojectEditorSupport editorSupport;
     private final PythonEditorSupport pythonEditorSupport;
     private final ExternalBuildResolver externalBuildResolver;
+    private final ToolRuntimeInstaller toolRuntimeInstaller;
 
     public PyronautInstallMain() {
         this(new PyprojectModelReader(), new MavenClasspathResolver(), new PyprojectEditorSupport(), new PythonEditorSupport(), new ExternalBuildResolver());
@@ -113,11 +117,22 @@ public final class PyronautInstallMain implements Callable<Integer> {
                         PyprojectEditorSupport editorSupport,
                         PythonEditorSupport pythonEditorSupport,
                         ExternalBuildResolver externalBuildResolver) {
+        this(modelReader, resolver, editorSupport, pythonEditorSupport, externalBuildResolver,
+            new ToolClasspathInstaller()::install);
+    }
+
+    PyronautInstallMain(PyprojectModelReader modelReader,
+                        MavenClasspathResolver resolver,
+                        PyprojectEditorSupport editorSupport,
+                        PythonEditorSupport pythonEditorSupport,
+                        ExternalBuildResolver externalBuildResolver,
+                        ToolRuntimeInstaller toolRuntimeInstaller) {
         this.modelReader = modelReader;
         this.resolver = resolver;
         this.editorSupport = editorSupport;
         this.pythonEditorSupport = pythonEditorSupport;
         this.externalBuildResolver = externalBuildResolver;
+        this.toolRuntimeInstaller = toolRuntimeInstaller;
     }
 
     @Override
@@ -126,6 +141,10 @@ public final class PyronautInstallMain implements Callable<Integer> {
             initializeJavaHomeIfMissing(() -> System.getenv("JAVA_HOME"));
             Path root = projectDir.toAbsolutePath().normalize();
             Path pyproject = root.resolve(PyprojectModelReader.FILE_NAME);
+            if (resolveToolsOnly) {
+                installToolClasspaths(root, null);
+                return InstallExitCode.SUCCESS.code();
+            }
             if (!sources.isEmpty()) {
                 if (Files.exists(pyproject) || ExternalProjectLayout.isExternal(root)) {
                     throw new IllegalArgumentException(
@@ -143,6 +162,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                         progressReporter
                     );
                 }
+                installToolClasspaths(root, null);
                 return InstallExitCode.SUCCESS.code();
             }
             if (ExternalProjectLayout.isExternal(root)) {
@@ -170,6 +190,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                         // Option discovery is best effort; dependency installation remains usable.
                     }
                     if (completeCache) {
+                        installToolClasspaths(root, null);
                         if (showProgress) {
                             System.err.println(buildName + " dependencies already configured (cache hit). Use --refresh to resolve again.");
                         }
@@ -198,6 +219,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 if (showProgress) {
                     System.err.println(buildName + " Dependencies Configured.");
                 }
+                installToolClasspaths(root, null);
                 return InstallExitCode.SUCCESS.code();
             }
             InstallProgressReporter.ProgressMode.fromCliValue(progress);
@@ -243,6 +265,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                         progressReporter,
                         () -> pythonEditorSupport.ensureWrittenFromManifests(root, cacheDir, model.pyronaut().ideStubs())
                     );
+                    installToolClasspaths(root, model, progressReporter);
                     return InstallExitCode.SUCCESS.code();
                 }
                 if (bypassRequested) {
@@ -313,6 +336,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     )
                 );
                 ResolutionCache.write(cacheDir, hash, resolved);
+                installToolClasspaths(root, model, progressReporter);
             }
             return InstallExitCode.SUCCESS.code();
         } catch (IllegalArgumentException e) {
@@ -320,7 +344,8 @@ public final class PyronautInstallMain implements Callable<Integer> {
             return InstallExitCode.CONFIG_ERROR.code();
         } catch (PyprojectModelException e) {
             System.err.println(e.getMessage());
-            if (e.getCause() instanceof org.eclipse.aether.resolution.DependencyResolutionException) {
+            if (e.getCause() instanceof org.eclipse.aether.resolution.DependencyResolutionException
+                || e.getCause() instanceof org.eclipse.aether.resolution.ArtifactResolutionException) {
                 return InstallExitCode.RESOLUTION_ERROR.code();
             }
             return InstallExitCode.CONFIG_ERROR.code();
@@ -331,6 +356,44 @@ public final class PyronautInstallMain implements Callable<Integer> {
             System.err.println("Unexpected install failure: " + e.getMessage());
             return InstallExitCode.INTERNAL_ERROR.code();
         }
+    }
+
+    private void installToolClasspaths(Path root, PyprojectModel model) throws IOException {
+        try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
+            installToolClasspaths(root, model, progressReporter);
+        }
+    }
+
+    private void installToolClasspaths(Path root,
+                                       PyprojectModel model,
+                                       InstallProgressReporter progressReporter) throws IOException {
+        InstallScope progressScope = InstallScope.DEVELOPMENT_RUNTIME;
+        progressReporter.startScope(progressScope);
+        try {
+            Path installed = toolRuntimeInstaller.install(
+                model,
+                resolveLocalRepository(root),
+                offline,
+                refresh || noCache,
+                progressListener(progressReporter, progressScope)
+            );
+            progressReporter.finishScope(progressScope);
+            if (installed != null && !"off".equalsIgnoreCase(progress)) {
+                progressReporter.toolRuntimeReady(installed);
+            }
+        } catch (RuntimeException | IOException e) {
+            progressReporter.failScope(progressScope);
+            throw e;
+        }
+    }
+
+    @FunctionalInterface
+    interface ToolRuntimeInstaller {
+        Path install(PyprojectModel model,
+                     Path localRepository,
+                     boolean offline,
+                     boolean refresh,
+                     DependencyProgressListener progressListener) throws IOException;
     }
 
     static boolean externalCacheComplete(ExternalProjectLayout layout, Path testResourcesManifest) throws IOException {

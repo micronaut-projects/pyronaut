@@ -37,13 +37,13 @@ import java.util.Set;
 @Internal
 public final class PyronautLauncherLogging {
     static final String APPLICATION_DEFAULTS_MARKER = "pyronaut.application.logging.defaults";
+    static final String PYTHON_LOGGING_CONFIGURED = "pyronaut.python.logging.configured";
+    static final String VERBOSE_LOGGER_PROPERTY = "pyronaut.logging.verbose-loggers";
     private static final String SIMPLE_LOGGER_DEFAULT_LEVEL = "org.slf4j.simpleLogger.defaultLogLevel";
     private static final String LOGBACK_STATUS_LISTENER = "logback.statusListenerClass";
     private static final String LOGBACK_NOP_STATUS_LISTENER = "ch.qos.logback.core.status.NopStatusListener";
     private static final String LOGBACK_CONFIGURATION_FILE_PROPERTY = "logback.configurationFile";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
-    static final String PYTHON_LOGGING_CONFIGURED = "pyronaut.python.logging.configured";
-    static final String VERBOSE_LOGGER_PROPERTY = "pyronaut.logging.verbose-loggers";
     private static final String FALLBACK_STREAM_PROPERTY = "pyronaut.logging.fallback-stream";
     private static final String FALLBACK_STREAM_ENVIRONMENT = "PYRONAUT_LOGGING_FALLBACK_STREAM";
     private static final String CONSOLE_APPENDER_NAME = "PYRONAUT_LAUNCHER_CONSOLE";
@@ -125,6 +125,8 @@ public final class PyronautLauncherLogging {
      * Reapply the verbose logger policy after framework bootstrap. GraalPy can
      * initialize its logging configuration while the application context is
      * being built, so this must happen immediately before application startup.
+     *
+     * @param verboseLogger comma-separated logger names to trace, or {@code null} for normal INFO logging
      */
     public static void reapplyVerboseLoggerDefaults(String verboseLogger) {
         if (verboseLogger == null) {
@@ -180,52 +182,6 @@ public final class PyronautLauncherLogging {
             .anyMatch(configured -> logger.equals(configured) || logger.startsWith(configured + "."));
     }
 
-    private static final class VerboseLoggerFilter extends TurboFilter {
-        private Set<String> explicitlyConfiguredLoggers;
-        private Set<String> traceLoggers;
-
-        private VerboseLoggerFilter(String verboseLogger, Set<String> explicitlyConfiguredLoggers) {
-            this.explicitlyConfiguredLoggers = explicitlyConfiguredLoggers;
-            this.traceLoggers = verboseLogger.isEmpty() ? Set.of() : Set.copyOf(Arrays.stream(verboseLogger.split(","))
-                .map(String::trim)
-                .filter(logger -> !logger.isEmpty())
-                .toList());
-        }
-
-        private void update(String verboseLogger, Set<String> explicitlyConfiguredLoggers) {
-            this.explicitlyConfiguredLoggers = explicitlyConfiguredLoggers;
-            this.traceLoggers = verboseLogger.isEmpty() ? Set.of() : Set.copyOf(Arrays.stream(verboseLogger.split(","))
-                .map(String::trim)
-                .filter(logger -> !logger.isEmpty())
-                .toList());
-        }
-
-        @Override
-        public FilterReply decide(Marker marker, ch.qos.logback.classic.Logger logger, Level level,
-                                  String format, Object[] params, Throwable throwable) {
-            if (level.isGreaterOrEqual(Level.INFO)
-                || !isSuppressedLogger(logger.getName())
-                || isExplicitlyConfigured(logger.getName(), explicitlyConfiguredLoggers)) {
-                return FilterReply.NEUTRAL;
-            }
-            return FilterReply.DENY;
-        }
-
-        private boolean isSuppressedLogger(String loggerName) {
-            return Arrays.stream(VERBOSE_DEFAULT_INFO_LOGGERS)
-                .anyMatch(configured -> matchesLogger(loggerName, configured))
-                && traceLoggers.stream().noneMatch(configured -> matchesLogger(loggerName, configured));
-        }
-
-        private boolean matchesLogger(String loggerName, String configured) {
-            return loggerName.equals(configured)
-                || loggerName.startsWith(configured + ".")
-                || (configured.endsWith("LoggingPosixSupport") && loggerName.endsWith(".LoggingPosixSupport"))
-                || (configured.endsWith("ClassUtils") && loggerName.endsWith(".ClassUtils"))
-                || (configured.endsWith("MatchArgumentQualifier") && loggerName.endsWith(".MatchArgumentQualifier"));
-        }
-    }
-
     /**
      * Determine whether Pyronaut should use its programmatic application logging defaults.
      *
@@ -279,6 +235,52 @@ public final class PyronautLauncherLogging {
     private static void setDefaultProperty(String name, String value) {
         if (System.getProperty(name) == null) {
             System.setProperty(name, value);
+        }
+    }
+
+    private static final class VerboseLoggerFilter extends TurboFilter {
+        private Set<String> explicitlyConfiguredLoggers;
+        private Set<String> traceLoggers;
+
+        private VerboseLoggerFilter(String verboseLogger, Set<String> explicitlyConfiguredLoggers) {
+            this.explicitlyConfiguredLoggers = explicitlyConfiguredLoggers;
+            this.traceLoggers = verboseLogger.isEmpty() ? Set.of() : Set.copyOf(Arrays.stream(verboseLogger.split(","))
+                .map(String::trim)
+                .filter(logger -> !logger.isEmpty())
+                .toList());
+        }
+
+        private void update(String verboseLogger, Set<String> explicitlyConfiguredLoggers) {
+            this.explicitlyConfiguredLoggers = explicitlyConfiguredLoggers;
+            this.traceLoggers = verboseLogger.isEmpty() ? Set.of() : Set.copyOf(Arrays.stream(verboseLogger.split(","))
+                .map(String::trim)
+                .filter(logger -> !logger.isEmpty())
+                .toList());
+        }
+
+        @Override
+        public FilterReply decide(Marker marker, ch.qos.logback.classic.Logger logger, Level level,
+                                  String format, Object[] params, Throwable throwable) {
+            if (level.isGreaterOrEqual(Level.INFO)
+                || !isSuppressedLogger(logger.getName())
+                || isExplicitlyConfigured(logger.getName(), explicitlyConfiguredLoggers)) {
+                return FilterReply.NEUTRAL;
+            }
+            return FilterReply.DENY;
+        }
+
+        private boolean isSuppressedLogger(String loggerName) {
+            return Arrays.stream(VERBOSE_DEFAULT_INFO_LOGGERS)
+                .anyMatch(configured -> matchesLogger(loggerName, configured))
+                && traceLoggers.stream().noneMatch(configured -> matchesLogger(loggerName, configured));
+        }
+
+        private boolean matchesLogger(String loggerName, String configured) {
+            return loggerName.equals(configured)
+                || loggerName.startsWith(configured + ".")
+                || (configured.endsWith("LoggingPosixSupport") && loggerName.endsWith(".LoggingPosixSupport"))
+                || (configured.endsWith("ClassUtils") && loggerName.endsWith(".ClassUtils"))
+                || (configured.endsWith("MatchArgumentQualifier") && loggerName.endsWith(".MatchArgumentQualifier"));
         }
     }
 }

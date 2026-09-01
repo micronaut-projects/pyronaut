@@ -176,6 +176,13 @@ final class InstallProgressReporter implements AutoCloseable {
         }
     }
 
+    void finishScope(InstallScope scope) {
+        synchronized (lock) {
+            State state = states.get(scope);
+            finishScope(scope, state == null ? 0 : state.completed);
+        }
+    }
+
     void failScope(InstallScope scope) {
         if (!enabled) return;
         synchronized (lock) {
@@ -210,6 +217,8 @@ final class InstallProgressReporter implements AutoCloseable {
     void directSourceDependencies(int artifactCount) { if (enabled) printlnAfterProgress("Resolved direct-source dependencies (" + artifactCount + " artifacts)"); }
 
     void directSourceEditorSupport(String language) { if (enabled) printlnAfterProgress("Generated " + language + " IDE support in .vscode, .idea, and __pyronaut__"); }
+
+    void toolRuntimeReady(Path path) { if (enabled) printlnAfterProgress("Pyronaut tool runtime ready: " + path); }
 
     void editorStubsWarnings(int warningCount, Path reportPath) {
         if (!enabled) return;

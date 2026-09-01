@@ -1,5 +1,6 @@
 import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import java.nio.file.Files
 import java.util.regex.Pattern
 
@@ -207,22 +208,91 @@ tasks.register("prepareWheelSources", Sync) {
         sharedLib.mkdirs()
         def sharedByName = [:]
         def sharedOrigins = [:].withDefault { [] }
+        def installerClasspathEntries = (new File(toolsRoot, "pyronaut-install/lib").listFiles() ?: [])
+            .findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }
+            .collect { it.name } as Set
         def originProjects = delegatedCliProjects.collectEntries { cliProject ->
             def command = cliProject.command
             [(command): cliProject.path]
         }
         toolsRoot.listFiles()?.findAll { it.isDirectory() && it.name != "shared" }.each { toolDir ->
-            def classpathEntries = []
             def toolLib = new File(toolDir, "lib")
+            def classpathEntries = []
             if (toolLib.isDirectory()) {
-                toolLib.listFiles()?.findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }.each { artifact ->
-                    classpathEntries << artifact.name
+                def launcher = new File(toolDir, "bin/${toolDir.name}")
+                def classpathLine = launcher.readLines("UTF-8").find { it.startsWith("CLASSPATH=") }
+                if (classpathLine == null) {
+                    throw new GradleException("Missing Gradle launcher classpath for ${toolDir.name}")
+                }
+                def launcherEntryMatcher = Pattern.compile('\\$APP_HOME/lib/([^:]+)').matcher(classpathLine)
+                while (launcherEntryMatcher.find()) {
+                    classpathEntries.add(launcherEntryMatcher.group(1))
+                }
+                def libraryEntries = (toolLib.listFiles() ?: [])
+                    .findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }
+                    .collect { it.name }
+                if (classpathEntries.toSet() != libraryEntries.toSet() || classpathEntries.size() != libraryEntries.size()) {
+                    throw new GradleException(
+                        "Launcher classpath does not exactly cover ${toolDir.name}/lib: launcher=${classpathEntries}, lib=${libraryEntries}"
+                    )
                 }
             }
             if (!classpathEntries.isEmpty()) {
                 def manifest = new File(toolDir, "bin/pyronaut-classpath.txt")
                 manifest.parentFile.mkdirs()
-                manifest.text = classpathEntries.unique().sort().join(System.lineSeparator()) + System.lineSeparator()
+                manifest.text = classpathEntries.join(System.lineSeparator()) + System.lineSeparator()
+                if (toolDir.name == "pyronaut-install") {
+                    installerClasspathEntries.addAll(classpathEntries)
+                }
+
+                def originProjectPath = originProjects[toolDir.name]
+                if (originProjectPath != null) {
+                    def artifactsByName = project(originProjectPath)
+                        .configurations.runtimeClasspath
+                        .resolvedConfiguration
+                        .resolvedArtifacts
+                        .groupBy { it.file.name }
+                    def descriptorLines = classpathEntries.unique().collect { fileName ->
+                        if (installerClasspathEntries.contains(fileName)
+                            || (fileName.startsWith("micronaut-pyronaut-") && fileName.endsWith(".jar"))) {
+                            return "bundled\t${fileName}"
+                        }
+                        def matches = artifactsByName[fileName] ?: []
+                        if (matches.size() != 1) {
+                            throw new GradleException(
+                                "Expected exactly one resolved artifact for ${toolDir.name}/${fileName}, found ${matches.size()}"
+                            )
+                        }
+                        def artifact = matches.first()
+                        def component = artifact.id.componentIdentifier
+                        if (component instanceof ProjectComponentIdentifier || artifact.moduleVersion.id.group == projectGroup) {
+                            return "bundled\t${fileName}"
+                        }
+                        def classifier = artifact.classifier ?: ""
+                        "maven\t${artifact.moduleVersion.id.group}\t${artifact.name}\t${artifact.moduleVersion.id.version}\t${artifact.extension}\t${classifier}\t${fileName}"
+                    }
+                    if (toolDir.name == "pyronaut-dev") {
+                        def controlPanelRuntime = project(originProjectPath).configurations.findByName("controlPanelRuntime")
+                        if (controlPanelRuntime != null) {
+                            def controlPanelArtifactsByName = controlPanelRuntime.resolvedConfiguration.resolvedArtifacts.groupBy { it.file.name }
+                            controlPanelRuntime.files.collect { it.name }.unique().each { fileName ->
+                                def matches = controlPanelArtifactsByName[fileName] ?: []
+                                if (matches.size() != 1) {
+                                    throw new GradleException(
+                                        "Expected exactly one Control Panel artifact for ${fileName}, found ${matches.size()}"
+                                    )
+                                }
+                                def artifact = matches.first()
+                                def classifier = artifact.classifier ?: ""
+                                descriptorLines.add(
+                                    "control-panel\t${artifact.moduleVersion.id.group}\t${artifact.name}\t${artifact.moduleVersion.id.version}\t${artifact.extension}\t${classifier}\t${fileName}"
+                                )
+                            }
+                        }
+                    }
+                    def descriptor = new File(toolDir, "bin/pyronaut-tool-classpath.tsv")
+                    descriptor.text = descriptorLines.join(System.lineSeparator()) + System.lineSeparator()
+                }
             }
 
             [toolLib].each { sourceDir ->
@@ -267,6 +337,32 @@ tasks.register("prepareWheelSources", Sync) {
         originReport.text = sharedOrigins.keySet().sort().collect { jarName ->
             "${jarName}\t${sharedOrigins[jarName].unique().sort().join('; ')}"
         }.join(System.lineSeparator()) + System.lineSeparator()
+
+        // Only the installer can run before Maven resolution is available.
+        // Keep its complete runtime plus the small repository-owned tool JARs;
+        // every other external artifact is reconstructed from the exact
+        // build-generated descriptors by pyronaut-install.
+        sharedLib.listFiles()?.findAll { it.isFile() }.each { artifact ->
+            def repositoryOwnedJar = artifact.name.startsWith("micronaut-pyronaut-") && artifact.name.endsWith(".jar")
+            if (!installerClasspathEntries.contains(artifact.name) && !repositoryOwnedJar) {
+                artifact.delete()
+            }
+        }
+        def controlPanelDir = new File(toolsRoot, "pyronaut-dev/lib/control-panel")
+        if (controlPanelDir.isDirectory()) {
+            delete(controlPanelDir)
+        }
+
+        def descriptorDigest = java.security.MessageDigest.getInstance("SHA-256")
+        fileTree(toolsRoot).matching { include("*/bin/pyronaut-tool-classpath.tsv") }.files.sort().each { descriptor ->
+            descriptorDigest.update(descriptor.parentFile.parentFile.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            descriptorDigest.update((byte) 0)
+            descriptorDigest.update(descriptor.bytes)
+            descriptorDigest.update((byte) 0)
+        }
+        def toolRuntimeProperties = new File(toolsRoot, "tool-runtime.properties")
+        toolRuntimeProperties.text = "sdk.version=${wheelVersion.get()}${System.lineSeparator()}" +
+            "descriptor.sha256=${java.util.HexFormat.of().formatHex(descriptorDigest.digest())}${System.lineSeparator()}"
 
         def toolchainDefaultsFile = wheelStagingDir.get().file("src/pyronaut_cli_v2/toolchain-defaults.properties").asFile
         if (graalVmDevTag.present) {
@@ -378,6 +474,49 @@ tasks.register("buildSdkWheel", Exec) {
         wheelDistDir.get().asFile.absolutePath,
         wheelStagingDir.get().asFile.absolutePath
     )
+    doLast {
+        def wheels = fileTree(wheelDistDir).matching { include("pyronaut-*.whl") }.files
+        if (wheels.size() != 1) {
+            throw new GradleException("Expected exactly one Pyronaut SDK wheel, found ${wheels.size()}")
+        }
+        def wheel = wheels.first()
+        if (wheel.length() >= 100_000_000L) {
+            throw new GradleException("Pyronaut SDK wheel exceeds the PyPI 100 MB limit: ${wheel.length()} bytes")
+        }
+        def descriptorFiles = fileTree(wheelStagingDir.get().dir("src/pyronaut_cli_v2/tools")).matching {
+            include("*/bin/pyronaut-tool-classpath.tsv")
+        }.files
+        if (descriptorFiles.size() != delegatedCliProjects.size()) {
+            throw new GradleException(
+                "Expected ${delegatedCliProjects.size()} tool dependency descriptors, found ${descriptorFiles.size()}"
+            )
+        }
+        def externalArtifactNames = [] as Set
+        def bundledArtifactNames = [] as Set
+        descriptorFiles.each { descriptor ->
+            descriptor.eachLine("UTF-8") { line ->
+                def fields = line.split("\\t", -1)
+                if (fields[0] == "bundled") {
+                    bundledArtifactNames.add(fields[1])
+                } else if (fields[0] == "maven" || fields[0] == "control-panel") {
+                    externalArtifactNames.add(fields[6])
+                }
+            }
+        }
+        def packagedArtifactNames = zipTree(wheel).matching {
+            include("**/tools/shared/lib/*")
+            include("**/tools/*/lib/control-panel/*")
+        }.files.collect { it.name } as Set
+        def unexpectedExternalArtifacts = packagedArtifactNames.intersect(externalArtifactNames)
+        if (!unexpectedExternalArtifacts.isEmpty()) {
+            throw new GradleException("Wheel contains externally resolved tool artifacts: ${unexpectedExternalArtifacts.sort()}")
+        }
+        def missingBundledArtifacts = bundledArtifactNames - packagedArtifactNames
+        if (!missingBundledArtifacts.isEmpty()) {
+            throw new GradleException("Wheel is missing required bootstrap artifacts: ${missingBundledArtifacts.sort()}")
+        }
+        logger.lifecycle("Verified Pyronaut SDK wheel size: ${wheel.length()} bytes")
+    }
 }
 
 tasks.register("installSdkWheel", Exec) {

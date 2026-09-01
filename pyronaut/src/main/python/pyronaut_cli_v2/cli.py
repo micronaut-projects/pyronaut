@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import filecmp
 import fnmatch
 from functools import lru_cache
 import hashlib
@@ -113,6 +114,11 @@ _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RESET = "\033[0m"
 _allow_draft_release = False
+_tool_bootstrap_local_repository: str | None = None
+_tool_bootstrap_offline = False
+_tool_bootstrap_refresh = False
+_tool_bootstrap_progress: str | None = None
+_tool_bootstrap_attempted: set[str] = set()
 
 
 def _print_version() -> None:
@@ -204,9 +210,15 @@ def run(
     input_reader: Callable[[float | None], str | None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    global _allow_draft_release
+    global _allow_draft_release, _tool_bootstrap_local_repository, _tool_bootstrap_offline
+    global _tool_bootstrap_refresh, _tool_bootstrap_progress
     _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
     argv = [value for value in argv if value != "--allow-draft-release"]
+    _tool_bootstrap_local_repository = _extract_local_repository(argv) or _read_env(LOCAL_REPOSITORY_ENV)
+    _tool_bootstrap_offline = _extract_offline(argv)
+    _tool_bootstrap_refresh = _extract_no_cache(argv) or _extract_flag(argv, "--refresh")
+    _tool_bootstrap_progress = _extract_option_value(argv, "--progress")
+    _tool_bootstrap_attempted.clear()
 
     if monotonic is None:
         monotonic = time.monotonic
@@ -1137,12 +1149,26 @@ def _build_direct_source_native_jvm_args(
 
 def _direct_control_panel_classpath_entries(executable_path: str) -> list[str]:
     entries: list[str] = []
-    launcher_lib = Path(executable_path).parent.parent / "lib"
+    executable = Path(executable_path)
+    launcher_root = executable.parent.parent
+    launcher_lib = launcher_root / "lib"
     if Path(executable_path).name in _NATIVE_IMAGE_COMMANDS:
-        packaged_lib = _packaged_tool_dir(Path(executable_path).name) / "lib"
+        packaged_root = _packaged_tool_dir(Path(executable_path).name)
+        packaged_lib = packaged_root / "lib"
         if (packaged_lib / "control-panel").is_dir():
+            launcher_root = packaged_root
             launcher_lib = packaged_lib
     bundled_dir = launcher_lib / "control-panel"
+    descriptor = launcher_root / "bin" / "pyronaut-tool-classpath.tsv"
+    if descriptor.is_file():
+        for line in descriptor.read_text(encoding="utf-8").splitlines():
+            fields = line.split("\t")
+            if len(fields) == 7 and fields[0] == "control-panel":
+                entry = bundled_dir / fields[6]
+                if entry.is_file() and not entry.name.endswith("-sources.jar"):
+                    entries.append(str(entry))
+        if entries:
+            return list(dict.fromkeys(entries))
     for entry in sorted(bundled_dir.glob("*.jar")):
         if not entry.name.endswith("-sources.jar"):
             entries.append(str(entry))
@@ -6385,6 +6411,17 @@ def _extract_local_repository(args: Sequence[str]) -> str | None:
     return None
 
 
+def _extract_option_value(args: Sequence[str], option: str) -> str | None:
+    for index, token in enumerate(args):
+        if token == option:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {option}")
+            return args[index + 1]
+        if token.startswith(option + "="):
+            return token.split("=", 1)[1]
+    return None
+
+
 def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
     filtered: list[str] = []
     skip_next = False
@@ -6500,9 +6537,30 @@ def _resolve_executable(command_name: str) -> str | None:
     if override:
         return override
 
+    if command_name == COMMAND_TO_EXECUTABLE["install"]:
+        bundled = _bundled_executable(command_name)
+        if bundled is not None and bundled.exists():
+            return str(bundled)
+
+    resolved_tool = _resolved_tool_executable(command_name)
+    if resolved_tool is not None:
+        return str(resolved_tool)
+
+    if command_name.startswith("pyronaut-") and command_name not in _tool_bootstrap_attempted:
+        _tool_bootstrap_attempted.add(command_name)
+        if _bootstrap_resolved_tools():
+            resolved_tool = _resolved_tool_executable(command_name)
+            if resolved_tool is not None:
+                return str(resolved_tool)
+
+    # Source checkouts and legacy/installDist layouts still contain complete
+    # launchers. A wheel launcher carrying a descriptor is intentionally
+    # incomplete until the installer has materialized its resolved cache.
     bundled = _bundled_executable(command_name)
     if bundled is not None and bundled.exists():
-        return str(bundled)
+        descriptor = bundled.parent / "pyronaut-tool-classpath.tsv"
+        if not descriptor.is_file():
+            return str(bundled)
 
     discovered = shutil.which(command_name)
     if discovered:
@@ -6510,11 +6568,136 @@ def _resolve_executable(command_name: str) -> str | None:
     return None
 
 
-def _bundled_executable(command_name: str) -> Path | None:
-    if sys.platform.startswith("linux") or sys.platform == "darwin":
-        package_root = Path(__file__).resolve().parent
-        return package_root / "tools" / command_name / "bin" / command_name
+def _resolved_tool_executable(command_name: str) -> Path | None:
+    packaged_tools = Path(__file__).resolve().parent / "tools"
+    if not (packaged_tools / "tool-runtime.properties").is_file():
+        return None
+    version = _installed_pyronaut_version()
+    if version is None:
+        return None
+    safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version)
+    cache_root = Path.home() / ".pyronaut" / "tools" / safe_version / "current"
+    if not _resolved_tools_cache_complete(cache_root, packaged_tools, version):
+        return None
+    executable = cache_root / "tools" / command_name / "bin" / _launcher_file_name(command_name)
+    return executable if executable.is_file() else None
+
+
+def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, version: str) -> bool:
+    metadata_file = cache_root / "tool-runtime.properties"
+    if not metadata_file.is_file():
+        return False
+    try:
+        metadata = _read_tool_runtime_properties(metadata_file)
+        packaged_metadata = _read_tool_runtime_properties(packaged_tools / "tool-runtime.properties")
+        descriptors = sorted(packaged_tools.glob("*/bin/pyronaut-tool-classpath.tsv"))
+        for descriptor in descriptors:
+            command = descriptor.parent.parent.name
+            if not (cache_root / "tools" / command / "bin" / _launcher_file_name(command)).is_file():
+                return False
+            for line in descriptor.read_text(encoding="utf-8").splitlines():
+                fields = line.split("\t")
+                if len(fields) == 2 and fields[0] == "bundled":
+                    artifact = cache_root / "tools" / "shared" / "lib" / fields[1]
+                    expected_source = packaged_tools / "shared" / "lib" / fields[1]
+                elif len(fields) == 7 and fields[0] == "maven":
+                    artifact = cache_root / "tools" / "shared" / "lib" / fields[6]
+                    local_repository = metadata.get("local.repository")
+                    if not local_repository:
+                        return False
+                    expected_source = (
+                        Path(local_repository)
+                        / Path(*fields[1].split("."))
+                        / fields[2]
+                        / fields[3]
+                        / fields[6]
+                    )
+                elif len(fields) == 7 and fields[0] == "control-panel":
+                    artifact = cache_root / "tools" / "pyronaut-dev" / "lib" / "control-panel" / fields[6]
+                    local_repository = metadata.get("local.repository")
+                    if not local_repository:
+                        return False
+                    expected_source = (
+                        Path(local_repository)
+                        / Path(*fields[1].split("."))
+                        / fields[2]
+                        / fields[3]
+                        / fields[6]
+                    )
+                else:
+                    return False
+                if not artifact.is_file() or not expected_source.is_file():
+                    return False
+                if artifact.is_symlink():
+                    if artifact.resolve() != expected_source.resolve():
+                        return False
+                else:
+                    try:
+                        same_file = os.path.samefile(artifact, expected_source)
+                    except OSError:
+                        same_file = False
+                    if not same_file and not filecmp.cmp(artifact, expected_source, shallow=False):
+                        return False
+        return (
+            bool(descriptors)
+            and metadata.get("sdk.version") == version
+            and metadata.get("descriptor.sha256") == packaged_metadata.get("descriptor.sha256")
+        )
+    except (OSError, UnicodeError, ValueError):
+        return False
+
+
+def _read_tool_runtime_properties(path: Path) -> dict[str, str]:
+    return dict(
+        line.split("=", 1)
+        for line in path.read_text(encoding="iso-8859-1").splitlines()
+        if line and not line.startswith(("#", "!")) and "=" in line
+    )
+
+
+def _installed_pyronaut_version() -> str | None:
+    version_file = Path(__file__).with_name("version.properties")
+    if not version_file.is_file():
+        return None
+    for line in version_file.read_text(encoding="utf-8").splitlines():
+        if line.startswith("pyronaut="):
+            value = line.split("=", 1)[1].strip()
+            return value or None
     return None
+
+
+def _bootstrap_resolved_tools() -> bool:
+    installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
+    packaged_tools = Path(__file__).resolve().parent / "tools"
+    if installer is None or not installer.is_file() or not (packaged_tools / "tool-runtime.properties").is_file():
+        return False
+    command_line = [str(installer), "--resolve-tools-only"]
+    if _tool_bootstrap_local_repository:
+        command_line.extend(["--local-repository", _tool_bootstrap_local_repository])
+    if _tool_bootstrap_offline:
+        command_line.append("--offline")
+    if _tool_bootstrap_refresh:
+        command_line.append("--refresh")
+    if _tool_bootstrap_progress:
+        command_line.extend(["--progress", _tool_bootstrap_progress])
+    env = dict(os.environ)
+    env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
+    env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
+    try:
+        return subprocess.run(command_line, check=False, env=env).returncode == SUCCESS
+    except OSError:
+        return False
+
+
+def _bundled_executable(command_name: str) -> Path | None:
+    if sys.platform.startswith("linux") or sys.platform == "darwin" or sys.platform == "win32":
+        package_root = Path(__file__).resolve().parent
+        return package_root / "tools" / command_name / "bin" / _launcher_file_name(command_name)
+    return None
+
+
+def _launcher_file_name(command_name: str) -> str:
+    return f"{command_name}.bat" if sys.platform == "win32" else command_name
 
 
 def _bundled_native_executable(command_name: str) -> Path | None:
