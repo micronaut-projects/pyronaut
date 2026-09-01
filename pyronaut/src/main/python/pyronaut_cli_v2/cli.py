@@ -5774,7 +5774,7 @@ def _github_release_asset(
     owner, repository = parts[:2]
     tag = version if version.startswith("v") else f"v{version}"
     token = next(
-        (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN") if os.environ.get(name)),
+        (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN") if os.environ.get(name)),
         None,
     )
     headers = {
