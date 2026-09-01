@@ -1,13 +1,12 @@
 = Getting Started
 
-This section creates a minimal Pyronaut HTTP application by hand.
-Generated projects follow the same basic layout.
+In this section you will learn how to define a minimal Pyronaut project and application.
 
 == Create `pyproject.toml`
 
 [source,toml]
 ----
-[project]
+[project] # (1)
 name = "hello-pyronaut"
 version = "0.1.0"
 dynamic = ["scripts"]
@@ -17,22 +16,20 @@ requires = ["setuptools", "wheel", "tomli"]
 build-backend = "setuptools.build_meta"
 
 [tool.pyronaut]
-repositories = ["mavenCentral"]
+repositories = ["mavenCentral"] # (2)
 
-[tool.pyronaut.dependencies]
-runtime = [
-  "io.micronaut:micronaut-http-server-netty",
-  "io.micronaut:micronaut-json-core",
-  "io.micronaut:micronaut-jackson-databind",
-  "ch.qos.logback:logback-classic"
-]
+[tool.pyronaut.dependencies] # (3)
+runtime = []
 build = []
 test = [
   "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
-  "io.micronaut.test:micronaut-test-junit5",
   "io.micronaut.pyronaut:micronaut-pyronaut-requests"
 ]
 ----
+
+<1> The basic project name, version etc. are defined using `pyproject.toml` conventions
+<2> The `tool.pyronaut` namespace contains pyronaut specific configuration. Here we define the repository used to resolve Java modules.
+<3> The `tool.pyronaut.dependencies` entry defines Java dependencies in specific scopes.
 
 Versionless Micronaut coordinates are resolved from the configured Micronaut platform and core BOMs.
 Add explicit versions for dependencies that are not managed by those BOMs.

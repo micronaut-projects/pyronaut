@@ -1,33 +1,26 @@
 = Installing Pyronaut
 
-Install Pyronaut into the Python environment that will run the application.
-A virtual environment is recommended so the `pyronaut` command and Python test tools are isolated from the system Python installation.
+Pyronaut can be installed into your existing Python installation via `pip`.
+
 
 [source,bash]
 ----
-python -m venv .venv
-source .venv/bin/activate
 pip install pyronaut
 pyronaut --version
 ----
 
-Pyronaut runs on GraalPy and delegates Micronaut work to Java-based tools.
-Use a GraalVM JDK that satisfies the toolchain requirements for the current Pyronaut version.
-When no explicit toolchain is configured, the CLI discovers a compatible GraalVM from `JAVA_HOME`, common SDK locations, and Pyronaut's own SDK cache.
+Note the version of Python used to run applications is dictated by `pyronaut` which bundles GraalPy and DOES NOT use your local Python installation but instead an isolated embedded version of GraalPy.
 
-The SDK wheel contains the JVM implementations of the delegated tools. Native
-executables are downloaded only when a native toolchain or direct-source flow
-needs them, then cached under:
+The `pyronaut` command requires a local installation of GraalVM SDK which can be installed in a https://www.graalvm.org/downloads/[number of different ways] with SDKMan! the recommended way, if you do not have a GraalVM SDK installed then `pyronaut` will download and install one to `~/.pyronaut/sdks` on first use.
+
+By default `pyronaut` will run Pyronaut projects using the JVM provided by the installed GraalVM SDK, if `native` executable mode is selected or when directly executing Python source with `pyronaut run app.py` then `pyronaut` will download additional native executables that are platform specified and install them into `~/pyronaut/bin` :
 
 [source,text]
 ----
 ~/.pyronaut/bin/<version>/<os>-<architecture>/
 ----
 
-The first native invocation displays download progress. Automatic GraalVM JDK
-provisioning uses the same percentage progress display and is stored under
-`~/.pyronaut/sdks/`. Configure the bundle source and version in
-`~/.pyronaut/settings.toml` when using a CI build or a VPN-only repository; see
+TIP: see
 <<proxyConfig,Proxy Configuration>> for proxy setup.
 
 == Project Installation
@@ -40,6 +33,7 @@ pyronaut install
 ----
 
 `pyronaut install` resolves Java dependencies for the configured build, runtime, development-runtime, test, and test-resources-server scopes.
+
 Dependency artifacts are installed into Maven local by default:
 
 [source,text]

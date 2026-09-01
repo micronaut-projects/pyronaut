@@ -1,0 +1,50 @@
+Pyronaut exposes the entirety of the https://docs.micronaut.io/latest/[Micronaut API] to the Python by representing any Java annotation as a Python decorator at the source level.
+
+This means you can use any documented Micronaut construct in Python code.
+
+For example controllers are defined with Python decorators that bridge to Micronaut's annotations used in other languages like Java, Kotlin and Groovy:
+
+.Using HTTP decorators
+[source,python]
+----
+from micronaut.http.annotation import Get
+
+
+@Get(value="/", produces="text/plain")
+def index() -> str:
+    return "Hello from Pyronaut"
+----
+
+One caveat is that the packages you import start with `micronaut` instead of `io.micronaut` so when refering to the https://docs.micronaut.io/latest/api/[API Reference] you need to omit the `io.` any import. This wrinkle is due to the fact Python itself forbids defining packages that are part of Python core and since `io` is a core Python package this would otherwise conflict.
+
+This flexibility to use any Java side annotation as a Python decorator means you can leverage advanced features of Micronaut such as Micronaut serialization to define JSON mapping using Jackson:
+
+.Writing Serializable data classes
+[source, python]
+----
+from dataclasses import dataclass
+from typing import Annotated
+
+from jakarta.validation.constraints import NotBlank, Pattern, Size
+from micronaut.serde.annotation import Serdeable
+from com.fasterxml.jackson.annotation import JsonProperty
+
+@Serdeable # (1)
+@dataclass
+class Person:
+    """Create/update form for Owner."""
+
+    name: Annotated[str, NotBlank, Size(min=1, max=30)] # (2) 
+    telephone: Annotated[str | None, NotBlank, Pattern(regexp=r"\d{10}", message="Telephone must be a 10-digit number")] = None
+    age: Annotated[int, JsonProperty("person_age")] # (3)
+----
+
+<1> Here the `@Serdeable` decorator is used to indicate that the data class can be serialized and deserialized
+<2> The `name` attribute has some `jakarta.validation` constraints applied to it via decorators
+<3> The `age` attribute is mapped to a different JSON attribute name ("person_age") using `JsonProperty`
+
+
+So what happens is during the execution of `pyronaut process` which is executed prior to running the application Micronaut at build time produces additional artefacts during this processing step that know how to serialization and deserialization the `Person` data class plus some code that bridges that enable Python <--> Java interop.
+
+Any Java API can be imported and used directly from Python and advanced features like Micronaut Validation, Micronaut Serialization and Micronaut Data "just work" in the context of Python enabling a highly productive, scalable and portable development platform for Python developers.
+
