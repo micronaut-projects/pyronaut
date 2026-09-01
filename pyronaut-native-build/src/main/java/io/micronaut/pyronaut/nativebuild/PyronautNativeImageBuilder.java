@@ -301,6 +301,7 @@ public final class PyronautNativeImageBuilder {
 
     private static final List<String> PYTHON_ARGUMENTS = List.of(
         "--enable-native-access=org.graalvm.truffle",
+        "-H:Preserve=package=org.graalvm.home.*",
         "-H:Preserve=package=org.graalvm.polyglot"
     );
 
