@@ -19,6 +19,7 @@ repositories {
 tasks.register("docsZip", Zip) {
     group = "documentation"
     description = "Packages the Pyronaut documentation sources into one ZIP archive."
+    archiveBaseName = "pyronaut"
     archiveClassifier = "docs"
     destinationDirectory = layout.buildDirectory.dir("distributions")
     from(projectDir) {
