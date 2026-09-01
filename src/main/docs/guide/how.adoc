@@ -48,3 +48,10 @@ So what happens is during the execution of `pyronaut process` which is executed 
 
 Any Java API can be imported and used directly from Python and advanced features like Micronaut Validation, Micronaut Serialization and Micronaut Data "just work" in the context of Python enabling a highly productive, scalable and portable development platform for Python developers.
 
+A Pyronaut decorator can be used at the type or function level using the regular decorator syntax (for example `@Get`). 
+
+Named arguments can be used used with decorators which are map to the underlying Java annotation values (for example `@Get(value="/", produces="text/plain")`).
+
+The standard `typing.Annotated` Python construct can be use to apply Pyronaut decorators to class attributes or function arguments (for example `Annotated[str, NotBlank, Size(min=1, max=30)]`).
+
+For more information checkout the https://docs.micronaut.io/latest/core/#core-introduction[Micronaut core documentation] which has been updated with Python examples and a dedicated https://docs.micronaut.io/latest/core/#core-python[Python Section] cover features specific to Python such as async/await support. 
