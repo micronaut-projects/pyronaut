@@ -3437,6 +3437,14 @@ def _additional_resource_docker_copy_lines(context_dir: Path, *, destination_roo
     ]
 
 
+def _bundled_base_docker_copy_lines(context_dir: Path) -> list[str]:
+    bundled_dir = context_dir / "bundled-base"
+    return [
+        f"COPY bundled-base/{entry.name}{'/' if entry.is_dir() else ''} /opt/pyronaut/bin/{entry.name}{'/' if entry.is_dir() else ''}"
+        for entry in sorted(bundled_dir.iterdir())
+    ]
+
+
 def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str,
                           runtime_copies: Sequence[str]) -> None:
     dockerfile = f"""\
@@ -3567,13 +3575,13 @@ ENTRYPOINT ["/opt/pyronaut/bin/{runner_name}", "--project-dir", "/app"]
 
 def _write_bundled_application_dockerfile(
     *, target: Path, runtime_image: str, runner_name: str,
-    runtime_copies: Sequence[str], resource_copies: Sequence[str],
+    bundle_copies: Sequence[str], runtime_copies: Sequence[str], resource_copies: Sequence[str],
 ) -> None:
     """Build the application layer directly on top of a bundled runner."""
     target.write_text(
         f"""FROM {runtime_image} AS pyronaut-base
 WORKDIR /opt/pyronaut
-COPY bundled-base/ /opt/pyronaut/bin/
+{chr(10).join(bundle_copies)}
 
 FROM pyronaut-base
 WORKDIR /app
@@ -3734,6 +3742,7 @@ def _run_docker_build(
                     target=dockerfile,
                     runtime_image=runtime_image,
                     runner_name=runner_name,
+                    bundle_copies=_bundled_base_docker_copy_lines(context_dir),
                     runtime_copies=_manifest_docker_copy_lines(context_dir),
                     resource_copies=_additional_resource_docker_copy_lines(context_dir),
                 )

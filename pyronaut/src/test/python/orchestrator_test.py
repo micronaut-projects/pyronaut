@@ -5304,10 +5304,16 @@ additional-test-resources = ["test-fixtures"]
     def test_bundled_default_dockerfile_includes_pyproject(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             dockerfile = Path(temp_dir) / "DockerfileNativeDefault"
+            context_dir = Path(temp_dir) / "context"
+            bundled_dir = context_dir / "bundled-base"
+            bundled_dir.mkdir(parents=True)
+            (bundled_dir / "pyronaut-run-python").write_text("binary", encoding="utf-8")
+            (bundled_dir / "resources").mkdir()
             cli._write_bundled_application_dockerfile(  # noqa: SLF001
                 target=dockerfile,
                 runtime_image="example/runtime:1",
                 runner_name="pyronaut-run-python",
+                bundle_copies=cli._bundled_base_docker_copy_lines(context_dir),  # noqa: SLF001
                 runtime_copies=[
                     "COPY app/__pyronaut__/resolved-runtime-dependencies /app/__pyronaut__/resolved-runtime-dependencies",
                     "COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/",
@@ -5316,7 +5322,8 @@ additional-test-resources = ["test-fixtures"]
             )
 
             content = dockerfile.read_text(encoding="utf-8")
-            self.assertIn("COPY bundled-base/ /opt/pyronaut/bin/", content)
+            self.assertIn("COPY bundled-base/pyronaut-run-python /opt/pyronaut/bin/pyronaut-run-python", content)
+            self.assertIn("COPY bundled-base/resources/ /opt/pyronaut/bin/resources/", content)
             self.assertIn("COPY app/pyproject.toml /app/pyproject.toml", content)
             self.assertIn("COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/", content)
             self.assertIn("COPY app/views/ /app/views/", content)
