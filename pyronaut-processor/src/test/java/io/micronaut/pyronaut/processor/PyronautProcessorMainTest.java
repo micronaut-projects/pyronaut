@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,6 +24,12 @@ class PyronautProcessorMainTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void keepsOpenApiAdocParserOnProcessorClasspath() {
+        assertDoesNotThrow(() -> Class.forName("org.pegdown.PegDownProcessor"));
+        assertDoesNotThrow(() -> Class.forName("org.parboiled.Parboiled"));
+    }
 
     @Test
     void usesCachedDefaultPaths() throws Exception {

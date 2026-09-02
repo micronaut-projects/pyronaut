@@ -16,6 +16,10 @@ dependencies {
     implementation(mnPicocli.picocli)
     implementation(mn.micronaut.context.python)
     implementation(mn.micronaut.inject.python)
+    // OpenAPI ADOC conversion is executed while the processor handles
+    // generated applications. Keep its parser on the processor classpath,
+    // rather than relying on an application-only jar discovered later.
+    implementation("io.micronaut.openapi:micronaut-openapi-adoc")
 
     implementation(project(":micronaut-pyronaut-logback"))
 
