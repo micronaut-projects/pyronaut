@@ -748,17 +748,21 @@ final class ExternalBuildResolver {
             + "c.exclude(group: 'org.openjdk.nashorn', module: 'nashorn-core') };";
     }
 
-    private static List<Path> mergeClasspath(List<Path> primary, List<Path> additional) {
+    static List<Path> mergeClasspath(List<Path> primary, List<Path> additional) {
         Map<String, Path> artifacts = new LinkedHashMap<>();
         primary.forEach(path -> artifacts.putIfAbsent(mavenArtifactKey(path), path));
         additional.forEach(path -> artifacts.putIfAbsent(mavenArtifactKey(path), path));
         return List.copyOf(artifacts.values());
     }
 
-    private static String mavenArtifactKey(Path path) {
-        Path version = path.getParent();
-        Path artifact = version == null ? null : version.getParent();
-        return artifact == null ? path.toAbsolutePath().normalize().toString() : artifact.getFileName().toString();
+    static String mavenArtifactKey(Path path) {
+        // Gradle caches add a content-hash directory below the Maven version,
+        // while a Maven repository does not. The file name is the stable
+        // artifact identity shared by both layouts. Keying by the immediate
+        // parent (as before) collapsed every artifact with the same version,
+        // for example netty-handler and netty-buffer 4.2.16.Final.
+        Path file = path.getFileName();
+        return file == null ? path.toAbsolutePath().normalize().toString() : file.toString();
     }
 
     private record GradleSourceSets(List<List<Path>> sourceSets, boolean testResourcesEnabled) {

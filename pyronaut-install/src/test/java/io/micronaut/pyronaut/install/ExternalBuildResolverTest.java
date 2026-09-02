@@ -52,6 +52,27 @@ class ExternalBuildResolverTest {
     }
 
     @Test
+    void keepsDifferentGradleArtifactsWithTheSameVersionWhenMergingClasspaths() {
+        var version = "4.2.16.Final";
+        var handler = java.nio.file.Path.of(
+            "/gradle/io.netty/netty-handler/" + version + "/hash/netty-handler-" + version + ".jar");
+        var buffer = java.nio.file.Path.of(
+            "/gradle/io.netty/netty-buffer/" + version + "/hash/netty-buffer-" + version + ".jar");
+
+        assertEquals(java.util.List.of(handler, buffer), ExternalBuildResolver.mergeClasspath(
+            java.util.List.of(handler, buffer), java.util.List.of()));
+    }
+
+    @Test
+    void doesNotInjectManagedDevelopmentSupportUnlessControlPanelIsEnabled() throws Exception {
+        MavenClasspathResolver resolver = new MavenClasspathResolver(
+            new ProxyConfigurationLoader(), name -> null);
+
+        assertTrue(resolver.resolveManagedDevelopmentSupport(
+            Files.createTempDirectory("pyronaut-managed-development"), true).isEmpty());
+    }
+
+    @Test
     void detectsGradleTestResourcesPlugin() throws Exception {
         var root = Files.createTempDirectory("pyronaut-gradle-test-resources");
         Files.writeString(root.resolve("build.gradle.kts"), "plugins { id(\"io.micronaut.test-resources\") version \"5.0.0\" }");

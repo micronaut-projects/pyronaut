@@ -86,6 +86,14 @@ Pyronaut searches the corresponding module's
 example `pyronaut-dev/build/distributions/pyronaut-dev-macos-aarch64-0.0.1-SNAPSHOT.tar.gz`.
 The archive is unpacked into `~/.pyronaut/bin` just like a downloaded bundle.
 
+## Testing a release
+
+The repeatable clean-container release-validation runbook is maintained in
+[`TESTING.md`](TESTING.md). It covers wheel installation into CPython,
+authenticated GitHub asset verification, SDK and native-tool provisioning,
+fresh managed fixtures, native/JVM execution, progress reporting, and cache
+evidence.
+
 ## Creating a pull request
 
 Once you are satisfied with your changes:

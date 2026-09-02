@@ -50,16 +50,34 @@ If you rebuild the wheel and want to retest with the latest local artifact:
 python -m pip install --force-reinstall pyronaut/build/wheel/dist/pyronaut-*.whl
 ```
 
-The SDK wheel delegates to JVM launchers. Native images are downloaded on demand for native-configured projects and direct-source execution, then cached under `~/.pyronaut/bin`. The default bundle base URL is `https://gds.oracle.com/download/pyronaut/bundles/`; use `[native-images]` in `~/.pyronaut/settings.toml` to select a private base URL or pinned CI version. GitHub Releases are also supported:
+The SDK wheel delegates to JVM launchers. Native images are downloaded on demand for native-configured projects and direct-source execution, then cached under `~/.pyronaut/bin`. The default bundle base URL is `https://github.com/micronaut-projects/pyronaut/releases`. Use `[native-images]` in `~/.pyronaut/settings.toml` to select a release or another bundle source:
 
 ```toml
 [native-images]
 base-url = "https://github.com/micronaut-projects/pyronaut/releases"
 version = "0.0.1"
+# Optional: select an exact GitHub release tag.
+release-tag = "v0.0.1"
 ```
 
-For a private repository or draft release, set a read-only `GH_TOKEN` (or
-`GITHUB_TOKEN`) with repository contents read access. The CLI currently supports
+When `release-tag` is omitted, the GitHub release tag defaults to
+`v<version>`; for example, `version = "0.0.1-SNAPSHOT"` resolves
+`v0.0.1-SNAPSHOT` while retaining the version in the asset filename and
+cache path.
+
+For a private repository or draft release, set a read-only
+`PYRONAUT_RELEASE_TOKEN` (or `GH_TOKEN`, `GITHUB_TOKEN`, or
+`GITHUB_API_TOKEN`) with repository contents read access. Use
+`--allow-draft-release` when selecting a draft release. The Oracle GDS bundle
+source remains available as an explicit override:
+
+```toml
+[native-images]
+base-url = "https://gds.oracle.com/download/pyronaut/bundles/"
+version = "0.0.1"
+```
+
+The CLI currently supports
 Linux and macOS; Windows bundles may be published by CI but are not consumed
 by this CLI yet. `pyronaut process` stays on JIT by default unless the project opts into:
 

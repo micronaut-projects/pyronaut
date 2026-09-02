@@ -170,7 +170,15 @@ final class MavenClasspathResolver {
      * not contribute their dependency-management version to this resolution.
      */
     List<Path> resolveManagedDevelopmentSupport(Path localRepositoryPath, boolean offline) {
-        boolean enabled = "true".equalsIgnoreCase(System.getenv("PYRONAUT_CONTROL_PANEL_ENABLED"));
+        boolean enabled = "true".equalsIgnoreCase(envReader.apply("PYRONAUT_CONTROL_PANEL_ENABLED"));
+        if (!enabled) {
+            // An external Maven or Gradle project owns its runtime dependency
+            // versions. Do not add the SDK's development-support graph unless
+            // the project explicitly enables the Control Panel; otherwise a
+            // different Micronaut platform version can be mixed into the
+            // application's JVM development classpath.
+            return List.of();
+        }
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
             null,
             PyronautManagedVersions.micronautPlatformVersion(),

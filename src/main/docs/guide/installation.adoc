@@ -13,7 +13,7 @@ Note the version of Python used to run applications is dictated by `pyronaut` wh
 
 The `pyronaut` command requires a local installation of GraalVM SDK which can be installed in a https://www.graalvm.org/downloads/[number of different ways] with SDKMan! the recommended way, if you do not have a GraalVM SDK installed then `pyronaut` will download and install one to `~/.pyronaut/sdks` on first use.
 
-By default `pyronaut` will run Pyronaut projects using the JVM provided by the installed GraalVM SDK, if `native` executable mode is selected or when directly executing Python source with `pyronaut run app.py` then `pyronaut` will download additional native executables that are platform specified and install them into `~/pyronaut/bin` :
+By default `pyronaut` will run Pyronaut projects using the JVM provided by the installed GraalVM SDK, if `native` executable mode is selected or when directly executing Python source with `pyronaut run app.py` then `pyronaut` will download additional native executables from the Pyronaut GitHub Releases page and install them into `~/.pyronaut/bin`:
 
 [source,text]
 ----

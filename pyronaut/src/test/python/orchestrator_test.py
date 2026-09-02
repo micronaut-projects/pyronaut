@@ -220,6 +220,24 @@ class OrchestratorTest(unittest.TestCase):
         exit_code = cli.run(["unknown"], runner=self._runner_ok(), resolver=self._resolver(), platform_name="linux")
         self.assertEqual(cli.USAGE_ERROR, exit_code)
 
+    def test_jvm_delegate_strips_orchestrator_only_options(self):
+        self.assertEqual(
+            ["run", "--project-dir", "/tmp/demo", "--tests", "example.Test"],
+            cli._strip_orchestrator_only_args(
+                [
+                    "run",
+                    "--progress",
+                    "on",
+                    "--local-repository",
+                    "/tmp/m2",
+                    "--project-dir",
+                    "/tmp/demo",
+                    "--tests",
+                    "example.Test",
+                ]
+            ),
+        )
+
     def test_run_processes_main_then_run(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -460,6 +478,33 @@ class OrchestratorTest(unittest.TestCase):
                 return 0
 
             with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["install", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([["/tmp/pyronaut-install", "--project-dir", str(project_dir)]], executed)
+
+    def test_external_install_uses_current_wheel_installer_by_default(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "build.gradle").write_text("plugins { id 'java' }\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: Path(temp_dir) / "pyronaut-dev"
+                if command_name == "pyronaut-dev" else None,
+            ):
                 exit_code = cli.run(
                     ["install", "--project-dir", str(project_dir)],
                     runner=runner,
@@ -812,7 +857,7 @@ class OrchestratorTest(unittest.TestCase):
 
             with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
                 exit_code = cli.run(
-                    ["run", str(source)],
+                    ["run", "--progress", "on", str(source)],
                     runner=runner,
                     resolver=self._resolver(),
                     platform_name="linux",
@@ -821,9 +866,25 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", str(source)]],
+            [[
+                str(native_dev),
+                "-Djava.home=/tmp/java-home",
+                f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}",
+                "-Dmicronaut.control-panel.enabled=false",
+                "-Dmicronaut.graalvm.imagesingletons.enabled=false",
+                str(source),
+            ]],
             executed,
         )
+
+    def test_run_direct_source_with_explicit_build_mode_is_detected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "app.py"
+            source.write_text("print('ok')\n", encoding="utf-8")
+            for mode in ("--native", "--jvm", "--mode=native", "--mode", "jvm"):
+                with self.subTest(mode=mode):
+                    args = [mode, str(source)] if mode not in {"--mode", "jvm"} else ["--mode", "jvm", str(source)]
+                    self.assertTrue(cli._looks_like_direct_source_invocation(args))
 
     def test_run_direct_java_script_uses_pyronaut_dev_native_executable(self):
         executed = []
@@ -849,7 +910,14 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", str(source)]],
+            [[
+                str(native_dev),
+                "-Djava.home=/tmp/java-home",
+                f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}",
+                "-Dmicronaut.control-panel.enabled=false",
+                "-Dmicronaut.graalvm.imagesingletons.enabled=false",
+                str(source),
+            ]],
             executed,
         )
 
@@ -6117,9 +6185,12 @@ java-version = 25
                 self.requests.append(request)
                 return Response(release)
 
-        for token in (None, "read-only-token"):
+        token_names = ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN")
+        for token_name, token in ((None, None), ("PYRONAUT_RELEASE_TOKEN", "read-only-token")):
             opener = Opener()
-            environment = {"GH_TOKEN": token or ""}
+            environment = {name: "" for name in token_names}
+            if token_name is not None:
+                environment[token_name] = token
             with patch.dict(os.environ, environment, clear=False), \
                     patch.object(cli, "_download_proxy", return_value=(None, None)), \
                     patch.object(cli.urllib.request, "build_opener", return_value=opener):
@@ -6136,6 +6207,204 @@ java-version = 25
                 self.assertEqual("Bearer read-only-token", request_headers["Authorization"])
             else:
                 self.assertNotIn("Authorization", request_headers)
+
+    def test_github_release_url_uses_explicit_release_tag_without_normalizing_it(self):
+        archive_name = "pyronaut-dev-linux-amd64-0.0.1-SNAPSHOT.tar.gz"
+        release_tag = "untagged-335b1cec0d28f835a836"
+        release = {"tag_name": release_tag, "draft": True, "assets": [{"name": archive_name, "url": "asset"}]}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(release).encode()
+
+        class Opener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, request):
+                self.requests.append(request)
+                return Response()
+
+        opener = Opener()
+        with patch.dict(
+            os.environ,
+            {name: "" for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN")},
+            clear=False,
+        ), patch.object(cli, "_download_proxy", return_value=(None, None)), patch.object(
+            cli.urllib.request, "build_opener", return_value=opener
+        ):
+            result = cli._github_release_asset(
+                "https://github.com/micronaut-projects/pyronaut/releases",
+                "0.0.1-SNAPSHOT",
+                archive_name,
+                allow_draft=True,
+                release_tag=release_tag,
+            )
+
+        self.assertEqual("asset", result[0])
+        self.assertEqual(
+            "https://api.github.com/repos/micronaut-projects/pyronaut/releases/tags/untagged-335b1cec0d28f835a836",
+            opener.requests[0].full_url,
+        )
+
+    def test_github_release_url_derives_tag_from_native_image_version(self):
+        archive_name = "pyronaut-dev-linux-amd64-0.0.1-SNAPSHOT.tar.gz"
+        release = {
+            "tag_name": "v0.0.1-SNAPSHOT",
+            "draft": False,
+            "assets": [{"name": archive_name, "url": "asset"}],
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return cli.json.dumps(release).encode()
+
+        class Opener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, request):
+                self.requests.append(request)
+                return Response()
+
+        opener = Opener()
+        with patch.dict(
+            os.environ,
+            {name: "" for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN")},
+            clear=False,
+        ), patch.object(cli, "_download_proxy", return_value=(None, None)), patch.object(
+            cli.urllib.request, "build_opener", return_value=opener
+        ):
+            result = cli._github_release_asset(
+                "https://github.com/micronaut-projects/pyronaut/releases",
+                "0.0.1-SNAPSHOT",
+                archive_name,
+            )
+
+        self.assertEqual("asset", result[0])
+        self.assertEqual(
+            "https://api.github.com/repos/micronaut-projects/pyronaut/releases/tags/v0.0.1-SNAPSHOT",
+            opener.requests[0].full_url,
+        )
+
+    def test_native_image_configuration_reads_explicit_release_tag(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            settings_dir = home / ".pyronaut"
+            settings_dir.mkdir()
+            (settings_dir / "settings.toml").write_text(
+                "[native-images]\n"
+                'base-url = "https://github.com/micronaut-projects/pyronaut/releases"\n'
+                'version = "0.0.1-SNAPSHOT"\n'
+                'release-tag = "untagged-335b1cec0d28f835a836"\n',
+                encoding="utf-8",
+            )
+
+            with patch.object(cli.Path, "home", return_value=home):
+                configuration = cli._native_image_configuration()
+
+        self.assertEqual(
+            (
+                "https://github.com/micronaut-projects/pyronaut/releases/",
+                "0.0.1-SNAPSHOT",
+                "untagged-335b1cec0d28f835a836",
+            ),
+            configuration,
+        )
+
+    def test_default_native_image_base_url_uses_github_releases(self):
+        self.assertEqual(
+            "https://github.com/micronaut-projects/pyronaut/releases",
+            cli._NATIVE_IMAGE_BASE_URL,
+        )
+
+    def test_native_image_configuration_defaults_to_github_releases(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(cli.Path, "home", return_value=Path(temp_dir)), patch.object(
+                cli, "_installed_pyronaut_version", return_value="0.0.1.dev0"
+            ):
+                configuration = cli._native_image_configuration()
+
+        self.assertEqual(
+            (
+                "https://github.com/micronaut-projects/pyronaut/releases/",
+                "0.0.1-SNAPSHOT",
+                None,
+            ),
+            configuration,
+        )
+
+    def test_native_image_cache_separates_release_tags(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            settings_dir = home / ".pyronaut"
+            settings_dir.mkdir()
+            settings_path = settings_dir / "settings.toml"
+            settings_path.write_text(
+                "[native-images]\n"
+                'base-url = "https://github.com/micronaut-projects/pyronaut/releases"\n'
+                'version = "0.0.1-SNAPSHOT"\n'
+                'release-tag = "tag-a"\n',
+                encoding="utf-8",
+            )
+            downloaded_urls = []
+            resolved_tags = []
+
+            def resolve_asset(_base_url, _version, _archive_name, *, allow_draft, release_tag):
+                self.assertTrue(allow_draft)
+                resolved_tags.append(release_tag)
+                return f"https://example.invalid/{release_tag}.tar.gz", {}
+
+            def download_archive(_url, destination, _image_name, headers=None):
+                downloaded_urls.append(_url)
+                with tarfile.open(destination, "w:gz") as archive:
+                    content = b"native-image"
+                    info = tarfile.TarInfo("pyronaut-dev")
+                    info.size = len(content)
+                    archive.addfile(info, io.BytesIO(content))
+
+            with patch.object(cli.Path, "home", return_value=home), \
+                    patch.object(cli, "_github_release_asset", side_effect=resolve_asset), \
+                    patch.object(cli, "_download_native_image_archive", side_effect=download_archive), \
+                    patch.object(cli, "_allow_draft_release", True):
+                first = cli._ensure_native_image(
+                    "pyronaut-dev",
+                    platform_name="linux",
+                    machine_name="x86_64",
+                )
+                settings_path.write_text(
+                    "[native-images]\n"
+                    'base-url = "https://github.com/micronaut-projects/pyronaut/releases"\n'
+                    'version = "0.0.1-SNAPSHOT"\n'
+                    'release-tag = "tag-b"\n',
+                    encoding="utf-8",
+                )
+                second = cli._ensure_native_image(
+                    "pyronaut-dev",
+                    platform_name="linux",
+                    machine_name="x86_64",
+                )
+
+            self.assertEqual(first, second)
+            self.assertEqual(["tag-a", "tag-b"], resolved_tags)
+            self.assertEqual(
+                ["https://example.invalid/tag-a.tar.gz", "https://example.invalid/tag-b.tar.gz"],
+                downloaded_urls,
+            )
+            metadata = cli.json.loads(first.with_name("pyronaut-dev.json").read_text(encoding="utf-8"))
+            self.assertEqual("tag-b", metadata["release-tag"])
 
     def test_github_release_url_ignores_draft_without_explicit_flag(self):
         archive_name = "pyronaut-dev-linux-amd64-0.0.1.tar.gz"
@@ -6300,6 +6569,52 @@ java-version = 25
                     ("http://proxy.example:3128", "*.oracle.com|localhost"),
                     cli._download_proxy("https://downloads.example/native.tar.gz"),
                 )
+
+    def test_large_download_retries_an_interrupted_stream(self):
+        payload = b"retryable-download"
+        attempts = []
+
+        class Response:
+            headers = {"Content-Length": str(len(payload))}
+
+            def __init__(self, interrupted):
+                self.interrupted = interrupted
+                self.remaining = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self, _size):
+                if self.interrupted:
+                    self.interrupted = False
+                    raise OSError("connection closed while reading")
+                value, self.remaining = self.remaining, b""
+                return value
+
+        class Opener:
+            def open(self, _request):
+                attempts.append(True)
+                return Response(len(attempts) == 1)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "download.tar.gz"
+            stderr = io.StringIO()
+            with patch.object(cli.urllib.request, "build_opener", return_value=Opener()), \
+                    patch.object(cli, "_download_proxy", return_value=(None, None)), \
+                    patch.object(cli.time, "sleep"), \
+                    redirect_stderr(stderr):
+                cli._download_url_with_progress(
+                    "https://example.invalid/download.tar.gz",
+                    destination,
+                    "Downloading test asset",
+                )
+
+            self.assertEqual(payload, destination.read_bytes())
+            self.assertEqual(2, len(attempts))
+            self.assertIn("download interrupted; retrying", stderr.getvalue())
 
     def test_graalvm_sdk_download_uses_shared_progress_reporting(self):
         payload = b"graalvm-sdk"
@@ -7459,6 +7774,7 @@ java-version = 25
             with (
                 patch.object(cli, "__file__", str(package / "cli.py")),
                 patch.object(cli, "_bundled_executable", return_value=installer),
+                patch.object(cli, "_ensure_graalvm_java_home", return_value="/tmp/graalvm-jdk-25"),
                 patch.object(cli.subprocess, "run", return_value=completed) as run_process,
                 patch.object(cli, "_tool_bootstrap_local_repository", "/tmp/repository"),
                 patch.object(cli, "_tool_bootstrap_offline", True),
@@ -7484,10 +7800,50 @@ java-version = 25
             self.assertEqual(
                 tools.resolve(), Path(run_process.call_args.kwargs["env"]["PYRONAUT_PACKAGED_TOOLS_DIR"])
             )
+            self.assertEqual("/tmp/graalvm-jdk-25", run_process.call_args.kwargs["env"]["JAVA_HOME"])
+            self.assertTrue(run_process.call_args.kwargs["env"]["PATH"].startswith("/tmp/graalvm-jdk-25/bin"))
             self.assertEqual(
                 Path.home() / ".pyronaut" / "tools",
                 Path(run_process.call_args.kwargs["env"]["PYRONAUT_TOOLS_CACHE_DIR"]),
             )
+
+    def test_bundled_pyronaut_maven_repository_stages_jars_and_bom_in_default_repository(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            package = root / "package"
+            installer = package / "tools" / "pyronaut-install" / "bin" / "pyronaut-install"
+            installer.parent.mkdir(parents=True)
+            installer.write_text("#!/bin/sh\n", encoding="utf-8")
+            shared = package / "tools" / "shared" / "lib"
+            shared.mkdir(parents=True)
+            poms = package / "tools" / "shared" / "maven-poms"
+            poms.mkdir(parents=True)
+            jar_name = "micronaut-pyronaut-logback-0.0.1-SNAPSHOT.jar"
+            (shared / jar_name).write_bytes(b"logback")
+            artifact_pom = '<project><artifactId>micronaut-pyronaut-logback</artifactId><dependency><artifactId>micronaut-http</artifactId></dependency></project>'
+            (poms / "micronaut-pyronaut-logback-0.0.1-SNAPSHOT.pom").write_text(
+                artifact_pom,
+                encoding="utf-8",
+            )
+
+            with patch.object(cli, "__file__", str(package / "cli.py")), patch.dict(
+                os.environ, {"HOME": str(root / "home")}
+            ):
+                cli._seed_bundled_pyronaut_maven_repository(
+                    root / "project",
+                    None,
+                    str(installer),
+                )
+
+            repository = root / "home" / ".m2" / "repository" / "io" / "micronaut" / "pyronaut"
+            artifact_dir = repository / "micronaut-pyronaut-logback" / "0.0.1-SNAPSHOT"
+            self.assertEqual(b"logback", (artifact_dir / jar_name).read_bytes())
+            self.assertEqual(
+                artifact_pom,
+                (artifact_dir / "micronaut-pyronaut-logback-0.0.1-SNAPSHOT.pom").read_text(encoding="utf-8"),
+            )
+            bom = repository / "micronaut-pyronaut-bom" / "0.0.1-SNAPSHOT" / "micronaut-pyronaut-bom-0.0.1-SNAPSHOT.pom"
+            self.assertIn("micronaut-pyronaut-logback", bom.read_text(encoding="utf-8"))
 
     def test_bundled_executable_selects_windows_batch_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:

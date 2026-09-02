@@ -46,8 +46,23 @@ NOTE: Direct code execution (`pyronaut run App.py`) always selects the `native` 
 Native images are not included in the SDK wheel. When the native toolchain is
 selected, Pyronaut downloads the matching `pyronaut-dev`, `pyronaut-run`, or
 `pyronaut-run-python` bundle for the current operating system and architecture.
-The default source is `https://gds.oracle.com/download/pyronaut/bundles/` and
-the default version is the installed Pyronaut version. You can pin a CI build:
+The default source is `https://github.com/micronaut-projects/pyronaut/releases`
+and the default version is the installed Pyronaut version. The `version` selects
+the asset suffix. If `release-tag` is omitted, GitHub release lookup uses
+`v<version>`; use `release-tag` to select an exact tag, including private or
+draft releases:
+
+[source,toml]
+----
+[native-images]
+base-url = "https://github.com/micronaut-projects/pyronaut/releases"
+version = "0.0.1-SNAPSHOT"
+release-tag = "untagged-335b1cec0d28f835a836"
+----
+
+Pass `--allow-draft-release` when using a draft release and provide a read-only
+`PYRONAUT_RELEASE_TOKEN` (or one of the supported GitHub token variables).
+The Oracle GDS bundle source remains available as an explicit override:
 
 When Pyronaut provisions a GraalVM SDK automatically, the default distribution
 is Oracle GraalVM Enterprise Edition (EE). Select `ce` or `dev` explicitly in
@@ -56,7 +71,7 @@ is Oracle GraalVM Enterprise Edition (EE). Select `ce` or `dev` explicitly in
 [source,toml]
 ----
 [native-images]
-base-url = "https://foobar.com/download/pyronaut/bundles/"
+base-url = "https://gds.oracle.com/download/pyronaut/bundles/"
 version = "0.0.1.dev18704471"
 ----
 

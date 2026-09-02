@@ -80,7 +80,7 @@ DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
 _DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i2"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
-_NATIVE_IMAGE_BASE_URL = "https://gds.oracle.com/download/pyronaut/bundles/"
+_NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
 _NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
 _NATIVE_IMAGE_SETTINGS_TABLE = "native-images"
 _DEFAULT_DOCKER_JVM_BASE_IMAGE = f"container-registry.oracle.com/graalvm/jdk:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
@@ -461,6 +461,7 @@ def run(
                     resolver=locate,
                     no_cache=no_cache,
                     env_overrides=test_resources_env_overrides,
+                    java_home_provider=effective_java_home_provider,
                 )
                 if validation_code != SUCCESS:
                     return validation_code
@@ -473,6 +474,7 @@ def run(
                     locate,
                     install=False,
                     process_pass="main",
+                    java_home_provider=effective_java_home_provider,
                 )
                 if preflight_code != SUCCESS:
                     return preflight_code
@@ -511,6 +513,7 @@ def run(
                     # External dev must use the normal process entry point;
                     # the explicit pass can skip Java-only output generation.
                     process_pass=None,
+                    java_home_provider=effective_java_home_provider,
                 )
                 if preflight_code != SUCCESS:
                     return preflight_code
@@ -524,6 +527,7 @@ def run(
                     resolver=locate,
                     no_cache=no_cache,
                     env_overrides=test_resources_env_overrides,
+                    java_home_provider=effective_java_home_provider,
                 )
                 if validation_code != SUCCESS:
                     return validation_code
@@ -537,6 +541,7 @@ def run(
                     locate,
                     install=False,
                     process_pass="main",
+                    java_home_provider=effective_java_home_provider,
                 )
                 if preflight_code != SUCCESS:
                     return preflight_code
@@ -626,6 +631,15 @@ def _delegate(
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    if command == "install":
+        project_dir = Path(_extract_project_dir(args)).resolve()
+        configured_local_repository = _extract_local_repository(args)
+        _seed_bundled_pyronaut_maven_repository(
+            project_dir,
+            configured_local_repository,
+            resolver("pyronaut-install"),
+        )
+
     if command == "test-resources-server":
         try:
             env = _build_non_test_resources_env(command, java_home_provider)
@@ -753,7 +767,10 @@ def _delegate(
                 return PRECONDITION_FAILED
             env = _merge_env_overrides(env, env_overrides)
             env = _apply_project_virtualenv(env, project_dir)
-            command_line = [executable_path, *[value for value in args if value not in {"--jvm", "--native"}]]
+            forwarded_args = _strip_orchestrator_only_args(
+                [value for value in args if value not in {"--jvm", "--native"}]
+            )
+            command_line = [executable_path, *forwarded_args]
             if _delegation_trace_enabled():
                 print(shlex.join(command_line), file=sys.stderr)
             return runner(command_line, env) or SUCCESS
@@ -766,7 +783,7 @@ def _delegate(
             return PRECONDITION_FAILED
         default_executable = resolver(COMMAND_TO_EXECUTABLE[command])
         if executable_path != default_executable:
-            command_line = [executable_path, *args]
+            command_line = [executable_path, *_strip_orchestrator_only_args(args)]
             if _delegation_trace_enabled():
                 print(shlex.join(command_line), file=sys.stderr)
             try:
@@ -795,7 +812,12 @@ def _delegate(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
-    command_line = [executable_path, *args]
+    install_args = list(args)
+    if command == "install" and _extract_local_repository(install_args) is None:
+        configured_local_repository = _read_env(LOCAL_REPOSITORY_ENV)
+        if configured_local_repository:
+            install_args.extend(["--local-repository", configured_local_repository])
+    command_line = [executable_path, *install_args]
     if debug_vm and command in {"run", "test"}:
         command_line = [*command_line, "--debug-vm"]
     if _delegation_trace_enabled():
@@ -831,8 +853,11 @@ def _delegate_direct_source(
     *,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
+    forwarded_args = _strip_orchestrator_only_args(
+        [value for value in args if value not in {"--jvm", "--native"}]
+    )
     try:
-        executable_path = _resolve_direct_source_dev_executable(args, resolver)
+        executable_path = _resolve_direct_source_dev_executable(forwarded_args, resolver)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -848,12 +873,12 @@ def _delegate_direct_source(
         executable_path,
         env,
         command=command,
-        environment=_default_environment(command, args),
-        args=args,
+        environment=_default_environment(command, forwarded_args),
+        args=forwarded_args,
     )
     forwarded_args = [
         "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
-        for value in args
+        for value in forwarded_args
         if value not in {"--jvm", "--native"}
     ]
     command_line = [executable_path, *jvm_args, *forwarded_args]
@@ -994,9 +1019,10 @@ def _run_direct_source_with_auto_restart(
     if watch_debounce_seconds < 0:
         watch_debounce_seconds = 0.0
 
+    direct_args = _strip_orchestrator_only_args(args)
     forwarded_args = [
         "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
-        for value in args
+        for value in direct_args
         if value not in {"--jvm", "--native"}
     ]
     command_line = [
@@ -1005,7 +1031,7 @@ def _run_direct_source_with_auto_restart(
             executable_path,
             env,
             command=command,
-            environment=_default_environment(command, args),
+            environment=_default_environment(command, direct_args),
             args=forwarded_args,
         ),
         *forwarded_args,
@@ -1226,7 +1252,10 @@ def _build_java_delegate_invocation(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
 
-    command_line = [java_exec, *jvm_args, "-cp", classpath, JAVA_MAIN_BY_COMMAND[command], *args]
+    forwarded_args = _strip_orchestrator_only_args(
+        [value for value in args if value not in {"--jvm", "--native"}]
+    )
+    command_line = [java_exec, *jvm_args, "-cp", classpath, JAVA_MAIN_BY_COMMAND[command], *forwarded_args]
     if debug_vm:
         command_line = [*command_line, "--debug-vm"]
     return command_line, env
@@ -1992,17 +2021,19 @@ def _run_preflight(
     *,
     install: bool = True,
     process_pass: str | None = None,
+    java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
     if install:
-        _seed_bundled_pyronaut_maven_repository(
-            Path(project_dir),
-            local_repository,
-            resolver("pyronaut-install"),
-        )
         install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
         if no_cache:
             install_args.append("--no-cache")
-        install_code = _delegate("install", install_args, runner, resolver)
+        install_code = _delegate(
+            "install",
+            install_args,
+            runner,
+            resolver,
+            java_home_provider=java_home_provider,
+        )
         if install_code != SUCCESS:
             return install_code
 
@@ -2020,7 +2051,13 @@ def _run_preflight(
     # and fail during classpath assembly.
     if no_cache:
         process_args.append("--no-cache")
-    return _delegate("process", process_args, runner, resolver)
+    return _delegate(
+        "process",
+        process_args,
+        runner,
+        resolver,
+        java_home_provider=java_home_provider,
+    )
 
 
 def _local_repository_install_args(local_repository: str | None = None) -> list[str]:
@@ -2038,24 +2075,30 @@ def _seed_bundled_pyronaut_maven_repository(
     """Expose Pyronaut snapshot modules shipped in the SDK wheel to Maven.
 
     The delegated installer intentionally resolves through Maven rather than
-    the CLI's Java classpath. Copying the wheel's Pyronaut module JARs into the
-    selected local repository gives those modules normal Maven coordinates and
-    avoids requiring a snapshot publication for every SDK wheel build.
+    the CLI's Java classpath. Copying the wheel's Pyronaut module JARs and a
+    matching BOM into the selected (or default) local repository gives those
+    modules normal Maven coordinates and avoids requiring a snapshot
+    publication for every SDK wheel build.
     """
     if install_executable is None:
         return
     repository = local_repository or _read_env(LOCAL_REPOSITORY_ENV)
-    if repository is None:
-        return
+    target_root = (
+        Path(repository).expanduser().resolve()
+        if repository is not None
+        else Path.home() / ".m2" / "repository"
+    )
     launcher_dir = Path(install_executable).resolve().parent.parent
     lib_dirs = (launcher_dir / "lib", _launcher_shared_lib_dir(install_executable))
-    target_root = Path(repository).expanduser().resolve()
+    pom_dirs = tuple(dict.fromkeys(lib_dir.parent / "maven-poms" for lib_dir in lib_dirs))
     jars = {jar for lib_dir in lib_dirs if lib_dir.is_dir() for jar in lib_dir.glob("micronaut-pyronaut-*.jar")}
+    staged_artifacts: dict[str, str] = {}
     for jar in sorted(jars):
         match = re.match(r"^(micronaut-pyronaut-[^-].*)-(\d+[^/]*)\.jar$", jar.name)
         if match is None:
             continue
         artifact, version = match.groups()
+        staged_artifacts[artifact] = version
         # The wheel is produced from this repository, whose published group
         # is stable across modules.
         artifact_dir = target_root / "io" / "micronaut" / "pyronaut" / artifact / version
@@ -2064,7 +2107,14 @@ def _seed_bundled_pyronaut_maven_repository(
         if not staged_jar.exists() or staged_jar.stat().st_size != jar.stat().st_size:
             shutil.copy2(jar, staged_jar)
         pom = artifact_dir / f"{artifact}-{version}.pom"
-        if not pom.exists():
+        packaged_pom = next(
+            (pom_dir / pom.name for pom_dir in pom_dirs if (pom_dir / pom.name).is_file()),
+            None,
+        )
+        if packaged_pom is not None:
+            if not pom.exists() or not filecmp.cmp(pom, packaged_pom, shallow=False):
+                shutil.copy2(packaged_pom, pom)
+        elif not pom.exists():
             pom.write_text(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">"
@@ -2073,6 +2123,40 @@ def _seed_bundled_pyronaut_maven_repository(
                 f"<version>{version}</version></project>",
                 encoding="utf-8",
             )
+    if not staged_artifacts:
+        return
+    bom_version = sorted(set(staged_artifacts.values()))[0]
+    bom_dependencies = "".join(
+        "<dependency>"
+        "<groupId>io.micronaut.pyronaut</groupId>"
+        f"<artifactId>{artifact}</artifactId>"
+        f"<version>{version}</version>"
+        "</dependency>"
+        for artifact, version in sorted(staged_artifacts.items())
+    )
+    bom = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<project xmlns="http://maven.apache.org/POM/4.0.0">'
+        "<modelVersion>4.0.0</modelVersion>"
+        "<groupId>io.micronaut.pyronaut</groupId>"
+        "<artifactId>micronaut-pyronaut-bom</artifactId>"
+        f"<version>{bom_version}</version><packaging>pom</packaging>"
+        "<dependencyManagement><dependencies>"
+        f"{bom_dependencies}"
+        "</dependencies></dependencyManagement></project>"
+    )
+    bom_dir = target_root / "io" / "micronaut" / "pyronaut" / "micronaut-pyronaut-bom" / bom_version
+    bom_dir.mkdir(parents=True, exist_ok=True)
+    bom_file = bom_dir / f"micronaut-pyronaut-bom-{bom_version}.pom"
+    packaged_bom = next(
+        (pom_dir / bom_file.name for pom_dir in pom_dirs if (pom_dir / bom_file.name).is_file()),
+        None,
+    )
+    if packaged_bom is not None:
+        if not bom_file.is_file() or not filecmp.cmp(bom_file, packaged_bom, shallow=False):
+            shutil.copy2(packaged_bom, bom_file)
+    elif not bom_file.is_file() or bom_file.read_text(encoding="utf-8") != bom:
+        bom_file.write_text(bom, encoding="utf-8")
 
 
 def _has_direct_install_sources(args: Sequence[str]) -> bool:
@@ -2470,11 +2554,20 @@ def _run_build(
             runner=runner,
             resolver=resolver,
             no_cache=no_cache,
+            java_home_provider=java_home_provider,
         )
         if validation_code != SUCCESS:
             return validation_code
 
-    preflight = _run_preflight(str(project_dir), no_cache, None, runner, resolver, install=preflight_install)
+    preflight = _run_preflight(
+        str(project_dir),
+        no_cache,
+        None,
+        runner,
+        resolver,
+        install=preflight_install,
+        java_home_provider=java_home_provider,
+    )
     if preflight != SUCCESS:
         return preflight
 
@@ -3907,6 +4000,7 @@ def _run_lifecycle_validation(
     resolver: Callable[[str], str | None],
     no_cache: bool = False,
     env_overrides: dict[str, str] | None = None,
+    java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
     args = ["--project-dir", project_dir, "--scenario", scenario]
     if no_cache:
@@ -3917,6 +4011,7 @@ def _run_lifecycle_validation(
         runner,
         resolver,
         env_overrides=env_overrides,
+        java_home_provider=java_home_provider,
     )
 
 
@@ -4587,6 +4682,7 @@ def _run_with_auto_restart(
                 resolver,
                 install=False,
                 process_pass=process_pass,
+                java_home_provider=java_home_provider,
             )
             if preflight_code != SUCCESS:
                 return preflight_code
@@ -4650,6 +4746,7 @@ def _run_with_auto_restart(
                                 project_dir=str(project_root), scenario="dev",
                                 runner=execute, resolver=resolver,
                                 no_cache=no_cache, env_overrides=env_overrides,
+                                java_home_provider=java_home_provider,
                             )
                             if validation_code != SUCCESS:
                                 refresh_code = validation_code
@@ -4662,6 +4759,7 @@ def _run_with_auto_restart(
                             resolver,
                             install=False,
                             process_pass=process_pass,
+                            java_home_provider=java_home_provider,
                         )
                     except BaseException as exc:
                         refresh_exception = exc
@@ -4720,6 +4818,7 @@ def _run_test_cycle(
             resolver,
             install=not (_pyronaut_output_dir(project_dir) / "project-layout.properties").exists(),
             process_pass="all",
+            java_home_provider=java_home_provider,
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
@@ -4738,6 +4837,7 @@ def _run_test_cycle(
             resolver=resolver,
             no_cache=no_cache,
             env_overrides=test_resources_env_overrides,
+            java_home_provider=java_home_provider,
         )
         if validation_code != SUCCESS:
             return validation_code, test_resources_env_overrides
@@ -4751,6 +4851,7 @@ def _run_test_cycle(
             resolver,
             install=False,
             process_pass="all",
+            java_home_provider=java_home_provider,
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
@@ -4974,7 +5075,10 @@ def _build_dev_delegate_invocation(
         env = _merge_env_overrides(env, env_overrides)
         env = _apply_project_virtualenv(env, project_dir)
         return dev_command_line, env
-    if _read_pyproject_toolchain_type(project_dir) == TOOLCHAIN_TYPE_NATIVE:
+    if (
+        _read_pyproject_toolchain_type(project_dir) == TOOLCHAIN_TYPE_NATIVE
+        and _extract_build_mode_flag(args) != TOOLCHAIN_TYPE_JVM
+    ):
         raise RuntimeError(
             "The project requests the native toolchain, but pyronaut dev produced no native launcher invocation. "
             "Refusing to fall back to the JVM launcher."
@@ -5173,7 +5277,10 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
         if token == "--":
             index += 1
             continue
-        if token in {"test", "--port", "--property", "--config", "--setup", "--report"}:
+        if token in {
+            "test", "--port", "--property", "--config", "--setup", "--report",
+            "--progress", "--color", "--local-repository", "--local-repo",
+        }:
             index += 2
             continue
         if token == "--verbose":
@@ -5185,7 +5292,10 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
         if token == "--disable-test-resources":
             index += 1
             continue
-        if token.startswith("-D") or token.startswith("--port=") or token.startswith("--property=") or token.startswith("--config=") or token.startswith("--setup=") or token.startswith("--report="):
+        if token in {"--offline", "--refresh", "--no-cache", "--native", "--jvm"}:
+            index += 1
+            continue
+        if token.startswith("-D") or token.startswith("--port=") or token.startswith("--property=") or token.startswith("--config=") or token.startswith("--setup=") or token.startswith("--report=") or token.startswith("--progress=") or token.startswith("--color=") or token.startswith("--local-repository=") or token.startswith("--local-repo="):
             index += 1
             continue
         path = Path(token)
@@ -5706,7 +5816,7 @@ def _native_image_platform(
     return os_segment, arch
 
 
-def _native_image_configuration() -> tuple[str, str]:
+def _native_image_configuration() -> tuple[str, str, str | None]:
     settings = _read_pyronaut_user_settings()
     configured = settings.get(_NATIVE_IMAGE_SETTINGS_TABLE, {})
     if configured is None:
@@ -5737,7 +5847,17 @@ def _native_image_configuration() -> tuple[str, str]:
     version = _native_image_distribution_version(version.strip())
     if any(character in version for character in "/\\"):
         raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].version must not contain path separators")
-    return (base_url.rstrip("/") + "/") if parsed_base_url.scheme in {"http", "https"} else base_url, version
+
+    release_tag = configured.get("release-tag")
+    if release_tag is not None:
+        if not isinstance(release_tag, str) or not release_tag.strip():
+            raise RuntimeError(f"[{_NATIVE_IMAGE_SETTINGS_TABLE}].release-tag must be a non-empty string")
+        release_tag = release_tag.strip()
+    return (
+        (base_url.rstrip("/") + "/") if parsed_base_url.scheme in {"http", "https"} else base_url,
+        version,
+        release_tag,
+    )
 
 
 def _native_image_local_archive(
@@ -5765,6 +5885,7 @@ def _github_release_asset(
     archive_name: str,
     *,
     allow_draft: bool = False,
+    release_tag: str | None = None,
 ) -> tuple[str, dict[str, str]] | None:
     parsed = urllib.parse.urlparse(base_url)
     parts = [part for part in parsed.path.split("/") if part]
@@ -5772,7 +5893,11 @@ def _github_release_asset(
         return None
 
     owner, repository = parts[:2]
-    tag = version if version.startswith("v") else f"v{version}"
+    tag = (
+        release_tag.strip()
+        if release_tag is not None
+        else (version if version.startswith("v") else f"v{version}")
+    )
     token = next(
         (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN") if os.environ.get(name)),
         None,
@@ -5822,7 +5947,11 @@ def _github_release_asset(
     if isinstance(release, dict) and release.get("draft") and not allow_draft:
         release = None
     if not isinstance(release, dict):
-        token_hint = "; check GH_TOKEN read access" if not token else ""
+        token_hint = (
+            "; check GH_TOKEN, GITHUB_TOKEN, GITHUB_API_TOKEN, or PYRONAUT_RELEASE_TOKEN read access"
+            if not token
+            else ""
+        )
         raise RuntimeError(f"GitHub release '{tag}' was not found at {base_url}{token_hint}")
 
     assets = release.get("assets", [])
@@ -5889,20 +6018,33 @@ def _download_url_with_progress(
     opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
 
     request = urllib.request.Request(url, headers=headers or {}) if headers else url
-    with opener.open(request) as response, destination.open("wb") as output:
-        total = int(response.headers.get("Content-Length", "0") or "0")
-        downloaded = 0
-        last_percent = -1
-        print(f"{label}... 0%", end="", file=sys.stderr, flush=True)
-        while chunk := response.read(1024 * 1024):
-            output.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                percent = min(100, downloaded * 100 // total)
-                if percent != last_percent:
-                    last_percent = percent
-                    print(f"\r{label}... {percent}%", end="", file=sys.stderr, flush=True)
-        print(f"\r{label}... 100%", file=sys.stderr, flush=True)
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            with opener.open(request) as response, destination.open("wb") as output:
+                total = int(response.headers.get("Content-Length", "0") or "0")
+                downloaded = 0
+                last_percent = -1
+                print(f"{label}... 0%", end="", file=sys.stderr, flush=True)
+                while chunk := response.read(1024 * 1024):
+                    output.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        percent = min(100, downloaded * 100 // total)
+                        if percent != last_percent:
+                            last_percent = percent
+                            print(f"\r{label}... {percent}%", end="", file=sys.stderr, flush=True)
+                print(f"\r{label}... 100%", file=sys.stderr, flush=True)
+            return
+        except OSError:
+            if attempt == attempts:
+                raise
+            print(
+                f"\n{label} download interrupted; retrying ({attempt}/{attempts - 1})...",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(attempt)
 
 
 def _download_native_image_archive(
@@ -5958,7 +6100,7 @@ def _ensure_native_image(
 ) -> Path:
     if image_name not in _NATIVE_IMAGE_COMMANDS:
         raise RuntimeError(f"Unsupported native Pyronaut image: {image_name}")
-    base_url, version = _native_image_configuration()
+    base_url, version, release_tag = _native_image_configuration()
     os_segment, arch = _native_image_platform(platform_name=platform_name, machine_name=machine_name)
     archive_name = f"{image_name}-{os_segment}-{arch}-{version}.tar.gz"
     local_archive = _native_image_local_archive(base_url, image_name, archive_name)
@@ -5978,6 +6120,7 @@ def _ensure_native_image(
     expected_metadata: dict[str, object] = {
         "source": base_url,
         "version": version,
+        "release-tag": release_tag,
         "platform": f"{os_segment}-{arch}",
         # Version 3 isolates per-image manifests/resources in the shared
         # version/platform cache directory.
@@ -6030,6 +6173,7 @@ def _ensure_native_image(
                         version,
                         archive_name,
                         allow_draft=_allow_draft_release,
+                        release_tag=release_tag,
                     )
                     if github_asset is None:
                         raise RuntimeError(f"Unsupported GitHub release URL: {base_url}")
@@ -6680,6 +6824,9 @@ def _bootstrap_resolved_tools() -> bool:
     packaged_tools = Path(__file__).resolve().parent / "tools"
     if installer is None or not installer.is_file() or not (packaged_tools / "tool-runtime.properties").is_file():
         return False
+    java_home = _ensure_graalvm_java_home()
+    if java_home is None or not java_home.strip():
+        return False
     command_line = [str(installer), "--resolve-tools-only"]
     if _tool_bootstrap_local_repository:
         command_line.extend(["--local-repository", _tool_bootstrap_local_repository])
@@ -6690,6 +6837,10 @@ def _bootstrap_resolved_tools() -> bool:
     if _tool_bootstrap_progress:
         command_line.extend(["--progress", _tool_bootstrap_progress])
     env = dict(os.environ)
+    env["JAVA_HOME"] = java_home
+    java_bin = str(Path(java_home) / "bin")
+    path_value = env.get("PATH", "")
+    env["PATH"] = java_bin + (os.pathsep + path_value if path_value else "")
     env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
     env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
     try:
@@ -6961,7 +7112,12 @@ def _use_pyronaut_dev_native_toolchain(
     if override is not None:
         toolchain_type = override
     elif _is_external_build_project(project_dir) and pyronaut is None:
-        toolchain_type = TOOLCHAIN_TYPE_NATIVE
+        # External Maven/Gradle dependency resolution lives in the wheel's
+        # current JVM installer. Using the released native pyronaut-dev image
+        # here would execute its AOT copy of the installer, which can be older
+        # than the CLI wheel (and cannot receive wheel-only fixes). The native
+        # runner remains the default for the actual external project launch.
+        toolchain_type = TOOLCHAIN_TYPE_JVM if command == "install" else TOOLCHAIN_TYPE_NATIVE
     else:
         toolchain_type = _toolchain_type_from_pyronaut_table(pyronaut)
     if toolchain_type != TOOLCHAIN_TYPE_NATIVE:
@@ -6979,13 +7135,31 @@ def _use_pyronaut_dev_native_toolchain(
 def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
     if not argv:
         return False
-    direct_options = {"--port", "--property", "-D", "--config", "--setup", "--report", "--disable-test-resources", "--control-panel", "--verbose", "--test", "--smoke", "--non-interactive", "--trace-delegation"}
-    value_options = {"--port", "--property", "-D", "--config", "--setup"}
+    direct_options = {
+        "--port", "--property", "-D", "--config", "--setup", "--report",
+        "--disable-test-resources", "--control-panel", "--verbose", "--test",
+        "--smoke", "--non-interactive", "--trace-delegation", "--progress",
+        "--color", "--local-repository", "--local-repo", "--offline", "--refresh",
+        "--no-cache",
+    }
+    value_options = {
+        "--port", "--property", "-D", "--config", "--setup", "--progress",
+        "--color", "--local-repository", "--local-repo",
+    }
     index = 0
     while index < len(argv):
         arg = argv[index]
         if arg == "--":
             return len(argv) > index + 1
+        if arg in {"--native", "--jvm"}:
+            index += 1
+            continue
+        if arg == "--mode":
+            index += 2
+            continue
+        if arg.startswith("--mode="):
+            index += 1
+            continue
         if arg in direct_options or arg.startswith("-D") or arg.startswith("--verbose="):
             if arg in value_options:
                 index += 2

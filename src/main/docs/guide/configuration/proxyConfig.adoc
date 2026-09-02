@@ -74,5 +74,7 @@ If neither environment variables nor Pyronaut settings define a proxy, Pyronaut 
 When dependency resolution fails and a proxy was selected, the install error includes the proxy source and host summary.
 
 Native-image downloads use the same precedence and bypass rules. The selected
-bundle URL is formed from `[native-images].base-url` and `[native-images].version`;
-these settings are independent of the `[proxy]` table.
+bundle URL is formed from `[native-images].base-url` and
+`[native-images].version`. For GitHub Releases, `[native-images].release-tag`
+selects the release used to resolve that versioned asset. These settings are
+independent of the `[proxy]` table.

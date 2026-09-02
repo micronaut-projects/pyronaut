@@ -85,6 +85,34 @@ def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-test-resources-server", command: "pyronaut-test-resources-server"],
     [path: ":micronaut-pyronaut-tui", command: "pyronaut-tui", installDir: "pyronaut-tui"]
 ]
+// The wheel stages the Pyronaut modules that are embedded in the delegated
+// tools. Keep their generated Maven metadata with the wheel as well; the
+// installer uses that metadata when it exposes those modules through a
+// caller-selected local repository. Use paths instead of inspecting tasks
+// during this project configuration phase because sibling publication tasks
+// may not have been created yet.
+def wheelMavenProjectPaths = [
+    ":micronaut-pyronaut",
+    ":micronaut-pyronaut-bom",
+    ":micronaut-pyronaut-build-annotations",
+    ":micronaut-pyronaut-config-model",
+    ":micronaut-pyronaut-dev",
+    ":micronaut-pyronaut-direct-source",
+    ":micronaut-pyronaut-install",
+    ":micronaut-pyronaut-jar-build",
+    ":micronaut-pyronaut-logback",
+    ":micronaut-pyronaut-logging",
+    ":micronaut-pyronaut-native-build",
+    ":micronaut-pyronaut-processor",
+    ":micronaut-pyronaut-pytest",
+    ":micronaut-pyronaut-requests",
+    ":micronaut-pyronaut-run",
+    ":micronaut-pyronaut-run-python",
+    ":micronaut-pyronaut-test",
+    ":micronaut-pyronaut-test-resources-server",
+    ":micronaut-pyronaut-tui",
+    ":micronaut-pyronaut-validate-config"
+]
 def mavenVersionDirReady = { File versionDir, String artifactId ->
     if (!versionDir.isDirectory()) {
         return false
@@ -167,6 +195,9 @@ tasks.register("prepareWheelSources", Sync) {
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run-python").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-requests").tasks.named("jar"))
+    wheelMavenProjectPaths.each { modulePath ->
+        dependsOn("${modulePath}:generatePomFileForMavenPublication")
+    }
     from("src/main/python") {
         into("src")
     }
@@ -206,6 +237,23 @@ tasks.register("prepareWheelSources", Sync) {
         def toolsRoot = wheelStagingDir.get().file("src/pyronaut_cli_v2/tools").asFile
         def sharedLib = new File(toolsRoot, "shared/lib")
         sharedLib.mkdirs()
+        def sharedMavenPoms = new File(toolsRoot, "shared/maven-poms")
+        delete(sharedMavenPoms)
+        sharedMavenPoms.mkdirs()
+        wheelMavenProjectPaths.collect { modulePath -> project(modulePath) }.each { module ->
+            def pom = module.layout.buildDirectory.file("publications/maven/pom-default.xml").get().asFile
+            if (!pom.isFile()) {
+                throw new GradleException("Missing generated Maven POM for ${module.path}: ${pom.absolutePath}")
+            }
+            def pomText = pom.getText("UTF-8")
+            def artifactMatcher = pomText =~ /<artifactId>([^<]+)<\/artifactId>/
+            def versionMatcher = pomText =~ /<version>([^<]+)<\/version>/
+            if (!artifactMatcher.find() || !versionMatcher.find()) {
+                throw new GradleException("Unable to read artifact coordinates from ${pom.absolutePath}")
+            }
+            def target = new File(sharedMavenPoms, "${artifactMatcher.group(1)}-${versionMatcher.group(1)}.pom")
+            Files.copy(pom.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
         def sharedByName = [:]
         def sharedOrigins = [:].withDefault { [] }
         def installerClasspathEntries = (new File(toolsRoot, "pyronaut-install/lib").listFiles() ?: [])
@@ -406,7 +454,7 @@ build-backend = "setuptools.build_meta"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-pyronaut_cli_v2 = ["tools/**", "tools/shared/lib/*", "toolchain-defaults.properties", "version.properties"]
+pyronaut_cli_v2 = ["tools/**", "tools/shared/lib/*", "tools/shared/maven-poms/*", "toolchain-defaults.properties", "version.properties"]
 """.trim() + System.lineSeparator()
 
         def setupCfgFile = wheelStagingDir.get().file("setup.cfg").asFile
@@ -434,6 +482,7 @@ pyronaut_cli_v2 =
     tools/*/*/*
     tools/*/*/*/*
     tools/shared/lib/*
+    tools/shared/maven-poms/*
 
 [options.entry_points]
 console_scripts =
@@ -563,6 +612,12 @@ tasks.register("testPythonOrchestrator", Exec) {
     doFirst {
         environment.remove("VIRTUAL_ENV")
         environment.remove("JAVA_HOME")
+        // Keep credentials and release-discovery state out of unit tests. A
+        // failing assertion can include the subprocess environment, and the
+        // GitHub-release tests provide their own token fixtures explicitly.
+        ["PYRONAUT_RELEASE_TOKEN", "PYRONAUT_GIT_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN"].each {
+            environment.remove(it)
+        }
         environment("PYRONAUT_DISABLE_AUTO_JAVA_HOME", "true")
     }
 }
