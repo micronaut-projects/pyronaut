@@ -184,6 +184,7 @@ dependencies.add(
 )
 
 val stagedPyronautProjectPaths = listOf(
+    ":micronaut-pyronaut-config-model",
     ":micronaut-pyronaut-logback",
     ":micronaut-pyronaut-pytest",
     ":micronaut-pyronaut-requests",

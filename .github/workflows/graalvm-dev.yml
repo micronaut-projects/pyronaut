@@ -34,10 +34,12 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: "🔧 Setup Java"
-        uses: actions/setup-java@v4
+        uses: graalvm/setup-graalvm@v1.4.4
         with:
-          distribution: 'oracle'
+          distribution: 'graalvm'
           java-version: '25'
+          version: '25.2'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: "💾 Cache source dependency checkouts"
         uses: ./.github/actions/cache-source-dependencies

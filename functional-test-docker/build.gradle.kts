@@ -188,6 +188,7 @@ dependencies.add(
 )
 
 val stagedPyronautProjectPaths = listOf(
+    ":micronaut-pyronaut-config-model",
     ":micronaut-pyronaut-logback",
     ":micronaut-pyronaut-pytest",
     ":micronaut-pyronaut-requests",
@@ -1704,6 +1705,9 @@ val validateInvalidConfig by tasks.registering {
     group = "verification"
     description = "Verifies that configuration validation rejects invalid fixture app configuration."
     dependsOn(installApp)
+    if (!useNativeExecutables.get()) {
+        dependsOn(project(":micronaut-pyronaut-validate-config").tasks.named("installDist"))
+    }
     mustRunAfter(validateConfig)
     inputs.files(
         fixtureAppDir.file("pyproject.toml"),

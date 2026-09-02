@@ -141,14 +141,6 @@ dependencies {
     implementation(mnTest.junit.jupiter.engine)
     implementation(mnTest.junit.platform.launcher)
 
-    constraints {
-        runtimeOnly("org.antlr:antlr4-runtime") {
-            version {
-                strictly("4.11.1")
-            }
-            because("tomlj 1.1.1 includes parsers generated with ANTLR 4.11.1")
-        }
-    }
 }
 
 val bundleControlPanelJars by tasks.registering(Sync::class) {
