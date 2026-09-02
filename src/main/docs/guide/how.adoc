@@ -1,4 +1,4 @@
-Pyronaut exposes the entirety of the https://docs.micronaut.io/latest/[Micronaut API] to the Python by representing any Java annotation as a Python decorator at the source level.
+Pyronaut exposes the entirety of the https://docs.micronaut.io/latest/[Micronaut API] to Python by representing any Java annotation as a Python decorator at the source level.
 
 This means you can use any documented Micronaut construct in Python code.
 
@@ -15,7 +15,7 @@ def index() -> str:
     return "Hello from Pyronaut"
 ----
 
-One caveat is that the packages you import start with `micronaut` instead of `io.micronaut` so when refering to the https://docs.micronaut.io/latest/api/[API Reference] you need to omit the `io.` any import. This wrinkle is due to the fact Python itself forbids defining packages that are part of Python core and since `io` is a core Python package this would otherwise conflict.
+One caveat is that the packages you import start with `micronaut` instead of `io.micronaut` so when refering to the https://docs.micronaut.io/latest/api/[API Reference] you need to omit the `io.` on any import declaration. This wrinkle is due to the fact Python itself forbids defining packages that are part of the core Python API and since `io` is a core Python package this would otherwise conflict and produce a runtime error.
 
 This flexibility to use any Java side annotation as a Python decorator means you can leverage advanced features of Micronaut such as Micronaut serialization to define JSON mapping using Jackson:
 
@@ -46,7 +46,7 @@ class Person:
 
 So what happens is during the execution of `pyronaut process` which is executed prior to running the application Micronaut at build time produces additional artefacts during this processing step that know how to serialization and deserialization the `Person` data class plus some code that bridges that enable Python <--> Java interop.
 
-Any Java API can be imported and used directly from Python and advanced features like Micronaut Validation, Micronaut Serialization and Micronaut Data "just work" in the context of Python enabling a highly productive, scalable and portable development platform for Python developers.
+Any Java API can be imported and used directly from Python and advanced features like https://docs.micronaut.io/latest/validation/[Micronaut Validation], https://docs.micronaut.io/latest/serde/[Micronaut Serialization] and https://docs.micronaut.io/latest/data[Micronaut Data] "just work" in the context of Python enabling a highly productive, scalable and portable development platform for Python developers.
 
 A Pyronaut decorator can be used at the type or function level using the regular decorator syntax (for example `@Get`). 
 
