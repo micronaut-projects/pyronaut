@@ -396,11 +396,6 @@ tasks.register("prepareWheelSources", Sync) {
                 artifact.delete()
             }
         }
-        def controlPanelDir = new File(toolsRoot, "pyronaut-dev/lib/control-panel")
-        if (controlPanelDir.isDirectory()) {
-            delete(controlPanelDir)
-        }
-
         def descriptorDigest = java.security.MessageDigest.getInstance("SHA-256")
         fileTree(toolsRoot).matching { include("*/bin/pyronaut-tool-classpath.tsv") }.files.sort().each { descriptor ->
             descriptorDigest.update(descriptor.parentFile.parentFile.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
@@ -541,13 +536,16 @@ tasks.register("buildSdkWheel", Exec) {
             )
         }
         def externalArtifactNames = [] as Set
+        def controlPanelArtifactNames = [] as Set
         def bundledArtifactNames = [] as Set
         descriptorFiles.each { descriptor ->
             descriptor.eachLine("UTF-8") { line ->
                 def fields = line.split("\\t", -1)
                 if (fields[0] == "bundled") {
                     bundledArtifactNames.add(fields[1])
-                } else if (fields[0] == "maven" || fields[0] == "control-panel") {
+                } else if (fields[0] == "control-panel") {
+                    controlPanelArtifactNames.add(fields[6])
+                } else if (fields[0] == "maven") {
                     externalArtifactNames.add(fields[6])
                 }
             }
@@ -556,7 +554,7 @@ tasks.register("buildSdkWheel", Exec) {
             include("**/tools/shared/lib/*")
             include("**/tools/*/lib/control-panel/*")
         }.files.collect { it.name } as Set
-        def unexpectedExternalArtifacts = packagedArtifactNames.intersect(externalArtifactNames)
+        def unexpectedExternalArtifacts = packagedArtifactNames.intersect(externalArtifactNames - controlPanelArtifactNames)
         if (!unexpectedExternalArtifacts.isEmpty()) {
             throw new GradleException("Wheel contains externally resolved tool artifacts: ${unexpectedExternalArtifacts.sort()}")
         }
@@ -612,13 +610,13 @@ tasks.register("testPythonOrchestrator", Exec) {
     doFirst {
         environment.remove("VIRTUAL_ENV")
         environment.remove("JAVA_HOME")
+        environment.remove("PYRONAUT_DISABLE_AUTO_JAVA_HOME")
         // Keep credentials and release-discovery state out of unit tests. A
         // failing assertion can include the subprocess environment, and the
         // GitHub-release tests provide their own token fixtures explicitly.
         ["PYRONAUT_RELEASE_TOKEN", "PYRONAUT_GIT_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN"].each {
             environment.remove(it)
         }
-        environment("PYRONAUT_DISABLE_AUTO_JAVA_HOME", "true")
     }
 }
 

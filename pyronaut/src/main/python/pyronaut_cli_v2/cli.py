@@ -874,7 +874,10 @@ def _delegate_direct_source(
         env,
         command=command,
         environment=_default_environment(command, forwarded_args),
-        args=forwarded_args,
+        # Keep orchestration flags available while constructing JVM
+        # properties. In particular, --control-panel is stripped from the
+        # delegated argument list below but must still enable its classpath.
+        args=args,
     )
     forwarded_args = [
         "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
@@ -1032,7 +1035,9 @@ def _run_direct_source_with_auto_restart(
             env,
             command=command,
             environment=_default_environment(command, direct_args),
-            args=forwarded_args,
+            # --control-panel is removed from direct_args before delegation;
+            # retain the original flags for JVM-property construction.
+            args=args,
         ),
         *forwarded_args,
     ]
@@ -1120,6 +1125,7 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
+        jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
         if not _control_panel_requested(Path.cwd().resolve(), args):
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     elif command == "run":
@@ -1159,7 +1165,6 @@ def _build_direct_source_native_jvm_args(
             except RuntimeError:
                 pass
             else:
-                jvm_args.append(f"-Djava.class.path={classpath}")
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
         if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
             # Resolve Control Panel artifacts bundled with the launcher wheel;
@@ -1170,6 +1175,12 @@ def _build_direct_source_native_jvm_args(
                 classpath = os.pathsep.join(dict.fromkeys([*existing, *control_panel]))
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
                 jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}")
+        if classpath:
+            # PyronautDevMain creates the runtime classloader from the
+            # java.class.path property in the native image. Control Panel is
+            # intentionally outside that image and must be added here at
+            # runtime when explicitly requested.
+            jvm_args.append(f"-Djava.class.path={classpath}")
     return jvm_args
 
 
@@ -1184,6 +1195,13 @@ def _direct_control_panel_classpath_entries(executable_path: str) -> list[str]:
         if (packaged_lib / "control-panel").is_dir():
             launcher_root = packaged_root
             launcher_lib = packaged_lib
+        else:
+            # Native images are cached separately from the resolved JVM tool
+            # distribution. The latter owns the optional Control Panel jars.
+            resolved_root = _resolved_tool_distribution_dir("pyronaut-dev")
+            if resolved_root is not None:
+                launcher_root = resolved_root
+                launcher_lib = resolved_root / "lib"
     bundled_dir = launcher_lib / "control-panel"
     descriptor = launcher_root / "bin" / "pyronaut-tool-classpath.tsv"
     if descriptor.is_file():
@@ -1822,6 +1840,21 @@ def _native_launcher_compile_classpath_entries(launcher_executable: str | None) 
                         if bundled.is_file():
                             resolved.append(str(bundled))
                             break
+                    else:
+                        # Native manifests are produced on the build host and
+                        # may contain absolute Gradle-cache paths. Their
+                        # standard files-2.1 layout contains enough Maven
+                        # coordinates to resolve the artifact portably.
+                        parts = candidate.parts
+                        try:
+                            marker = parts.index("files-2.1")
+                            group, artifact, version = parts[marker + 1:marker + 4]
+                        except (ValueError, IndexError):
+                            continue
+                        repository = Path.home() / ".m2" / "repository"
+                        match = repository.joinpath(*group.split("."), artifact, version, candidate.name)
+                        if match.is_file():
+                            resolved.append(str(match))
         return resolved
     # Older distributions do not have a reduced compiler manifest. Their
     # native parent remains sufficient, so do not re-add the whole lib dir.
@@ -6725,15 +6758,33 @@ def _resolved_tool_executable(command_name: str) -> Path | None:
     packaged_tools = Path(__file__).resolve().parent / "tools"
     if not (packaged_tools / "tool-runtime.properties").is_file():
         return None
+    cache_root = _resolved_tool_cache_root()
+    if cache_root is None:
+        return None
+    version = _installed_pyronaut_version()
+    if version is None:
+        return None
+    if not _resolved_tools_cache_complete(cache_root, packaged_tools, version):
+        return None
+    executable = cache_root / "tools" / command_name / "bin" / _launcher_file_name(command_name)
+    return executable if executable.is_file() else None
+
+
+def _resolved_tool_cache_root() -> Path | None:
     version = _installed_pyronaut_version()
     if version is None:
         return None
     safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version)
     cache_root = Path.home() / ".pyronaut" / "tools" / safe_version / "current"
-    if not _resolved_tools_cache_complete(cache_root, packaged_tools, version):
+    return cache_root if cache_root.is_dir() else None
+
+
+def _resolved_tool_distribution_dir(command_name: str) -> Path | None:
+    cache_root = _resolved_tool_cache_root()
+    if cache_root is None:
         return None
-    executable = cache_root / "tools" / command_name / "bin" / _launcher_file_name(command_name)
-    return executable if executable.is_file() else None
+    tool_dir = cache_root / "tools" / command_name
+    return tool_dir if tool_dir.is_dir() else None
 
 
 def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, version: str) -> bool:
@@ -6938,6 +6989,12 @@ def _pyronaut_dev_native_command_line(
             return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider) if command in {"dev", "run", "test"} else []
+    # The native pyronaut-dev image cannot currently load the reflective
+    # pegdown/parboiled parser used by OpenAPI's ADOC converter. Keep this
+    # optional documentation conversion disabled for native launches until
+    # the converter has native-image support.
+    if command in {"dev", "run", "test"}:
+        jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
     # Coordinates contain ':', so use a delimiter independent of the host
     # path separator when passing the list through a system property.
     provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
@@ -7497,7 +7554,7 @@ def _run_tui(
     direct_source = _looks_like_direct_source_invocation(args)
     project_dir = Path.cwd().resolve() if direct_source else Path(_extract_project_dir(args)).resolve()
     try:
-        tui_toolchain_type = _read_pyproject_toolchain_type(project_dir)
+        tui_toolchain_type = "jvm" if direct_source else _read_pyproject_toolchain_type(project_dir)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -7844,7 +7901,7 @@ class _OwnedTestResourcesSession:
         if self._session_file.exists():
             self._emit_status("[test-resources] stale session detected; starting owned server instead")
         else:
-            self._emit_status("[test-resources] external settings detected but server unavailable; starting owned server instead")
+            self._emit_status("[test-resources] stale external settings detected; starting owned server instead")
         return False
 
     def _delegate_test_resources_server(
@@ -8024,12 +8081,13 @@ def _run_tamboui_tui(
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
         return PRECONDITION_FAILED
     pyronaut_table = _read_pyproject_pyronaut_table(project_dir)
-    if isinstance(pyronaut_table, dict):
-        configured_toolchain = pyronaut_table.get("toolchain")
-        if not isinstance(configured_toolchain, dict) or "type" not in configured_toolchain:
+    if direct_dev_executable is None:
+        if isinstance(pyronaut_table, dict):
+            configured_toolchain = pyronaut_table.get("toolchain")
+            if not isinstance(configured_toolchain, dict) or "type" not in configured_toolchain:
+                toolchain_type = None
+        else:
             toolchain_type = None
-    else:
-        toolchain_type = None
     if direct_dev_executable is not None:
         native_commands = []
     else:
@@ -8072,6 +8130,9 @@ def _run_tamboui_tui(
         "--report-dir",
         str(report_dir),
     ]
+    selected_java_home = base_env.get("JAVA_HOME") if base_env is not None else None
+    if direct_dev_executable is not None and selected_java_home:
+        command_line.extend(["--java-home", selected_java_home])
     if toolchain_type is not None:
         command_line.extend(["--toolchain-type", toolchain_type])
     if direct_dev_executable is not None:
