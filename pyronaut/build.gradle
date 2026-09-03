@@ -350,7 +350,7 @@ tasks.register("prepareWheelSources", Sync) {
                 sourceDir.listFiles()?.findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }.each { artifact ->
                     if (artifact.name.endsWith(".jar")) {
                         def origin = originProjects[toolDir.name] ?: toolDir.name
-                        sharedOrigins[artifact.name] << "${origin} (${artifact.absolutePath})"
+                        sharedOrigins[artifact.name] << origin
                     }
                     def existing = sharedByName[artifact.name]
                     if (existing != null) {
@@ -561,6 +561,29 @@ tasks.register("buildSdkWheel", Exec) {
         def missingBundledArtifacts = bundledArtifactNames - packagedArtifactNames
         if (!missingBundledArtifacts.isEmpty()) {
             throw new GradleException("Wheel is missing required bootstrap artifacts: ${missingBundledArtifacts.sort()}")
+        }
+        def forbiddenPaths = [
+            rootProject.projectDir.canonicalPath,
+            wheelStagingDir.get().asFile.canonicalPath,
+            gradle.gradleUserHomeDir.canonicalPath,
+            new File(gradle.gradleUserHomeDir, "caches").canonicalPath,
+            new File(System.getProperty("user.home")).canonicalPath,
+        ].unique()
+        def auditCommand = []
+        auditCommand.addAll(pythonCommand.get())
+        auditCommand.add(file("src/main/python/pyronaut_cli_v2/wheel_audit.py").absolutePath)
+        auditCommand.add(wheel.absolutePath)
+        auditCommand.addAll(forbiddenPaths)
+        def auditProcessBuilder = new ProcessBuilder(auditCommand)
+            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+        if (usesPyenv.get()) {
+            auditProcessBuilder.environment().put("PYENV_VERSION", pyenvVersion.get())
+        }
+        def auditProcess = auditProcessBuilder.start()
+        def auditExit = auditProcess.waitFor()
+        if (auditExit != 0) {
+            throw new GradleException("Pyronaut SDK wheel contains build-machine paths or invalid native descriptors")
         }
         logger.lifecycle("Verified Pyronaut SDK wheel size: ${wheel.length()} bytes")
     }

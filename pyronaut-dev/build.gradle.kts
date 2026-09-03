@@ -223,12 +223,39 @@ val writeNativeClasspathManifests by tasks.registering {
                 .sorted()
                 .joinToString("\n", postfix = "\n")
         )
+        val compileArtifactsByFile = nativeCompileClasspath.resolvedConfiguration.resolvedArtifacts
+            .associateBy { it.file.canonicalFile }
+        val compileEntries = nativeCompileClasspath.files
+            .map { file ->
+                val artifact = checkNotNull(compileArtifactsByFile[file.canonicalFile]) {
+                    "Missing Maven coordinates for native classpath entry: $file"
+                }
+                listOf(
+                    "maven",
+                    artifact.moduleVersion.id.group,
+                    artifact.name,
+                    artifact.moduleVersion.id.version,
+                    artifact.extension,
+                    artifact.classifier ?: "",
+                    artifact.file.name
+                ).joinToString("\t")
+            }
+            .distinct()
+        compileEntries.forEach { entry ->
+            val fields = entry.split("\t")
+            check(fields.size == 7 && fields[0] == "maven") { "Invalid native classpath descriptor: $entry" }
+            check(fields.subList(1, 5).all { it.isNotBlank() && '/' !in it && '\\' !in it }) {
+                "Invalid native classpath coordinate: $entry"
+            }
+            check('/' !in fields[5] && '\\' !in fields[5]) { "Invalid native classpath classifier: $entry" }
+            val classifier = fields[5].takeIf { it.isNotEmpty() }?.let { "-$it" } ?: ""
+            val expectedFileName = "${fields[2]}-${fields[3]}$classifier.${fields[4]}"
+            check(fields[6] == expectedFileName && !File(fields[6]).isAbsolute && File(fields[6]).name == fields[6]) {
+                "Native classpath descriptor contains a host path: $entry"
+            }
+        }
         directory.resolve("native-compile-classpath.txt").writeText(
-            nativeCompileClasspath.resolvedConfiguration.resolvedArtifacts
-                .map { it.file.toPath().toAbsolutePath().normalize().toString() }
-                .distinct()
-                .sorted()
-                .joinToString("\n", postfix = "\n")
+            compileEntries.joinToString("\n", postfix = "\n")
         )
     }
 }

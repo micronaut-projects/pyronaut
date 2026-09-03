@@ -34,7 +34,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"install", "process", "dev", "run", "test", "build", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "install", "process", "dev", "run", "test", "build", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -80,8 +80,12 @@ DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
 _DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i2"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
+_SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
 _NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
+_SETUP_IMAGE_COMMANDS = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
+_SETUP_SCHEMA_VERSION = 1
+_SETUP_REQUIRED_MESSAGE = "Pyronaut setup is missing or stale. Run pyronaut setup."
 _NATIVE_IMAGE_SETTINGS_TABLE = "native-images"
 _DEFAULT_DOCKER_JVM_BASE_IMAGE = f"container-registry.oracle.com/graalvm/jdk:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
 _DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = f"container-registry.oracle.com/graalvm/native-image:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
@@ -114,11 +118,7 @@ _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RESET = "\033[0m"
 _allow_draft_release = False
-_tool_bootstrap_local_repository: str | None = None
-_tool_bootstrap_offline = False
-_tool_bootstrap_refresh = False
-_tool_bootstrap_progress: str | None = None
-_tool_bootstrap_attempted: set[str] = set()
+_validated_setup_manifest: dict[str, object] | None = None
 
 
 def _print_version() -> None:
@@ -210,15 +210,10 @@ def run(
     input_reader: Callable[[float | None], str | None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    global _allow_draft_release, _tool_bootstrap_local_repository, _tool_bootstrap_offline
-    global _tool_bootstrap_refresh, _tool_bootstrap_progress
+    global _allow_draft_release, _validated_setup_manifest
     _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
+    _validated_setup_manifest = None
     argv = [value for value in argv if value != "--allow-draft-release"]
-    _tool_bootstrap_local_repository = _extract_local_repository(argv) or _read_env(LOCAL_REPOSITORY_ENV)
-    _tool_bootstrap_offline = _extract_offline(argv)
-    _tool_bootstrap_refresh = _extract_no_cache(argv) or _extract_flag(argv, "--refresh")
-    _tool_bootstrap_progress = _extract_option_value(argv, "--progress")
-    _tool_bootstrap_attempted.clear()
 
     if monotonic is None:
         monotonic = time.monotonic
@@ -233,6 +228,12 @@ def run(
         execute = _run_subprocess
     locate = resolver or _resolve_executable
     current_platform = platform_name or sys.platform
+    enforce_setup = (
+        resolver is None
+        and runner is None
+        and runner_with_env is None
+        and process_runner is None
+    )
 
     if not argv:
         _print_usage()
@@ -246,7 +247,29 @@ def run(
         _print_version()
         return SUCCESS
 
+    command = argv[0]
+    if command == "setup":
+        setup_args = list(argv[1:])
+        if _extract_flag(setup_args, "--help") or _extract_flag(setup_args, "-h"):
+            _print_setup_usage()
+            return SUCCESS
+        if not _is_supported_platform(current_platform):
+            print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
+            return PLATFORM_UNSUPPORTED
+        return _run_setup(setup_args, execute)
+
+    option_args = argv[: argv.index("--")] if "--" in argv else argv
+    if "-V" in option_args[1:] or (
+        command != "build" and "--version" in option_args[1:]
+    ):
+        _print_version()
+        return SUCCESS
+
     if "--tui" in argv or argv[0] == "--tui":
+        if (not any(value in {"-h", "--help", "-V", "--version"} for value in option_args)
+                and enforce_setup and _setup_is_required()):
+            if not _require_setup(argv):
+                return PRECONDITION_FAILED
         tui_args = [value for value in argv if value != "--tui"]
         tui_project_dir = (
             Path.cwd()
@@ -266,7 +289,6 @@ def run(
             java_home_provider=tui_java_home_provider,
         )
 
-    command = argv[0]
     forwarded_args = _normalize_project_flag(list(argv[1:]))
     forwarded_args = _normalize_no_cache_flag(forwarded_args)
     forwarded_args = _normalize_tests_selection_flag(forwarded_args)
@@ -279,6 +301,8 @@ def run(
 
     if command not in SUPPORTED_COMMANDS:
         if _looks_like_direct_source_invocation(argv):
+            if enforce_setup and _setup_is_required() and not _require_setup(argv):
+                return PRECONDITION_FAILED
             direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
                 runner=runner,
                 runner_with_env=runner_with_env,
@@ -303,6 +327,17 @@ def run(
     if command == "test" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
         _print_test_usage()
         return SUCCESS
+
+    if command == "build" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
+        _print_build_usage()
+        return SUCCESS
+
+    if _extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h"):
+        _print_usage()
+        return SUCCESS
+
+    if enforce_setup and _setup_is_required() and not _require_setup(forwarded_args):
+        return PRECONDITION_FAILED
 
     if command == "dev" and not _looks_like_direct_source_invocation(forwarded_args):
         default_source = _default_dev_source(forwarded_args)
@@ -1142,9 +1177,6 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append("-Dmicronaut.control-panel.path=/control-panel")
         jvm_args.append("-Dmicronaut.control-panel.security.access=ANONYMOUS")
     compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
-    if not compiler_classpath and Path(executable_path).name == DEV_NATIVE_EXECUTABLE:
-        with contextlib.suppress(RuntimeError):
-            compiler_classpath = os.pathsep.join(_delegate_lib_entries(executable_path))
     if compiler_classpath:
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
         if command == "process":
@@ -1818,47 +1850,38 @@ def _native_launcher_provided_manifest_file_names(launcher_executable: str | Non
 
 
 def _native_launcher_compile_classpath_entries(launcher_executable: str | None) -> list[str]:
-    entries = _native_launcher_manifest_entries(launcher_executable, "native-compile-classpath.txt")
-    if entries:
-        launcher_parent = Path(launcher_executable).parent if launcher_executable else None
-        lib_dirs = []
-        if launcher_parent:
-            lib_dirs.extend((launcher_parent.parent / "lib", _launcher_shared_lib_dir(launcher_executable)))
-        resolved: list[str] = []
-        for entry in entries:
-            candidate = Path(entry)
-            if candidate.is_file():
-                resolved.append(str(candidate))
-            elif lib_dirs:
-                if ":" in entry and "/" not in entry:
-                    artifact_id = entry.split(":", 1)[1]
-                    matches = sorted({path for lib_dir in lib_dirs for path in lib_dir.glob(artifact_id + "-*.jar")})
-                    resolved.extend(str(path) for path in matches)
-                else:
-                    for lib_dir in lib_dirs:
-                        bundled = lib_dir / candidate.name
-                        if bundled.is_file():
-                            resolved.append(str(bundled))
-                            break
-                    else:
-                        # Native manifests are produced on the build host and
-                        # may contain absolute Gradle-cache paths. Their
-                        # standard files-2.1 layout contains enough Maven
-                        # coordinates to resolve the artifact portably.
-                        parts = candidate.parts
-                        try:
-                            marker = parts.index("files-2.1")
-                            group, artifact, version = parts[marker + 1:marker + 4]
-                        except (ValueError, IndexError):
-                            continue
-                        repository = Path.home() / ".m2" / "repository"
-                        match = repository.joinpath(*group.split("."), artifact, version, candidate.name)
-                        if match.is_file():
-                            resolved.append(str(match))
-        return resolved
-    # Older distributions do not have a reduced compiler manifest. Their
-    # native parent remains sufficient, so do not re-add the whole lib dir.
-    return []
+    if not launcher_executable:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    image_name = Path(launcher_executable).name
+    if image_name not in _NATIVE_IMAGE_COMMANDS:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    if not _setup_is_required():
+        if not _native_launcher_manifest_entries(
+            launcher_executable, "native-compile-classpath.txt"
+        ):
+            return []
+        entries = _native_compile_descriptor_entries(launcher_executable)
+        repository = _setup_local_repository(())
+        resolved = [
+            repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6])
+            for entry in entries
+            for fields in (entry.split("\t"),)
+        ]
+        if all(path.is_file() for path in resolved):
+            return [str(path) for path in resolved]
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    try:
+        manifest = _validated_setup_manifest or _read_valid_setup_manifest(())
+        image = manifest["images"][image_name]
+        entries = _native_compile_descriptor_entries(launcher_executable)
+        if image["descriptorSha256"] != _native_descriptor_hash(entries):
+            raise ValueError("native descriptor changed")
+        resolved = image["classpath"]
+        if len(resolved) != len(entries) or not all(isinstance(path, str) and Path(path).is_file() for path in resolved):
+            raise ValueError("native classpath is incomplete")
+        return list(resolved)
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
 
 
 def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> list[str]:
@@ -3170,7 +3193,7 @@ def _bundled_default_base_image(
     # reuse a host-native executable from a source checkout.
     if platform_name is None and executable is not None and executable.is_file():
         return executable
-    return _ensure_native_image(launcher, platform_name=platform_name)
+    return _cached_native_image(launcher, platform_name=platform_name)
 
 
 def _native_user_package_args(project_dir: Path) -> list[str]:
@@ -5456,7 +5479,11 @@ def _default_environment(command: str, args: Sequence[str]) -> str | None:
     return None
 
 
-def _ensure_graalvm_java_home(project_dir: Path | None = None) -> str | None:
+def _ensure_graalvm_java_home(
+    project_dir: Path | None = None,
+    *,
+    offline: bool = False,
+) -> str | None:
     global _provisioned_graalvm_home
     toolchain = _read_pyproject_toolchain_spec(project_dir)
 
@@ -5498,6 +5525,8 @@ def _ensure_graalvm_java_home(project_dir: Path | None = None) -> str | None:
         _provisioned_graalvm_home = str(gradle_home)
         return _provisioned_graalvm_home
 
+    if offline:
+        return None
     downloaded = _download_and_install_graalvm(pyronaut_jdks, toolchain)
     if downloaded is not None:
         _provisioned_graalvm_home = str(downloaded)
@@ -6732,13 +6761,6 @@ def _resolve_executable(command_name: str) -> str | None:
     if resolved_tool is not None:
         return str(resolved_tool)
 
-    if command_name.startswith("pyronaut-") and command_name not in _tool_bootstrap_attempted:
-        _tool_bootstrap_attempted.add(command_name)
-        if _bootstrap_resolved_tools():
-            resolved_tool = _resolved_tool_executable(command_name)
-            if resolved_tool is not None:
-                return str(resolved_tool)
-
     # Source checkouts and legacy/installDist layouts still contain complete
     # launchers. A wheel launcher carrying a descriptor is intentionally
     # incomplete until the installer has materialized its resolved cache.
@@ -6859,47 +6881,6 @@ def _read_tool_runtime_properties(path: Path) -> dict[str, str]:
     )
 
 
-def _installed_pyronaut_version() -> str | None:
-    version_file = Path(__file__).with_name("version.properties")
-    if not version_file.is_file():
-        return None
-    for line in version_file.read_text(encoding="utf-8").splitlines():
-        if line.startswith("pyronaut="):
-            value = line.split("=", 1)[1].strip()
-            return value or None
-    return None
-
-
-def _bootstrap_resolved_tools() -> bool:
-    installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
-    packaged_tools = Path(__file__).resolve().parent / "tools"
-    if installer is None or not installer.is_file() or not (packaged_tools / "tool-runtime.properties").is_file():
-        return False
-    java_home = _ensure_graalvm_java_home()
-    if java_home is None or not java_home.strip():
-        return False
-    command_line = [str(installer), "--resolve-tools-only"]
-    if _tool_bootstrap_local_repository:
-        command_line.extend(["--local-repository", _tool_bootstrap_local_repository])
-    if _tool_bootstrap_offline:
-        command_line.append("--offline")
-    if _tool_bootstrap_refresh:
-        command_line.append("--refresh")
-    if _tool_bootstrap_progress:
-        command_line.extend(["--progress", _tool_bootstrap_progress])
-    env = dict(os.environ)
-    env["JAVA_HOME"] = java_home
-    java_bin = str(Path(java_home) / "bin")
-    path_value = env.get("PATH", "")
-    env["PATH"] = java_bin + (os.pathsep + path_value if path_value else "")
-    env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
-    env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
-    try:
-        return subprocess.run(command_line, check=False, env=env).returncode == SUCCESS
-    except OSError:
-        return False
-
-
 def _bundled_executable(command_name: str) -> Path | None:
     if sys.platform.startswith("linux") or sys.platform == "darwin" or sys.platform == "win32":
         package_root = Path(__file__).resolve().parent
@@ -6934,7 +6915,10 @@ def _resolve_native_preferred_executable(
         return str(bundled)
 
     if command_name in {"pyronaut-run", "pyronaut-run-python"} and resolver is _resolve_executable:
-        return str(_ensure_native_image(command_name))
+        try:
+            return str(_cached_native_image(command_name))
+        except RuntimeError:
+            return None
 
     if fallback_to_resolver:
         return resolver(command_name)
@@ -6952,7 +6936,10 @@ def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None
         return str(bundled)
     if resolver is not _resolve_executable:
         return resolver(DEV_NATIVE_EXECUTABLE)
-    return str(_ensure_native_image(DEV_NATIVE_EXECUTABLE))
+    try:
+        return str(_cached_native_image(DEV_NATIVE_EXECUTABLE))
+    except RuntimeError:
+        return None
 
 
 def _pyronaut_dev_native_command_line(
@@ -7388,7 +7375,425 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
+
+
+def _print_setup_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
+        "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] "
+        "[--progress <auto|on|off>] [--allow-draft-release]\n"
+    )
+    stream.write("Provision the global Pyronaut SDK toolchain, launchers, and native compiler classpaths.\n")
+
+
+def _setup_local_repository(args: Sequence[str]) -> Path:
+    configured = _extract_local_repository(args) or _read_env(LOCAL_REPOSITORY_ENV)
+    if configured is None:
+        if _setup_is_required():
+            try:
+                recorded = json.loads(_setup_manifest_path().read_text(encoding="utf-8")).get(
+                    "localRepository"
+                )
+                if isinstance(recorded, str) and Path(recorded).is_absolute():
+                    return Path(recorded).resolve()
+            except (AttributeError, OSError, TypeError, ValueError):
+                pass
+        return (Path.home() / ".m2" / "repository").resolve()
+    repository = Path(configured).expanduser()
+    if not repository.is_absolute():
+        repository = Path.cwd() / repository
+    return repository.resolve()
+
+
+def _setup_is_required() -> bool:
+    return (Path(__file__).resolve().parent / "tools" / "tool-runtime.properties").is_file()
+
+
+def _setup_repositories() -> list[str]:
+    settings = _read_pyronaut_user_settings()
+    maven = settings.get("maven")
+    if maven is not None and not isinstance(maven, dict):
+        raise RuntimeError("[maven] in ~/.pyronaut/settings.toml must be a table")
+    configured = maven.get("repositories") if isinstance(maven, dict) else None
+    if configured is not None:
+        if not isinstance(configured, list) or not configured:
+            raise RuntimeError("[maven].repositories must be a non-empty string array")
+        repositories = []
+        for index, value in enumerate(configured):
+            if not isinstance(value, str) or not value.strip():
+                raise RuntimeError(f"[maven].repositories[{index}] must be a non-empty string")
+            repositories.append(value.strip())
+        return repositories
+    repositories = ["mavenCentral"]
+    version = _installed_pyronaut_version()
+    if version.endswith("-SNAPSHOT") or ".dev" in version:
+        repositories.append(_SONATYPE_SNAPSHOTS_REPOSITORY)
+    return repositories
+
+
+def _setup_platform() -> str:
+    os_segment, arch = _native_image_platform()
+    return f"{os_segment}-{arch}"
+
+
+def _setup_manifest_path() -> Path:
+    version = re.sub(r"[^A-Za-z0-9._-]", "_", _installed_pyronaut_version())
+    return Path.home() / ".pyronaut" / "setup" / version / _setup_platform() / "setup.json"
+
+
+def _packaged_tool_descriptor_hash() -> str:
+    metadata_file = Path(__file__).resolve().parent / "tools" / "tool-runtime.properties"
+    if not metadata_file.is_file():
+        raise RuntimeError("Installed Pyronaut wheel is missing tool runtime metadata")
+    value = _read_tool_runtime_properties(metadata_file).get("descriptor.sha256")
+    if not value:
+        raise RuntimeError("Installed Pyronaut wheel is missing its tool descriptor hash")
+    return value
+
+
+def _packaged_sdk_descriptor_hash() -> str:
+    package_root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for name in ("version.properties", _PACKAGED_TOOLCHAIN_DEFAULTS):
+        path = package_root / name
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        if path.is_file():
+            digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _is_executable_file(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def _resolved_tool_executables(tool_root: Path) -> dict[str, str]:
+    packaged_tools = Path(__file__).resolve().parent / "tools"
+    commands = sorted(
+        descriptor.parent.parent.name
+        for descriptor in packaged_tools.glob("*/bin/pyronaut-tool-classpath.tsv")
+    )
+    executables: dict[str, str] = {}
+    for command in commands:
+        executable = tool_root / "tools" / command / "bin" / _launcher_file_name(command)
+        if not _is_executable_file(executable):
+            raise RuntimeError(f"Resolved SDK executable is missing or not executable: {command}")
+        executables[command] = str(executable.resolve())
+    if not executables:
+        raise RuntimeError("Installed Pyronaut wheel contains no SDK tool descriptors")
+    return executables
+
+
+def _native_compile_descriptor_entries(executable: str | Path) -> list[str]:
+    entries = _native_launcher_manifest_entries(str(executable), "native-compile-classpath.txt")
+    if not entries:
+        raise RuntimeError(f"Missing native compiler classpath descriptor for {Path(executable).name}")
+    for entry in entries:
+        fields = entry.split("\t")
+        if len(fields) != 7 or fields[0] != "maven":
+            raise RuntimeError(f"Invalid native compiler classpath descriptor for {Path(executable).name}")
+        if any(not field or "/" in field or "\\" in field for field in fields[1:5]):
+            raise RuntimeError(f"Invalid native compiler Maven coordinate for {Path(executable).name}")
+        if "/" in fields[5] or "\\" in fields[5]:
+            raise RuntimeError(f"Invalid native compiler Maven classifier for {Path(executable).name}")
+        expected_filename = (
+            f"{fields[2]}-{fields[3]}"
+            f"{'-' + fields[5] if fields[5] else ''}.{fields[4]}"
+        )
+        if not fields[6] or Path(fields[6]).name != fields[6] or fields[6] != expected_filename:
+            raise RuntimeError(f"Invalid native compiler artifact filename for {Path(executable).name}")
+    return entries
+
+
+def _native_descriptor_hash(entries: Sequence[str]) -> str:
+    return hashlib.sha256(("\n".join(entries) + "\n").encode("utf-8")).hexdigest()
+
+
+def _setup_expectation(args: Sequence[str]) -> dict[str, object]:
+    base_url, native_version, release_tag = _native_image_configuration()
+    return {
+        "schemaVersion": _SETUP_SCHEMA_VERSION,
+        "sdkVersion": _installed_pyronaut_version(),
+        "platform": _setup_platform(),
+        "localRepository": str(_setup_local_repository(args)),
+        "repositories": _setup_repositories(),
+        "sdkDescriptorSha256": _packaged_sdk_descriptor_hash(),
+        "toolDescriptorSha256": _packaged_tool_descriptor_hash(),
+        "nativeImages": {
+            "source": base_url,
+            "version": native_version,
+            "releaseTag": release_tag,
+        },
+    }
+
+
+def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
+    manifest_path = _setup_manifest_path()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    expected = _setup_expectation(args)
+    for key in (
+        "schemaVersion",
+        "sdkVersion",
+        "platform",
+        "localRepository",
+        "repositories",
+        "sdkDescriptorSha256",
+        "toolDescriptorSha256",
+        "nativeImages",
+    ):
+        if manifest.get(key) != expected[key]:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    java_home = manifest.get("javaHome")
+    if not isinstance(java_home, str) or not _is_executable_file(Path(java_home) / "bin" / "java"):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    metadata = _read_graalvm_metadata(Path(java_home))
+    current_graalvm = {
+        "distribution": metadata.distribution if metadata else None,
+        "version": metadata.version if metadata else None,
+        "javaVersion": metadata.java_version if metadata else None,
+    }
+    if metadata is None or manifest.get("graalvm") != current_graalvm:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    tool_root = manifest.get("toolRuntime")
+    if not isinstance(tool_root, str) or not Path(tool_root).is_dir():
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    packaged_tools = Path(__file__).resolve().parent / "tools"
+    if not _resolved_tools_cache_complete(
+        Path(tool_root), packaged_tools, str(expected["sdkVersion"])
+    ):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    try:
+        expected_executables = _resolved_tool_executables(Path(tool_root))
+    except RuntimeError as exc:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
+    if manifest.get("executables") != expected_executables:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    images = manifest.get("images")
+    if not isinstance(images, dict):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    for image_name in _SETUP_IMAGE_COMMANDS:
+        image = images.get(image_name)
+        if not isinstance(image, dict):
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        executable = image.get("executable")
+        classpath = image.get("classpath")
+        descriptor_hash = image.get("descriptorSha256")
+        if not isinstance(executable, str) or not _is_executable_file(Path(executable)):
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        if not isinstance(classpath, list) or not classpath:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        if not all(isinstance(path, str) and Path(path).is_file() for path in classpath):
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        try:
+            current_hash = _native_descriptor_hash(_native_compile_descriptor_entries(executable))
+        except RuntimeError as exc:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
+        if descriptor_hash != current_hash:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    return manifest
+
+
+def _require_setup(args: Sequence[str]) -> bool:
+    global _validated_setup_manifest
+    try:
+        _validated_setup_manifest = _read_valid_setup_manifest(args)
+        return True
+    except RuntimeError:
+        _validated_setup_manifest = None
+        print(_SETUP_REQUIRED_MESSAGE, file=sys.stderr)
+        return False
+
+
+def _cached_native_image(
+    image_name: str,
+    *,
+    platform_name: str | None = None,
+    machine_name: str | None = None,
+) -> Path:
+    base_url, version, release_tag = _native_image_configuration()
+    os_segment, arch = _native_image_platform(
+        platform_name=platform_name,
+        machine_name=machine_name,
+    )
+    executable = _native_image_cache_path(image_name, version=version, os_segment=os_segment, arch=arch)
+    metadata = executable.with_name(executable.name + ".json")
+    if not _is_executable_file(executable) or not metadata.is_file():
+        raise RuntimeError(f"Native image {image_name} is not cached")
+    try:
+        cached_metadata = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"Native image {image_name} cache metadata is invalid") from exc
+    expected = {
+        "source": base_url,
+        "version": version,
+        "release-tag": release_tag,
+        "platform": f"{os_segment}-{arch}",
+        "bundle-format": 3,
+    }
+    if not isinstance(cached_metadata, dict) or any(
+        cached_metadata.get(key) != value for key, value in expected.items()
+    ):
+        raise RuntimeError(f"Native image {image_name} cache is stale")
+    return executable
+
+
+def _validate_setup_arguments(args: Sequence[str]) -> None:
+    value_options = {"--local-repository", "--local-repo", "--progress"}
+    flag_options = {"--offline", "--refresh"}
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in value_options:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {token}")
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in value_options):
+            index += 1
+            continue
+        if token in flag_options:
+            index += 1
+            continue
+        raise ValueError(f"Unknown pyronaut setup option: {token}")
+    progress = _extract_option_value(args, "--progress")
+    if progress is not None and progress not in {"auto", "on", "off"}:
+        raise ValueError("Invalid value for --progress. Use auto, on, or off")
+
+
+def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
+    try:
+        _validate_setup_arguments(args)
+        refresh = _extract_flag(args, "--refresh")
+        offline = _extract_offline(args)
+        manifest_path = _setup_manifest_path()
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = manifest_path.with_suffix(".lock")
+        with _native_image_cache_lock(lock_path):
+            if not refresh:
+                try:
+                    _read_valid_setup_manifest(args)
+                except RuntimeError:
+                    pass
+                else:
+                    print(f"Pyronaut setup is ready at {manifest_path}")
+                    return SUCCESS
+
+            expectation = _setup_expectation(args)
+            java_home = _ensure_graalvm_java_home(None, offline=offline)
+            if java_home is None:
+                qualifier = " cached" if offline else ""
+                raise RuntimeError(
+                    f"Unable to locate or provision a{qualifier} compatible GraalVM JDK (requires JDK 25+)"
+                )
+            images: dict[str, Path] = {}
+            for image_name in _SETUP_IMAGE_COMMANDS:
+                images[image_name] = (
+                    _cached_native_image(image_name)
+                    if offline
+                    else _ensure_native_image(image_name)
+                )
+
+            installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
+            if installer is None or not _is_executable_file(installer):
+                raise RuntimeError("Installed Pyronaut wheel is missing executable pyronaut-install")
+            local_repository = _setup_local_repository(args)
+            _seed_bundled_pyronaut_maven_repository(
+                Path.cwd(), str(local_repository), str(installer)
+            )
+
+            with tempfile.TemporaryDirectory(prefix=".setup-", dir=manifest_path.parent) as temp_dir:
+                request_dir = Path(temp_dir) / "native-classpaths"
+                request_dir.mkdir()
+                descriptor_entries: dict[str, list[str]] = {}
+                for image_name, executable in images.items():
+                    entries = _native_compile_descriptor_entries(executable)
+                    descriptor_entries[image_name] = entries
+                    (request_dir / f"{image_name}.tsv").write_text(
+                        "\n".join(entries) + "\n", encoding="utf-8"
+                    )
+
+                command_line = [
+                    str(installer),
+                    "--resolve-tools-only",
+                    "--native-classpaths-dir",
+                    str(request_dir),
+                    "--local-repository",
+                    str(local_repository),
+                ]
+                for repository in expectation["repositories"]:
+                    command_line.extend(["--repository", str(repository)])
+                if offline:
+                    command_line.append("--offline")
+                if refresh:
+                    command_line.append("--refresh")
+                progress = _extract_option_value(args, "--progress")
+                if progress is not None:
+                    command_line.extend(["--progress", progress])
+                env = dict(os.environ)
+                env["JAVA_HOME"] = java_home
+                java_bin = str(Path(java_home) / "bin")
+                env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
+                packaged_tools = Path(__file__).resolve().parent / "tools"
+                env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
+                env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
+                if runner(command_line, env) != SUCCESS:
+                    raise RuntimeError("pyronaut-install failed to resolve SDK classpaths")
+
+                tool_root = _resolved_tool_cache_root()
+                if tool_root is None:
+                    raise RuntimeError("pyronaut-install did not produce a complete SDK tool runtime")
+                packaged_tools = Path(__file__).resolve().parent / "tools"
+                if not _resolved_tools_cache_complete(
+                    tool_root, packaged_tools, str(expectation["sdkVersion"])
+                ):
+                    raise RuntimeError("pyronaut-install produced an incomplete SDK tool runtime")
+                executables = _resolved_tool_executables(tool_root)
+                image_state: dict[str, object] = {}
+                for image_name, executable in images.items():
+                    resolved_file = request_dir / "resolved" / f"{image_name}.txt"
+                    resolved = [
+                        line.strip()
+                        for line in resolved_file.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    ]
+                    if len(resolved) != len(descriptor_entries[image_name]):
+                        raise RuntimeError(f"Incomplete resolved compiler classpath for {image_name}")
+                    if not all(Path(path).is_file() for path in resolved):
+                        raise RuntimeError(f"Resolved compiler classpath for {image_name} contains missing files")
+                    image_state[image_name] = {
+                        "executable": str(executable.resolve()),
+                        "descriptorSha256": _native_descriptor_hash(descriptor_entries[image_name]),
+                        "classpath": resolved,
+                    }
+                metadata = _read_graalvm_metadata(Path(java_home))
+                state = {
+                    **expectation,
+                    "javaHome": str(Path(java_home).resolve()),
+                    "graalvm": {
+                        "distribution": metadata.distribution if metadata else None,
+                        "version": metadata.version if metadata else None,
+                        "javaVersion": metadata.java_version if metadata else None,
+                    },
+                    "toolRuntime": str(tool_root.resolve()),
+                    "executables": executables,
+                    "images": image_state,
+                }
+                temporary_manifest = Path(temp_dir) / "setup.json"
+                temporary_manifest.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                os.replace(temporary_manifest, manifest_path)
+        print(f"Pyronaut setup completed at {manifest_path}")
+        return SUCCESS
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
 
 
 def _print_build_usage(stream=None) -> None:
