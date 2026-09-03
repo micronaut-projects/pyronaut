@@ -50,7 +50,11 @@ class WheelAuditTest(unittest.TestCase):
                     "package/native-compile-classpath.txt",
                     "/Users/builder/.gradle/caches/example.jar\n",
                 )
-            with self.assertRaises(WheelAuditError):
+            with self.assertRaisesRegex(
+                WheelAuditError,
+                r"Invalid native classpath descriptor in wheel: package/native-compile-classpath\.txt "
+                r"\(expected a Maven coordinate entry, got '/Users/builder/\.gradle/caches/example\.jar'\)",
+            ):
                 audit_wheel(invalid, ["/unrelated/home"])
 
             portable = root / "portable.whl"

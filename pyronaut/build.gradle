@@ -200,6 +200,10 @@ tasks.register("prepareWheelSources", Sync) {
     }
     from("src/main/python") {
         into("src")
+        // Python tests and local tooling can leave host-specific bytecode in
+        // the source tree. It is ignored by Git but must not be copied into
+        // the portable SDK wheel.
+        exclude("**/__pycache__/**", "**/*.pyc", "**/*.pyo")
     }
     into(wheelStagingDir)
 
@@ -575,15 +579,16 @@ tasks.register("buildSdkWheel", Exec) {
         auditCommand.add(wheel.absolutePath)
         auditCommand.addAll(forbiddenPaths)
         def auditProcessBuilder = new ProcessBuilder(auditCommand)
-            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .redirectErrorStream(true)
         if (usesPyenv.get()) {
             auditProcessBuilder.environment().put("PYENV_VERSION", pyenvVersion.get())
         }
         def auditProcess = auditProcessBuilder.start()
+        def auditOutput = auditProcess.inputStream.getText("UTF-8").trim()
         def auditExit = auditProcess.waitFor()
         if (auditExit != 0) {
-            throw new GradleException("Pyronaut SDK wheel contains build-machine paths or invalid native descriptors")
+            def diagnostic = auditOutput ?: "the audit produced no diagnostic"
+            throw new GradleException("Pyronaut SDK wheel audit failed: ${diagnostic}")
         }
         logger.lifecycle("Verified Pyronaut SDK wheel size: ${wheel.length()} bytes")
     }

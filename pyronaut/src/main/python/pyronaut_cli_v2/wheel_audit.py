@@ -30,18 +30,31 @@ def _validate_native_descriptor(name: str, payload: bytes) -> None:
     try:
         lines = payload.decode("utf-8").splitlines()
     except UnicodeDecodeError as exc:
-        raise WheelAuditError(f"Native classpath descriptor is not UTF-8: {name}") from exc
+        raise WheelAuditError(
+            f"Invalid native classpath descriptor in wheel: {name} (not UTF-8)"
+        ) from exc
     entries = [line for line in lines if line.strip() and not line.lstrip().startswith("#")]
     if not entries:
-        raise WheelAuditError(f"Native classpath descriptor is empty: {name}")
+        raise WheelAuditError(
+            f"Invalid native classpath descriptor in wheel: {name} (contains no entries)"
+        )
     for entry in entries:
         fields = entry.split("\t")
         if len(fields) != 7 or fields[0] != "maven":
-            raise WheelAuditError(f"Native classpath descriptor is not coordinate-only: {name}")
+            raise WheelAuditError(
+                f"Invalid native classpath descriptor in wheel: {name} "
+                f"(expected a Maven coordinate entry, got {entry!r})"
+            )
         if any(not field or "/" in field or "\\" in field for field in fields[1:5]):
-            raise WheelAuditError(f"Native classpath descriptor contains an invalid coordinate: {name}")
+            raise WheelAuditError(
+                f"Invalid native classpath descriptor in wheel: {name} "
+                f"(invalid Maven coordinate in {entry!r})"
+            )
         if "/" in fields[5] or "\\" in fields[5]:
-            raise WheelAuditError(f"Native classpath descriptor contains an invalid classifier: {name}")
+            raise WheelAuditError(
+                f"Invalid native classpath descriptor in wheel: {name} "
+                f"(invalid classifier in {entry!r})"
+            )
         filename = fields[6]
         classifier = f"-{fields[5]}" if fields[5] else ""
         expected_filename = f"{fields[2]}-{fields[3]}{classifier}.{fields[4]}"
@@ -52,7 +65,10 @@ def _validate_native_descriptor(name: str, payload: bytes) -> None:
             or "\\" in filename
             or filename != expected_filename
         ):
-            raise WheelAuditError(f"Native classpath descriptor contains a host path: {name}")
+            raise WheelAuditError(
+                f"Invalid native classpath descriptor in wheel: {name} "
+                f"(filename must be {expected_filename!r}, got {filename!r})"
+            )
 
 
 def _scan_zip(
