@@ -397,7 +397,7 @@ Packaging selection:
 - `--jvm` (shortcut for JVM mode)
 - `--native` (shortcut for native mode)
 - `--docker` changes an explicit JVM/native selection to its Docker equivalent
-- `--base-image=default` changes a native selection to its Crema equivalent
+- `--native-base=<default|path|url>` selects the matching Crema equivalent and implies native mode
 - `tool.pyronaut.packaging.format` when no packaging-shaping flag is present
 
 The configured values are `fat-jar`, `wheel-jvm`, `wheel-native`,
@@ -414,9 +414,10 @@ Common options:
 - `--jar`: build one runnable FAT JAR
 - `--docker`: build a container image instead of a wheel/native binary on the host
 - `--static`: static native container build; only valid with `--native --docker`
-- `--base-image`: build a reusable Crema production runtime image
-- `--base-image=default`: package against the downloaded Java or Python Crema runtime
-- `--base-image-output <path>`: choose the local output for `--base-image`
+- `--native-base`: build a reusable Crema production runtime image
+- `--native-base=default`: package against the configured Java or Python Crema runtime for the target platform
+- `--native-base=<path-or-HTTP(S)-URL>`: package against a custom native launcher
+- `--native-base-output <path>`: choose the local output for bare `--native-base`
 - `--name <name>` / `--version <version>`: package metadata for direct Java or Python sources
 - `--verbose` (native mode, forwarded to `native-image`)
 - `--no-validate`: explicitly bypasses lifecycle config validation
@@ -429,7 +430,7 @@ JVM mode:
 
 FAT JAR (`pyronaut build --jar`):
 
-- Rejects `--main-class` and JVM/native, Docker, static, and base-image flags.
+- Rejects `--main-class` and JVM/native, Docker, static, and native-base flags.
 - Packages application classes and resources before ordered runtime and
   production-launcher dependencies.
 - Produces `dist/<project-name>-<version>.jar`, runnable with `java -jar`.
@@ -445,7 +446,7 @@ Native mode always uses `io.micronaut.pyronaut.run.PyronautRunMain`; `--main-cla
 `wheel-native` and `docker-native` are closed-world formats and reject a
 configured reusable base. `wheel-crema` and `docker-crema` use a configured
 custom base when present, otherwise the bundled language-specific default.
-Bare `--base-image` remains the separate operation for building a reusable
+Bare `--native-base` remains the separate operation for building a reusable
 base.
 
 The SDK wheel contains JVM launchers only. Native project commands download
@@ -484,7 +485,7 @@ Native Docker mode (`pyronaut build --native --docker`):
 
 ==== Reusable Crema base images
 
-`pyronaut build --base-image` creates a production native launcher that uses
+`pyronaut build --native-base` creates a production native launcher that uses
 runtime class loading (`-H:+RuntimeClassLoading`) to run already processed
 applications. It does not include the compiler, annotation processors, test
 frameworks, or other development tooling. Java applications use the
@@ -496,31 +497,35 @@ The repository's own runtime images use this exact same builder: run
 `./gradlew :micronaut-pyronaut-run-python:buildCremaNativeImage`. The standard
 `nativeCompile` task delegates to the corresponding shared-builder task.
 
-The base builder includes the application's runtime dependencies, so custom
+The native-base builder includes the application's runtime dependencies, so custom
 dependencies declared in `pyproject.toml` are available to subsequent
-application builds. Base-image builds enable the native-image build report and
+application builds. Native-base builds enable the native-image build report and
 SBOM export; inspect the generated report to verify included dependencies.
 
-Use `--base-image=default` when application dependencies do not need to be
-included in a custom base. It downloads and caches the language-specific
-`pyronaut-run` image for Java applications or `pyronaut-run-python` for Python
-applications. Docker Crema builds always use the Linux bundle. The equivalent
-`pyproject.toml` setting is `base-image = "default"`. Bare `--base-image`
+Use `--native-base=default` when application dependencies do not need to be
+included in a custom base. Host builds resolve the bundle for the current
+operating system and architecture; Docker builds resolve Linux for the current
+architecture. Pyronaut caches the language-specific `pyronaut-run` image for
+Java applications or `pyronaut-run-python` for Python applications. Resolution
+uses the `[native-images]` repository, version, release, authentication, and
+proxy settings in `~/.pyronaut/settings.toml`; missing bundles are downloaded
+with progress reporting. The equivalent `pyproject.toml` setting is
+`native-base = "default"`. Bare `--native-base`
 continues to create a custom base and export its report and SBOM.
 
 [source,toml]
 ----
 [tool.pyronaut.build]
-base-image = "build/pyronaut-base/pyronaut-run"
+native-base = "build/pyronaut-base/pyronaut-run"
 ----
 
 [source,bash]
 ----
-pyronaut build --base-image
+pyronaut build --native-base
 pyronaut build
 ----
 
-Without `base-image`, Pyronaut builds an application-specific native binary.
+Without `native-base`, Pyronaut builds an application-specific native binary.
 With it, the later native build packages the configured reusable launcher and
 the processed application classes separately.
 
@@ -531,16 +536,16 @@ Package standalone Java or Python source files or directories directly:
 [source,bash]
 ----
 pyronaut build App.java --native --name example-app --version 1.0.0
-pyronaut build App.py --docker --base-image=default
+pyronaut build App.py --docker --native-base=default
 ----
 
 Sources compile into a disk-backed project under `__pyronaut__/direct-source-build`.
 Without `--name` and `--version`, the source stem and `0.1.0` are used.
 `--setup pyproject.toml` supplies normal Pyronaut configuration. Inline
 `@Dependency` declarations are resolved before packaging and are included in
-a custom base image's SBOM.
+a custom native base's SBOM.
 
-For Docker, `pyronaut build --native --docker --base-image` first creates and
+For Docker, `pyronaut build --docker --native-base` first creates and
 tags `<image-name>:<project-version>-native-base` and then creates the final
 application image. Select `docker-crema` for future builds that should reuse
 that recorded base. To share a base between projects or CI builds, configure

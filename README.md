@@ -529,7 +529,7 @@ pyronaut build --native
 pyronaut build --docker
 pyronaut build --native --docker
 pyronaut build --native --docker --static
-pyronaut build --native --base-image=default
+pyronaut build --native-base=default
 pyronaut build App.java --native --name hello-java --version 1.0.0
 ```
 

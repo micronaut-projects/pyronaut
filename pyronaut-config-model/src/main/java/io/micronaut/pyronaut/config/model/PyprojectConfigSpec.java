@@ -174,9 +174,9 @@ public final class PyprojectConfigSpec {
         "wheel-jvm",
         List.of("fat-jar", "wheel-jvm", "wheel-native", "wheel-crema", "docker-jvm", "docker-native", "docker-crema")
     );
-    public static final FieldSpec PYRONAUT_BUILD_BASE_IMAGE = string(
-        "tool.pyronaut.build.base-image",
-        "Local reusable Pyronaut native runtime image path, or 'default' for the bundled language-specific production runtime.",
+    public static final FieldSpec PYRONAUT_BUILD_NATIVE_BASE = string(
+        "tool.pyronaut.build.native-base",
+        "Reusable Pyronaut native runtime path or HTTP(S) URL, or 'default' for the configured language-specific runtime for the target platform.",
         null,
         List.of(),
         List.of()
@@ -809,7 +809,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_DEPENDENCIES_EXCLUSIONS,
         PYRONAUT_DEPENDENCIES_ARTIFACT_EXCLUSIONS,
         PYRONAUT_PACKAGING_FORMAT,
-        PYRONAUT_BUILD_BASE_IMAGE,
+        PYRONAUT_BUILD_NATIVE_BASE,
         PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED,
         PYRONAUT_PROCESSOR_MODE,
         PYRONAUT_PROCESSOR_INCREMENTAL,

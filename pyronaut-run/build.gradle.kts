@@ -184,7 +184,7 @@ tasks {
                 nativeBuildExecutable.get().asFile.absolutePath,
                 "--project-dir", projectDirectory.toString(),
                 "--output", cremaOutput.get().asFile.absolutePath,
-                "--base-image"
+                "--native-base"
             )
         }
     }
