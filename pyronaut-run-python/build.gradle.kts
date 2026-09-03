@@ -68,6 +68,10 @@ application {
 val nativeBuildProject = project(":micronaut-pyronaut-native-build")
 val cremaProjectDirectory = layout.buildDirectory.dir("crema-native-image")
 val cremaOutput = layout.buildDirectory.file("native/nativeCompile/pyronaut-run-python")
+val nativeImageCiArgs = providers.gradleProperty("pyronautNativeImageCiArgs")
+    .map { it.trim().split(Regex("\\s+")).filter(String::isNotBlank) }
+    .orElse(emptyList())
+    .get()
 val nativeBuildExecutable = nativeBuildProject.layout.buildDirectory.file(
     "install/micronaut-pyronaut-native-build/bin/pyronaut-native-build"
 )
@@ -153,6 +157,7 @@ tasks {
         dependsOn(nativeBuildProject.tasks.named("installDist"))
         dependsOn(writeNativeClasspathManifest)
         inputs.files(configurations.runtimeClasspath)
+        inputs.property("pyronautNativeImageCiArgs", nativeImageCiArgs)
         outputs.file(cremaOutput)
         doFirst {
             val projectDirectory = cremaProjectDirectory.get().asFile.toPath()
@@ -161,13 +166,15 @@ tasks {
                 projectDirectory.resolve("__pyronaut__/resolved-runtime-dependencies"),
                 configurations.runtimeClasspath.get().files.joinToString(System.lineSeparator()) { it.absolutePath } + System.lineSeparator()
             )
-            commandLine(
+            val nativeBuildArgs = mutableListOf<Any>(
                 nativeBuildExecutable.get().asFile.absolutePath,
                 "--project-dir", projectDirectory.toString(),
                 "--output", cremaOutput.get().asFile.absolutePath,
                 "--native-base",
                 "--include-python"
             )
+            nativeBuildArgs.addAll(nativeImageCiArgs)
+            commandLine(nativeBuildArgs)
         }
     }
     val nativeCompileTask = named("nativeCompile") {
