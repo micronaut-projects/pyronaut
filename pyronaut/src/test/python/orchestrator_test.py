@@ -5069,7 +5069,7 @@ additional-test-resources = ["test-fixtures"]
 
             with redirect_stdout(stdout):
                 exit_code = cli.run(
-                    ["build", "--native", "--project-dir", str(project_dir)],
+                    ["build", "--native", "--project-dir", str(project_dir), "--local-repository", "/tmp/m2"],
                     runner_with_env=runner_with_env,
                     resolver=self._resolver(),
                     platform_name="linux",
@@ -5080,7 +5080,10 @@ additional-test-resources = ["test-fixtures"]
         resolved_project_dir = str(project_dir.resolve())
         self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", resolved_project_dir, "--scenario", "production"], executed[0][0])
         self.assertIsInstance(executed[0][1], dict)
-        self.assertEqual(["/tmp/pyronaut-install", "--project-dir", resolved_project_dir], executed[1][0])
+        self.assertEqual(
+            ["/tmp/pyronaut-install", "--project-dir", resolved_project_dir, "--local-repository", "/tmp/m2"],
+            executed[1][0],
+        )
         self.assertIsInstance(executed[1][1], dict)
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", resolved_project_dir], executed[2][0])
         self.assertIsInstance(executed[2][1], dict)

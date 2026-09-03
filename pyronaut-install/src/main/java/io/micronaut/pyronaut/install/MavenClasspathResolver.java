@@ -949,8 +949,44 @@ final class MavenClasspathResolver {
                 visitedBoms,
                 managed
             );
+            // The bundled installer BOM only contains the Pyronaut modules that
+            // are shipped with the launcher (for example install and logback).
+            // Test-only modules such as pyronaut-pytest are resolved from the
+            // configured repository and still need the running tool version
+            // when they are declared without one.
+            addVersionlessPyronautDependencies(model, toolVersion, managed);
         }
         return List.copyOf(managed.values());
+    }
+
+    private static void addVersionlessPyronautDependencies(PyprojectModel model,
+                                                            String toolVersion,
+                                                            Map<String, Dependency> managedDependencies) {
+        PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
+        for (List<String> coordinates : List.of(
+            dependencies.runtime(),
+            dependencies.developmentRuntime(),
+            dependencies.build(),
+            dependencies.test()
+        )) {
+            for (String coordinate : coordinates) {
+                if (coordinate == null) {
+                    continue;
+                }
+                String[] parts = coordinate.trim().split(":");
+                if (parts.length == 2 && PYRONAUT_GROUP.equals(parts[0])) {
+                    managedDependencies.putIfAbsent(
+                        parts[0] + ":" + parts[1],
+                        new Dependency(
+                            new DefaultArtifact(parts[0], parts[1], "jar", toolVersion),
+                            JavaScopes.RUNTIME,
+                            false,
+                            List.of()
+                        )
+                    );
+                }
+            }
+        }
     }
 
     private void addManagedDependenciesFromBom(Artifact bomArtifact,

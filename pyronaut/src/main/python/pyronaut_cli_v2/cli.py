@@ -2562,7 +2562,7 @@ def _run_build(
     preflight = _run_preflight(
         str(project_dir),
         no_cache,
-        None,
+        _extract_local_repository(args),
         runner,
         resolver,
         install=preflight_install,
