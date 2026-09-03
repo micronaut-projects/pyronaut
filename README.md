@@ -6,7 +6,7 @@ Pyronaut is a polyglot runtime for running Python and Java code built on the Mic
 
 For Python developers Pyronaut is a viable alternative to frameworks like FastAPI built on one of the most popular and mature frameworks in the Java ecosystem and highly scalable thanks to Netty.
 
-For Java developers Pyronaut provides a faster GraalVM crema-based development model that allows easily incorporating Python code using GraalPy.
+For Java developers Pyronaut provides a faster GraalVM Crema-based development model that allows easy incorporation of Python code using GraalPy.
 
 The main user entry point is the `pyronaut` command. The command is a Python
 orchestrator that delegates to focused JVM/native tools for dependency
@@ -26,44 +26,89 @@ that make Python applications work with Micronaut:
 - `pyronaut-dev`: runs applications in development mode with automatic
   install/process preflight.
 - `pyronaut-run` and `pyronaut-test`: run applications and pytest-backed tests.
-  templates.
 - `pyronaut-validate-config`: validates Micronaut configuration for run, test,
   and production scenarios.
 - `pyronaut-test-resources-server`: manages Micronaut Test Resources for local
   development and tests.
 - `pyronaut-native-build`: builds native executables.
 - `pyronaut-tui`: interactive terminal UI over the same CLI workflow.
-  support.
 - `pyronaut-pytest`, `pyronaut-requests`, `pyronaut-logging`, and
   `pyronaut-logback`: runtime and testing support libraries.
 
 The full user guide lives in `src/main/docs/guide`.
 
+## Installation
+
+Install the latest published Pyronaut CLI from PyPI with Python 3.10 or later:
+
+```bash
+python3 -m pip install --upgrade pyronaut
+pyronaut --version
+```
+
+If PyPI is unavailable, download the `pyronaut-<version>-py3-none-any.whl`
+file from the Assets section of a [GitHub Release](https://github.com/micronaut-projects/pyronaut/releases),
+then install the downloaded wheel manually:
+
+```bash
+python3 -m pip install --upgrade /path/to/downloaded/pyronaut-<version>-py3-none-any.whl
+pyronaut --version
+```
+
+To keep the CLI isolated from other Python packages, install it in a virtual
+environment:
+
+```bash
+python3 -m venv .venv-pyronaut-cli
+source .venv-pyronaut-cli/bin/activate
+python -m pip install --upgrade pip pyronaut
+pyronaut --help
+```
+
+After installing or upgrading the wheel, provision the local Pyronaut SDK:
+
+```bash
+pyronaut setup
+```
+
+Setup is idempotent. It provisions GraalVM, resolves the SDK dependencies, and
+downloads the native launchers required by the CLI. The validated setup state
+and downloaded tools are cached under `~/.pyronaut`; run `pyronaut setup`
+again after changing the wheel or use `pyronaut setup --refresh` to re-resolve
+the setup.
+
+The package does not require cloning this repository or running Gradle. Pyronaut
+uses an embedded GraalPy runtime for application code. Commands that need Java
+use a compatible GraalVM JDK 25; Pyronaut discovers local installations and can
+provision one under `~/.pyronaut/sdks` when necessary. Native launcher bundles
+are downloaded on demand and cached under `~/.pyronaut/bin`. Pytest-backed tests
+also require `pytest` in the project's GraalPy environment; see [Test
+prerequisite: pytest in GraalPy](#test-prerequisite-pytest-in-graalpy).
+
 ## Getting started from a source checkout
 
 These instructions build the Pyronaut CLI from this repository. The tested
-local setup uses GraalVM Community Edition `25.1.3+9.1` and GraalPy `3.12.8`
-from Oracle GraalVM Native 25.1.3. GraalVM Enterprise Edition should also
-work, but the Community Edition setup is the one currently replicated by the
-project maintainers.
+project setup targets JDK 25, GraalVM 25.2, and GraalPy `3.12.8`
+(`graalpy3.12-25.2.4`). Use a GraalVM JDK 25 for native-image tasks; the
+current CI setup uses GraalVM 25.2.
 
 ### 1. Install the prerequisites
 
-Install GraalVM CE `25.1.3+9.1` from the
-[GraalVM 25.1.3 releases](https://github.com/graalvm/graalvm-ce-builds/releases#release-graal-25.1.3).
-On macOS, use the `aarch64` bundle, extract it, and set `JAVA_HOME` to the
-JDK's `Contents/Home` directory. On Linux, choose the bundle matching your
-machine's architecture:
+Install a GraalVM JDK 25, such as GraalVM 25.2, from the
+[GraalVM downloads](https://www.graalvm.org/downloads/). Choose the bundle
+matching your machine's architecture. On macOS, set `JAVA_HOME` to the JDK's
+`Contents/Home` directory:
 
 ```bash
-export JAVA_HOME="/path/to/graalvm-community-25.1.3/Contents/Home"
+export JAVA_HOME="/path/to/graalvm-jdk-25/Contents/Home"
 java -version
 ```
 
-The output should identify GraalVM CE `25.1.3+9.1`. Set `JAVA_HOME` in the
-same shell where you run Gradle.
+Set `JAVA_HOME` in the same shell where you run Gradle. Verify that the Java
+version is 25 and that the runtime identifies itself as GraalVM.
 
-Install `pyenv` if it is not already available:
+Install `pyenv` using its [installation instructions](https://github.com/pyenv/pyenv#installation)
+if it is not already available. On macOS, the setup can be started with:
 
 ```bash
 brew install pyenv
@@ -75,19 +120,17 @@ echo 'eval "$(pyenv init - zsh)"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Install GraalPy `3.12.8` (`graalpy3.12-25.1.3`) with `pyenv`:
+Install GraalPy `3.12.8` (`graalpy3.12-25.2.4`) with `pyenv`:
 
 ```bash
 pyenv install --list | grep graalpy
-pyenv install graalpy3.12-25.1.3
-pyenv shell graalpy3.12-25.1.3
+pyenv install --skip-existing graalpy3.12-25.2.4
+pyenv shell graalpy3.12-25.2.4
 
 python --version
 ```
 
-If `pyenv install` reports that the version is already installed, select it
-with `pyenv shell graalpy3.12-25.1.3` instead. If you do not have `pyenv`, ask
-your coding assistant to install and configure it for your shell.
+The output should identify GraalPy `3.12.8` from Oracle GraalVM Native 25.2.4.
 
 ### 2. Build the Pyronaut CLI
 
@@ -97,7 +140,7 @@ wheel task:
 ```bash
 git clone https://github.com/micronaut-projects/pyronaut.git
 cd pyronaut
-export PYENV_VERSION=graalpy3.12-25.1.3
+export PYENV_VERSION=graalpy3.12-25.2.4
 ```
 
 Build the SDK wheel:
@@ -116,7 +159,7 @@ Pyronaut sources.
 The wheel is written to:
 
 ```text
-pyronaut/pyronaut/build/wheel/dist/
+pyronaut/build/wheel/dist/
 ```
 
 ### 3. Install the CLI
@@ -126,7 +169,7 @@ Choose one of the following options.
 #### Option 1: Install into the active pyenv environment
 
 This uses the `PYENV_VERSION` selected above and installs the wheel into that
-environment:
+GraalPy environment:
 
 ```bash
 ./gradlew :micronaut-pyronaut:installSdkWheel
@@ -135,14 +178,13 @@ pyronaut --version
 pyronaut setup
 ```
 
-The help command should print the CLI usage. The version command currently
-prints:
+The help command should print the CLI usage. A snapshot wheel currently reports:
 
 ```text
-Pyronaut: 0.0.1-SNAPSHOT
+Pyronaut: 0.0.1.dev0
 Micronaut Core: 5.2.0-SNAPSHOT
 Micronaut Platform: 5.1.0
-GraalPy: 25.1.3
+GraalPy: 25.2.4
 Native Image JDK: 25
 ```
 
@@ -158,7 +200,7 @@ commands from the demo application's directory, outside the Pyronaut checkout:
 python3 -m venv .venv-pyronaut-sdk
 source .venv-pyronaut-sdk/bin/activate
 python -m pip install --upgrade pip
-python -m pip install /absolute/path/to/pyronaut/pyronaut/build/wheel/dist/pyronaut-0.0.1.dev0-py3-none-any.whl
+python -m pip install /absolute/path/to/pyronaut/pyronaut/build/wheel/dist/pyronaut-*.whl
 pyronaut --help
 pyronaut --version
 pyronaut setup
@@ -171,30 +213,26 @@ use `/Users/your-user/Code/pyronaut` as the corresponding absolute path.
 If you rebuild the wheel, reinstall the new wheel into the virtual environment:
 
 ```bash
-python -m pip install --force-reinstall /absolute/path/to/pyronaut/pyronaut/build/wheel/dist/pyronaut-0.0.1.dev0-py3-none-any.whl
+python -m pip install --force-reinstall /absolute/path/to/pyronaut/pyronaut/build/wheel/dist/pyronaut-*.whl
 ```
 
 ### Test prerequisite: pytest in GraalPy
 
 `pyronaut test` requires `pytest` to be installed in the GraalPy environment
-used by Pyronaut. Pyronaut does not install Python packages automatically, and
-a CPython virtual environment cannot provide packages to the embedded GraalPy
-runtime.
+used by the project. Pyronaut does not install Python packages automatically,
+and a CPython virtual environment cannot provide packages to the embedded
+GraalPy runtime.
 
-If the CLI is installed into the active pyenv environment (Option 1), install
-pytest into that active environment. If the CLI is project-local (Option 2),
-use the project-local environment described below. For a separate project
-environment, create and activate a GraalPy virtual environment from the
-hello-world directory:
-
-For Option 1:
+If the CLI is installed into the active GraalPy pyenv environment (Option 1)
+and the project does not have a `.venv`, install `pytest` into that environment:
 
 ```bash
 python -m pip install --upgrade pip pytest
 python -m pytest --version
 ```
 
-For a separate project environment:
+For a project-specific environment, create `.venv` with GraalPy from the
+hello-world directory:
 
 ```bash
 graalpy -m venv .venv
@@ -203,21 +241,15 @@ python -m pip install --upgrade pip pytest
 python -m pytest --version
 ```
 
-If you are using Option 2 and installed the CLI into `.venv-pyronaut-sdk`,
-activate that environment and install `pytest` into it instead of creating a
-second environment:
-
-```bash
-source .venv-pyronaut-sdk/bin/activate
-python -m pip install --upgrade pip pytest
-python -m pytest --version
-```
+When a project `.venv` exists, Pyronaut uses it when launching the application
+and tests. Create that environment with GraalPy even when the CLI itself is
+installed in a separate CPython environment.
 
 ## CLI at a glance
 
 ```bash
-pyronaut [--version] [--tui [--smoke|--non-interactive]] \
-  <install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
+pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] \
+  <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]
 ```
 
 Current platform support is macOS and Linux. Commands that delegate to the JVM
@@ -254,8 +286,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.pyronaut]
 repositories = [
-  "https://s01.oss.sonatype.org/content/repositories/snapshots/",
-  "mavenCentral"
+  "mavenCentral",
+  "https://central.sonatype.com/repository/maven-snapshots/"
 ]
 
 [tool.pyronaut.dependencies]
@@ -351,18 +383,18 @@ pyronaut process
 pyronaut dev
 ```
 
-Wait for `pyronaut install` to resolve every scope before running
+Wait for `pyronaut install` to resolve every active scope before running
 `pyronaut process`. A successful install resolves build, runtime,
-development-runtime, test, and test-resources-server dependencies, then
-generates the application schema and Python editor stubs. Dependency counts
-vary, but the output has this shape:
+development-runtime, and test dependencies, then generates the application
+schema and Python editor stubs. If Test Resources is enabled, it also resolves
+the test-resources-server dependencies. Dependency counts vary, but the output
+has this shape:
 
 ```text
 Resolved build dependencies (... artifacts)
 Resolved runtime dependencies (... artifacts)
 Resolved development-runtime dependencies (... artifacts)
 Resolved test dependencies (... artifacts)
-Resolved test-resources-server dependencies (... artifacts)
 Generated application schema from runtime classpath (... fragments)
 Generated Python editor stubs (... packages, ... symbols)
 ```
@@ -679,5 +711,4 @@ Open `build/docs/index.html` after the guide build completes.
 - `src/main/docs/guide/pyronautCliV2.adoc`: full CLI reference.
 - `pyronaut/README.md`: SDK wheel and orchestrator development notes.
 - `functional-test/README.md`: fixture application test workflow.
-- `pyronaut-cli-v2/docs/cli-protocol.md`: orchestrator/delegate protocol.
 - `CONTRIBUTING.md`: maintainer setup, build, and contribution notes.
