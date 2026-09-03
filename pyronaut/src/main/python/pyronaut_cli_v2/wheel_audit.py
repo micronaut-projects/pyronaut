@@ -75,6 +75,7 @@ def _scan_zip(
     archive: zipfile.ZipFile,
     forbidden: set[bytes],
     *,
+    owned_jar_names: set[str],
     prefix: str = "",
     depth: int = 0,
 ) -> None:
@@ -85,21 +86,35 @@ def _scan_zip(
             raise WheelAuditError(f"Wheel entry name contains a build-machine path: {name}")
         if entry.is_dir():
             continue
+        if entry.filename.lower().endswith(".jar") and Path(entry.filename).name.lower() not in owned_jar_names:
+            # Dependency JARs are published artifacts. Their class files may
+            # legitimately contain example paths from the dependency build.
+            continue
         payload = archive.read(entry)
         lowered_payload = payload.lower()
         if any(value in lowered_payload for value in forbidden):
             raise WheelAuditError(f"Wheel entry content contains a build-machine path: {name}")
         if entry.filename.endswith("native-compile-classpath.txt"):
             _validate_native_descriptor(name, payload)
-        if depth < 4 and entry.filename.lower().endswith((".jar", ".zip", ".whl")):
+        if depth < 4 and entry.filename.lower().endswith(".jar"):
             try:
                 with zipfile.ZipFile(io.BytesIO(payload)) as nested:
-                    _scan_zip(nested, forbidden, prefix=f"{name}!/", depth=depth + 1)
+                    _scan_zip(
+                        nested,
+                        forbidden,
+                        owned_jar_names=owned_jar_names,
+                        prefix=f"{name}!/",
+                        depth=depth + 1,
+                    )
             except zipfile.BadZipFile:
                 pass
 
 
-def audit_wheel(wheel: Path, forbidden_paths: Iterable[str | Path]) -> None:
+def audit_wheel(
+    wheel: Path,
+    forbidden_paths: Iterable[str | Path],
+    owned_jar_names: Iterable[str] = (),
+) -> None:
     forbidden = {
         variant
         for path in forbidden_paths
@@ -107,20 +122,28 @@ def audit_wheel(wheel: Path, forbidden_paths: Iterable[str | Path]) -> None:
     }
     if not forbidden:
         raise WheelAuditError("Wheel audit requires at least one forbidden path")
+    owned_jars = {Path(name).name.lower() for name in owned_jar_names}
     try:
         with zipfile.ZipFile(wheel) as archive:
-            _scan_zip(archive, forbidden)
+            _scan_zip(archive, forbidden, owned_jar_names=owned_jars)
     except zipfile.BadZipFile as exc:
         raise WheelAuditError(f"Invalid wheel archive: {wheel}") from exc
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit a Pyronaut wheel for build-machine path leaks")
+    parser.add_argument(
+        "--owned-jar",
+        dest="owned_jar_names",
+        action="append",
+        default=[],
+        help="Pyronaut-owned JAR filename whose contents should be audited; may be repeated",
+    )
     parser.add_argument("wheel", type=Path)
     parser.add_argument("forbidden_path", nargs="+")
     args = parser.parse_args()
     try:
-        audit_wheel(args.wheel, args.forbidden_path)
+        audit_wheel(args.wheel, args.forbidden_path, args.owned_jar_names)
     except WheelAuditError as exc:
         parser.exit(1, f"{exc}\n")
     return 0

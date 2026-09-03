@@ -23,7 +23,7 @@ class WheelAuditTest(unittest.TestCase):
                 with self.assertRaises(WheelAuditError):
                     audit_wheel(wheel, [forbidden])
 
-    def test_rejects_leaks_in_entry_names_and_nested_jars(self):
+    def test_rejects_leaks_in_entry_names_and_owned_nested_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             nested = root / "nested.jar"
@@ -31,9 +31,18 @@ class WheelAuditTest(unittest.TestCase):
                 archive.writestr("origin.txt", "/Users/builder/.gradle/caches/example.jar")
             wheel = root / "nested.whl"
             with zipfile.ZipFile(wheel, "w") as archive:
-                archive.write(nested, "package/lib/example.jar")
+                archive.write(nested, "package/lib/micronaut-pyronaut-runtime.jar")
             with self.assertRaises(WheelAuditError):
-                audit_wheel(wheel, ["/Users/builder", "/Users/builder/.gradle"])
+                audit_wheel(
+                    wheel,
+                    ["/Users/builder", "/Users/builder/.gradle"],
+                    ["micronaut-pyronaut-runtime.jar"],
+                )
+
+            external = root / "external.whl"
+            with zipfile.ZipFile(external, "w") as archive:
+                archive.write(nested, "package/lib/chromeinspector-tool-25.2.4.jar")
+            audit_wheel(external, ["/Users/builder", "/Users/builder/.gradle"])
 
             named = root / "named.whl"
             with zipfile.ZipFile(named, "w") as archive:

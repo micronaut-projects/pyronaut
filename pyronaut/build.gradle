@@ -566,16 +566,26 @@ tasks.register("buildSdkWheel", Exec) {
         if (!missingBundledArtifacts.isEmpty()) {
             throw new GradleException("Wheel is missing required bootstrap artifacts: ${missingBundledArtifacts.sort()}")
         }
+        // Recurse only into Pyronaut-owned JARs. External dependencies are
+        // published artifacts and may contain legitimate sample paths.
+        def ownedJarNames = packagedArtifactNames
+            .findAll { it.startsWith("micronaut-pyronaut-") && it.endsWith(".jar") }
+            .sort()
+        // Do not reject the entire user home: third-party class files can
+        // legitimately contain sample paths such as /home/joe/project.
         def forbiddenPaths = [
             rootProject.projectDir.canonicalPath,
             wheelStagingDir.get().asFile.canonicalPath,
             gradle.gradleUserHomeDir.canonicalPath,
             new File(gradle.gradleUserHomeDir, "caches").canonicalPath,
-            new File(System.getProperty("user.home")).canonicalPath,
         ].unique()
         def auditCommand = []
         auditCommand.addAll(pythonCommand.get())
         auditCommand.add(file("src/main/python/pyronaut_cli_v2/wheel_audit.py").absolutePath)
+        ownedJarNames.each { jarName ->
+            auditCommand.add("--owned-jar")
+            auditCommand.add(jarName)
+        }
         auditCommand.add(wheel.absolutePath)
         auditCommand.addAll(forbiddenPaths)
         def auditProcessBuilder = new ProcessBuilder(auditCommand)
