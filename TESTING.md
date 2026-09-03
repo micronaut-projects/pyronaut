@@ -12,14 +12,17 @@ The runbook uses the host Docker socket for Docker-backed test resources. The
 only host state passed to the container is the Docker socket and the
 read-capable `PYRONAUT_RELEASE_TOKEN`; no host filesystem mount is required.
 
-Build the SDK wheel, but do not rebuild the existing Linux native bundles:
+Build the SDK wheel and the three Linux native bundles from the same revision.
+The bundle manifests and wheel setup contract must stay in sync:
 
 ```bash
-./gradlew :micronaut-pyronaut:buildSdkWheel
+./gradlew :micronaut-pyronaut:buildSdkWheel \
+  :micronaut-pyronaut-dev:assemble \
+  :micronaut-pyronaut-run:assemble \
+  :micronaut-pyronaut-run-python:assemble
 ```
 
-When updating a release, replace only
-`pyronaut-0.0.1.dev0-py3-none-any.whl`. Keep these existing assets unchanged:
+When updating a release, replace the wheel and all three matching native assets:
 
 ```text
 pyronaut-dev-linux-amd64-0.0.1-SNAPSHOT.tar.gz
@@ -68,8 +71,9 @@ to the same command (from the repository root):
 
 Use the local-wheel options while validating an updated CLI before uploading
 it: the no-settings assertion exercises defaults embedded in the wheel, while
-the three existing Linux native bundles can remain unchanged. Once the wheel
-asset has been replaced, omit these options to validate the published wheel.
+the release must already contain native bundles built from the same setup
+descriptor format. Once the wheel asset has been replaced, omit these options
+to validate the published wheel.
 
 Run the following inside the container:
 
@@ -569,28 +573,51 @@ run_test() {
   fi
 }
 
+# Installed-wheel execution is deliberately unavailable until the complete SDK
+# has been provisioned. The failure text and exit code are part of the CLI
+# contract and remain available without Java.
+set +e
+pyronaut run --local-repository "$LOCAL_REPOSITORY" \
+  /work/projects/direct-python/app.py > /work/logs/pre-setup.log 2>&1
+PRE_SETUP_STATUS=$?
+set -e
+test "$PRE_SETUP_STATUS" -eq 8
+grep -Fxq 'Pyronaut setup is missing or stale. Run pyronaut setup.' /work/logs/pre-setup.log
+
+run_test sdk-setup \
+  pyronaut setup --allow-draft-release --progress on \
+  --local-repository "$LOCAL_REPOSITORY"
+grep -Fq 'Downloading GraalVM SDK... 0%' /work/logs/sdk-setup.log
+grep -Fq 'Downloading GraalVM SDK... 100%' /work/logs/sdk-setup.log
+grep -Fq 'Downloading pyronaut-dev... 0%' /work/logs/sdk-setup.log
+grep -Fq 'Downloading pyronaut-run... 0%' /work/logs/sdk-setup.log
+grep -Fq 'Downloading pyronaut-run-python... 0%' /work/logs/sdk-setup.log
+
+# A second setup with identical inputs validates and reuses the published state.
+run_test sdk-setup-cache-hit \
+  pyronaut setup --allow-draft-release --progress on \
+  --local-repository "$LOCAL_REPOSITORY"
+grep -Fq 'Pyronaut setup is ready at' /work/logs/sdk-setup-cache-hit.log
+
 (
   cd /work/projects/direct-python
   run_http direct-python-run 18081 /hello \
-    pyronaut --allow-draft-release run --progress on app.py
+    pyronaut --allow-draft-release run --progress on \
+    --local-repository "$LOCAL_REPOSITORY" app.py
   run_http direct-python-dev 18082 /hello \
-    pyronaut --allow-draft-release dev app.py
+    pyronaut --allow-draft-release dev --local-repository "$LOCAL_REPOSITORY" app.py
 )
-grep -Fq 'Downloading GraalVM SDK... 0%' /work/logs/direct-python-run.log
-grep -Fq 'Downloading GraalVM SDK... 100%' /work/logs/direct-python-run.log
-grep -Fq 'Downloading pyronaut-dev... 0%' /work/logs/direct-python-run.log
-grep -Fq 'Downloading pyronaut-dev... 100%' /work/logs/direct-python-run.log
 
 (
   cd /work/projects/direct-java
   run_http direct-java-run 18083 /hello \
-    pyronaut --allow-draft-release run App.java
+    pyronaut --allow-draft-release run --local-repository "$LOCAL_REPOSITORY" App.java
   run_http direct-java-dev 18084 /hello \
-    pyronaut --allow-draft-release dev App.java
+    pyronaut --allow-draft-release dev --local-repository "$LOCAL_REPOSITORY" App.java
 )
 
-# Gradle itself needs a JVM. Let the first direct Pyronaut run provision it,
-# then expose that container-local SDK to the Gradle fixture.
+# Gradle itself needs a JVM. Setup provisioned it before invoking the Java
+# dependency resolver, so expose that container-local SDK to the Gradle fixture.
 SDK_JAVA=$(find -L "$HOME/.pyronaut/sdks" -type f -path '*/bin/java' -print -quit)
 test -n "$SDK_JAVA"
 export JAVA_HOME="${SDK_JAVA%/bin/java}"
@@ -604,9 +631,6 @@ test -f "$LOCAL_REPOSITORY/io/micronaut/pyronaut/micronaut-pyronaut-bom/0.0.1-SN
 run_http --default-port simple-python-native 8080 / \
   pyronaut --allow-draft-release run --progress on \
   --local-repository "$LOCAL_REPOSITORY" --native --project-dir /work/projects/simple-python
-grep -Fq 'Downloading pyronaut-run-python... 0%' /work/logs/simple-python-native.log
-grep -Fq 'Downloading pyronaut-run-python... 100%' /work/logs/simple-python-native.log
-grep -Fq 'Pyronaut tool runtime ready:' /work/logs/simple-python-native.log
 run_test simple-python-test-native \
   pyronaut --allow-draft-release test --local-repository "$LOCAL_REPOSITORY" \
   --native --project-dir /work/projects/simple-python
@@ -626,8 +650,6 @@ run_http --default-port simple-python-dev-jvm 8080 / \
 run_http --default-port fresh5-native 8080 /hello \
   pyronaut --allow-draft-release run --progress on \
   --local-repository "$LOCAL_REPOSITORY" --native --project-dir /work/projects/fresh5
-grep -Fq 'Downloading pyronaut-run... 0%' /work/logs/fresh5-native.log
-grep -Fq 'Downloading pyronaut-run... 100%' /work/logs/fresh5-native.log
 run_test fresh5-test-native \
   pyronaut --allow-draft-release test --local-repository "$LOCAL_REPOSITORY" \
   --native --project-dir /work/projects/fresh5
@@ -675,6 +697,6 @@ delegation/provisioning logs, and the final Pyronaut cache tree. The cache must
 contain the provisioned SDK under `~/.pyronaut/sdks`, delegated tools under
 `~/.pyronaut/tools`, and the three existing native bundles under the
 wheel-resolved `~/.pyronaut/bin/<version>/linux-amd64` directory. The resolved
-version is recorded in `native-version.txt`. Repeated invocations must reuse
-those cached assets, while the first native invocations must retain visible
-0% and 100% download progress.
+version is recorded in `native-version.txt`. The setup log must retain visible
+0% and 100% download progress, while the second setup and every execution
+command reuse those cached assets.

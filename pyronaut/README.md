@@ -42,6 +42,7 @@ Verify the installed CLI:
 ```bash
 pyronaut --help
 pyronaut --version
+pyronaut setup
 ```
 
 If you rebuild the wheel and want to retest with the latest local artifact:
@@ -50,7 +51,19 @@ If you rebuild the wheel and want to retest with the latest local artifact:
 python -m pip install --force-reinstall pyronaut/build/wheel/dist/pyronaut-*.whl
 ```
 
-The SDK wheel delegates to JVM launchers. Native images are downloaded on demand for native-configured projects and direct-source execution, then cached under `~/.pyronaut/bin`. The default bundle base URL is `https://github.com/micronaut-projects/pyronaut/releases`. Use `[native-images]` in `~/.pyronaut/settings.toml` to select a release or another bundle source:
+`pyronaut setup` is mandatory after installing or upgrading the wheel. It provisions GraalVM first, then resolves the delegated JVM tools and native compiler classpaths and downloads all three native launchers. Setup is idempotent and records validated local state under `~/.pyronaut/setup`; use `--refresh` to re-resolve it or `--offline` to require cache-only operation.
+
+The default setup repository is Maven Central. Snapshot Pyronaut wheels also use Sonatype Central snapshots. Override the setup repository list in `~/.pyronaut/settings.toml` (an explicit list replaces the defaults):
+
+```toml
+[maven]
+repositories = [
+  "mavenCentral",
+  "https://central.sonatype.com/repository/maven-snapshots/"
+]
+```
+
+Native images are cached under `~/.pyronaut/bin`. The default bundle base URL is `https://github.com/micronaut-projects/pyronaut/releases`. Use `[native-images]` in the same settings file to select a release or another bundle source:
 
 ```toml
 [native-images]

@@ -12,7 +12,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import socket
 import threading
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from unittest.mock import ANY
 
 _CLI_MODULE_PATH = Path(__file__).resolve().parents[2] / "main" / "python" / "pyronaut_cli_v2" / "cli.py"
@@ -82,6 +82,35 @@ class OrchestratorTest(unittest.TestCase):
     @staticmethod
     def _normalized_project_dir(value: str) -> str:
         return str(Path(value).resolve())
+
+    @staticmethod
+    def _write_native_compile_descriptor(
+        executable: Path,
+        home: Path,
+        coordinates: list[tuple[str, str, str, str]],
+    ) -> list[Path]:
+        entries = []
+        artifacts = []
+        for group, artifact, version, filename in coordinates:
+            entries.append(
+                "\t".join(("maven", group, artifact, version, "jar", "", filename))
+            )
+            resolved = (
+                home
+                / ".m2"
+                / "repository"
+                / Path(*group.split("."))
+                / artifact
+                / version
+                / filename
+            )
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            resolved.write_text(artifact, encoding="utf-8")
+            artifacts.append(resolved)
+        (executable.parent / "native-compile-classpath.txt").write_text(
+            "\n".join(entries) + "\n", encoding="utf-8"
+        )
+        return artifacts
 
     def _assert_java_delegate(self, command_line, main_class: str, project_dir: str, manifest: str, extra_args: list[str] | None = None) -> None:
         self.assertEqual("/tmp/java-home/bin/java", command_line[0])
@@ -672,12 +701,12 @@ class OrchestratorTest(unittest.TestCase):
             native_install = bin_dir / "pyronaut-install"
             native_dev.write_text("", encoding="utf-8")
             native_install.write_text("", encoding="utf-8")
-            compiler_jar = lib_dir / "micronaut-runtime.jar"
-            compiler_jar.write_text("", encoding="utf-8")
-            (bin_dir / "native-compile-classpath.txt").write_text(
-                str(compiler_jar) + "\n",
-                encoding="utf-8",
-            )
+            home = root / "home"
+            compiler_jar = self._write_native_compile_descriptor(
+                native_dev,
+                home,
+                [("io.micronaut", "micronaut-runtime", "5.1.0", "micronaut-runtime-5.1.0.jar")],
+            )[0]
             source = root / "App.java"
             source.write_text("class App {}\n", encoding="utf-8")
             captured = {}
@@ -694,7 +723,7 @@ class OrchestratorTest(unittest.TestCase):
                     "pyronaut-dev": native_dev,
                     "pyronaut-install": native_install,
                 }.get(command_name),
-            ):
+            ), patch("pathlib.Path.home", return_value=home):
                 exit_code = cli.run(
                     ["install", "--project-dir", str(root), str(source)],
                     runner_with_env=runner,
@@ -708,7 +737,7 @@ class OrchestratorTest(unittest.TestCase):
             [str(native_install), "--project-dir", str(root), str(source)],
             captured["command"],
         )
-        self.assertEqual(str(compiler_jar), captured["env"]["PYRONAUT_DIRECT_CLASSPATH"])
+        self.assertEqual(str(compiler_jar.resolve()), captured["env"]["PYRONAUT_DIRECT_CLASSPATH"])
 
     def test_control_panel_option_without_source_uses_project_development(self):
         self.assertFalse(cli._looks_like_direct_source_invocation(["--control-panel"]))
@@ -1181,25 +1210,19 @@ class OrchestratorTest(unittest.TestCase):
                 "io.micronaut:micronaut-context-python\n",
                 encoding="utf-8",
             )
-            (bin_dir / "native-compile-classpath.txt").write_text(
-                "\n".join(
-                    [
-                        str(lib_dir / "micronaut-context-python-5.1.0.jar"),
-                        str(lib_dir / "micronaut-inject-python-5.1.0.jar"),
-                        str(lib_dir / "micronaut-runtime-5.1.0.jar"),
-                    ]
-                )
-                + "\n",
-                encoding="utf-8",
+            home = Path(temp_dir) / "home"
+            self._write_native_compile_descriptor(
+                native_dev,
+                home,
+                [
+                    ("io.micronaut", "micronaut-context-python", "5.1.0", "micronaut-context-python-5.1.0.jar"),
+                    ("io.micronaut", "micronaut-inject-python", "5.1.0", "micronaut-inject-python-5.1.0.jar"),
+                    ("io.micronaut", "micronaut-runtime", "5.1.0", "micronaut-runtime-5.1.0.jar"),
+                ],
             )
-            for jar_name in (
-                "micronaut-context-python-5.1.0.jar",
-                "micronaut-inject-python-5.1.0.jar",
-                "micronaut-runtime-5.1.0.jar",
-            ):
-                (lib_dir / jar_name).write_text("", encoding="utf-8")
 
-            jvm_args = cli._build_direct_source_native_jvm_args(str(native_dev), {"JAVA_HOME": "/tmp/java-home"})
+            with patch("pathlib.Path.home", return_value=home):
+                jvm_args = cli._build_direct_source_native_jvm_args(str(native_dev), {"JAVA_HOME": "/tmp/java-home"})
 
         self.assertEqual(2, len(jvm_args))
         self.assertEqual("-Djava.home=/tmp/java-home", jvm_args[0])
@@ -1312,22 +1335,22 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual([str(binary.resolve())], jars)
 
-    def test_native_compile_classpath_resolves_wheel_shared_lib(self):
+    def test_native_compile_classpath_resolves_source_checkout_maven_repository(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             tools = Path(temp_dir) / "tools"
             native_dir = tools / "pyronaut-dev" / "native"
             native_dir.mkdir(parents=True)
             native_dev = native_dir / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
-            (native_dir / "native-compile-classpath.txt").write_text(
-                "io.micronaut:micronaut-inject-python\n", encoding="utf-8"
-            )
-            shared_lib = tools / "shared" / "lib"
-            shared_lib.mkdir(parents=True)
-            binary = shared_lib / "micronaut-inject-python-5.2.0.jar"
-            binary.write_text("binary", encoding="utf-8")
+            home = Path(temp_dir) / "home"
+            binary = self._write_native_compile_descriptor(
+                native_dev,
+                home,
+                [("io.micronaut", "micronaut-inject-python", "5.2.0", "micronaut-inject-python-5.2.0.jar")],
+            )[0]
 
-            entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
+            with patch("pathlib.Path.home", return_value=home):
+                entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
 
         self.assertEqual([str(binary.resolve())], entries)
 
@@ -1660,12 +1683,12 @@ type = "native"
             native_dev = root / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
             native_dev.chmod(0o755)
-            compiler_jar = root / "compiler.jar"
-            compiler_jar.write_text("compiler", encoding="utf-8")
-            (root / "native-compile-classpath.txt").write_text(
-                f"{compiler_jar}\n",
-                encoding="utf-8",
-            )
+            home = root / "home"
+            compiler_jar = self._write_native_compile_descriptor(
+                native_dev,
+                home,
+                [("example", "compiler", "1.0", "compiler-1.0.jar")],
+            )[0]
             project_dir = root / "project"
             cache_dir = project_dir / "__pyronaut__"
             classes_dir = cache_dir / "classes"
@@ -1692,7 +1715,7 @@ type = "native"
                 cli,
                 "_bundled_native_executable",
                 side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None,
-            ):
+            ), patch("pathlib.Path.home", return_value=home):
                 command_line = cli._pyronaut_dev_native_command_line(
                     "process",
                     ["--project-dir", str(project_dir), "--pass", "test"],
@@ -1798,7 +1821,7 @@ type = "native"
         auto_restart.assert_called_once()
         self.assertEqual([], delegated)
 
-    def test_native_compile_manifest_remaps_build_machine_paths_from_maven_cache(self):
+    def test_native_compile_manifest_rejects_build_machine_paths(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             native_dev = root / "resources" / "pyronaut-dev"
@@ -1807,13 +1830,8 @@ type = "native"
                 "/build-agent/gradle-cache/files-2.1/org.junit.jupiter/junit-jupiter-api/6.1.3/hash/junit-jupiter-api-6.1.3.jar\n",
                 encoding="utf-8",
             )
-            maven_jar = root / "home" / ".m2" / "repository" / "org" / "junit" / "jupiter" / "junit-jupiter-api" / "6.1.3" / "junit-jupiter-api-6.1.3.jar"
-            maven_jar.parent.mkdir(parents=True)
-            maven_jar.write_text("junit", encoding="utf-8")
-            with patch("pathlib.Path.home", return_value=root / "home"):
-                entries = cli._native_launcher_compile_classpath_entries(str(native_dev / "pyronaut-dev"))
-
-        self.assertEqual([str(maven_jar)], entries)
+            with self.assertRaisesRegex(RuntimeError, "Invalid native compiler classpath descriptor"):
+                cli._native_launcher_compile_classpath_entries(str(native_dev / "pyronaut-dev"))
 
     def test_native_direct_dev_disables_openapi_adoc_conversion(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -8100,51 +8118,202 @@ java-version = 25
                 artifact.unlink()
                 self.assertIsNone(cli._resolved_tool_executable("pyronaut-run"))
 
-    def test_tools_bootstrap_forwards_resolution_settings(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            package = Path(temp_dir) / "package"
-            tools = package / "tools"
-            tools.mkdir(parents=True)
-            (tools / "tool-runtime.properties").write_text("sdk.version=1.2.3\n", encoding="utf-8")
-            installer = Path(temp_dir) / "pyronaut-install"
-            installer.write_text("#!/bin/sh\n", encoding="utf-8")
-            completed = subprocess.CompletedProcess([], 0)
+    def test_setup_repositories_default_to_maven_central_and_snapshots_for_snapshot_sdk(self):
+        with (
+            patch.object(cli, "_read_pyronaut_user_settings", return_value={}),
+            patch.object(cli, "_installed_pyronaut_version", return_value="1.2.3-SNAPSHOT"),
+        ):
+            self.assertEqual(
+                ["mavenCentral", cli._SONATYPE_SNAPSHOTS_REPOSITORY],
+                cli._setup_repositories(),
+            )
 
+        with (
+            patch.object(cli, "_read_pyronaut_user_settings", return_value={}),
+            patch.object(cli, "_installed_pyronaut_version", return_value="1.2.3"),
+        ):
+            self.assertEqual(["mavenCentral"], cli._setup_repositories())
+
+    def test_setup_repositories_can_be_replaced_in_user_settings(self):
+        settings = {"maven": {"repositories": ["https://repo.example/releases", "companySnapshots"]}}
+        with patch.object(cli, "_read_pyronaut_user_settings", return_value=settings):
+            self.assertEqual(
+                ["https://repo.example/releases", "companySnapshots"],
+                cli._setup_repositories(),
+            )
+
+    def test_setup_reuses_recorded_custom_local_repository_until_explicitly_changed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = root / "setup.json"
+            custom = root / "custom-m2"
+            default = root / "home" / ".m2" / "repository"
+            manifest.write_text(
+                cli.json.dumps({"localRepository": str(custom.resolve())}), encoding="utf-8"
+            )
+            with (
+                patch.object(cli, "_setup_is_required", return_value=True),
+                patch.object(cli, "_setup_manifest_path", return_value=manifest),
+                patch("pathlib.Path.home", return_value=root / "home"),
+            ):
+                self.assertEqual(custom.resolve(), cli._setup_local_repository(()))
+                self.assertEqual(
+                    default.resolve(),
+                    cli._setup_local_repository(("--local-repository", str(default))),
+                )
+
+    def test_execution_requires_setup_but_help_and_version_do_not(self):
+        stderr = io.StringIO()
+        with (
+            patch.object(cli, "_setup_is_required", return_value=True),
+            patch.object(cli, "_read_valid_setup_manifest", side_effect=RuntimeError("stale")),
+            redirect_stderr(stderr),
+        ):
+            self.assertEqual(cli.PRECONDITION_FAILED, cli.run(["install"], platform_name="linux"))
+            self.assertEqual(cli.SUCCESS, cli.run(["install", "--help"], platform_name="linux"))
+            self.assertEqual(cli.SUCCESS, cli.run(["dev", "--version"], platform_name="linux"))
+
+        self.assertEqual(cli._SETUP_REQUIRED_MESSAGE + "\n", stderr.getvalue())
+
+    def test_setup_provisions_all_components_and_publishes_validated_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            home = root / "home"
+            package = root / "package"
+            tools = package / "tools"
+            tool_descriptor = tools / "pyronaut-run" / "bin" / "pyronaut-tool-classpath.tsv"
+            tool_descriptor.parent.mkdir(parents=True)
+            tool_descriptor.write_text(
+                "maven\tio.micronaut.pyronaut\tmicronaut-pyronaut-run\t1.2.3\tjar\t\tmicronaut-pyronaut-run-1.2.3.jar\n",
+                encoding="utf-8",
+            )
+            (tools / "tool-runtime.properties").write_text(
+                "sdk.version=1.2.3\ndescriptor.sha256=tool-hash\n", encoding="utf-8"
+            )
+            tool_root = home / ".pyronaut" / "tools" / "1.2.3" / "current"
+            tool_executable = tool_root / "tools" / "pyronaut-run" / "bin" / "pyronaut-run"
+            tool_executable.parent.mkdir(parents=True)
+            tool_executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            tool_executable.chmod(0o755)
+
+            installer = root / "pyronaut-install"
+            installer.write_text("#!/bin/sh\n", encoding="utf-8")
+            installer.chmod(0o755)
+            java_home = root / "graalvm"
+            java = java_home / "bin" / "java"
+            java.parent.mkdir(parents=True)
+            java.write_text("#!/bin/sh\n", encoding="utf-8")
+            java.chmod(0o755)
+
+            images = {}
+            resolved_by_image = {}
+            for image_name in cli._SETUP_IMAGE_COMMANDS:
+                executable = root / "images" / image_name / image_name
+                executable.parent.mkdir(parents=True)
+                executable.write_text("native", encoding="utf-8")
+                executable.chmod(0o755)
+                resolved_by_image[image_name] = self._write_native_compile_descriptor(
+                    executable,
+                    home,
+                    [("com.example", f"{image_name}-compiler", "1.0", f"{image_name}-compiler-1.0.jar")],
+                )[0].resolve()
+                images[image_name] = executable
+
+            manifest_path = home / ".pyronaut" / "setup" / "1.2.3" / "linux-amd64" / "setup.json"
+            expectation = {
+                "schemaVersion": 1,
+                "sdkVersion": "1.2.3",
+                "platform": "linux-amd64",
+                "localRepository": str((home / ".m2" / "repository").resolve()),
+                "repositories": ["mavenCentral", cli._SONATYPE_SNAPSHOTS_REPOSITORY],
+                "sdkDescriptorSha256": "sdk-hash",
+                "toolDescriptorSha256": "tool-hash",
+                "nativeImages": {
+                    "source": "https://example.invalid/",
+                    "version": "1.2.3",
+                    "releaseTag": None,
+                },
+            }
+            commands = []
+            provisioning_order = []
+
+            def provision_jdk(_project_dir, *, offline=False):
+                provisioning_order.append("graalvm")
+                self.assertFalse(offline)
+                return str(java_home)
+
+            def provision_image(name):
+                provisioning_order.append(name)
+                return images[name]
+
+            def runner(command_line, env=None):
+                commands.append((command_line, env))
+                request_dir = Path(command_line[command_line.index("--native-classpaths-dir") + 1])
+                output = request_dir / "resolved"
+                output.mkdir()
+                for image_name, artifact in resolved_by_image.items():
+                    (output / f"{image_name}.txt").write_text(str(artifact) + "\n", encoding="utf-8")
+                return 0
+
+            metadata = cli._GraalVmMetadata("25.0.3", 25, "ee")
             with (
                 patch.object(cli, "__file__", str(package / "cli.py")),
+                patch.object(cli, "_setup_manifest_path", return_value=manifest_path),
+                patch.object(cli, "_setup_expectation", return_value=expectation),
+                patch.object(cli, "_read_valid_setup_manifest", side_effect=RuntimeError("missing")),
+                patch.object(cli, "_ensure_graalvm_java_home", side_effect=provision_jdk),
+                patch.object(cli, "_ensure_native_image", side_effect=provision_image),
                 patch.object(cli, "_bundled_executable", return_value=installer),
-                patch.object(cli, "_ensure_graalvm_java_home", return_value="/tmp/graalvm-jdk-25"),
-                patch.object(cli.subprocess, "run", return_value=completed) as run_process,
-                patch.object(cli, "_tool_bootstrap_local_repository", "/tmp/repository"),
-                patch.object(cli, "_tool_bootstrap_offline", True),
-                patch.object(cli, "_tool_bootstrap_refresh", True),
-                patch.object(cli, "_tool_bootstrap_progress", "off"),
+                patch.object(cli, "_seed_bundled_pyronaut_maven_repository") as seed_repository,
+                patch.object(cli, "_resolved_tool_cache_root", return_value=tool_root),
+                patch.object(cli, "_resolved_tools_cache_complete", return_value=True),
+                patch.object(cli, "_read_graalvm_metadata", return_value=metadata),
+                patch("pathlib.Path.home", return_value=home),
             ):
-                self.assertTrue(cli._bootstrap_resolved_tools())
+                exit_code = cli._run_setup(["--refresh", "--progress", "off"], runner)
 
-            command_line = run_process.call_args.args[0]
-            self.assertEqual(
-                [
-                    str(installer),
-                    "--resolve-tools-only",
-                    "--local-repository",
-                    "/tmp/repository",
-                    "--offline",
-                    "--refresh",
-                    "--progress",
-                    "off",
-                ],
-                command_line,
-            )
-            self.assertEqual(
-                tools.resolve(), Path(run_process.call_args.kwargs["env"]["PYRONAUT_PACKAGED_TOOLS_DIR"])
-            )
-            self.assertEqual("/tmp/graalvm-jdk-25", run_process.call_args.kwargs["env"]["JAVA_HOME"])
-            self.assertTrue(run_process.call_args.kwargs["env"]["PATH"].startswith("/tmp/graalvm-jdk-25/bin"))
-            self.assertEqual(
-                Path.home() / ".pyronaut" / "tools",
-                Path(run_process.call_args.kwargs["env"]["PYRONAUT_TOOLS_CACHE_DIR"]),
-            )
+            self.assertEqual(cli.SUCCESS, exit_code)
+            self.assertEqual(["graalvm", *cli._SETUP_IMAGE_COMMANDS], provisioning_order)
+            seed_repository.assert_called_once()
+            self.assertEqual(1, len(commands))
+            command_line, environment = commands[0]
+            self.assertIn("--resolve-tools-only", command_line)
+            self.assertEqual(2, command_line.count("--repository"))
+            self.assertIn("--refresh", command_line)
+            self.assertEqual("off", command_line[command_line.index("--progress") + 1])
+            self.assertEqual(str(java_home), environment["JAVA_HOME"])
+
+            state = cli.json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(expectation["repositories"], state["repositories"])
+            self.assertEqual(str(tool_executable.resolve()), state["executables"]["pyronaut-run"])
+            self.assertEqual(set(cli._SETUP_IMAGE_COMMANDS), set(state["images"]))
+            for image_name in cli._SETUP_IMAGE_COMMANDS:
+                self.assertEqual(
+                    [str(resolved_by_image[image_name])],
+                    state["images"][image_name]["classpath"],
+                )
+
+            resolved_by_image["pyronaut-dev"].unlink()
+            with (
+                patch.object(cli, "__file__", str(package / "cli.py")),
+                patch.object(cli, "_setup_manifest_path", return_value=manifest_path),
+                patch.object(cli, "_setup_expectation", return_value=expectation),
+                patch.object(cli, "_resolved_tools_cache_complete", return_value=True),
+                patch.object(cli, "_read_graalvm_metadata", return_value=metadata),
+                patch("pathlib.Path.home", return_value=home),
+            ):
+                with self.assertRaisesRegex(RuntimeError, cli._SETUP_REQUIRED_MESSAGE):
+                    cli._read_valid_setup_manifest([])
+
+    def test_setup_is_idempotent_without_refresh(self):
+        runner = Mock(side_effect=AssertionError("setup cache hit invoked installer"))
+        with (
+            patch.object(cli, "_setup_manifest_path", return_value=Path("/tmp/setup.json")),
+            patch.object(cli, "_read_valid_setup_manifest", return_value={}),
+            patch.object(cli, "_ensure_graalvm_java_home") as ensure_jdk,
+        ):
+            self.assertEqual(cli.SUCCESS, cli._run_setup([], runner))
+        ensure_jdk.assert_not_called()
 
     def test_bundled_pyronaut_maven_repository_stages_jars_and_bom_in_default_repository(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -8213,30 +8382,28 @@ java-version = 25
                 self.assertEqual(str(installer), cli._resolve_executable("pyronaut-install"))
                 resolved_tool.assert_not_called()
 
-    def test_resolve_executable_repairs_missing_cache_and_keeps_complete_distribution_fallback(self):
+    def test_resolve_executable_does_not_implicitly_bootstrap_missing_cache(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            cached = root / "cache" / "pyronaut-run"
             bundled = root / "bundled" / "bin" / "pyronaut-run"
-            cached.parent.mkdir(parents=True)
             bundled.parent.mkdir(parents=True)
-            cached.write_text("#!/bin/sh\n", encoding="utf-8")
             bundled.write_text("#!/bin/sh\n", encoding="utf-8")
-            cli._tool_bootstrap_attempted.clear()
-            with (
-                patch.dict(os.environ, {"PYRONAUT_RUN_EXECUTABLE": ""}),
-                patch.object(cli, "_resolved_tool_executable", side_effect=[None, cached]),
-                patch.object(cli, "_bootstrap_resolved_tools", return_value=True) as bootstrap,
-                patch.object(cli, "_bundled_executable", return_value=None),
-            ):
-                self.assertEqual(str(cached), cli._resolve_executable("pyronaut-run"))
-                bootstrap.assert_called_once_with()
-
-            cli._tool_bootstrap_attempted.clear()
+            (bundled.parent / "pyronaut-tool-classpath.tsv").write_text(
+                "maven\tio.micronaut.pyronaut\tmicronaut-pyronaut-run\t1.0\tjar\t\tmicronaut-pyronaut-run-1.0.jar\n",
+                encoding="utf-8",
+            )
             with (
                 patch.dict(os.environ, {"PYRONAUT_RUN_EXECUTABLE": ""}),
                 patch.object(cli, "_resolved_tool_executable", return_value=None),
-                patch.object(cli, "_bootstrap_resolved_tools", return_value=False),
+                patch.object(cli, "_bundled_executable", return_value=bundled),
+                patch.object(cli.shutil, "which", return_value=None),
+            ):
+                self.assertIsNone(cli._resolve_executable("pyronaut-run"))
+
+            (bundled.parent / "pyronaut-tool-classpath.tsv").unlink()
+            with (
+                patch.dict(os.environ, {"PYRONAUT_RUN_EXECUTABLE": ""}),
+                patch.object(cli, "_resolved_tool_executable", return_value=None),
                 patch.object(cli, "_bundled_executable", return_value=bundled),
             ):
                 self.assertEqual(str(bundled), cli._resolve_executable("pyronaut-run"))
