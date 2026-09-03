@@ -41,6 +41,7 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"exclude-patterns\""));
         assertTrue(schema.contains("\"dockerfile-native\""));
         assertTrue(schema.contains("\"static-native-base-image\""));
+        assertTrue(schema.contains("\"native-base\""));
         assertTrue(schema.contains("\"base-image\""));
         assertTrue(schema.contains("\"fail-on-not-present\""));
         assertTrue(schema.contains("\"validate-dependency-injection\""));

@@ -83,6 +83,12 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @CommandLine.Option(names = "--resolve-tools-only", hidden = true, description = "Resolve SDK launcher classpaths without installing a project")
     boolean resolveToolsOnly;
 
+    @CommandLine.Option(names = "--native-classpaths-dir", hidden = true, description = "Directory containing portable native launcher classpath descriptors")
+    Path nativeClasspathsDir;
+
+    @CommandLine.Option(names = "--repository", hidden = true, description = "Repository used for SDK setup resolution")
+    List<String> setupRepositories = List.of();
+
     @CommandLine.Parameters(arity = "0..*", paramLabel = "SOURCE", description = "Direct .java/.py source files, directories, or glob patterns")
     List<Path> sources = List.of();
 
@@ -142,8 +148,37 @@ public final class PyronautInstallMain implements Callable<Integer> {
             Path root = projectDir.toAbsolutePath().normalize();
             Path pyproject = root.resolve(PyprojectModelReader.FILE_NAME);
             if (resolveToolsOnly) {
-                installToolClasspaths(root, null);
+                PyprojectModel setupModel = setupRepositories.isEmpty()
+                    ? ToolClasspathInstaller.defaultModel()
+                    : ToolClasspathInstaller.defaultModel(setupRepositories);
+                try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
+                    installToolClasspaths(root, setupModel, progressReporter);
+                    if (nativeClasspathsDir != null) {
+                        Path descriptors = nativeClasspathsDir.isAbsolute()
+                            ? nativeClasspathsDir
+                            : root.resolve(nativeClasspathsDir);
+                        InstallScope progressScope = InstallScope.BUILD;
+                        progressReporter.startScope(progressScope);
+                        try {
+                            new NativeClasspathInstaller(resolver).install(
+                                setupModel,
+                                descriptors.toAbsolutePath().normalize(),
+                                resolveLocalRepository(root),
+                                offline,
+                                refresh || noCache,
+                                progressListener(progressReporter, progressScope)
+                            );
+                            progressReporter.finishScope(progressScope);
+                        } catch (RuntimeException | IOException e) {
+                            progressReporter.failScope(progressScope);
+                            throw e;
+                        }
+                    }
+                }
                 return InstallExitCode.SUCCESS.code();
+            }
+            if (nativeClasspathsDir != null) {
+                throw new IllegalArgumentException("--native-classpaths-dir requires --resolve-tools-only");
             }
             if (!sources.isEmpty()) {
                 if (Files.exists(pyproject) || ExternalProjectLayout.isExternal(root)) {

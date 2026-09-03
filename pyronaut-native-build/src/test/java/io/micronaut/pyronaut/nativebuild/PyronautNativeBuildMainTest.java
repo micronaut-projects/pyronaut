@@ -198,14 +198,14 @@ class PyronautNativeBuildMainTest {
         overwriteRuntimeManifest(project, List.of(runtimeJar.toString()));
         assertEquals(0, new CommandLine(command).execute(
             "--project-dir", project.toString(),
-            "--base-image",
+            "--native-base",
             "--user-package", "example.app"
         ));
         assertFalse(executed.getFirst().contains("-H:Preserve=package=example.app.*"));
     }
 
     @Test
-    void buildsReusableCremaBaseImageWithSbom() throws Exception {
+    void buildsReusableCremaNativeBaseWithSbom() throws Exception {
         Path project = prepareProject("""
             [project]
             name = "demo"
@@ -232,7 +232,7 @@ class PyronautNativeBuildMainTest {
         int exit = new CommandLine(command).execute(
             "--project-dir", project.toString(),
             "--native-image-executable", "/tmp/native-image",
-            "--base-image"
+            "--native-base"
         );
 
         assertEquals(0, exit);
@@ -269,14 +269,14 @@ class PyronautNativeBuildMainTest {
         PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
         assertEquals(0, new CommandLine(command).execute(
             "--project-dir", project.toString(),
-            "--default-base-image"
+            "--default-native-base"
         ));
         String classpath = executed.getFirst().get(executed.getFirst().indexOf("-cp") + 1);
         assertFalse(classpath.contains(runtimeJar.toString()));
     }
 
     @Test
-    void copiesDownloadedDefaultBaseImageWithoutInvokingNativeImage() throws Exception {
+    void copiesDownloadedDefaultNativeBaseWithoutInvokingNativeImage() throws Exception {
         Path source = tempDir.resolve("pyronaut-run");
         Files.writeString(source, "prebuilt-base", java.nio.charset.StandardCharsets.UTF_8);
         source.toFile().setExecutable(true, false);
@@ -295,8 +295,8 @@ class PyronautNativeBuildMainTest {
         int exit = new CommandLine(command).execute(
             "--project-dir", tempDir.toString(),
             "--output", output.toString(),
-            "--default-base-image",
-            "--default-base-image-path", source.toString()
+            "--default-native-base",
+            "--default-native-base-path", source.toString()
         );
 
         assertEquals(0, exit);
@@ -373,7 +373,7 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
-    void excludesBundledNativeImageConfigWhenBuildingReusableBaseImage() throws Exception {
+    void excludesBundledNativeImageConfigWhenBuildingReusableNativeBase() throws Exception {
         Path project = prepareProject("""
             [project]
             name = "demo"
@@ -401,7 +401,7 @@ class PyronautNativeBuildMainTest {
         int exit = new CommandLine(command).execute(
             "--project-dir", project.toString(),
             "--native-image-executable", "/tmp/native-image",
-            "--base-image"
+            "--native-base"
         );
 
         assertEquals(0, exit);

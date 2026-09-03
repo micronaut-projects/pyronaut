@@ -154,7 +154,7 @@ class PyprojectModelReaderTest {
         PyprojectModel.Build contradictoryBuild = new PyprojectModel.Build(
             "jvm",
             defaults.build().pythonBytecodeEnabled(),
-            defaults.build().baseImage(),
+            defaults.build().nativeBase(),
             defaults.build().metadata(),
             defaults.build().docker()
         );
@@ -819,7 +819,7 @@ class PyprojectModelReaderTest {
             [tool.pyronaut]
 
             [tool.pyronaut.build]
-            base-image = "build/pyronaut-base/pyronaut-run"
+            native-base = "build/pyronaut-base/pyronaut-run"
 
             [tool.pyronaut.build.docker]
             image-name = "example/demo"
@@ -834,7 +834,7 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModel model = reader.readFile(file);
-        assertEquals("build/pyronaut-base/pyronaut-run", model.pyronaut().build().baseImage());
+        assertEquals("build/pyronaut-base/pyronaut-run", model.pyronaut().build().nativeBase());
         assertEquals("example/demo", model.pyronaut().build().docker().imageName());
         assertEquals("docker/Dockerfile.jvm", model.pyronaut().build().docker().dockerfile());
         assertEquals("docker/Dockerfile.native", model.pyronaut().build().docker().dockerfileNative());
@@ -844,6 +844,22 @@ class PyprojectModelReaderTest {
         assertEquals("container-registry.oracle.com/graalvm/native-image:25-muslib", model.pyronaut().build().docker().staticNativeBuilderImage());
         assertEquals("scratch", model.pyronaut().build().docker().staticNativeBaseImage());
         assertEquals("registry.example.com/acme/pyronaut-runtime:1", model.pyronaut().build().docker().baseImage());
+    }
+
+    @Test
+    void rejectsRemovedBuildBaseImageConfiguration() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build]
+            base-image = "default"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+
+        assertTrue(exception.getMessage().contains("base-image"), exception.getMessage());
     }
 
     @Test
@@ -868,7 +884,7 @@ class PyprojectModelReaderTest {
             """);
 
         PyprojectModel model = reader.readFile(file);
-        assertEquals(null, model.pyronaut().build().baseImage());
+        assertEquals(null, model.pyronaut().build().nativeBase());
         assertEquals("example/demo", model.pyronaut().build().docker().imageName());
         assertEquals("DockerfileNative", model.pyronaut().build().docker().dockerfileNative());
         assertEquals("example/jvm", model.pyronaut().build().docker().jvmBaseImage());

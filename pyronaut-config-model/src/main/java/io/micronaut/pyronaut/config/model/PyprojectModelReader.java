@@ -123,7 +123,7 @@ public final class PyprojectModelReader {
             new PyprojectModel.Build(
                 packaging.format().legacyMode(),
                 readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_PYTHON_BYTECODE_ENABLED),
-                readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_BASE_IMAGE),
+                readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_NATIVE_BASE),
                 resolveBuildMetadata(parsed),
                 resolveBuildDocker(parsed)
             ),
@@ -224,6 +224,11 @@ public final class PyprojectModelReader {
     }
 
     private static PyprojectModel.Packaging resolvePackaging(TomlParseResult parsed) {
+        if (parsed.contains("tool.pyronaut.build.base-image")) {
+            throw new PyprojectModelException(
+                "Unsupported configuration 'tool.pyronaut.build.base-image'; use 'tool.pyronaut.build.native-base'"
+            );
+        }
         if (parsed.contains("tool.pyronaut.build.mode")) {
             throw new PyprojectModelException(
                 "Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'"

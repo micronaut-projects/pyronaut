@@ -186,11 +186,11 @@ class PackagingMatrixRunner:
         if docker:
             args.append("--docker")
         if base:
-            args.append("--base-image")
+            args.append("--native-base")
         if default_base:
-            args.append("--base-image=default")
+            args.append("--native-base=default")
         if output is not None:
-            args += ["--base-image-output", str(output)]
+            args += ["--native-base-output", str(output)]
         args += ["--project-dir", str(project), "--local-repository", str(project / "__pyronaut__" / "m2-repository"), "--no-validate"]
         setup = project / "pyproject.toml"
         if direct and setup.exists():
@@ -203,7 +203,7 @@ class PackagingMatrixRunner:
         with log.open("a", encoding="utf-8") as stream:
             stream.write(f"$ {self.cli} {' '.join(args)}\n{completed.stdout}\n{completed.stderr}\n")
         if completed.returncode != 0:
-            if "--base-image" in args and "--base-image=default" not in args:
+            if "--native-base" in args and "--native-base=default" not in args:
                 raise BlockedScenario(f"base prerequisite failed with exit code {completed.returncode}")
             raise RuntimeError(f"build failed with exit code {completed.returncode}")
 
@@ -359,13 +359,13 @@ class PackagingMatrixRunner:
     def _configure_base(project: Path, base: Path) -> None:
         pyproject = project / "pyproject.toml"
         text = pyproject.read_text(encoding="utf-8") if pyproject.exists() else ""
-        text = _set_toml_key(text, "[tool.pyronaut.build]", "base-image", str(base))
+        text = _set_toml_key(text, "[tool.pyronaut.build]", "native-base", str(base))
         text = _set_toml_key(text, "[tool.pyronaut.packaging]", "format", "wheel-crema")
         pyproject.write_text(text, encoding="utf-8")
         (project / "setup.toml").write_text(
             f'[project]\nname = "{_project_name(project)}"\nversion = "0.1.0"\n\n'
             f'[tool.pyronaut.packaging]\nformat = "wheel-crema"\n\n'
-            f'[tool.pyronaut.build]\nbase-image = "{base}"\n', encoding="utf-8"
+            f'[tool.pyronaut.build]\nnative-base = "{base}"\n', encoding="utf-8"
         )
 
     @staticmethod

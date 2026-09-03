@@ -93,7 +93,7 @@ public record PyprojectModel(Project project,
                 build = new Build(
                     packaging.format().legacyMode(),
                     build.pythonBytecodeEnabled(),
-                    build.baseImage(),
+                    build.nativeBase(),
                     build.metadata(),
                     build.docker()
                 );
@@ -403,13 +403,13 @@ public record PyprojectModel(Project project,
      *
      * @param mode legacy default build mode, derived from {@link Packaging#format()}
      * @param pythonBytecodeEnabled whether generated Python resources include bytecode caches
-     * @param baseImage local reusable native runtime image path
+     * @param nativeBase local reusable native runtime image path or URL
      * @param metadata native image metadata settings
      * @param docker container image build settings
      */
     public record Build(String mode,
                         Boolean pythonBytecodeEnabled,
-                        String baseImage,
+                        String nativeBase,
                         Metadata metadata,
                         Docker docker) {
         public Build(String mode, Boolean pythonBytecodeEnabled, Metadata metadata, Docker docker) {

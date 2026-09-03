@@ -91,9 +91,12 @@ for a reusable native runtime.
 The test engine defaults to `both`. Use `junit` for JUnit Jupiter tests, `pytest` for pytest tests, or `both` to execute both types.
 
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
-For a Crema format, set `base-image = "default"` to use the bundled
-language-specific production runtime, or set a filesystem path to reuse a
-custom base created by `pyronaut build --base-image`. A closed-world
+For a Crema format, set `native-base = "default"` to use the configured
+language-specific production runtime for the target platform, or set a
+filesystem path or HTTP(S) URL to reuse a custom base created by
+`pyronaut build --native-base`. Docker builds select Linux; host builds select
+the current operating system.
+A closed-world
 `wheel-native` or `docker-native` format rejects a configured reusable base.
 See the CLI reference for the full build option surface.
 See <<incrementalProcessing,Incremental Processing>> before enabling incremental processing, the compiler daemon, or the optimistic Python dependency policy.

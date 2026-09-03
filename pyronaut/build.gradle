@@ -200,6 +200,10 @@ tasks.register("prepareWheelSources", Sync) {
     }
     from("src/main/python") {
         into("src")
+        // Python tests and local tooling can leave host-specific bytecode in
+        // the source tree. It is ignored by Git but must not be copied into
+        // the portable SDK wheel.
+        exclude("**/__pycache__/**", "**/*.pyc", "**/*.pyo")
     }
     into(wheelStagingDir)
 
@@ -350,7 +354,7 @@ tasks.register("prepareWheelSources", Sync) {
                 sourceDir.listFiles()?.findAll { it.isFile() && (it.name.endsWith(".jar") || it.name.endsWith(".pom")) }.each { artifact ->
                     if (artifact.name.endsWith(".jar")) {
                         def origin = originProjects[toolDir.name] ?: toolDir.name
-                        sharedOrigins[artifact.name] << "${origin} (${artifact.absolutePath})"
+                        sharedOrigins[artifact.name] << origin
                     }
                     def existing = sharedByName[artifact.name]
                     if (existing != null) {
@@ -396,11 +400,6 @@ tasks.register("prepareWheelSources", Sync) {
                 artifact.delete()
             }
         }
-        def controlPanelDir = new File(toolsRoot, "pyronaut-dev/lib/control-panel")
-        if (controlPanelDir.isDirectory()) {
-            delete(controlPanelDir)
-        }
-
         def descriptorDigest = java.security.MessageDigest.getInstance("SHA-256")
         fileTree(toolsRoot).matching { include("*/bin/pyronaut-tool-classpath.tsv") }.files.sort().each { descriptor ->
             descriptorDigest.update(descriptor.parentFile.parentFile.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
@@ -541,13 +540,16 @@ tasks.register("buildSdkWheel", Exec) {
             )
         }
         def externalArtifactNames = [] as Set
+        def controlPanelArtifactNames = [] as Set
         def bundledArtifactNames = [] as Set
         descriptorFiles.each { descriptor ->
             descriptor.eachLine("UTF-8") { line ->
                 def fields = line.split("\\t", -1)
                 if (fields[0] == "bundled") {
                     bundledArtifactNames.add(fields[1])
-                } else if (fields[0] == "maven" || fields[0] == "control-panel") {
+                } else if (fields[0] == "control-panel") {
+                    controlPanelArtifactNames.add(fields[6])
+                } else if (fields[0] == "maven") {
                     externalArtifactNames.add(fields[6])
                 }
             }
@@ -556,13 +558,47 @@ tasks.register("buildSdkWheel", Exec) {
             include("**/tools/shared/lib/*")
             include("**/tools/*/lib/control-panel/*")
         }.files.collect { it.name } as Set
-        def unexpectedExternalArtifacts = packagedArtifactNames.intersect(externalArtifactNames)
+        def unexpectedExternalArtifacts = packagedArtifactNames.intersect(externalArtifactNames - controlPanelArtifactNames)
         if (!unexpectedExternalArtifacts.isEmpty()) {
             throw new GradleException("Wheel contains externally resolved tool artifacts: ${unexpectedExternalArtifacts.sort()}")
         }
         def missingBundledArtifacts = bundledArtifactNames - packagedArtifactNames
         if (!missingBundledArtifacts.isEmpty()) {
             throw new GradleException("Wheel is missing required bootstrap artifacts: ${missingBundledArtifacts.sort()}")
+        }
+        // Recurse only into Pyronaut-owned JARs. External dependencies are
+        // published artifacts and may contain legitimate sample paths.
+        def ownedJarNames = packagedArtifactNames
+            .findAll { it.startsWith("micronaut-pyronaut-") && it.endsWith(".jar") }
+            .sort()
+        // Do not reject the entire user home: third-party class files can
+        // legitimately contain sample paths such as /home/joe/project.
+        def forbiddenPaths = [
+            rootProject.projectDir.canonicalPath,
+            wheelStagingDir.get().asFile.canonicalPath,
+            gradle.gradleUserHomeDir.canonicalPath,
+            new File(gradle.gradleUserHomeDir, "caches").canonicalPath,
+        ].unique()
+        def auditCommand = []
+        auditCommand.addAll(pythonCommand.get())
+        auditCommand.add(file("src/main/python/pyronaut_cli_v2/wheel_audit.py").absolutePath)
+        ownedJarNames.each { jarName ->
+            auditCommand.add("--owned-jar")
+            auditCommand.add(jarName)
+        }
+        auditCommand.add(wheel.absolutePath)
+        auditCommand.addAll(forbiddenPaths)
+        def auditProcessBuilder = new ProcessBuilder(auditCommand)
+            .redirectErrorStream(true)
+        if (usesPyenv.get()) {
+            auditProcessBuilder.environment().put("PYENV_VERSION", pyenvVersion.get())
+        }
+        def auditProcess = auditProcessBuilder.start()
+        def auditOutput = auditProcess.inputStream.getText("UTF-8").trim()
+        def auditExit = auditProcess.waitFor()
+        if (auditExit != 0) {
+            def diagnostic = auditOutput ?: "the audit produced no diagnostic"
+            throw new GradleException("Pyronaut SDK wheel audit failed: ${diagnostic}")
         }
         logger.lifecycle("Verified Pyronaut SDK wheel size: ${wheel.length()} bytes")
     }
@@ -612,13 +648,13 @@ tasks.register("testPythonOrchestrator", Exec) {
     doFirst {
         environment.remove("VIRTUAL_ENV")
         environment.remove("JAVA_HOME")
+        environment.remove("PYRONAUT_DISABLE_AUTO_JAVA_HOME")
         // Keep credentials and release-discovery state out of unit tests. A
         // failing assertion can include the subprocess environment, and the
         // GitHub-release tests provide their own token fixtures explicitly.
         ["PYRONAUT_RELEASE_TOKEN", "PYRONAUT_GIT_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN"].each {
             environment.remove(it)
         }
-        environment("PYRONAUT_DISABLE_AUTO_JAVA_HOME", "true")
     }
 }
 

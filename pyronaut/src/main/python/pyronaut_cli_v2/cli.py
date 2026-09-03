@@ -34,7 +34,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"install", "process", "dev", "run", "test", "build", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "install", "process", "dev", "run", "test", "build", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -80,8 +80,12 @@ DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
 _DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i2"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
+_SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
 _NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
+_SETUP_IMAGE_COMMANDS = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
+_SETUP_SCHEMA_VERSION = 1
+_SETUP_REQUIRED_MESSAGE = "Pyronaut setup is missing or stale. Run pyronaut setup."
 _NATIVE_IMAGE_SETTINGS_TABLE = "native-images"
 _DEFAULT_DOCKER_JVM_BASE_IMAGE = f"container-registry.oracle.com/graalvm/jdk:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
 _DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = f"container-registry.oracle.com/graalvm/native-image:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
@@ -114,11 +118,7 @@ _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RESET = "\033[0m"
 _allow_draft_release = False
-_tool_bootstrap_local_repository: str | None = None
-_tool_bootstrap_offline = False
-_tool_bootstrap_refresh = False
-_tool_bootstrap_progress: str | None = None
-_tool_bootstrap_attempted: set[str] = set()
+_validated_setup_manifest: dict[str, object] | None = None
 
 
 def _print_version() -> None:
@@ -210,15 +210,10 @@ def run(
     input_reader: Callable[[float | None], str | None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    global _allow_draft_release, _tool_bootstrap_local_repository, _tool_bootstrap_offline
-    global _tool_bootstrap_refresh, _tool_bootstrap_progress
+    global _allow_draft_release, _validated_setup_manifest
     _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
+    _validated_setup_manifest = None
     argv = [value for value in argv if value != "--allow-draft-release"]
-    _tool_bootstrap_local_repository = _extract_local_repository(argv) or _read_env(LOCAL_REPOSITORY_ENV)
-    _tool_bootstrap_offline = _extract_offline(argv)
-    _tool_bootstrap_refresh = _extract_no_cache(argv) or _extract_flag(argv, "--refresh")
-    _tool_bootstrap_progress = _extract_option_value(argv, "--progress")
-    _tool_bootstrap_attempted.clear()
 
     if monotonic is None:
         monotonic = time.monotonic
@@ -233,6 +228,12 @@ def run(
         execute = _run_subprocess
     locate = resolver or _resolve_executable
     current_platform = platform_name or sys.platform
+    enforce_setup = (
+        resolver is None
+        and runner is None
+        and runner_with_env is None
+        and process_runner is None
+    )
 
     if not argv:
         _print_usage()
@@ -246,7 +247,29 @@ def run(
         _print_version()
         return SUCCESS
 
+    command = argv[0]
+    if command == "setup":
+        setup_args = list(argv[1:])
+        if _extract_flag(setup_args, "--help") or _extract_flag(setup_args, "-h"):
+            _print_setup_usage()
+            return SUCCESS
+        if not _is_supported_platform(current_platform):
+            print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
+            return PLATFORM_UNSUPPORTED
+        return _run_setup(setup_args, execute)
+
+    option_args = argv[: argv.index("--")] if "--" in argv else argv
+    if "-V" in option_args[1:] or (
+        command != "build" and "--version" in option_args[1:]
+    ):
+        _print_version()
+        return SUCCESS
+
     if "--tui" in argv or argv[0] == "--tui":
+        if (not any(value in {"-h", "--help", "-V", "--version"} for value in option_args)
+                and enforce_setup and _setup_is_required()):
+            if not _require_setup(argv):
+                return PRECONDITION_FAILED
         tui_args = [value for value in argv if value != "--tui"]
         tui_project_dir = (
             Path.cwd()
@@ -266,7 +289,6 @@ def run(
             java_home_provider=tui_java_home_provider,
         )
 
-    command = argv[0]
     forwarded_args = _normalize_project_flag(list(argv[1:]))
     forwarded_args = _normalize_no_cache_flag(forwarded_args)
     forwarded_args = _normalize_tests_selection_flag(forwarded_args)
@@ -279,6 +301,8 @@ def run(
 
     if command not in SUPPORTED_COMMANDS:
         if _looks_like_direct_source_invocation(argv):
+            if enforce_setup and _setup_is_required() and not _require_setup(argv):
+                return PRECONDITION_FAILED
             direct_source_java_home_provider = java_home_provider or _default_java_home_provider(
                 runner=runner,
                 runner_with_env=runner_with_env,
@@ -303,6 +327,17 @@ def run(
     if command == "test" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
         _print_test_usage()
         return SUCCESS
+
+    if command == "build" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
+        _print_build_usage()
+        return SUCCESS
+
+    if _extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h"):
+        _print_usage()
+        return SUCCESS
+
+    if enforce_setup and _setup_is_required() and not _require_setup(forwarded_args):
+        return PRECONDITION_FAILED
 
     if command == "dev" and not _looks_like_direct_source_invocation(forwarded_args):
         default_source = _default_dev_source(forwarded_args)
@@ -402,6 +437,7 @@ def run(
                 no_cache=no_cache,
                 no_validate=no_validate,
                 java_home_provider=effective_java_home_provider,
+                platform_name=current_platform,
             )
         return _run_build(
             args=forwarded_args,
@@ -410,6 +446,7 @@ def run(
             no_cache=no_cache,
             no_validate=no_validate,
             java_home_provider=effective_java_home_provider,
+            platform_name=current_platform,
         )
 
     if command == "test-resources-server" and _is_test_resources_start(forwarded_args):
@@ -874,7 +911,10 @@ def _delegate_direct_source(
         env,
         command=command,
         environment=_default_environment(command, forwarded_args),
-        args=forwarded_args,
+        # Keep orchestration flags available while constructing JVM
+        # properties. In particular, --control-panel is stripped from the
+        # delegated argument list below but must still enable its classpath.
+        args=args,
     )
     forwarded_args = [
         "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
@@ -1032,7 +1072,9 @@ def _run_direct_source_with_auto_restart(
             env,
             command=command,
             environment=_default_environment(command, direct_args),
-            args=forwarded_args,
+            # --control-panel is removed from direct_args before delegation;
+            # retain the original flags for JVM-property construction.
+            args=args,
         ),
         *forwarded_args,
     ]
@@ -1120,6 +1162,7 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
+        jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
         if not _control_panel_requested(Path.cwd().resolve(), args):
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     elif command == "run":
@@ -1136,9 +1179,6 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append("-Dmicronaut.control-panel.path=/control-panel")
         jvm_args.append("-Dmicronaut.control-panel.security.access=ANONYMOUS")
     compiler_classpath = os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
-    if not compiler_classpath and Path(executable_path).name == DEV_NATIVE_EXECUTABLE:
-        with contextlib.suppress(RuntimeError):
-            compiler_classpath = os.pathsep.join(_delegate_lib_entries(executable_path))
     if compiler_classpath:
         jvm_args.append(f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}")
         if command == "process":
@@ -1159,7 +1199,6 @@ def _build_direct_source_native_jvm_args(
             except RuntimeError:
                 pass
             else:
-                jvm_args.append(f"-Djava.class.path={classpath}")
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
         if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
             # Resolve Control Panel artifacts bundled with the launcher wheel;
@@ -1170,6 +1209,12 @@ def _build_direct_source_native_jvm_args(
                 classpath = os.pathsep.join(dict.fromkeys([*existing, *control_panel]))
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
                 jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}")
+        if classpath:
+            # PyronautDevMain creates the runtime classloader from the
+            # java.class.path property in the native image. Control Panel is
+            # intentionally outside that image and must be added here at
+            # runtime when explicitly requested.
+            jvm_args.append(f"-Djava.class.path={classpath}")
     return jvm_args
 
 
@@ -1184,6 +1229,13 @@ def _direct_control_panel_classpath_entries(executable_path: str) -> list[str]:
         if (packaged_lib / "control-panel").is_dir():
             launcher_root = packaged_root
             launcher_lib = packaged_lib
+        else:
+            # Native images are cached separately from the resolved JVM tool
+            # distribution. The latter owns the optional Control Panel jars.
+            resolved_root = _resolved_tool_distribution_dir("pyronaut-dev")
+            if resolved_root is not None:
+                launcher_root = resolved_root
+                launcher_lib = resolved_root / "lib"
     bundled_dir = launcher_lib / "control-panel"
     descriptor = launcher_root / "bin" / "pyronaut-tool-classpath.tsv"
     if descriptor.is_file():
@@ -1800,32 +1852,38 @@ def _native_launcher_provided_manifest_file_names(launcher_executable: str | Non
 
 
 def _native_launcher_compile_classpath_entries(launcher_executable: str | None) -> list[str]:
-    entries = _native_launcher_manifest_entries(launcher_executable, "native-compile-classpath.txt")
-    if entries:
-        launcher_parent = Path(launcher_executable).parent if launcher_executable else None
-        lib_dirs = []
-        if launcher_parent:
-            lib_dirs.extend((launcher_parent.parent / "lib", _launcher_shared_lib_dir(launcher_executable)))
-        resolved: list[str] = []
-        for entry in entries:
-            candidate = Path(entry)
-            if candidate.is_file():
-                resolved.append(str(candidate))
-            elif lib_dirs:
-                if ":" in entry and "/" not in entry:
-                    artifact_id = entry.split(":", 1)[1]
-                    matches = sorted({path for lib_dir in lib_dirs for path in lib_dir.glob(artifact_id + "-*.jar")})
-                    resolved.extend(str(path) for path in matches)
-                else:
-                    for lib_dir in lib_dirs:
-                        bundled = lib_dir / candidate.name
-                        if bundled.is_file():
-                            resolved.append(str(bundled))
-                            break
-        return resolved
-    # Older distributions do not have a reduced compiler manifest. Their
-    # native parent remains sufficient, so do not re-add the whole lib dir.
-    return []
+    if not launcher_executable:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    image_name = Path(launcher_executable).name
+    if image_name not in _NATIVE_IMAGE_COMMANDS:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    if not _setup_is_required():
+        if not _native_launcher_manifest_entries(
+            launcher_executable, "native-compile-classpath.txt"
+        ):
+            return []
+        entries = _native_compile_descriptor_entries(launcher_executable)
+        repository = _setup_local_repository(())
+        resolved = [
+            repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6])
+            for entry in entries
+            for fields in (entry.split("\t"),)
+        ]
+        if all(path.is_file() for path in resolved):
+            return [str(path) for path in resolved]
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    try:
+        manifest = _validated_setup_manifest or _read_valid_setup_manifest(())
+        image = manifest["images"][image_name]
+        entries = _native_compile_descriptor_entries(launcher_executable)
+        if image["descriptorSha256"] != _native_descriptor_hash(entries):
+            raise ValueError("native descriptor changed")
+        resolved = image["classpath"]
+        if len(resolved) != len(entries) or not all(isinstance(path, str) and Path(path).is_file() for path in resolved):
+            raise ValueError("native classpath is incomplete")
+        return list(resolved)
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
 
 
 def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> list[str]:
@@ -2189,7 +2247,7 @@ def _looks_like_direct_build_invocation(args: Sequence[str]) -> bool:
 
 def _direct_build_source_selectors(args: Sequence[str]) -> list[str]:
     value_options = {
-        "--project-dir", "--project", "--mode", "--main-class", "--base-image-output",
+        "--project-dir", "--project", "--mode", "--main-class", "--native-base-output",
         "--name", "--version", "--setup", "--local-repository", "--local-repo",
     }
     selectors: list[str] = []
@@ -2256,14 +2314,27 @@ def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Pa
     index = 0
     while index < len(args):
         token = args[index]
-        if token == "--base-image-output" and index + 1 < len(args):
+        if token == "--native-base-output" and index + 1 < len(args):
             output = Path(args[index + 1])
             result.extend([token, str(output if output.is_absolute() else (root / output).resolve())])
             index += 2
             continue
-        if token.startswith("--base-image-output="):
+        if token.startswith("--native-base-output="):
             output = Path(token.split("=", 1)[1])
-            result.append("--base-image-output=" + str(output if output.is_absolute() else (root / output).resolve()))
+            result.append("--native-base-output=" + str(output if output.is_absolute() else (root / output).resolve()))
+            index += 1
+            continue
+        if token.startswith("--native-base="):
+            configured = token.split("=", 1)[1]
+            parsed = urllib.parse.urlparse(configured)
+            if configured.lower() == "default" or parsed.scheme in {"http", "https"}:
+                result.append(token)
+            else:
+                native_base = Path(configured).expanduser()
+                result.append(
+                    "--native-base="
+                    + str(native_base if native_base.is_absolute() else (root / native_base).resolve())
+                )
             index += 1
             continue
         if token in value_options:
@@ -2278,9 +2349,9 @@ def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Pa
         result.append(token)
         index += 1
     result.extend(["--project-dir", str(staging_project)])
-    if _extract_build_base_image(args) and _extract_build_base_image_output(args) is None:
+    if _extract_build_native_base(args) and _extract_build_native_base_output(args) is None:
         launcher = PYTHON_RUN_EXECUTABLE if language == "python" else COMMAND_TO_EXECUTABLE["run"]
-        result.extend(["--base-image-output", str(root / "__pyronaut__" / "native" / "base" / launcher)])
+        result.extend(["--native-base-output", str(root / "__pyronaut__" / "native" / "base" / launcher)])
     return result
 
 
@@ -2327,6 +2398,7 @@ def _run_direct_source_build(
     no_cache: bool,
     no_validate: bool,
     java_home_provider: JavaHomeProvider | None,
+    platform_name: str | None,
 ) -> int:
     root = Path(_extract_project_dir(args)).resolve()
     selectors = _direct_build_source_selectors(args)
@@ -2460,6 +2532,7 @@ def _run_direct_source_build(
             java_home_provider=java_home_provider,
             project_metadata=(project_name, project_version),
             preflight_install=False,
+            platform_name=platform_name,
         )
         if exit_code == SUCCESS and not _extract_build_docker(args):
             dist = root / "dist"
@@ -2482,6 +2555,7 @@ def _run_build(
     java_home_provider: JavaHomeProvider | None,
     project_metadata: tuple[str, str] | None = None,
     preflight_install: bool = True,
+    platform_name: str | None = None,
 ) -> int:
     if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
         _print_build_usage()
@@ -2498,34 +2572,50 @@ def _run_build(
     mode = "jvm" if packaging_format in {"fat-jar", "wheel-jvm", "docker-jvm"} else "native"
     docker_build = packaging_format.startswith("docker-")
     static_native = _extract_build_static(args)
-    base_image_build = _extract_build_base_image(args)
-    configured_base_image = _read_pyproject_build_base_image(project_dir)
-    configured_default_base_image = (configured_base_image or "").strip().lower() == "default"
+    native_base_build = _extract_build_native_base(args)
+    native_base_output = _extract_build_native_base_output(args)
+    cli_native_base = _extract_build_native_base_value(args)
+    configured_native_base = _read_pyproject_build_native_base(project_dir)
     configured_docker_base_image = None
+    explicit_docker_base_image = None
     if docker_build:
-        configured_docker_base_image = _configured_docker_base_image(
-            project_dir, _read_pyproject_build_docker_config(project_dir)
-        )
+        docker_config = _read_pyproject_build_docker_config(project_dir)
+        explicit_docker_base_image = docker_config.get("base_image")
+        configured_docker_base_image = _configured_docker_base_image(project_dir, docker_config)
+    selected_native_base = cli_native_base if cli_native_base is not None else configured_native_base
     if packaging_format == "wheel-crema":
-        default_base_image = configured_base_image is None or configured_default_base_image
+        default_native_base = selected_native_base is None or selected_native_base.strip().lower() == "default"
     elif packaging_format == "docker-crema":
-        # Local executable bases and OCI image bases are separate settings.
-        # A local wheel base must not silently turn docker-crema into a
-        # closed-world container build.
-        default_base_image = configured_docker_base_image is None
+        if cli_native_base is not None:
+            selected_native_base = cli_native_base
+        elif explicit_docker_base_image is not None:
+            selected_native_base = None
+        elif configured_native_base is not None:
+            selected_native_base = configured_native_base
+        elif configured_docker_base_image is not None:
+            selected_native_base = None
+        default_native_base = selected_native_base is not None and selected_native_base.strip().lower() == "default"
+        if selected_native_base is None and configured_docker_base_image is None:
+            default_native_base = True
     else:
-        default_base_image = False
-    if base_image_build and default_base_image:
-        print("--base-image and --base-image=default cannot be combined", file=sys.stderr)
+        default_native_base = False
+        selected_native_base = None
+    if (
+        native_base_build
+        and native_base_output is None
+        and configured_native_base is not None
+        and configured_native_base.strip().lower() == "default"
+    ):
+        print("Bare --native-base cannot use native-base = 'default' as its output", file=sys.stderr)
         return USAGE_ERROR
-    if base_image_build:
+    if native_base_build:
         mode = "native"
-    reusable_base_configured = configured_base_image is not None or (
+    reusable_base_configured = configured_native_base is not None or (
         packaging_format == "docker-native" and configured_docker_base_image is not None
     )
-    if packaging_format in {"wheel-native", "docker-native"} and reusable_base_configured and not base_image_build:
+    if packaging_format in {"wheel-native", "docker-native"} and reusable_base_configured and not native_base_build:
         print(
-            f"{packaging_format} cannot use a configured reusable base image; select "
+            f"{packaging_format} cannot use a configured native base; select "
             f"{'docker-crema' if docker_build else 'wheel-crema'} instead",
             file=sys.stderr,
         )
@@ -2571,8 +2661,8 @@ def _run_build(
     if preflight != SUCCESS:
         return preflight
 
-    if base_image_build and not docker_build:
-        return _run_native_base_image_build(
+    if native_base_build and not docker_build:
+        return _run_native_base_build(
             args=args,
             runner=runner,
             resolver=resolver,
@@ -2603,8 +2693,9 @@ def _run_build(
             main_class=main_class,
             verbose=verbose,
             static_native=static_native,
-            base_image_build=base_image_build,
-            default_base_image=default_base_image,
+            native_base_build=native_base_build,
+            default_native_base=default_native_base,
+            selected_native_base=selected_native_base,
         )
 
     dist_dir = project_dir / "dist"
@@ -2628,19 +2719,18 @@ def _run_build(
         output_dir.mkdir(parents=True, exist_ok=True)
         output_binary = output_dir / project_name
         configured_base = None
-        if packaging_format == "wheel-crema" and configured_base_image is not None and not configured_default_base_image:
-            configured_path = Path(configured_base_image)
-            configured_base = configured_path if configured_path.is_absolute() else (project_dir / configured_path).resolve()
-        if default_base_image:
+        if packaging_format == "wheel-crema" and selected_native_base is not None and not default_native_base:
+            configured_base = selected_native_base
+        if default_native_base:
             try:
-                configured_base = _bundled_default_base_image(project_dir)
+                configured_base = _bundled_default_native_base(project_dir, platform_name=platform_name)
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
                 return PRECONDITION_FAILED
-        if default_base_image and configured_base is None:
-            print("The default native base image is not available for this platform.", file=sys.stderr)
+        if default_native_base and configured_base is None:
+            print("The default native base is not available for this platform.", file=sys.stderr)
             return PRECONDITION_FAILED
-        if default_base_image:
+        if default_native_base:
             delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
             if delegate_executable is None:
                 print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
@@ -2651,9 +2741,9 @@ def _run_build(
                 str(project_dir),
                 "--output",
                 str(output_binary),
-                "--base-image",
-                "--default-base-image",
-                "--default-base-image-path",
+                "--native-base",
+                "--default-native-base",
+                "--default-native-base-path",
                 str(configured_base),
             ]
             if _extract_offline(args):
@@ -2667,11 +2757,16 @@ def _run_build(
             if exit_code != SUCCESS:
                 return exit_code
         elif configured_base is not None:
-            if not configured_base.is_file():
-                print(f"Configured base image does not exist: {configured_base}. Run pyronaut build --base-image first.", file=sys.stderr)
+            try:
+                _stage_native_base_executable(
+                    configured_base,
+                    project_dir=project_dir,
+                    target=output_binary,
+                    offline=_extract_offline(args),
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
                 return PRECONDITION_FAILED
-            shutil.copy2(configured_base, output_binary)
-            output_binary.chmod(0o755)
         else:
             delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
             if delegate_executable is None:
@@ -2710,6 +2805,8 @@ def _run_build(
                 mode="native",
                 main_class=main_class,
                 runner_executable=None,
+                native_bundle_dir=Path(configured_base).parent if default_native_base else None,
+                native_launcher_executable=str(configured_base) if default_native_base else None,
             )
             wheel_command = [
                 python_exec,
@@ -2878,6 +2975,8 @@ def _prepare_build_wheel_staging(
     mode: str,
     main_class: str,
     runner_executable: str | None = None,
+    native_bundle_dir: Path | None = None,
+    native_launcher_executable: str | None = None,
 ) -> None:
     if mode not in {"jvm", "native"}:
         raise ValueError(f"Unsupported build wheel staging mode: {mode}")
@@ -2911,6 +3010,8 @@ def _prepare_build_wheel_staging(
         (pyronaut_dir / "native").mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary_path, pyronaut_dir / "native" / binary_name)
         (pyronaut_dir / "native" / binary_name).chmod(0o755)
+        if native_bundle_dir is not None:
+            _stage_native_bundle_support(native_bundle_dir, pyronaut_dir / "native")
         classes_dir = project_dir / "__pyronaut__" / "classes"
         runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
         if not classes_dir.is_dir():
@@ -2923,6 +3024,7 @@ def _prepare_build_wheel_staging(
                 project_dir=project_dir,
                 pyronaut_dir=pyronaut_dir,
                 exclude_python=not _is_python_runtime_project(project_dir),
+                launcher_executable=native_launcher_executable,
             )
         launcher_code = _native_build_launcher_code(binary_name)
     else:
@@ -3001,6 +3103,15 @@ def _copytree_if_exists(source: Path, target: Path) -> None:
         shutil.copytree(source, target, dirs_exist_ok=True)
 
 
+def _stage_native_bundle_support(bundle_dir: Path, target_dir: Path) -> None:
+    """Keep external native-image runtime inputs beside the staged launcher."""
+    _copytree_if_exists(bundle_dir / "resources", target_dir / "resources")
+    for pattern in ("*.so", "*.dylib"):
+        for runtime_library in bundle_dir.glob(pattern):
+            if runtime_library.is_file():
+                shutil.copy2(runtime_library, target_dir / runtime_library.name)
+
+
 def _stage_manifest_artifacts(
     *, source: Path, target: Path, project_dir: Path, pyronaut_dir: Path,
     exclude_python: bool = False,
@@ -3068,33 +3179,45 @@ def _extract_build_static(args: Sequence[str]) -> bool:
     return any(token == "--static" for token in args)
 
 
-def _extract_build_base_image(args: Sequence[str]) -> bool:
-    return any(token == "--base-image" for token in args)
+def _extract_build_native_base(args: Sequence[str]) -> bool:
+    return any(token == "--native-base" for token in args)
 
 
-def _extract_build_default_base_image(args: Sequence[str]) -> bool:
-    return any(token == "--base-image=default" for token in args)
-
-
-def _extract_build_base_image_output(args: Sequence[str]) -> str | None:
-    for index, token in enumerate(args):
-        if token == "--base-image-output":
-            if index + 1 >= len(args):
-                raise ValueError("Missing value for --base-image-output")
-            return args[index + 1]
-        if token.startswith("--base-image-output="):
-            return token.split("=", 1)[1]
+def _extract_build_native_base_value(args: Sequence[str]) -> str | None:
+    for token in args:
+        if token.startswith("--native-base="):
+            value = token.split("=", 1)[1].strip()
+            if not value:
+                raise ValueError("Invalid empty value for --native-base")
+            return value
     return None
 
 
-def _read_pyproject_build_base_image(project_dir: Path) -> str | None:
+def _extract_build_native_base_output(args: Sequence[str]) -> str | None:
+    for index, token in enumerate(args):
+        if token == "--native-base-output":
+            if index + 1 >= len(args):
+                raise ValueError("Missing value for --native-base-output")
+            value = args[index + 1].strip()
+            if not value:
+                raise ValueError("Invalid empty value for --native-base-output")
+            return value
+        if token.startswith("--native-base-output="):
+            value = token.split("=", 1)[1].strip()
+            if not value:
+                raise ValueError("Invalid empty value for --native-base-output")
+            return value
+    return None
+
+
+def _read_pyproject_build_native_base(project_dir: Path) -> str | None:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
         return None
     build = pyronaut.get("build")
     if not isinstance(build, dict):
         return None
-    return _read_pyproject_string(build, "base-image")
+    return _read_pyproject_string(build, "native-base")
 
 
 def _is_python_runtime_project(project_dir: Path) -> bool:
@@ -3126,18 +3249,45 @@ def _is_python_runtime_project(project_dir: Path) -> bool:
     return False
 
 
-def _bundled_default_base_image(
-    project_dir: Path,
-    *,
-    platform_name: str | None = None,
-) -> Path | None:
+def _bundled_default_native_base(project_dir: Path, *, platform_name: str | None = None) -> Path | None:
     launcher = PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]
-    executable = _bundled_native_executable(launcher)
-    # An explicit platform is used for Docker targets and must not accidentally
-    # reuse a host-native executable from a source checkout.
-    if platform_name is None and executable is not None and executable.is_file():
-        return executable
     return _ensure_native_image(launcher, platform_name=platform_name)
+
+
+def _stage_native_base_executable(
+    configured: str,
+    *,
+    project_dir: Path,
+    target: Path,
+    offline: bool,
+) -> None:
+    parsed = urllib.parse.urlparse(configured)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if parsed.scheme in {"http", "https"}:
+        if not parsed.netloc:
+            raise RuntimeError(f"Invalid native base URL: {configured}")
+        if offline:
+            raise RuntimeError("Cannot download --native-base while offline")
+        try:
+            _download_url_with_progress(configured, target, "Downloading native base")
+        except Exception as exc:
+            target.unlink(missing_ok=True)
+            raise RuntimeError(f"Failed downloading native base from {configured}: {exc}") from exc
+    elif parsed.scheme:
+        raise RuntimeError("Native base must be a local path or HTTP(S) URL")
+    else:
+        source = Path(configured).expanduser()
+        source = source if source.is_absolute() else (project_dir / source).resolve()
+        if not source.is_file():
+            raise RuntimeError(
+                f"Configured native base does not exist: {source}. Run pyronaut build --native-base first."
+            )
+        if source.resolve() != target.resolve():
+            shutil.copy2(source, target)
+    if not target.is_file() or target.stat().st_size == 0:
+        target.unlink(missing_ok=True)
+        raise RuntimeError(f"Native base is empty or missing: {configured}")
+    target.chmod(0o755)
 
 
 def _native_user_package_args(project_dir: Path) -> list[str]:
@@ -3173,16 +3323,18 @@ def _record_docker_base_image(project_dir: Path, image_name: str) -> None:
     marker.write_text(image_name + "\n", encoding="utf-8")
 
 
-def _resolve_base_image_output(project_dir: Path, args: Sequence[str]) -> Path:
-    configured = _extract_build_base_image_output(args) or _read_pyproject_build_base_image(project_dir)
+def _resolve_native_base_output(project_dir: Path, args: Sequence[str]) -> Path:
+    configured = _extract_build_native_base_output(args) or _read_pyproject_build_native_base(project_dir)
     if configured is None:
         launcher = "pyronaut-run-python" if _is_python_runtime_project(project_dir) else "pyronaut-run"
         return project_dir / "__pyronaut__" / "native" / "base" / launcher
-    path = Path(configured)
+    if urllib.parse.urlparse(configured).scheme:
+        raise ValueError("A URL native-base cannot be used as a build output; set --native-base-output")
+    path = Path(configured).expanduser()
     return path if path.is_absolute() else (project_dir / path).resolve()
 
 
-def _run_native_base_image_build(
+def _run_native_base_build(
     *,
     args: Sequence[str],
     runner: RunnerWithEnv,
@@ -3194,7 +3346,7 @@ def _run_native_base_image_build(
     try:
         env = _build_non_test_resources_env("build", java_home_provider)
         _build_native_classpath(project_dir)
-        output = _resolve_base_image_output(project_dir, args)
+        output = _resolve_native_base_output(project_dir, args)
     except (RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -3207,7 +3359,7 @@ def _run_native_base_image_build(
         delegate_executable,
         "--project-dir", str(project_dir),
         "--output", str(output),
-        "--base-image",
+        "--native-base",
     ]
     if _is_python_runtime_project(project_dir):
         command.append("--include-python")
@@ -3218,10 +3370,10 @@ def _run_native_base_image_build(
         print(shlex.join(command), file=sys.stderr)
     exit_code = runner(command, env)
     if exit_code == SUCCESS and not output.is_file():
-        print(f"Base image build reported success but no binary was produced at: {output}", file=sys.stderr)
+        print(f"Native base build reported success but no binary was produced at: {output}", file=sys.stderr)
         return PRECONDITION_FAILED
     if exit_code == SUCCESS:
-        print(f"Base image build complete: {output}")
+        print(f"Native base build complete: {output}")
     return exit_code
 
 
@@ -3623,10 +3775,10 @@ def _write_crema_base_dockerfile(
         "/workspace/app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build",
         "--project-dir", "/workspace/app",
         "--output", output_binary,
-        "--base-image",
+        "--native-base",
     ]
     if bundled_only:
-        build_command.append("--default-base-image")
+        build_command.append("--default-native-base")
     if include_python:
         build_command.append("--include-python")
     if verbose:
@@ -3740,8 +3892,9 @@ def _run_docker_build(
     main_class: str,
     verbose: bool,
     static_native: bool,
-    base_image_build: bool = False,
-    default_base_image: bool = False,
+    native_base_build: bool = False,
+    default_native_base: bool = False,
+    selected_native_base: str | None = None,
 ) -> int:
     docker_config = _read_pyproject_build_docker_config(project_dir)
     image_name = docker_config.get("image_name") or _default_docker_image_name(project_name)
@@ -3774,7 +3927,7 @@ def _run_docker_build(
             build_args["PYRONAUT_NATIVE_BUILDER_IMAGE"] = builder_image
             build_args["PYRONAUT_NATIVE_BASE_IMAGE"] = runtime_image
             runner_name = PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else "pyronaut-run"
-            if base_image_build:
+            if native_base_build:
                 base_image = docker_config.get("base_image") or f"{image_name}:{project_version}-native-base"
                 build_args["PYRONAUT_BASE_IMAGE"] = base_image
                 dockerfile = context_dir / "DockerfileNativeBase"
@@ -3805,16 +3958,16 @@ def _run_docker_build(
                 if base_exit != SUCCESS:
                     return base_exit
                 _record_docker_base_image(project_dir, base_image)
-            elif default_base_image:
-                # Crema base images are Linux containers even when the CLI is
-                # running on macOS, so resolve the Linux bundle explicitly.
+            elif default_native_base:
+                # Docker contexts require a Linux launcher even when the CLI
+                # is running on another operating system.
                 try:
-                    bundled = _bundled_default_base_image(project_dir, platform_name="linux")
+                    bundled = _bundled_default_native_base(project_dir, platform_name="linux")
                 except RuntimeError as exc:
                     print(str(exc), file=sys.stderr)
                     return PRECONDITION_FAILED
                 if bundled is None or not bundled.is_file():
-                    print("The default native base image is not available for this platform.", file=sys.stderr)
+                    print("The default native base is not available for this platform.", file=sys.stderr)
                     return PRECONDITION_FAILED
                 _prepare_bundled_docker_context(
                     project_dir=project_dir, context_dir=context_dir, launcher_executable=str(bundled),
@@ -3823,6 +3976,31 @@ def _run_docker_build(
                 shutil.copytree(bundled.parent, bundled_dir, dirs_exist_ok=True)
                 (bundled_dir / runner_name).chmod(0o755)
                 dockerfile = context_dir / "DockerfileNativeDefault"
+                _write_bundled_application_dockerfile(
+                    target=dockerfile,
+                    runtime_image=runtime_image,
+                    runner_name=runner_name,
+                    runtime_copies=_manifest_docker_copy_lines(context_dir),
+                    resource_copies=_additional_resource_docker_copy_lines(context_dir),
+                )
+            elif selected_native_base is not None:
+                bundled = context_dir / "bundled-base" / runner_name
+                try:
+                    _stage_native_base_executable(
+                        selected_native_base,
+                        project_dir=project_dir,
+                        target=bundled,
+                        offline=_extract_offline(args),
+                    )
+                except RuntimeError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return PRECONDITION_FAILED
+                _prepare_bundled_docker_context(
+                    project_dir=project_dir,
+                    context_dir=context_dir,
+                    launcher_executable=str(bundled),
+                )
+                dockerfile = context_dir / "DockerfileNativeBase"
                 _write_bundled_application_dockerfile(
                     target=dockerfile,
                     runtime_image=runtime_image,
@@ -4041,32 +4219,41 @@ def _resolve_packaging_format(project_dir: Path, args: Sequence[str]) -> str:
     # Parse and validate the configured value even when command-line flags
     # override it. This keeps removed keys and invalid enum values rejected
     # when lifecycle validation is explicitly disabled.
+    removed_options = ("--base-image", "--base-image-output")
+    if any(token == option or token.startswith(option + "=") for token in args for option in removed_options):
+        raise ValueError("Unsupported base-image option; use --native-base or --native-base-output")
     configured = _read_pyproject_packaging_format(project_dir)
     jar = _extract_flag(args, "--jar")
     explicit_mode = _extract_build_mode_flag(args)
     docker = _extract_build_docker(args)
     static = _extract_build_static(args)
-    base_image_build = _extract_build_base_image(args)
-    default_base = _extract_build_default_base_image(args)
+    native_base_build = _extract_build_native_base(args)
+    native_base_value = _extract_build_native_base_value(args)
+    native_base_output = _extract_build_native_base_output(args)
+
+    if native_base_build and native_base_value is not None:
+        raise ValueError("Bare --native-base cannot be combined with --native-base=<value>")
+    if native_base_output is not None and not native_base_build:
+        raise ValueError("--native-base-output requires bare --native-base")
 
     if jar:
-        conflicts = explicit_mode is not None or docker or static or base_image_build or default_base or _has_main_class_option(args)
+        conflicts = explicit_mode is not None or docker or static or native_base_build or native_base_value is not None or _has_main_class_option(args)
         if conflicts:
-            raise ValueError("--jar cannot be combined with --main-class, JVM/native, Docker, static, or base-image options")
+            raise ValueError("--jar cannot be combined with --main-class, JVM/native, Docker, static, or native-base options")
         return "fat-jar"
 
-    if base_image_build:
+    if native_base_build:
         if explicit_mode == "jvm":
-            raise ValueError("--base-image cannot be combined with JVM mode")
+            raise ValueError("--native-base cannot be combined with JVM mode")
         return "docker-native" if docker else "wheel-native"
 
-    if explicit_mode is not None or docker or static or default_base:
-        mode = explicit_mode or ("native" if default_base else "jvm")
-        if default_base and mode == "jvm":
-            raise ValueError("--base-image=default is only supported for native builds")
+    if explicit_mode is not None or docker or static or native_base_value is not None:
+        mode = explicit_mode or ("native" if native_base_value is not None else "jvm")
+        if native_base_value is not None and mode == "jvm":
+            raise ValueError("--native-base is only supported for native builds")
         if mode == "jvm":
             return "docker-jvm" if docker else "wheel-jvm"
-        if default_base:
+        if native_base_value is not None:
             return "docker-crema" if docker else "wheel-crema"
         return "docker-native" if docker else "wheel-native"
 
@@ -4327,8 +4514,13 @@ def _read_pyproject_packaging_format(project_dir: Path) -> str:
     if not isinstance(pyronaut, dict):
         return DEFAULT_PACKAGING_FORMAT
     build = pyronaut.get("build")
-    if isinstance(build, dict) and "mode" in build:
-        raise ValueError("Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'")
+    if isinstance(build, dict):
+        if "base-image" in build:
+            raise ValueError(
+                "Unsupported configuration 'tool.pyronaut.build.base-image'; use 'tool.pyronaut.build.native-base'"
+            )
+        if "mode" in build:
+            raise ValueError("Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'")
     packaging = pyronaut.get("packaging")
     if packaging is None:
         return DEFAULT_PACKAGING_FORMAT
@@ -4587,10 +4779,10 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token == "--":
             passthrough.extend(args[index + 1:])
             break
-        if token in {"--native", "--jvm", "--jar", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--base-image", "--base-image=default"}:
+        if token in {"--native", "--jvm", "--jar", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--native-base"} or token.startswith("--native-base="):
             index += 1
             continue
-        if token in {"--mode", "--main-class", "--project-dir", "--base-image-output", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src"}:
+        if token in {"--mode", "--main-class", "--project-dir", "--native-base-output", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src"}:
             index += 1
             if index < len(args):
                 index += 1
@@ -4602,7 +4794,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
             or token.startswith("--no-cache=")
             or token.startswith("--docker=")
             or token.startswith("--static=")
-            or token.startswith("--base-image-output=")
+            or token.startswith("--native-base-output=")
             or token.startswith("--local-repository=")
             or token.startswith("--local-repo=")
             or token.startswith("--setup=")
@@ -5423,7 +5615,11 @@ def _default_environment(command: str, args: Sequence[str]) -> str | None:
     return None
 
 
-def _ensure_graalvm_java_home(project_dir: Path | None = None) -> str | None:
+def _ensure_graalvm_java_home(
+    project_dir: Path | None = None,
+    *,
+    offline: bool = False,
+) -> str | None:
     global _provisioned_graalvm_home
     toolchain = _read_pyproject_toolchain_spec(project_dir)
 
@@ -5465,6 +5661,8 @@ def _ensure_graalvm_java_home(project_dir: Path | None = None) -> str | None:
         _provisioned_graalvm_home = str(gradle_home)
         return _provisioned_graalvm_home
 
+    if offline:
+        return None
     downloaded = _download_and_install_graalvm(pyronaut_jdks, toolchain)
     if downloaded is not None:
         _provisioned_graalvm_home = str(downloaded)
@@ -6699,13 +6897,6 @@ def _resolve_executable(command_name: str) -> str | None:
     if resolved_tool is not None:
         return str(resolved_tool)
 
-    if command_name.startswith("pyronaut-") and command_name not in _tool_bootstrap_attempted:
-        _tool_bootstrap_attempted.add(command_name)
-        if _bootstrap_resolved_tools():
-            resolved_tool = _resolved_tool_executable(command_name)
-            if resolved_tool is not None:
-                return str(resolved_tool)
-
     # Source checkouts and legacy/installDist layouts still contain complete
     # launchers. A wheel launcher carrying a descriptor is intentionally
     # incomplete until the installer has materialized its resolved cache.
@@ -6725,15 +6916,33 @@ def _resolved_tool_executable(command_name: str) -> Path | None:
     packaged_tools = Path(__file__).resolve().parent / "tools"
     if not (packaged_tools / "tool-runtime.properties").is_file():
         return None
+    cache_root = _resolved_tool_cache_root()
+    if cache_root is None:
+        return None
+    version = _installed_pyronaut_version()
+    if version is None:
+        return None
+    if not _resolved_tools_cache_complete(cache_root, packaged_tools, version):
+        return None
+    executable = cache_root / "tools" / command_name / "bin" / _launcher_file_name(command_name)
+    return executable if executable.is_file() else None
+
+
+def _resolved_tool_cache_root() -> Path | None:
     version = _installed_pyronaut_version()
     if version is None:
         return None
     safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version)
     cache_root = Path.home() / ".pyronaut" / "tools" / safe_version / "current"
-    if not _resolved_tools_cache_complete(cache_root, packaged_tools, version):
+    return cache_root if cache_root.is_dir() else None
+
+
+def _resolved_tool_distribution_dir(command_name: str) -> Path | None:
+    cache_root = _resolved_tool_cache_root()
+    if cache_root is None:
         return None
-    executable = cache_root / "tools" / command_name / "bin" / _launcher_file_name(command_name)
-    return executable if executable.is_file() else None
+    tool_dir = cache_root / "tools" / command_name
+    return tool_dir if tool_dir.is_dir() else None
 
 
 def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, version: str) -> bool:
@@ -6808,47 +7017,6 @@ def _read_tool_runtime_properties(path: Path) -> dict[str, str]:
     )
 
 
-def _installed_pyronaut_version() -> str | None:
-    version_file = Path(__file__).with_name("version.properties")
-    if not version_file.is_file():
-        return None
-    for line in version_file.read_text(encoding="utf-8").splitlines():
-        if line.startswith("pyronaut="):
-            value = line.split("=", 1)[1].strip()
-            return value or None
-    return None
-
-
-def _bootstrap_resolved_tools() -> bool:
-    installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
-    packaged_tools = Path(__file__).resolve().parent / "tools"
-    if installer is None or not installer.is_file() or not (packaged_tools / "tool-runtime.properties").is_file():
-        return False
-    java_home = _ensure_graalvm_java_home()
-    if java_home is None or not java_home.strip():
-        return False
-    command_line = [str(installer), "--resolve-tools-only"]
-    if _tool_bootstrap_local_repository:
-        command_line.extend(["--local-repository", _tool_bootstrap_local_repository])
-    if _tool_bootstrap_offline:
-        command_line.append("--offline")
-    if _tool_bootstrap_refresh:
-        command_line.append("--refresh")
-    if _tool_bootstrap_progress:
-        command_line.extend(["--progress", _tool_bootstrap_progress])
-    env = dict(os.environ)
-    env["JAVA_HOME"] = java_home
-    java_bin = str(Path(java_home) / "bin")
-    path_value = env.get("PATH", "")
-    env["PATH"] = java_bin + (os.pathsep + path_value if path_value else "")
-    env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
-    env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
-    try:
-        return subprocess.run(command_line, check=False, env=env).returncode == SUCCESS
-    except OSError:
-        return False
-
-
 def _bundled_executable(command_name: str) -> Path | None:
     if sys.platform.startswith("linux") or sys.platform == "darwin" or sys.platform == "win32":
         package_root = Path(__file__).resolve().parent
@@ -6883,7 +7051,10 @@ def _resolve_native_preferred_executable(
         return str(bundled)
 
     if command_name in {"pyronaut-run", "pyronaut-run-python"} and resolver is _resolve_executable:
-        return str(_ensure_native_image(command_name))
+        try:
+            return str(_cached_native_image(command_name))
+        except RuntimeError:
+            return None
 
     if fallback_to_resolver:
         return resolver(command_name)
@@ -6901,7 +7072,10 @@ def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None
         return str(bundled)
     if resolver is not _resolve_executable:
         return resolver(DEV_NATIVE_EXECUTABLE)
-    return str(_ensure_native_image(DEV_NATIVE_EXECUTABLE))
+    try:
+        return str(_cached_native_image(DEV_NATIVE_EXECUTABLE))
+    except RuntimeError:
+        return None
 
 
 def _pyronaut_dev_native_command_line(
@@ -6938,6 +7112,12 @@ def _pyronaut_dev_native_command_line(
             return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider) if command in {"dev", "run", "test"} else []
+    # The native pyronaut-dev image cannot currently load the reflective
+    # pegdown/parboiled parser used by OpenAPI's ADOC converter. Keep this
+    # optional documentation conversion disabled for native launches until
+    # the converter has native-image support.
+    if command in {"dev", "run", "test"}:
+        jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
     # Coordinates contain ':', so use a delimiter independent of the host
     # path separator when passing the list through a system property.
     provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
@@ -7331,14 +7511,432 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
+
+
+def _print_setup_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
+        "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] "
+        "[--progress <auto|on|off>] [--allow-draft-release]\n"
+    )
+    stream.write("Provision the global Pyronaut SDK toolchain, launchers, and native compiler classpaths.\n")
+
+
+def _setup_local_repository(args: Sequence[str]) -> Path:
+    configured = _extract_local_repository(args) or _read_env(LOCAL_REPOSITORY_ENV)
+    if configured is None:
+        if _setup_is_required():
+            try:
+                recorded = json.loads(_setup_manifest_path().read_text(encoding="utf-8")).get(
+                    "localRepository"
+                )
+                if isinstance(recorded, str) and Path(recorded).is_absolute():
+                    return Path(recorded).resolve()
+            except (AttributeError, OSError, TypeError, ValueError):
+                pass
+        return (Path.home() / ".m2" / "repository").resolve()
+    repository = Path(configured).expanduser()
+    if not repository.is_absolute():
+        repository = Path.cwd() / repository
+    return repository.resolve()
+
+
+def _setup_is_required() -> bool:
+    return (Path(__file__).resolve().parent / "tools" / "tool-runtime.properties").is_file()
+
+
+def _setup_repositories() -> list[str]:
+    settings = _read_pyronaut_user_settings()
+    maven = settings.get("maven")
+    if maven is not None and not isinstance(maven, dict):
+        raise RuntimeError("[maven] in ~/.pyronaut/settings.toml must be a table")
+    configured = maven.get("repositories") if isinstance(maven, dict) else None
+    if configured is not None:
+        if not isinstance(configured, list) or not configured:
+            raise RuntimeError("[maven].repositories must be a non-empty string array")
+        repositories = []
+        for index, value in enumerate(configured):
+            if not isinstance(value, str) or not value.strip():
+                raise RuntimeError(f"[maven].repositories[{index}] must be a non-empty string")
+            repositories.append(value.strip())
+        return repositories
+    repositories = ["mavenCentral"]
+    version = _installed_pyronaut_version()
+    if version.endswith("-SNAPSHOT") or ".dev" in version:
+        repositories.append(_SONATYPE_SNAPSHOTS_REPOSITORY)
+    return repositories
+
+
+def _setup_platform() -> str:
+    os_segment, arch = _native_image_platform()
+    return f"{os_segment}-{arch}"
+
+
+def _setup_manifest_path() -> Path:
+    version = re.sub(r"[^A-Za-z0-9._-]", "_", _installed_pyronaut_version())
+    return Path.home() / ".pyronaut" / "setup" / version / _setup_platform() / "setup.json"
+
+
+def _packaged_tool_descriptor_hash() -> str:
+    metadata_file = Path(__file__).resolve().parent / "tools" / "tool-runtime.properties"
+    if not metadata_file.is_file():
+        raise RuntimeError("Installed Pyronaut wheel is missing tool runtime metadata")
+    value = _read_tool_runtime_properties(metadata_file).get("descriptor.sha256")
+    if not value:
+        raise RuntimeError("Installed Pyronaut wheel is missing its tool descriptor hash")
+    return value
+
+
+def _packaged_sdk_descriptor_hash() -> str:
+    package_root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for name in ("version.properties", _PACKAGED_TOOLCHAIN_DEFAULTS):
+        path = package_root / name
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        if path.is_file():
+            digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _is_executable_file(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def _resolved_tool_executables(tool_root: Path) -> dict[str, str]:
+    packaged_tools = Path(__file__).resolve().parent / "tools"
+    commands = sorted(
+        descriptor.parent.parent.name
+        for descriptor in packaged_tools.glob("*/bin/pyronaut-tool-classpath.tsv")
+    )
+    executables: dict[str, str] = {}
+    for command in commands:
+        executable = tool_root / "tools" / command / "bin" / _launcher_file_name(command)
+        if not _is_executable_file(executable):
+            raise RuntimeError(f"Resolved SDK executable is missing or not executable: {command}")
+        executables[command] = str(executable.resolve())
+    if not executables:
+        raise RuntimeError("Installed Pyronaut wheel contains no SDK tool descriptors")
+    return executables
+
+
+def _native_compile_descriptor_entries(executable: str | Path) -> list[str]:
+    entries = _native_launcher_manifest_entries(str(executable), "native-compile-classpath.txt")
+    if not entries:
+        raise RuntimeError(f"Missing native compiler classpath descriptor for {Path(executable).name}")
+    for entry in entries:
+        fields = entry.split("\t")
+        if len(fields) != 7 or fields[0] != "maven":
+            raise RuntimeError(f"Invalid native compiler classpath descriptor for {Path(executable).name}")
+        if any(not field or "/" in field or "\\" in field for field in fields[1:5]):
+            raise RuntimeError(f"Invalid native compiler Maven coordinate for {Path(executable).name}")
+        if "/" in fields[5] or "\\" in fields[5]:
+            raise RuntimeError(f"Invalid native compiler Maven classifier for {Path(executable).name}")
+        expected_filename = (
+            f"{fields[2]}-{fields[3]}"
+            f"{'-' + fields[5] if fields[5] else ''}.{fields[4]}"
+        )
+        if not fields[6] or Path(fields[6]).name != fields[6] or fields[6] != expected_filename:
+            raise RuntimeError(f"Invalid native compiler artifact filename for {Path(executable).name}")
+    return entries
+
+
+def _native_descriptor_hash(entries: Sequence[str]) -> str:
+    return hashlib.sha256(("\n".join(entries) + "\n").encode("utf-8")).hexdigest()
+
+
+def _setup_expectation(args: Sequence[str]) -> dict[str, object]:
+    base_url, native_version, release_tag = _native_image_configuration()
+    return {
+        "schemaVersion": _SETUP_SCHEMA_VERSION,
+        "sdkVersion": _installed_pyronaut_version(),
+        "platform": _setup_platform(),
+        "localRepository": str(_setup_local_repository(args)),
+        "repositories": _setup_repositories(),
+        "sdkDescriptorSha256": _packaged_sdk_descriptor_hash(),
+        "toolDescriptorSha256": _packaged_tool_descriptor_hash(),
+        "nativeImages": {
+            "source": base_url,
+            "version": native_version,
+            "releaseTag": release_tag,
+        },
+    }
+
+
+def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
+    manifest_path = _setup_manifest_path()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    expected = _setup_expectation(args)
+    for key in (
+        "schemaVersion",
+        "sdkVersion",
+        "platform",
+        "localRepository",
+        "repositories",
+        "sdkDescriptorSha256",
+        "toolDescriptorSha256",
+        "nativeImages",
+    ):
+        if manifest.get(key) != expected[key]:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    java_home = manifest.get("javaHome")
+    if not isinstance(java_home, str) or not _is_executable_file(Path(java_home) / "bin" / "java"):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    metadata = _read_graalvm_metadata(Path(java_home))
+    current_graalvm = {
+        "distribution": metadata.distribution if metadata else None,
+        "version": metadata.version if metadata else None,
+        "javaVersion": metadata.java_version if metadata else None,
+    }
+    if metadata is None or manifest.get("graalvm") != current_graalvm:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    tool_root = manifest.get("toolRuntime")
+    if not isinstance(tool_root, str) or not Path(tool_root).is_dir():
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    packaged_tools = Path(__file__).resolve().parent / "tools"
+    if not _resolved_tools_cache_complete(
+        Path(tool_root), packaged_tools, str(expected["sdkVersion"])
+    ):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    try:
+        expected_executables = _resolved_tool_executables(Path(tool_root))
+    except RuntimeError as exc:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
+    if manifest.get("executables") != expected_executables:
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    images = manifest.get("images")
+    if not isinstance(images, dict):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    for image_name in _SETUP_IMAGE_COMMANDS:
+        image = images.get(image_name)
+        if not isinstance(image, dict):
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        executable = image.get("executable")
+        classpath = image.get("classpath")
+        descriptor_hash = image.get("descriptorSha256")
+        if not isinstance(executable, str) or not _is_executable_file(Path(executable)):
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        if not isinstance(classpath, list) or not classpath:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        if not all(isinstance(path, str) and Path(path).is_file() for path in classpath):
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        try:
+            current_hash = _native_descriptor_hash(_native_compile_descriptor_entries(executable))
+        except RuntimeError as exc:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
+        if descriptor_hash != current_hash:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    return manifest
+
+
+def _require_setup(args: Sequence[str]) -> bool:
+    global _validated_setup_manifest
+    try:
+        _validated_setup_manifest = _read_valid_setup_manifest(args)
+        return True
+    except RuntimeError:
+        _validated_setup_manifest = None
+        print(_SETUP_REQUIRED_MESSAGE, file=sys.stderr)
+        return False
+
+
+def _cached_native_image(
+    image_name: str,
+    *,
+    platform_name: str | None = None,
+    machine_name: str | None = None,
+) -> Path:
+    base_url, version, release_tag = _native_image_configuration()
+    os_segment, arch = _native_image_platform(
+        platform_name=platform_name,
+        machine_name=machine_name,
+    )
+    executable = _native_image_cache_path(image_name, version=version, os_segment=os_segment, arch=arch)
+    metadata = executable.with_name(executable.name + ".json")
+    if not _is_executable_file(executable) or not metadata.is_file():
+        raise RuntimeError(f"Native image {image_name} is not cached")
+    try:
+        cached_metadata = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"Native image {image_name} cache metadata is invalid") from exc
+    expected = {
+        "source": base_url,
+        "version": version,
+        "release-tag": release_tag,
+        "platform": f"{os_segment}-{arch}",
+        "bundle-format": 3,
+    }
+    if not isinstance(cached_metadata, dict) or any(
+        cached_metadata.get(key) != value for key, value in expected.items()
+    ):
+        raise RuntimeError(f"Native image {image_name} cache is stale")
+    return executable
+
+
+def _validate_setup_arguments(args: Sequence[str]) -> None:
+    value_options = {"--local-repository", "--local-repo", "--progress"}
+    flag_options = {"--offline", "--refresh"}
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in value_options:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {token}")
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in value_options):
+            index += 1
+            continue
+        if token in flag_options:
+            index += 1
+            continue
+        raise ValueError(f"Unknown pyronaut setup option: {token}")
+    progress = _extract_option_value(args, "--progress")
+    if progress is not None and progress not in {"auto", "on", "off"}:
+        raise ValueError("Invalid value for --progress. Use auto, on, or off")
+
+
+def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
+    try:
+        _validate_setup_arguments(args)
+        refresh = _extract_flag(args, "--refresh")
+        offline = _extract_offline(args)
+        manifest_path = _setup_manifest_path()
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = manifest_path.with_suffix(".lock")
+        with _native_image_cache_lock(lock_path):
+            if not refresh:
+                try:
+                    _read_valid_setup_manifest(args)
+                except RuntimeError:
+                    pass
+                else:
+                    print(f"Pyronaut setup is ready at {manifest_path}")
+                    return SUCCESS
+
+            expectation = _setup_expectation(args)
+            java_home = _ensure_graalvm_java_home(None, offline=offline)
+            if java_home is None:
+                qualifier = " cached" if offline else ""
+                raise RuntimeError(
+                    f"Unable to locate or provision a{qualifier} compatible GraalVM JDK (requires JDK 25+)"
+                )
+            images: dict[str, Path] = {}
+            for image_name in _SETUP_IMAGE_COMMANDS:
+                images[image_name] = (
+                    _cached_native_image(image_name)
+                    if offline
+                    else _ensure_native_image(image_name)
+                )
+
+            installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
+            if installer is None or not _is_executable_file(installer):
+                raise RuntimeError("Installed Pyronaut wheel is missing executable pyronaut-install")
+            local_repository = _setup_local_repository(args)
+            _seed_bundled_pyronaut_maven_repository(
+                Path.cwd(), str(local_repository), str(installer)
+            )
+
+            with tempfile.TemporaryDirectory(prefix=".setup-", dir=manifest_path.parent) as temp_dir:
+                request_dir = Path(temp_dir) / "native-classpaths"
+                request_dir.mkdir()
+                descriptor_entries: dict[str, list[str]] = {}
+                for image_name, executable in images.items():
+                    entries = _native_compile_descriptor_entries(executable)
+                    descriptor_entries[image_name] = entries
+                    (request_dir / f"{image_name}.tsv").write_text(
+                        "\n".join(entries) + "\n", encoding="utf-8"
+                    )
+
+                command_line = [
+                    str(installer),
+                    "--resolve-tools-only",
+                    "--native-classpaths-dir",
+                    str(request_dir),
+                    "--local-repository",
+                    str(local_repository),
+                ]
+                for repository in expectation["repositories"]:
+                    command_line.extend(["--repository", str(repository)])
+                if offline:
+                    command_line.append("--offline")
+                if refresh:
+                    command_line.append("--refresh")
+                progress = _extract_option_value(args, "--progress")
+                if progress is not None:
+                    command_line.extend(["--progress", progress])
+                env = dict(os.environ)
+                env["JAVA_HOME"] = java_home
+                java_bin = str(Path(java_home) / "bin")
+                env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
+                packaged_tools = Path(__file__).resolve().parent / "tools"
+                env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
+                env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
+                if runner(command_line, env) != SUCCESS:
+                    raise RuntimeError("pyronaut-install failed to resolve SDK classpaths")
+
+                tool_root = _resolved_tool_cache_root()
+                if tool_root is None:
+                    raise RuntimeError("pyronaut-install did not produce a complete SDK tool runtime")
+                packaged_tools = Path(__file__).resolve().parent / "tools"
+                if not _resolved_tools_cache_complete(
+                    tool_root, packaged_tools, str(expectation["sdkVersion"])
+                ):
+                    raise RuntimeError("pyronaut-install produced an incomplete SDK tool runtime")
+                executables = _resolved_tool_executables(tool_root)
+                image_state: dict[str, object] = {}
+                for image_name, executable in images.items():
+                    resolved_file = request_dir / "resolved" / f"{image_name}.txt"
+                    resolved = [
+                        line.strip()
+                        for line in resolved_file.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    ]
+                    if len(resolved) != len(descriptor_entries[image_name]):
+                        raise RuntimeError(f"Incomplete resolved compiler classpath for {image_name}")
+                    if not all(Path(path).is_file() for path in resolved):
+                        raise RuntimeError(f"Resolved compiler classpath for {image_name} contains missing files")
+                    image_state[image_name] = {
+                        "executable": str(executable.resolve()),
+                        "descriptorSha256": _native_descriptor_hash(descriptor_entries[image_name]),
+                        "classpath": resolved,
+                    }
+                metadata = _read_graalvm_metadata(Path(java_home))
+                state = {
+                    **expectation,
+                    "javaHome": str(Path(java_home).resolve()),
+                    "graalvm": {
+                        "distribution": metadata.distribution if metadata else None,
+                        "version": metadata.version if metadata else None,
+                        "javaVersion": metadata.java_version if metadata else None,
+                    },
+                    "toolRuntime": str(tool_root.resolve()),
+                    "executables": executables,
+                    "images": image_state,
+                }
+                temporary_manifest = Path(temp_dir) / "setup.json"
+                temporary_manifest.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                os.replace(temporary_manifest, manifest_path)
+        print(f"Pyronaut setup completed at {manifest_path}")
+        return SUCCESS
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
 
 
 def _print_build_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--base-image|--base-image=default] [--base-image-output <path>] [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
+        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--native-base[=<default|path|url>]] [--native-base-output <path>] [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
     )
 
 
@@ -7497,7 +8095,7 @@ def _run_tui(
     direct_source = _looks_like_direct_source_invocation(args)
     project_dir = Path.cwd().resolve() if direct_source else Path(_extract_project_dir(args)).resolve()
     try:
-        tui_toolchain_type = _read_pyproject_toolchain_type(project_dir)
+        tui_toolchain_type = "jvm" if direct_source else _read_pyproject_toolchain_type(project_dir)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -7844,7 +8442,7 @@ class _OwnedTestResourcesSession:
         if self._session_file.exists():
             self._emit_status("[test-resources] stale session detected; starting owned server instead")
         else:
-            self._emit_status("[test-resources] external settings detected but server unavailable; starting owned server instead")
+            self._emit_status("[test-resources] stale external settings detected; starting owned server instead")
         return False
 
     def _delegate_test_resources_server(
@@ -8024,12 +8622,13 @@ def _run_tamboui_tui(
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
         return PRECONDITION_FAILED
     pyronaut_table = _read_pyproject_pyronaut_table(project_dir)
-    if isinstance(pyronaut_table, dict):
-        configured_toolchain = pyronaut_table.get("toolchain")
-        if not isinstance(configured_toolchain, dict) or "type" not in configured_toolchain:
+    if direct_dev_executable is None:
+        if isinstance(pyronaut_table, dict):
+            configured_toolchain = pyronaut_table.get("toolchain")
+            if not isinstance(configured_toolchain, dict) or "type" not in configured_toolchain:
+                toolchain_type = None
+        else:
             toolchain_type = None
-    else:
-        toolchain_type = None
     if direct_dev_executable is not None:
         native_commands = []
     else:
@@ -8072,6 +8671,9 @@ def _run_tamboui_tui(
         "--report-dir",
         str(report_dir),
     ]
+    selected_java_home = base_env.get("JAVA_HOME") if base_env is not None else None
+    if direct_dev_executable is not None and selected_java_home:
+        command_line.extend(["--java-home", selected_java_home])
     if toolchain_type is not None:
         command_line.extend(["--toolchain-type", toolchain_type])
     if direct_dev_executable is not None:

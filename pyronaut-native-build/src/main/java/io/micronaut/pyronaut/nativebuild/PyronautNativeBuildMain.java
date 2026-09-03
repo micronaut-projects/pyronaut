@@ -90,14 +90,14 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     @CommandLine.Option(names = "--verbose", description = "Print and pass verbose mode to native-image")
     boolean verbose;
 
-    @CommandLine.Option(names = "--base-image", description = "Build a reusable Crema runtime image")
-    boolean baseImage;
+    @CommandLine.Option(names = "--native-base", description = "Build a reusable Crema runtime image")
+    boolean nativeBase;
 
-    @CommandLine.Option(names = "--default-base-image", description = "Build the bundled Crema runtime without project dependencies")
-    boolean defaultBaseImage;
+    @CommandLine.Option(names = "--default-native-base", description = "Build the bundled Crema runtime without project dependencies")
+    boolean defaultNativeBase;
 
-    @CommandLine.Option(names = "--default-base-image-path", description = "Use a downloaded prebuilt default Crema runtime")
-    Path defaultBaseImagePath;
+    @CommandLine.Option(names = "--default-native-base-path", description = "Use a downloaded prebuilt default Crema runtime")
+    Path defaultNativeBasePath;
 
     @CommandLine.Option(names = "--include-python", description = "Include the Python and Truffle production runtime")
     boolean includePython;
@@ -148,11 +148,11 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             rejectMainClassOverride();
-            if (defaultBaseImagePath != null && !defaultBaseImage) {
-                throw new IllegalStateException("--default-base-image-path requires --default-base-image");
+            if (defaultNativeBasePath != null && !defaultNativeBase) {
+                throw new IllegalStateException("--default-native-base-path requires --default-native-base");
             }
-            if (defaultBaseImage && defaultBaseImagePath != null) {
-                return copyPrebuiltBaseImage(root);
+            if (defaultNativeBase && defaultNativeBasePath != null) {
+                return copyPrebuiltNativeBase(root);
             }
             Path classesDir = root.resolve(DEFAULT_CLASSES_DIR).normalize();
             if (!Files.isDirectory(classesDir)) {
@@ -166,8 +166,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             }
 
             List<Path> runtimeClasspath = readManifest(root, runtimeManifest);
-            if (baseImage || defaultBaseImage) {
-                return buildBaseImage(root, runtimeClasspath, defaultBaseImage);
+            if (nativeBase || defaultNativeBase) {
+                return buildNativeBase(root, runtimeClasspath, defaultNativeBase);
             }
             List<Path> runnerClasspath = pyronautRunClasspathEntries(includePython);
             List<Path> runnerFilteredRuntimeClasspath = excludeRunnerProvidedModules(runtimeClasspath, runnerClasspath);
@@ -250,10 +250,10 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         }
     }
 
-    private Integer copyPrebuiltBaseImage(Path root) throws IOException {
-        Path source = defaultBaseImagePath.toAbsolutePath().normalize();
+    private Integer copyPrebuiltNativeBase(Path root) throws IOException {
+        Path source = defaultNativeBasePath.toAbsolutePath().normalize();
         if (!Files.isRegularFile(source)) {
-            throw new IllegalStateException("Prebuilt default base image does not exist: " + source);
+            throw new IllegalStateException("Prebuilt default native base does not exist: " + source);
         }
         Path outputPath = root.resolve(output).normalize();
         Path outputParent = outputPath.getParent();
@@ -264,15 +264,15 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             Files.copy(source, outputPath, StandardCopyOption.REPLACE_EXISTING);
         }
         if (!outputPath.toFile().setExecutable(true, false)) {
-            throw new IOException("Unable to mark prebuilt default base image executable: " + outputPath);
+            throw new IOException("Unable to mark prebuilt default native base executable: " + outputPath);
         }
-        System.out.println("Prebuilt default base image copied: " + outputPath);
+        System.out.println("Prebuilt default native base copied: " + outputPath);
         return SUCCESS;
     }
 
-    private Integer buildBaseImage(Path root,
-                                   List<Path> runtimeClasspath,
-                                   boolean bundledOnly) throws IOException, InterruptedException {
+    private Integer buildNativeBase(Path root,
+                                    List<Path> runtimeClasspath,
+                                    boolean bundledOnly) throws IOException, InterruptedException {
         List<Path> runnerClasspath = pyronautRunClasspathEntries(includePython);
         List<Path> baseClasspath = bundledOnly
             ? new ArrayList<>()
@@ -311,7 +311,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         passthroughNativeImageArgs.forEach(builder::addNativeImageArgument);
         PyronautNativeImageBuilder.BuildResult result = builder.build();
         if (result.exitCode() == SUCCESS) {
-            System.out.println("Base image build complete: " + result.executable());
+            System.out.println("Native base build complete: " + result.executable());
         }
         return result.exitCode();
     }
