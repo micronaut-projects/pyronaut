@@ -132,6 +132,7 @@ environment:
 ./gradlew :micronaut-pyronaut:installSdkWheel
 pyronaut --help
 pyronaut --version
+pyronaut setup
 ```
 
 The help command should print the CLI usage. The version command currently
@@ -160,6 +161,7 @@ python -m pip install --upgrade pip
 python -m pip install /absolute/path/to/pyronaut/pyronaut/build/wheel/dist/pyronaut-0.0.1.dev0-py3-none-any.whl
 pyronaut --help
 pyronaut --version
+pyronaut setup
 ```
 
 Replace `/absolute/path/to/pyronaut` with the full path to the checkout where
@@ -535,10 +537,19 @@ Build the JVM-based SDK wheel:
 ./gradlew :micronaut-pyronaut:buildSdkWheel
 ```
 
-The wheel does not embed native executables. Native commands download the
-matching image on demand and cache it under `~/.pyronaut/bin`; configure a
-private bundle repository or pinned CI version in
-`~/.pyronaut/settings.toml` under `[native-images]`.
+The wheel does not embed native executables. Run `pyronaut setup` after wheel
+installation to download all three images into `~/.pyronaut/bin`, provision
+GraalVM, resolve SDK dependencies, and publish the local setup manifest.
+Configure a private bundle repository or pinned CI version in
+`~/.pyronaut/settings.toml` under `[native-images]` before running setup.
+
+Setup resolves from Maven Central by default and adds Sonatype Central
+snapshots for snapshot SDK versions. Configure replacement repositories with:
+
+```toml
+[maven]
+repositories = ["mavenCentral", "https://central.sonatype.com/repository/maven-snapshots/"]
+```
 
 During local development, `base-url` may instead point to this repository (or
 use a `file://` URL). Build the bundles first, then select the exact project

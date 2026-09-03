@@ -63,6 +63,13 @@ port = 8080
 
 == Run the Application
 
+After installing or upgrading the Pyronaut SDK wheel, provision it once:
+
+[source,bash]
+----
+pyronaut setup
+----
+
 [source,bash]
 ----
 pyronaut install

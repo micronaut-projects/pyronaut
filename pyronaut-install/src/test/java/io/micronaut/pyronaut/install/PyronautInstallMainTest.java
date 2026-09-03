@@ -31,8 +31,8 @@ import javax.tools.ToolProvider;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautInstallMainTest {
 
@@ -115,12 +115,14 @@ class PyronautInstallMainTest {
 
         assertEquals(InstallExitCode.SUCCESS.code(), command.call());
 
-        assertEquals(List.of(new Invocation(
-            null,
-            projectlessDirectory.resolve("custom-repository").toAbsolutePath().normalize(),
-            true,
-            true
-        )), invocations);
+        assertEquals(1, invocations.size());
+        Invocation invocation = invocations.getFirst();
+        assertEquals(List.of("mavenCentral"), invocation.model().pyronaut().repositories());
+        assertNull(invocation.model().pyronaut().coreVersion());
+        assertNull(invocation.model().pyronaut().platformVersion());
+        assertEquals(projectlessDirectory.resolve("custom-repository").toAbsolutePath().normalize(), invocation.repository());
+        assertTrue(invocation.offline());
+        assertTrue(invocation.refresh());
     }
 
     @Test

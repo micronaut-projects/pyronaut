@@ -16,7 +16,6 @@
 package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
-import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -426,11 +425,15 @@ final class ToolClasspathInstaller {
             : Path.of(configured).toAbsolutePath().normalize();
     }
 
-    private static PyprojectModel defaultModel() {
+    static PyprojectModel defaultModel() {
+        return defaultModel(List.of("mavenCentral"));
+    }
+
+    static PyprojectModel defaultModel(List<String> repositories) {
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
-            PyronautManagedVersions.micronautCoreVersion(),
-            PyronautManagedVersions.micronautPlatformVersion(),
-            List.of("mavenLocal", "mavenCentral"),
+            null,
+            null,
+            List.copyOf(repositories),
             null,
             new PyprojectModel.Dependencies(List.of(), List.of(), List.of(), List.of()),
             null, null, null, null, null, null, null, null, null, null, false

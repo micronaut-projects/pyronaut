@@ -25,6 +25,18 @@ Supported entries:
 
 If `repositories` is omitted or empty, Pyronaut uses Maven Central.
 
+The repositories above are project repositories used by `pyronaut install`.
+The global `pyronaut setup` command has a separate repository list in `~/.pyronaut/settings.toml`:
+
+[source,toml]
+----
+[maven]
+repositories = ["mavenCentral"]
+----
+
+If this global list is omitted, setup uses Maven Central and automatically adds the Sonatype Central snapshots repository when the installed Pyronaut SDK version is a snapshot.
+An explicit global list replaces those defaults.
+
 `mavenLocal` is a source repository entry.
 It is separate from the install destination selected by `pyronaut install --local-repository`.
 By default, the install destination is also Maven local, so many local development flows do not need to list `mavenLocal` explicitly.

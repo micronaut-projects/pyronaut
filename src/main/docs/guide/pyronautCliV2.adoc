@@ -22,7 +22,7 @@ Phase 1 supports macOS and Linux.
 
 [source,bash]
 ----
-pyronaut [--version] [--tui [--smoke|--non-interactive]] <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]
+pyronaut [--version] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|validate-config|test-resources-server> [args...]
 ----
 
 == Quickstart workflow
@@ -34,6 +34,9 @@ pyronaut process --project-dir /path/to/app
 pyronaut dev --project-dir /path/to/app
 pyronaut test --project-dir /path/to/app
 ----
+
+Installed SDK wheels require a successful global `pyronaut setup` before this workflow.
+Source-checkout launchers remain usable for repository development.
 
 == Project layout
 
@@ -73,6 +76,32 @@ These settings are used by `pyronaut process`, `pyronaut dev`, `pyronaut run`, `
 
 == Command reference
 
+=== `pyronaut setup`
+
+Provisions the complete SDK before any project command runs:
+
+[source,bash]
+----
+pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--progress <auto|on|off>]
+----
+
+Setup provisions the packaged/default GraalVM JDK first, so neither `JAVA_HOME` nor a preinstalled Java runtime is required.
+It then caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python`, seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel's portable dependency descriptors.
+Validated state is atomically written below `~/.pyronaut/setup`.
+
+The default remote repository is Maven Central. Snapshot SDK versions also use `https://central.sonatype.com/repository/maven-snapshots/`.
+Configure a replacement list in `~/.pyronaut/settings.toml`:
+
+[source,toml]
+----
+[maven]
+repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]
+----
+
+`--refresh` re-resolves and rewrites setup state while reusing healthy downloaded JDK and native images.
+`--offline` performs no JDK, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
+When setup is missing, corrupt, or stale, execution commands exit with code `8` and print `Pyronaut setup is missing or stale. Run pyronaut setup.`
+
 === `pyronaut install`
 
 Resolves dependencies into the configured local Maven repository and writes scoped manifests under `__pyronaut__/`.
@@ -99,7 +128,8 @@ cursor-control sequences.
 
 Proxy configuration:
 
-`pyronaut install` uses the configured proxy for Maven dependency resolution, including dependencies resolved from `tool.pyronaut.repositories`.
+`pyronaut setup` and `pyronaut install` use the configured proxy for Maven dependency resolution; setup also applies it to GraalVM and native-launcher downloads.
+This includes dependencies resolved from the global `[maven].repositories` list and project `tool.pyronaut.repositories`.
 Proxy configuration is discovered in this order:
 
 . Environment variables: `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy`
