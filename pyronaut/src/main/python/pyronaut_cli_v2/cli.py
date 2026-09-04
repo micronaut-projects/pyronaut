@@ -7116,7 +7116,7 @@ def _pyronaut_dev_native_command_line(
     # pegdown/parboiled parser used by OpenAPI's ADOC converter. Keep this
     # optional documentation conversion disabled for native launches until
     # the converter has native-image support.
-    if command in {"dev", "run", "test"}:
+    if command in {"process", "dev", "run", "test"}:
         jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
     # Coordinates contain ':', so use a delimiter independent of the host
     # path separator when passing the list through a system property.
