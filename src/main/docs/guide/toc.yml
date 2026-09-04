@@ -4,6 +4,7 @@ releaseHistory: Release History
 installation: Installing Pyronaut
 gettingStarted:
   title: Getting Started
+  prerequisites: Prerequisites
   fastApiTutorial: The FastAPI Tutorial
 how: How Pyronaut Works  
 projectStructure:

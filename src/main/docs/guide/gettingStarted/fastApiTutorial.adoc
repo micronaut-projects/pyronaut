@@ -5,6 +5,7 @@ This tutorial recreates the flow of the https://fastapi.tiangolo.com/#example[Fa
 The tutorial is designed for readers familiar with FastAPI and who want to learn Pyronaut.
 
 It uses standard Python type hints, generates an OpenAPI description and interactive documentation, validates input, reloads during development, and includes an automated test.
+Complete the <<prerequisites,Getting Started prerequisites>> before running the tutorial so that the GraalPy virtual environment and pytest are available.
 
 == Create It
 

@@ -2,6 +2,9 @@
 
 In this section you will learn how to define a minimal Pyronaut project and application.
 
+Complete the <<prerequisites,Prerequisites>> before creating the project.
+The prerequisites include the GraalPy virtual environment required by the testing section below.
+
 == Create `pyproject.toml`
 
 [source,toml]
