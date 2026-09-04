@@ -15,6 +15,7 @@
  */
 package io.micronaut.test.pytest.execution;
 
+import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Value;
 
 import java.io.PrintWriter;
@@ -62,10 +63,18 @@ public final class PytestFunctionInvoker {
                 this.exceptionClass = null;
                 this.stack = null;
             } else {
-                this.message = error.getMessage();
-                this.exceptionClass = error.getClass().getName();
-                this.stack = stackTraceToString(error);
+                Throwable rendered = unwrapHostException(error);
+                this.message = rendered.getMessage();
+                this.exceptionClass = rendered.getClass().getName();
+                this.stack = stackTraceToString(rendered);
             }
+        }
+
+        private static Throwable unwrapHostException(Throwable error) {
+            if (error instanceof PolyglotException polyglotException && polyglotException.isHostException()) {
+                return polyglotException.asHostException();
+            }
+            return error;
         }
 
         static Result success() {

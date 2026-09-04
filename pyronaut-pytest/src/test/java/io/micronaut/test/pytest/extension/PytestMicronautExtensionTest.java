@@ -212,7 +212,7 @@ class PytestMicronautExtensionTest {
     }
 
     @Test
-    void pytestRunReportsHostExceptionThrownByJavaMethodWithoutForeignExceptionLeak() throws Exception {
+    void pytestRunReportsHostExceptionWithoutWrapperLeak() throws Exception {
         Path testFile = tempDir.resolve("test_host_exception.py");
         Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
         Path eventsReport = reportsDir.resolve("events.ndjson");

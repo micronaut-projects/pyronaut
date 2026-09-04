@@ -47,6 +47,7 @@ class PytestFunctionInvokerTest {
             PytestFunctionInvoker.Result result = PytestFunctionInvoker.call(testFunction);
 
             assertFalse(result.success);
+            assertEquals("java.lang.IllegalStateException", result.exceptionClass);
             assertTrue(result.stack.contains("java.lang.IllegalStateException"));
             assertTrue(result.stack.contains("boom"));
         }
