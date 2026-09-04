@@ -1422,7 +1422,7 @@ additional-resources = ["views"]
         self.assertEqual(
             [
                 ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"],
-                [str(native_dev), "process", "--project-dir", str(project_dir), "--pass", "main"],
+                [str(native_dev), "-Dmicronaut.openapi.adoc.enabled=false", "process", "--project-dir", str(project_dir), "--pass", "main"],
             ],
             executed[:2],
         )
@@ -1727,6 +1727,7 @@ type = "native"
         self.assertNotIn(str(test_classes_dir.resolve()), entries)
         self.assertIsNotNone(command_line)
         assert command_line is not None
+        self.assertIn("-Dmicronaut.openapi.adoc.enabled=false", command_line)
         test_classpath = command_line[command_line.index("--test-classpath") + 1].split(os.pathsep)
         self.assertEqual(
             {*dependencies, str(compiler_jar.resolve())},
@@ -1925,7 +1926,7 @@ type = "native"
         self.assertEqual(
             [
                 ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"],
-                [str(native_dev), "process", "--project-dir", str(project_dir), "--pass", "main"],
+                [str(native_dev), "-Dmicronaut.openapi.adoc.enabled=false", "process", "--project-dir", str(project_dir), "--pass", "main"],
             ],
             executed[:2],
         )
@@ -2175,7 +2176,10 @@ test-resources = "test-resources"
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual([[str(native_dev), "process", "--project-dir", str(project_dir)]], executed)
+        self.assertEqual(
+            [[str(native_dev), "-Dmicronaut.openapi.adoc.enabled=false", "process", "--project-dir", str(project_dir)]],
+            executed,
+        )
 
     def test_process_explicit_jvm_mode_overrides_native_toolchain(self):
         executed = []

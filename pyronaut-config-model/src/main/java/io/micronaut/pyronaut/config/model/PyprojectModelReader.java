@@ -15,14 +15,12 @@
  */
 package io.micronaut.pyronaut.config.model;
 
-import org.tomlj.Toml;
-import org.tomlj.TomlArray;
-import org.tomlj.TomlInvalidTypeException;
-import org.tomlj.TomlParseError;
-import org.tomlj.TomlParseResult;
-import org.tomlj.TomlTable;
+import io.micronaut.json.tree.JsonNode;
+import io.micronaut.toml.Parser;
+import io.micronaut.toml.TomlStreamReadException;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -61,13 +59,20 @@ public final class PyprojectModelReader {
         if (!Files.exists(file)) {
             throw new PyprojectModelException("Missing required file '" + descriptorName + "' at: " + file);
         }
-        TomlParseResult parsed;
+        String contents;
         try {
-            parsed = Toml.parse(file);
+            contents = Files.readString(file);
         } catch (IOException e) {
             throw new PyprojectModelException("Failed reading " + descriptorName + ": " + file, e);
         }
-        failOnParseErrors(file, parsed.errors());
+        JsonNode parsed;
+        try {
+            parsed = Parser.parse(contents);
+        } catch (TomlStreamReadException e) {
+            throw new PyprojectModelException("Invalid TOML in " + file + ": " + e.getMessage(), e);
+        } catch (IOException e) {
+            throw new PyprojectModelException("Failed reading " + descriptorName + ": " + file, e);
+        }
         return map(parsed);
     }
 
@@ -77,16 +82,7 @@ public final class PyprojectModelReader {
         }
     }
 
-    private static void failOnParseErrors(Path file, List<TomlParseError> errors) {
-        if (!errors.isEmpty()) {
-            TomlParseError first = errors.get(0);
-            String message = "Invalid TOML in " + file + " at line " + first.position().line() + ", column "
-                + first.position().column() + ": " + first.getMessage();
-            throw new PyprojectModelException(message);
-        }
-    }
-
-    private static PyprojectModel map(TomlParseResult parsed) {
+    private static PyprojectModel map(JsonNode parsed) {
         PyprojectModel.Project project = new PyprojectModel.Project(
             readString(parsed, PyprojectConfigSpec.PROJECT_NAME),
             readString(parsed, PyprojectConfigSpec.PROJECT_VERSION),
@@ -139,13 +135,13 @@ public final class PyprojectModelReader {
             resolveIdeStubs(parsed),
             resolveValidation(parsed, sources),
             resolveTestResources(parsed),
-            parsed.contains("tool.pyronaut.control-panel") || parsed.contains("tool.pyronaut.controlPanel")
+            contains(parsed, "tool.pyronaut.control-panel") || contains(parsed, "tool.pyronaut.controlPanel")
         );
 
         return new PyprojectModel(project, buildSystem, pyronaut);
     }
 
-    private static PyprojectModel.ControlPanel resolveControlPanel(TomlParseResult parsed) {
+    private static PyprojectModel.ControlPanel resolveControlPanel(JsonNode parsed) {
         String path = readString(parsed, PyprojectConfigSpec.PYRONAUT_CONTROL_PANEL_PATH);
         if (path == null || path.isBlank() || !path.startsWith("/")) {
             throw new PyprojectModelException(
@@ -160,16 +156,16 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static String readString(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+    private static String readString(JsonNode parsed, PyprojectConfigSpec.FieldSpec field) {
         for (String path : field.allPaths()) {
-            try {
-                String value = parsed.getString(path);
-                if (value != null) {
-                    return value;
-                }
-            } catch (TomlInvalidTypeException e) {
-                throw invalidType(field.canonicalPath(), "string", e);
+            JsonNode value = node(parsed, path);
+            if (value == null) {
+                continue;
             }
+            if (!value.isString()) {
+                throw invalidType(field.canonicalPath(), "string");
+            }
+            return value.getStringValue();
         }
         if (field.defaultValue() instanceof String defaultValue) {
             return defaultValue;
@@ -177,7 +173,7 @@ public final class PyprojectModelReader {
         return null;
     }
 
-    private static PyprojectModel.Sources resolveSources(TomlParseResult parsed) {
+    private static PyprojectModel.Sources resolveSources(JsonNode parsed) {
         return new PyprojectModel.Sources(
             readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_PYTHON),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_SOURCES_PYTHON_TEST),
@@ -190,24 +186,22 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static List<String> readStringList(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+    private static List<String> readStringList(JsonNode parsed, PyprojectConfigSpec.FieldSpec field) {
         for (String path : field.allPaths()) {
-            TomlArray array;
-            try {
-                array = parsed.getArray(path);
-            } catch (TomlInvalidTypeException e) {
-                throw invalidType(field.canonicalPath(), "array", e);
-            }
+            JsonNode array = node(parsed, path);
             if (array == null) {
                 continue;
             }
+            if (!array.isArray()) {
+                throw invalidType(field.canonicalPath(), "array");
+            }
             List<String> values = new ArrayList<>(array.size());
             for (int i = 0; i < array.size(); i++) {
-                Object value = array.get(i);
-                if (!(value instanceof String stringValue)) {
+                JsonNode value = array.get(i);
+                if (value == null || !value.isString()) {
                     throw new PyprojectModelException("Invalid type for '" + field.canonicalPath() + "[" + i + "]': expected string");
                 }
-                values.add(stringValue);
+                values.add(value.getStringValue());
             }
             return List.copyOf(values);
         }
@@ -219,17 +213,17 @@ public final class PyprojectModelReader {
         return List.of();
     }
 
-    private static PyprojectModelException invalidType(String key, String expected, TomlInvalidTypeException e) {
-        return new PyprojectModelException("Invalid type for '" + key + "': expected " + expected, e);
+    private static PyprojectModelException invalidType(String key, String expected) {
+        return new PyprojectModelException("Invalid type for '" + key + "': expected " + expected);
     }
 
-    private static PyprojectModel.Packaging resolvePackaging(TomlParseResult parsed) {
-        if (parsed.contains("tool.pyronaut.build.base-image")) {
+    private static PyprojectModel.Packaging resolvePackaging(JsonNode parsed) {
+        if (contains(parsed, "tool.pyronaut.build.base-image")) {
             throw new PyprojectModelException(
                 "Unsupported configuration 'tool.pyronaut.build.base-image'; use 'tool.pyronaut.build.native-base'"
             );
         }
-        if (parsed.contains("tool.pyronaut.build.mode")) {
+        if (contains(parsed, "tool.pyronaut.build.mode")) {
             throw new PyprojectModelException(
                 "Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'"
             );
@@ -249,7 +243,7 @@ public final class PyprojectModelReader {
         return new PyprojectModel.Packaging(PyprojectModel.PackagingFormat.fromValue(value));
     }
 
-    private static PyprojectModel.Metadata resolveBuildMetadata(TomlParseResult parsed) {
+    private static PyprojectModel.Metadata resolveBuildMetadata(JsonNode parsed) {
         Boolean enabled = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_ENABLED);
         String version = readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_VERSION);
         String repositoryUrl = readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_METADATA_REPOSITORY_URL);
@@ -257,7 +251,7 @@ public final class PyprojectModelReader {
         return new PyprojectModel.Metadata(enabled, version, repositoryUrl, excludedModules);
     }
 
-    private static String resolveProcessorMode(TomlParseResult parsed) {
+    private static String resolveProcessorMode(JsonNode parsed) {
         String mode = readString(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE);
         if (mode == null || mode.isBlank()) {
             return (String) PyprojectConfigSpec.PYRONAUT_PROCESSOR_MODE.defaultValue();
@@ -272,7 +266,7 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static String resolveTestMode(TomlParseResult parsed) {
+    private static String resolveTestMode(JsonNode parsed) {
         String mode = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_MODE);
         if (mode == null || mode.isBlank()) {
             return (String) PyprojectConfigSpec.PYRONAUT_TEST_MODE.defaultValue();
@@ -287,7 +281,7 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static PyprojectModel.TestEngine resolveTestEngine(TomlParseResult parsed) {
+    private static PyprojectModel.TestEngine resolveTestEngine(JsonNode parsed) {
         String engine = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_ENGINE);
         if (engine == null || engine.isBlank()) {
             engine = (String) PyprojectConfigSpec.PYRONAUT_TEST_ENGINE.defaultValue();
@@ -303,7 +297,7 @@ public final class PyprojectModelReader {
         }
     }
 
-    private static PyprojectModel.Toolchain resolveToolchain(TomlParseResult parsed) {
+    private static PyprojectModel.Toolchain resolveToolchain(JsonNode parsed) {
         return new PyprojectModel.Toolchain(
             readEnum(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_DISTRIBUTION),
             readEnum(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_TYPE),
@@ -314,7 +308,7 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static PyprojectModel.Docker resolveBuildDocker(TomlParseResult parsed) {
+    private static PyprojectModel.Docker resolveBuildDocker(JsonNode parsed) {
         return new PyprojectModel.Docker(
             readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_IMAGE_NAME),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_BUILD_DOCKER_DOCKERFILE),
@@ -328,7 +322,7 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static PyprojectModel.IdeStubs resolveIdeStubs(TomlParseResult parsed) {
+    private static PyprojectModel.IdeStubs resolveIdeStubs(JsonNode parsed) {
         return new PyprojectModel.IdeStubs(
             readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_IDE_STUBS_ENABLED),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_IDE_STUBS_IDE),
@@ -338,7 +332,7 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static PyprojectModel.Validation resolveValidation(TomlParseResult parsed, PyprojectModel.Sources sources) {
+    private static PyprojectModel.Validation resolveValidation(JsonNode parsed, PyprojectModel.Sources sources) {
         Boolean enabled = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_ENABLED);
         Boolean failOnNotPresent = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_FAIL_ON_NOT_PRESENT);
         Boolean deduceEnvironments = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_VALIDATION_DEDUCE_ENVIRONMENTS);
@@ -426,7 +420,7 @@ public final class PyprojectModelReader {
     }
 
     private static PyprojectModel.ValidationScenario resolveValidationScenario(
-        TomlParseResult parsed,
+        JsonNode parsed,
         PyprojectConfigSpec.FieldSpec enabledField,
         PyprojectConfigSpec.FieldSpec environmentsField,
         PyprojectConfigSpec.FieldSpec includeDefaultEnvironmentField,
@@ -464,21 +458,21 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static Boolean readBoolean(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+    private static Boolean readBoolean(JsonNode parsed, PyprojectConfigSpec.FieldSpec field) {
         for (String path : field.allPaths()) {
-            try {
-                Boolean value = parsed.getBoolean(path);
-                if (value != null) {
-                    return value;
-                }
-            } catch (TomlInvalidTypeException e) {
-                throw invalidType(field.canonicalPath(), "boolean", e);
+            JsonNode value = node(parsed, path);
+            if (value == null) {
+                continue;
             }
+            if (!value.isBoolean()) {
+                throw invalidType(field.canonicalPath(), "boolean");
+            }
+            return value.getBooleanValue();
         }
         return (Boolean) field.defaultValue();
     }
 
-    private static String readEnum(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+    private static String readEnum(JsonNode parsed, PyprojectConfigSpec.FieldSpec field) {
         String raw = readString(parsed, field);
         if (raw == null || raw.isBlank()) {
             return (String) field.defaultValue();
@@ -490,21 +484,24 @@ public final class PyprojectModelReader {
         return normalized;
     }
 
-    private static Integer readInteger(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+    private static Integer readInteger(JsonNode parsed, PyprojectConfigSpec.FieldSpec field) {
         for (String path : field.allPaths()) {
-            Long raw;
-            try {
-                raw = parsed.getLong(path);
-            } catch (TomlInvalidTypeException e) {
-                throw invalidType(field.canonicalPath(), "integer", e);
-            }
-            if (raw == null) {
+            JsonNode value = node(parsed, path);
+            if (value == null) {
                 continue;
             }
-            if (raw > Integer.MAX_VALUE || raw < Integer.MIN_VALUE) {
+            Number raw = value.isNumber() ? value.getNumberValue() : null;
+            if (!(raw instanceof Integer || raw instanceof Long || raw instanceof BigInteger)) {
+                throw invalidType(field.canonicalPath(), "integer");
+            }
+            BigInteger integer = raw instanceof BigInteger bigInteger
+                ? bigInteger
+                : BigInteger.valueOf(raw.longValue());
+            if (integer.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0
+                || integer.compareTo(BigInteger.valueOf(Integer.MIN_VALUE)) < 0) {
                 throw new PyprojectModelException("Invalid value for '" + field.canonicalPath() + "': integer out of range");
             }
-            return raw.intValue();
+            return integer.intValue();
         }
         if (field.defaultValue() instanceof Integer defaultValue) {
             return defaultValue;
@@ -512,61 +509,54 @@ public final class PyprojectModelReader {
         return null;
     }
 
-    private static Map<String, String> readStringMap(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
+    private static Map<String, String> readStringMap(JsonNode parsed, PyprojectConfigSpec.FieldSpec field) {
         for (String path : field.allPaths()) {
-            TomlTable table;
-            try {
-                table = parsed.getTable(path);
-            } catch (TomlInvalidTypeException e) {
-                throw invalidType(field.canonicalPath(), "table", e);
-            }
+            JsonNode table = node(parsed, path);
             if (table == null) {
                 continue;
             }
-            Map<String, Object> raw = table.toMap();
-            if (raw.isEmpty()) {
-                return Map.of();
+            if (!table.isObject()) {
+                throw invalidType(field.canonicalPath(), "table");
             }
-            var out = new java.util.LinkedHashMap<String, String>(raw.size());
-            for (Map.Entry<String, Object> entry : raw.entrySet()) {
-                if (!(entry.getValue() instanceof String value)) {
+            var out = new java.util.LinkedHashMap<String, String>(table.size());
+            for (Map.Entry<String, JsonNode> entry : table.entries()) {
+                if (!entry.getValue().isString()) {
                     throw new PyprojectModelException("Invalid type for '" + field.canonicalPath() + "." + entry.getKey() + "': expected string");
                 }
-                out.put(entry.getKey(), value);
+                out.put(entry.getKey(), entry.getValue().getStringValue());
             }
             return Map.copyOf(out);
         }
         return Map.of();
     }
 
-    private static Map<String, List<String>> readStringArrayMap(TomlParseResult parsed, PyprojectConfigSpec.FieldSpec field) {
-        TomlTable table;
-        try {
-            table = parsed.getTable(field.canonicalPath());
-        } catch (TomlInvalidTypeException e) {
-            throw invalidType(field.canonicalPath(), "table", e);
-        }
+    private static Map<String, List<String>> readStringArrayMap(JsonNode parsed, PyprojectConfigSpec.FieldSpec field) {
+        JsonNode table = node(parsed, field.canonicalPath());
         if (table == null) {
             return Map.of();
         }
+        if (!table.isObject()) {
+            throw invalidType(field.canonicalPath(), "table");
+        }
         var out = new java.util.LinkedHashMap<String, List<String>>();
-        for (Map.Entry<String, Object> entry : table.toMap().entrySet()) {
-            if (!(entry.getValue() instanceof TomlArray array)) {
+        for (Map.Entry<String, JsonNode> entry : table.entries()) {
+            JsonNode array = entry.getValue();
+            if (!array.isArray()) {
                 throw new PyprojectModelException("Invalid type for '" + field.canonicalPath() + "." + entry.getKey() + "': expected array");
             }
             var values = new ArrayList<String>();
-            for (Object value : array.toList()) {
-                if (!(value instanceof String string)) {
+            for (JsonNode value : array.values()) {
+                if (!value.isString()) {
                     throw new PyprojectModelException("Invalid type for '" + field.canonicalPath() + "." + entry.getKey() + "': expected string array");
                 }
-                values.add(string);
+                values.add(value.getStringValue());
             }
             out.put(entry.getKey(), List.copyOf(values));
         }
         return Map.copyOf(out);
     }
 
-    private static PyprojectModel.TestResources resolveTestResources(TomlParseResult parsed) {
+    private static PyprojectModel.TestResources resolveTestResources(JsonNode parsed) {
         boolean configured = hasSection(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_SECTION);
         Boolean enabled = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_ENABLED);
         String version = readString(parsed, PyprojectConfigSpec.PYRONAUT_TEST_RESOURCES_VERSION);
@@ -606,12 +596,31 @@ public final class PyprojectModelReader {
         );
     }
 
-    private static boolean hasSection(TomlParseResult parsed, PyprojectConfigSpec.SectionSpec section) {
+    private static boolean hasSection(JsonNode parsed, PyprojectConfigSpec.SectionSpec section) {
         for (String path : section.allPaths()) {
-            if (parsed.getTable(path) != null) {
+            JsonNode value = node(parsed, path);
+            if (value != null) {
+                if (!value.isObject()) {
+                    throw invalidType(section.canonicalPath(), "table");
+                }
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean contains(JsonNode parsed, String path) {
+        return node(parsed, path) != null;
+    }
+
+    private static JsonNode node(JsonNode parsed, String path) {
+        JsonNode current = parsed;
+        for (String segment : path.split("\\.")) {
+            if (current == null || !current.isObject()) {
+                return null;
+            }
+            current = current.get(segment);
+        }
+        return current;
     }
 }

@@ -15,9 +15,10 @@
  */
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.json.tree.JsonNode;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
-import org.tomlj.Toml;
-import org.tomlj.TomlParseResult;
+import io.micronaut.toml.Parser;
+import io.micronaut.toml.TomlStreamReadException;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -26,6 +27,7 @@ import org.w3c.dom.NodeList;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -89,30 +91,41 @@ final class ProxyConfigurationLoader {
         if (!Files.isRegularFile(pyronautSettingsPath)) {
             return Optional.empty();
         }
-        TomlParseResult parseResult;
+        String contents;
         try {
-            parseResult = Toml.parse(pyronautSettingsPath);
+            contents = Files.readString(pyronautSettingsPath);
         } catch (IOException e) {
             throw new PyprojectModelException("Failed reading proxy settings from ~/.pyronaut/settings.toml", e);
         }
-        if (parseResult.hasErrors()) {
-            throw new PyprojectModelException("Invalid proxy settings in ~/.pyronaut/settings.toml: " + parseResult.errors().getFirst().getMessage());
+        JsonNode parseResult;
+        try {
+            parseResult = Parser.parse(contents);
+        } catch (TomlStreamReadException e) {
+            throw new PyprojectModelException("Invalid proxy settings in ~/.pyronaut/settings.toml: " + e.getMessage(), e);
+        } catch (IOException e) {
+            throw new PyprojectModelException("Failed reading proxy settings from ~/.pyronaut/settings.toml", e);
         }
-        var table = parseResult.getTable("proxy");
+        if (!parseResult.isObject()) {
+            throw new PyprojectModelException("Invalid proxy settings in ~/.pyronaut/settings.toml: expected a table");
+        }
+        JsonNode table = parseResult.get("proxy");
         if (table == null) {
             return Optional.empty();
         }
-        String url = trimToNull(table.getString("url"));
-        String nonProxyHosts = trimToNull(table.getString("nonProxyHosts"));
+        if (!table.isObject()) {
+            throw new PyprojectModelException("Invalid proxy settings in ~/.pyronaut/settings.toml: 'proxy' must be a table");
+        }
+        String url = trimToNull(stringValue(table, "url"));
+        String nonProxyHosts = trimToNull(stringValue(table, "nonProxyHosts"));
         if (nonProxyHosts == null) {
-            nonProxyHosts = trimToNull(table.getString("noProxyHosts"));
+            nonProxyHosts = trimToNull(stringValue(table, "noProxyHosts"));
         }
 
         ProxyConfiguration parsed = url == null
             ? null
             : parseProxyUrl(url, nonProxyHosts, SOURCE_PYRONAUT);
 
-        String host = trimToNull(table.getString("host"));
+        String host = trimToNull(stringValue(table, "host"));
         if (host == null && parsed != null) {
             host = parsed.host();
         }
@@ -120,7 +133,7 @@ final class ProxyConfigurationLoader {
             return Optional.empty();
         }
 
-        String protocol = trimToNull(table.getString("protocol"));
+        String protocol = trimToNull(stringValue(table, "protocol"));
         if (protocol == null && parsed != null) {
             protocol = parsed.protocol();
         }
@@ -128,7 +141,7 @@ final class ProxyConfigurationLoader {
             protocol = "http";
         }
 
-        Integer port = toInteger(table.getLong("port"));
+        Integer port = toInteger(longValue(table, "port"));
         if (port == null && parsed != null) {
             port = parsed.port();
         }
@@ -136,12 +149,12 @@ final class ProxyConfigurationLoader {
             port = defaultPort(protocol);
         }
 
-        String username = trimToNull(table.getString("username"));
+        String username = trimToNull(stringValue(table, "username"));
         if (username == null && parsed != null) {
             username = parsed.username();
         }
 
-        String password = trimToNull(table.getString("password"));
+        String password = trimToNull(stringValue(table, "password"));
         if (password == null && parsed != null) {
             password = parsed.password();
         }
@@ -273,6 +286,36 @@ final class ProxyConfigurationLoader {
             return null;
         }
         return value.intValue();
+    }
+
+    private static String stringValue(JsonNode table, String key) {
+        JsonNode value = table.get(key);
+        if (value == null) {
+            return null;
+        }
+        if (!value.isString()) {
+            throw new PyprojectModelException("Invalid proxy setting '" + key + "': expected string");
+        }
+        return value.getStringValue();
+    }
+
+    private static Long longValue(JsonNode table, String key) {
+        JsonNode value = table.get(key);
+        if (value == null) {
+            return null;
+        }
+        Number number = value.isNumber() ? value.getNumberValue() : null;
+        if (!(number instanceof Integer || number instanceof Long || number instanceof BigInteger)) {
+            throw new PyprojectModelException("Invalid proxy setting '" + key + "': expected integer");
+        }
+        BigInteger integer = number instanceof BigInteger bigInteger
+            ? bigInteger
+            : BigInteger.valueOf(number.longValue());
+        if (integer.compareTo(BigInteger.valueOf(Long.MAX_VALUE)) > 0
+            || integer.compareTo(BigInteger.valueOf(Long.MIN_VALUE)) < 0) {
+            throw new PyprojectModelException("Invalid proxy setting '" + key + "': integer out of range");
+        }
+        return integer.longValue();
     }
 
     private static int parsePort(String value, int fallback) {
