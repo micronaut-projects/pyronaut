@@ -1162,7 +1162,6 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
-        jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
         if not _control_panel_requested(Path.cwd().resolve(), args):
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     elif command == "run":
@@ -7112,12 +7111,6 @@ def _pyronaut_dev_native_command_line(
             return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider) if command in {"dev", "run", "test"} else []
-    # The native pyronaut-dev image cannot currently load the reflective
-    # pegdown/parboiled parser used by OpenAPI's ADOC converter. Keep this
-    # optional documentation conversion disabled for native launches until
-    # the converter has native-image support.
-    if command in {"process", "dev", "run", "test"}:
-        jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
     # Coordinates contain ':', so use a delimiter independent of the host
     # path separator when passing the list through a system property.
     provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))

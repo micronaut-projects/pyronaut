@@ -539,6 +539,12 @@ val nativeImageRuntimeArgs = listOf(
     // OpenAPI ADOC loads pegdown AST/parser types reflectively.
     "-H:Preserve=package=org.pegdown.*",
     "-H:Preserve=package=org.parboiled.*",
+    // Parboiled transforms the PegDown parser on the first use. Its ASM
+    // transformer reads the original class files through ClassLoader
+    // resources, which native-image does not retain unless they are included
+    // explicitly.
+    "-H:IncludeResources=org/pegdown/.*\\.class",
+    "-H:IncludeResources=org/parboiled/.*\\.class",
     "-H:IncludeResources=template/.*",
     "-H:IncludeResources=templates/.*",
     "-H:Preserve=package=io.micronaut.test.*",
