@@ -709,6 +709,57 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void fallsBackToToolVersionWhenPyronautBomIsUnavailable() throws Exception {
+        Path repository = tempDir.resolve("repo-pyronaut-bom-unavailable");
+        writeArtifact(repository, "io.micronaut.pyronaut", "micronaut-pyronaut-requests", "9.9.9");
+        writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
+        writeBom(repository, "io.micronaut.platform", "micronaut-platform", "1.0.0", List.of());
+
+        Path project = tempDir.resolve("project-pyronaut-bom-unavailable");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "1.0.0"
+
+            [tool.pyronaut.platform]
+            version = "1.0.0"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.micronaut.pyronaut:micronaut-pyronaut-requests"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        MavenClasspathResolver resolver = new MavenClasspathResolver(
+            new ProxyConfigurationLoader(),
+            System::getenv,
+            () -> "9.9.9"
+        );
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), resolver);
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        List<String> runtimeEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-runtime-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(runtimeEntries.stream().anyMatch(
+            entry -> entry.contains("micronaut-pyronaut-requests") && entry.contains("9.9.9")
+        ));
+    }
+
+    @Test
     void injectsTestResourcesClientOnlyForRunAndTestWhenConfiguredAndEnabled() throws Exception {
         Path repository = tempDir.resolve("repo-test-resources-enabled");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");

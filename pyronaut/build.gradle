@@ -180,6 +180,19 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
             }
         }
 
+        // A previous resolver download can leave a remote provenance marker
+        // beside a locally rebuilt snapshot. Treat the artifacts published by
+        // this build as local so their availability does not depend on the
+        // repository id that happened to populate the Maven cache first.
+        def projectGroupDirectory = new File(targetRepository, project.group.toString().replace('.', '/'))
+        if (projectGroupDirectory.isDirectory()) {
+            fileTree(projectGroupDirectory).matching {
+                include("**/_remote.repositories")
+            }.files
+                .findAll { it.parentFile.name == project.version.toString() }
+                .each { it.delete() }
+        }
+
         requireMavenVersionDir(
             targetRepository,
             "io/micronaut/pyronaut/micronaut-pyronaut-bom/${project.version}",
