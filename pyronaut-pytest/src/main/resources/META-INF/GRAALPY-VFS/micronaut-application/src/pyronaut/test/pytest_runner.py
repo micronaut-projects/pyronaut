@@ -29,6 +29,21 @@ def setup_virtual_filesystem():
     if test_python_dir.exists():
         sys.path.insert(0, str(test_python_dir))
 
+    # Embedded GraalPy does not automatically add a project's virtualenv
+    # site-packages when the context is created with python.Executable.
+    virtualenv = os.environ.get("VIRTUAL_ENV")
+    if virtualenv:
+        virtualenv_path = Path(virtualenv)
+        site_packages = [
+            virtualenv_path / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages",
+            virtualenv_path / "Lib" / "site-packages",
+        ]
+        for site_packages_dir in site_packages:
+            # The application VFS cannot stat host directories, but GraalPy can
+            # still import from an explicitly added host site-packages path.
+            if str(site_packages_dir) not in sys.path:
+                sys.path.insert(0, str(site_packages_dir))
+
 
 def run_pytest(test_files: List[str], listener: Any, junit_xml: Optional[str] = None):
     """
@@ -39,6 +54,7 @@ def run_pytest(test_files: List[str], listener: Any, junit_xml: Optional[str] = 
         listener: Java object implementing PytestTestListener interface
     """
     try:
+        setup_virtual_filesystem()
         # Import pytest here to ensure virtual filesystem is set up
         import pytest
         from pyronaut.test import create_plugin

@@ -101,6 +101,29 @@ class PytestMicronautExtensionTest {
     }
 
     @Test
+    void pytestRunnerLoadsPytestFromVirtualEnvSitePackages() throws Exception {
+        String virtualEnv = System.getenv("VIRTUAL_ENV");
+        assumeTrue(virtualEnv != null && !virtualEnv.isBlank());
+
+        PythonContextRuntime.setReuseContext(false);
+        PythonContextRuntime.resetContext();
+        try (Context context = GraalPyContextFactory.bootstrapReusableContext(
+            PytestMicronautExtensionTest.class.getClassLoader()
+        )) {
+            Value version = context.eval("python", """
+                from pyronaut.test.pytest_runner import setup_virtual_filesystem
+                setup_virtual_filesystem()
+                import pytest
+                pytest.__version__
+                """);
+            assertTrue(version.isString());
+        } finally {
+            PythonContextRuntime.setReuseContext(false);
+            PythonContextRuntime.resetContext();
+        }
+    }
+
+    @Test
     void applicationContextClassLoaderFallsBackToThreadContextClassLoader() {
         ClassLoader threadClassLoader = new ClassLoader() {
         };
