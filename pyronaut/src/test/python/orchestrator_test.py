@@ -1187,7 +1187,6 @@ class OrchestratorTest(unittest.TestCase):
                 f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}",
                 "-Dmicronaut.environments=dev",
                 "-Dpyronaut.dev.direct.command=dev",
-                "-Dmicronaut.openapi.adoc.enabled=false",
                 "-Dmicronaut.control-panel.enabled=false",
                 "-Dmicronaut.graalvm.imagesingletons.enabled=false",
                 "-Dpyronaut.dev.direct.restartable=true",
@@ -1422,7 +1421,7 @@ additional-resources = ["views"]
         self.assertEqual(
             [
                 ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"],
-                [str(native_dev), "-Dmicronaut.openapi.adoc.enabled=false", "process", "--project-dir", str(project_dir), "--pass", "main"],
+                [str(native_dev), "process", "--project-dir", str(project_dir), "--pass", "main"],
             ],
             executed[:2],
         )
@@ -1727,7 +1726,7 @@ type = "native"
         self.assertNotIn(str(test_classes_dir.resolve()), entries)
         self.assertIsNotNone(command_line)
         assert command_line is not None
-        self.assertIn("-Dmicronaut.openapi.adoc.enabled=false", command_line)
+        self.assertNotIn("-Dmicronaut.openapi.adoc.enabled=false", command_line)
         test_classpath = command_line[command_line.index("--test-classpath") + 1].split(os.pathsep)
         self.assertEqual(
             {*dependencies, str(compiler_jar.resolve())},
@@ -1834,7 +1833,7 @@ type = "native"
             with self.assertRaisesRegex(RuntimeError, "Invalid native compiler classpath descriptor"):
                 cli._native_launcher_compile_classpath_entries(str(native_dev / "pyronaut-dev"))
 
-    def test_native_direct_dev_disables_openapi_adoc_conversion(self):
+    def test_native_direct_dev_keeps_openapi_adoc_conversion_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
@@ -1846,7 +1845,7 @@ type = "native"
                 args=["app.py"],
             )
 
-        self.assertIn("-Dmicronaut.openapi.adoc.enabled=false", jvm_args)
+        self.assertNotIn("-Dmicronaut.openapi.adoc.enabled=false", jvm_args)
 
     def test_direct_source_dev_preserves_user_environment_property(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1926,7 +1925,7 @@ type = "native"
         self.assertEqual(
             [
                 ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "run"],
-                [str(native_dev), "-Dmicronaut.openapi.adoc.enabled=false", "process", "--project-dir", str(project_dir), "--pass", "main"],
+                [str(native_dev), "process", "--project-dir", str(project_dir), "--pass", "main"],
             ],
             executed[:2],
         )
@@ -2177,7 +2176,7 @@ test-resources = "test-resources"
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Dmicronaut.openapi.adoc.enabled=false", "process", "--project-dir", str(project_dir)]],
+            [[str(native_dev), "process", "--project-dir", str(project_dir)]],
             executed,
         )
 
