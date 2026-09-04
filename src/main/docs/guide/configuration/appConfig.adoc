@@ -27,6 +27,34 @@ enabled = true
 sensitive = false
 ----
 
+== Executor Defaults
+
+Pyronaut supplies the following low-priority defaults for Micronaut executors:
+This follows the https://github.com/micronaut-projects/micronaut-core/commit/1edbbb9f2d1627dedfd5a95d0a7eb7fd543f4029[Micronaut Core Python threading guidance].
+
+[cols="2,1,4", options="header"]
+|===
+|Property |Default |Why Pyronaut changes the default
+
+|`micronaut.executors.io.type`
+|`cached`
+|Uses a cached platform-thread executor for I/O work that may execute Python code.
+
+|`micronaut.executors.io.virtual`
+|`false`
+|GraalPy does not support executing Python code on virtual threads, so the I/O executor must use platform threads.
+
+|`micronaut.executors.blocking.type`
+|`cached`
+|Uses a cached platform-thread executor for blocking work that may execute Python code.
+
+|`micronaut.executors.blocking.virtual`
+|`false`
+|GraalPy does not support executing Python code on virtual threads, so the blocking executor must use platform threads.
+|===
+
+These defaults are applied only when the application does not provide a value. Normal application configuration, including `application.toml` or `application.properties`, can override them, and partial configuration leaves the unspecified defaults in place.
+
 Environment-specific files use the Micronaut naming convention:
 
 [source,text]
