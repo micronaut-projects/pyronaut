@@ -8,6 +8,7 @@ gettingStarted:
 how: How Pyronaut Works  
 projectStructure:
   title: Pyronaut Toolchain & Project Layout
+usingPackagesJavaLibraries: Using Python Packages & Java Libraries
 configuration:
   title: Configuration & Build Setup
   mavenGradle: Using Maven and Gradle Projects
