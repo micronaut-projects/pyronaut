@@ -25,8 +25,6 @@ import org.slf4j.helpers.MessageFormatter;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
-import static io.micronaut.context.python.GraalPyRuntimeUtil.PYTHON;
-
 /**
  * SLF4J Logger implementation that delegates to Python's logging module.
  * This logger is only used when a GraalPy context is available.
@@ -47,7 +45,7 @@ final class PythonLogger implements Logger {
     PythonLogger(String name) {
         this.name = name;
         this.pythonLogger = PythonContextRuntime.getContext()
-            .eval(PYTHON, "import logging; logging.getLogger('" + name + "')");
+            .eval(PythonContextRuntime.PYTHON, "import logging; logging.getLogger('" + name + "')");
         this.debugMember = pythonLogger.getMember("debug");
         this.infoMember = pythonLogger.getMember("info");
         this.warningMember = pythonLogger.getMember("warning");

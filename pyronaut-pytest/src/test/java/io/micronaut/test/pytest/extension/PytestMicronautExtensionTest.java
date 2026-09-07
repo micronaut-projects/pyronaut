@@ -81,9 +81,7 @@ class PytestMicronautExtensionTest {
     }
 
     @Test
-    void applicationContextClassLoaderPrefersGraalPyContextClassLoader() {
-        ClassLoader threadClassLoader = new ClassLoader() {
-        };
+    void applicationContextClassLoaderUsesThreadContextClassLoader() {
         ClassLoader applicationClassLoader = new ClassLoader() {
         };
         Thread thread = Thread.currentThread();
@@ -91,8 +89,7 @@ class PytestMicronautExtensionTest {
         try {
             PythonContextRuntime.setReuseContext(false);
             PythonContextRuntime.resetContext();
-            thread.setContextClassLoader(threadClassLoader);
-            PythonContextRuntime.setContext(null, applicationClassLoader);
+            thread.setContextClassLoader(applicationClassLoader);
 
             assertSame(applicationClassLoader, PytestMicronautExtension.resolveApplicationClassLoader());
         } finally {

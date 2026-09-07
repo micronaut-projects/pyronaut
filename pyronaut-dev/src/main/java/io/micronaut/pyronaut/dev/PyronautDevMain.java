@@ -37,7 +37,7 @@ import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceL
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
-import io.micronaut.python.processing.visitor.ScriptDef;
+import io.micronaut.python.processing.model.ScriptDef;
 import io.micronaut.pyronaut.testresources.DirectSourceTestResourcesSession;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
 import io.micronaut.pyronaut.validateconfig.PyronautValidateConfigMain;
@@ -857,15 +857,23 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static DirectPythonContextState detachPythonContext() {
-        Context context = PythonContextRuntime.isInitialized() ? PythonContextRuntime.getContext() : null;
-        ClassLoader classLoader = PythonContextRuntime.getContextClassLoader();
+        boolean initialized = PythonContextRuntime.isInitialized();
+        Context context = initialized ? PythonContextRuntime.getContext() : null;
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         boolean reuse = PythonContextRuntime.isReuseContext();
         PythonContextRuntime.setReuseContext(false);
         PythonContextRuntime.resetContext();
-        return new DirectPythonContextState(context, classLoader, reuse);
+        if (context != null) {
+            try {
+                context.close(true);
+            } catch (RuntimeException ignored) {
+                // The context may already have been closed by its owning application.
+            }
+        }
+        return new DirectPythonContextState(initialized, classLoader, reuse);
     }
 
-    private static void restorePythonContext(DirectPythonContextState previous) {
+    private static void restorePythonContext(DirectPythonContextState previous) throws IOException {
         if (PythonContextRuntime.isInitialized()) {
             Context directContext = PythonContextRuntime.getContext();
             PythonContextRuntime.setReuseContext(false);
@@ -877,8 +885,15 @@ public final class PyronautDevMain implements Callable<Integer> {
                 PythonContextRuntime.resetContext();
             }
         }
-        if (previous.context() != null) {
-            PythonContextRuntime.setContext(previous.context(), previous.classLoader());
+        if (previous.initialized()) {
+            ClassLoader classLoader = previous.classLoader() == null
+                ? PyronautDevMain.class.getClassLoader()
+                : previous.classLoader();
+            GraalPyContextFactory.bootstrapReusableContext(
+                classLoader,
+                Map.of(),
+                GraalPyContextFactory.APPLICATION_MAIN
+            );
         }
         PythonContextRuntime.setReuseContext(previous.reuse());
     }
@@ -1592,7 +1607,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         return false;
     }
 
-    private record DirectPythonContextState(Context context, ClassLoader classLoader, boolean reuse) {
+    private record DirectPythonContextState(boolean initialized, ClassLoader classLoader, boolean reuse) {
     }
 
     private static final class ConsoleTestExecutionListener implements TestExecutionListener {

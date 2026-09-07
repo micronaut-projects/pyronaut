@@ -18,9 +18,6 @@ package io.micronaut.pyronaut.logback;
 import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.context.python.GraalPyContextFactory;
 import org.graalvm.polyglot.Context;
-import org.graalvm.polyglot.HostAccess;
-import org.graalvm.python.embedding.GraalPyResources;
-import org.graalvm.python.embedding.VirtualFileSystem;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,27 +46,18 @@ class LogbackConfigurerGraalPyTest {
     private Context graalContext;
 
     @BeforeEach
-    void setupGraalPyContext() {
-        // Create GraalPy context with VFS resources
-        Context.Builder builder = GraalPyResources.contextBuilder(VirtualFileSystem.newBuilder()
-                        .resourceDirectory(GraalPyContextFactory.APPLICATION_PATH)
-                        .resourceLoadingClass(LogbackConfigurerGraalPyTest.class)
-                        .build())
-                .allowHostAccess(HostAccess.ALL)
-                .allowHostClassLookup(name -> true);
-
-        this.graalContext = builder.build();
-
-        // Set the context in PythonContextRuntime
-        PythonContextRuntime.setContext(graalContext);
-        PythonContextRuntime.setReuseContext(true);
+    void setupGraalPyContext() throws Exception {
+        this.graalContext = GraalPyContextFactory.bootstrapReusableContext(
+            LogbackConfigurerGraalPyTest.class.getClassLoader()
+        );
     }
 
     @AfterEach
     void cleanup() {
         if (graalContext != null) {
+            PythonContextRuntime.setReuseContext(false);
+            PythonContextRuntime.resetContext();
             graalContext.close();
-            PythonContextRuntime.setContext(null);
         }
     }
 
