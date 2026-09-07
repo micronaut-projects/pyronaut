@@ -69,6 +69,34 @@ class PyronautNativeImageBuilderTest {
     }
 
     @Test
+    void preservesNettyLoggingForRuntimeHttpClient() throws Exception {
+        Path classpathEntry = tempDir.resolve("netty-handler.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {
+            output.putNextEntry(new ZipEntry("io/netty/handler/logging/LogLevel.class"));
+            output.write(0);
+            output.closeEntry();
+        }
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=io.netty.handler.logging.*"));
+    }
+
+    @Test
+    void preservesCoreResourceResolverForPythonHostCalls() throws Exception {
+        Path classpathEntry = tempDir.resolve("micronaut-core.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {
+            output.putNextEntry(new ZipEntry("io/micronaut/core/io/ResourceResolver.class"));
+            output.write(0);
+            output.closeEntry();
+        }
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.io.*"));
+    }
+
+    @Test
     void addsPythonClasspathAndTruffleAccessOnlyWhenPythonIsEnabled() throws Exception {
         Path javaClasspathEntry = tempDir.resolve("runtime.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(javaClasspathEntry))) {

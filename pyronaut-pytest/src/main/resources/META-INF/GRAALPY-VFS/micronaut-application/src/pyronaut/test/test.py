@@ -272,9 +272,9 @@ class ApplicationContextWrapper:
             if findBean is not None:
                 opt = findBean(bean_class)
                 present = opt is not None and (not hasattr(opt, 'isPresent') or opt.isPresent())
-                if not present:
-                    raise KeyError(f"Key '{lookup_key}' not found in context")
-                return opt.get() if hasattr(opt, 'get') else opt
+                if present:
+                    return opt.get() if hasattr(opt, 'get') else opt
+                return self.java_ctx.getBean(bean_class)
             return self.java_ctx.getBean(bean_class)
         except BaseException:
             raise KeyError(f"Key '{lookup_key}' not found in context")

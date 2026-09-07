@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -133,6 +134,28 @@ class PytestFunctionInvokerTest {
 
             String lookupKey = context.getBindings("python").getMember("lookup_key").asString();
             assertEquals("java.lang.String", lookupKey);
+        }
+    }
+
+    @Test
+    void applicationContextWrapperFallsBackToGetBeanWhenFindBeanIsEmpty() throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String testSupport = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
+            context.getBindings("python").putMember("lookupContext", new EmptyLookupContext());
+
+            context.eval("python", """
+                wrapper = ApplicationContextWrapper(lookupContext)
+                bean = wrapper["java.lang.String"]
+                """);
+
+            assertEquals("bean", context.getBindings("python").getMember("bean").asString());
         }
     }
 
@@ -285,6 +308,16 @@ class PytestFunctionInvokerTest {
     public static final class FailingContext {
         public void stop() {
             throw new IllegalStateException("boom");
+        }
+    }
+
+    public static final class EmptyLookupContext {
+        public Optional<Object> findBean(Class<?> type) {
+            return Optional.empty();
+        }
+
+        public String getBean(Class<?> type) {
+            return "bean";
         }
     }
 }
