@@ -109,6 +109,10 @@ def _compact_assertion_failure(result) -> str:
 def _is_foreign_exception(result) -> bool:
     exception_class = getattr(result, "exceptionClass", None) or ""
     stack = getattr(result, "stack", None) or ""
+    if (exception_class.startswith("java.")
+            or exception_class.startswith("javax.")
+            or exception_class.startswith("io.micronaut.")):
+        return False
     return (
         "ForeignException" in exception_class
         or "PolyglotException" in exception_class
@@ -121,6 +125,11 @@ def _format_call_failure(result) -> str:
     message = getattr(result, "message", None)
     if _is_foreign_exception(result):
         return message or "Java exception raised during pytest execution"
+    exception_class = getattr(result, "exceptionClass", None) or ""
+    if message and (exception_class.startswith("java.")
+                    or exception_class.startswith("javax.")
+                    or exception_class.startswith("io.micronaut.")):
+        return f"{exception_class}: {message}"
     return _compact_assertion_failure(result)
 
 

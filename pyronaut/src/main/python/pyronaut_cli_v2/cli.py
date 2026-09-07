@@ -1162,7 +1162,6 @@ def _build_direct_source_native_jvm_args(
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     if command == "dev":
         jvm_args.append("-Dpyronaut.dev.direct.command=dev")
-        jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
         if not _control_panel_requested(Path.cwd().resolve(), args):
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
     elif command == "run":
@@ -1863,13 +1862,38 @@ def _native_launcher_compile_classpath_entries(launcher_executable: str | None) 
         ):
             return []
         entries = _native_compile_descriptor_entries(launcher_executable)
-        repository = _setup_local_repository(())
-        resolved = [
-            repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6])
-            for entry in entries
-            for fields in (entry.split("\t"),)
-        ]
-        if all(path.is_file() for path in resolved):
+        repositories = []
+        for repository in (_setup_local_repository(()), Path.cwd() / ".pyronaut-m2", Path.home() / ".m2" / "repository"):
+            repository = repository.resolve()
+            if repository not in repositories:
+                repositories.append(repository)
+        executable_path = Path(launcher_executable).resolve()
+        library_roots = []
+        for library_root in (
+            executable_path.parent / "lib",
+            executable_path.parent.parent / "lib",
+            executable_path.parents[2] / "install" / f"micronaut-{image_name}" / "lib",
+        ):
+            library_root = library_root.resolve()
+            if library_root not in library_roots:
+                library_roots.append(library_root)
+        resolved = []
+        for entry in entries:
+            fields = entry.split("\t")
+            path = next(
+                (
+                    repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6])
+                    for repository in repositories
+                    if repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6]).is_file()
+                ),
+                None,
+            )
+            if path is None:
+                path = next((root / fields[6] for root in library_roots if (root / fields[6]).is_file()), None)
+            if path is None:
+                raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+            resolved.append(path)
+        if resolved:
             return [str(path) for path in resolved]
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
     try:
@@ -7112,12 +7136,6 @@ def _pyronaut_dev_native_command_line(
             return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider) if command in {"dev", "run", "test"} else []
-    # The native pyronaut-dev image cannot currently load the reflective
-    # pegdown/parboiled parser used by OpenAPI's ADOC converter. Keep this
-    # optional documentation conversion disabled for native launches until
-    # the converter has native-image support.
-    if command in {"dev", "run", "test"}:
-        jvm_args.append("-Dmicronaut.openapi.adoc.enabled=false")
     # Coordinates contain ':', so use a delimiter independent of the host
     # path separator when passing the list through a system property.
     provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))

@@ -88,13 +88,13 @@ prerequisite: pytest in GraalPy](#test-prerequisite-pytest-in-graalpy).
 ## Getting started from a source checkout
 
 These instructions build the Pyronaut CLI from this repository. The tested
-project setup targets JDK 25, GraalVM 25.2, and GraalPy `3.12.8`
-(`graalpy3.12-25.2.4`). Use a GraalVM JDK 25 for native-image tasks; the
-current CI setup uses GraalVM 25.2.
+project setup targets JDK 25, GraalVM 25.3, and GraalPy `3.13.14`
+(`graalpy3.13-25.3.4.1`). Use a GraalVM JDK 25 for native-image tasks; the
+current CI setup uses GraalVM 25.3.
 
 ### 1. Install the prerequisites
 
-Install a GraalVM JDK 25, such as GraalVM 25.2, from the
+Install a GraalVM JDK 25, such as GraalVM 25.3, from the
 [GraalVM downloads](https://www.graalvm.org/downloads/). Choose the bundle
 matching your machine's architecture. On macOS, set `JAVA_HOME` to the JDK's
 `Contents/Home` directory:
@@ -120,17 +120,17 @@ echo 'eval "$(pyenv init - zsh)"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Install GraalPy `3.12.8` (`graalpy3.12-25.2.4`) with `pyenv`:
+Install GraalPy `3.13.14` (`graalpy3.13-25.3.4.1`) with `pyenv`:
 
 ```bash
 pyenv install --list | grep graalpy
-pyenv install --skip-existing graalpy3.12-25.2.4
-pyenv shell graalpy3.12-25.2.4
+pyenv install --skip-existing graalpy3.13-25.3.4.1
+pyenv shell graalpy3.13-25.3.4.1
 
 python --version
 ```
 
-The output should identify GraalPy `3.12.8` from Oracle GraalVM Native 25.2.4.
+The output should identify GraalPy `3.13.14` from Oracle GraalVM Native 25.3.4.1.
 
 ### 2. Build the Pyronaut CLI
 
@@ -140,7 +140,7 @@ wheel task:
 ```bash
 git clone https://github.com/micronaut-projects/pyronaut.git
 cd pyronaut
-export PYENV_VERSION=graalpy3.12-25.2.4
+export PYENV_VERSION=graalpy3.13-25.3.4.1
 ```
 
 Build the SDK wheel:
@@ -184,7 +184,7 @@ The help command should print the CLI usage. A snapshot wheel currently reports:
 Pyronaut: 0.0.1.dev0
 Micronaut Core: 5.2.0-SNAPSHOT
 Micronaut Platform: 5.1.0
-GraalPy: 25.2.4
+GraalPy: 25.3.4.1
 Native Image JDK: 25
 ```
 

@@ -65,6 +65,23 @@ final class PyronautDevNativeSmokeTest {
     }
 
     @Test
+    void nativeBinaryIncludesOpenApiParserClassResources() throws Exception {
+        String binary = System.getProperty("pyronaut.dev.native.binary");
+        assumeTrue(binary != null && !binary.isBlank(), "native binary not configured");
+
+        Process process = new ProcessBuilder(
+            binary,
+            "-Dpyronaut.dev.verify-system-resource=org/pegdown/Parser.class",
+            "--help"
+        )
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .start();
+        assertTrue(process.waitFor(30, TimeUnit.SECONDS));
+        assertEquals(0, process.exitValue());
+    }
+
+    @Test
     void nativeInstallUsesBuildTimeAnnotationProcessorOptions(@TempDir Path tempDir) throws Exception {
         String binary = System.getProperty("pyronaut.dev.native.binary");
         assumeTrue(binary != null && !binary.isBlank(), "native binary not configured");

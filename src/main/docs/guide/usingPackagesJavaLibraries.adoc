@@ -1,0 +1,101 @@
+= Using Python Packages & Java Libraries
+
+Pyronaut applications can use both Python packages and Java libraries.
+Install Python packages into a GraalPy virtual environment and declare Java libraries as Maven coordinates in `pyproject.toml`.
+
+== Create a GraalPy Virtual Environment
+
+Install https://github.com/pyenv/pyenv#installation[pyenv], then install and select the GraalPy version currently used by Pyronaut:
+
+[source,bash]
+----
+pyenv install --skip-existing graalpy3.13-25.3.4.1
+pyenv shell graalpy3.13-25.3.4.1
+python --version
+----
+
+From the project directory, create and activate a GraalPy virtual environment:
+
+[source,bash]
+----
+graalpy -m venv .venv
+source .venv/bin/activate
+python -m pip install pytest
+python -m pytest --version
+----
+
+Use the `pip` installed by the GraalPy virtual environment.
+It can apply GraalPy-specific package patches and select compatible distributions.
+
+When a project contains `.venv`, Pyronaut automatically uses its Python executable and installed packages when launching the application and tests.
+The virtual environment must be created with GraalPy; packages from a CPython-created virtual environment cannot be provided to Pyronaut's embedded GraalPy runtime.
+
+Pyronaut does not install Python packages when you run `pyronaut install`.
+You can also record Python dependencies in the standard `[project].dependencies` table in `pyproject.toml`; see <<configuration.dependencies,Installing Python & Java Dependencies>>.
+
+== Python Package Compatibility
+
+WARNING: As of September 3, 2026, not every Python package or package version is compatible with GraalPy or every Pyronaut execution model. Test the exact package versions and deployment mode used by your application.
+
+Support for packages containing native extensions remains experimental.
+Native wheels built for CPython are not binary-compatible with GraalPy, so native extensions require a GraalPy-specific wheel or must be built with GraalPy.
+See the https://www.graalvm.org/python/compatibility/[GraalPy package compatibility checker] and https://www.graalvm.org/reference-manual/graalpy/[GraalPy reference documentation] for current compatibility and native-extension guidance.
+
+Pydantic 2 depends on `pydantic-core`, which is partially written in Rust and exposed to Python as native code.
+Pydantic may work in tested single-threaded scenarios, but it does not work reliably in Pyronaut's multithreaded scenarios involving native code and should not be considered generally compatible with Pyronaut.
+Compatibility-checker results describe the configurations covered by those tests; they do not establish compatibility across every threading or deployment model.
+
+Many common Python library use cases have high-performance JVM alternatives that integrate directly with Micronaut:
+
+|===
+|Python library |JVM alternative
+
+|Pydantic
+|https://micronaut-projects.github.io/micronaut-validation/latest/guide/[Micronaut Validation]
+
+|SQLAlchemy
+|https://micronaut-projects.github.io/micronaut-data/latest/guide/[Micronaut Data]
+
+|Jinja
+|https://github.com/HubSpot/jinjava[Jinjava]
+|===
+
+== Use a Java Library from Python
+
+Declare Java dependencies by scope under `[tool.pyronaut.dependencies]`.
+For example, add Apache Commons Lang to the runtime classpath:
+
+[source,toml]
+----
+[tool.pyronaut]
+repositories = ["mavenCentral"]
+
+[tool.pyronaut.dependencies]
+runtime = [
+  "org.apache.commons:commons-lang3:3.20.0"
+]
+----
+
+Resolve the dependency and refresh the generated Pyronaut project state:
+
+[source,bash]
+----
+pyronaut install
+----
+
+The library is now available through a normal Python import. Pyronaut resolves the imported Java type from the configured classpath:
+
+[source,python]
+----
+from org.apache.commons.lang3 import StringUtils
+
+message = StringUtils.capitalize("hello from java")
+
+print(message)
+----
+
+Use `group:artifact:version` coordinates for libraries such as Apache Commons Lang that are not managed by the configured Micronaut BOMs.
+Micronaut dependencies managed by the Micronaut platform, Micronaut core, or Pyronaut BOMs can use versionless `group:artifact` coordinates.
+
+For the complete dependency scopes and install options, see <<configuration.dependencies,Installing Python & Java Dependencies>>.
+See also <<configuration.pyproject,Configuring pyproject.toml>>, <<configuration.mavenRepositories,Configuring Maven Repositories>>, and <<configuration.directSourceDeclarations,Declaring Direct Source Dependencies>>.

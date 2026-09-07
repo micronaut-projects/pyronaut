@@ -751,6 +751,10 @@ final class MavenClasspathResolver {
     }
 
     private static String resolvePyronautVersion() {
+        String configuredVersion = normalizedVersion(System.getProperty("pyronaut.version"));
+        if (configuredVersion != null) {
+            return configuredVersion;
+        }
         try (InputStream resource = MavenClasspathResolver.class.getResourceAsStream(PYRONAUT_VERSION_RESOURCE)) {
             return resolvePyronautVersion(MavenClasspathResolver.class.getPackage(), resource);
         } catch (IOException e) {
@@ -942,49 +946,49 @@ final class MavenClasspathResolver {
                     "Versionless Pyronaut dependencies require the running Pyronaut tool version, but it is unavailable"
                 );
             }
-            addManagedDependenciesFromBom(
-                new DefaultArtifact(PYRONAUT_GROUP, PYRONAUT_BOM_ARTIFACT, "", "pom", toolVersion),
-                repositories,
-                session,
-                visitedBoms,
-                managed
-            );
-            // The bundled installer BOM only contains the Pyronaut modules that
-            // are shipped with the launcher (for example install and logback).
-            // Test-only modules such as pyronaut-pytest are resolved from the
-            // configured repository and still need the running tool version
-            // when they are declared without one.
-            addVersionlessPyronautDependencies(model, toolVersion, managed);
+            try {
+                addManagedDependenciesFromBom(
+                    new DefaultArtifact(PYRONAUT_GROUP, PYRONAUT_BOM_ARTIFACT, "", "pom", toolVersion),
+                    repositories,
+                    session,
+                    visitedBoms,
+                    managed
+                );
+            } catch (PyprojectModelException ignored) {
+                // Every Pyronaut module is published with the tool version. The
+                // BOM is useful for custom management, but a source checkout or
+                // an incomplete local repository must not make direct-source
+                // versionless Pyronaut dependencies unusable.
+            }
+            addFallbackPyronautManagedDependencies(model, toolVersion, managed);
         }
         return List.copyOf(managed.values());
     }
 
-    private static void addVersionlessPyronautDependencies(PyprojectModel model,
-                                                            String toolVersion,
-                                                            Map<String, Dependency> managedDependencies) {
+    private static void addFallbackPyronautManagedDependencies(PyprojectModel model,
+                                                               String toolVersion,
+                                                               Map<String, Dependency> managedDependencies) {
         PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
-        for (List<String> coordinates : List.of(
+        List<List<String>> scopes = List.of(
             dependencies.runtime(),
             dependencies.developmentRuntime(),
             dependencies.build(),
             dependencies.test()
-        )) {
+        );
+        for (List<String> coordinates : scopes) {
             for (String coordinate : coordinates) {
                 if (coordinate == null) {
                     continue;
                 }
                 String[] parts = coordinate.trim().split(":");
-                if (parts.length == 2 && PYRONAUT_GROUP.equals(parts[0])) {
-                    managedDependencies.putIfAbsent(
-                        parts[0] + ":" + parts[1],
-                        new Dependency(
-                            new DefaultArtifact(parts[0], parts[1], "jar", toolVersion),
-                            JavaScopes.RUNTIME,
-                            false,
-                            List.of()
-                        )
-                    );
+                if (parts.length != 2 || !PYRONAUT_GROUP.equals(parts[0])) {
+                    continue;
                 }
+                Artifact artifact = new DefaultArtifact(PYRONAUT_GROUP, parts[1], "jar", toolVersion);
+                managedDependencies.putIfAbsent(
+                    managedDependencyKey(artifact),
+                    new Dependency(artifact, JavaScopes.RUNTIME, false, List.of())
+                );
             }
         }
     }
@@ -1008,7 +1012,6 @@ final class MavenClasspathResolver {
         } catch (ArtifactDescriptorException e) {
             throw new PyprojectModelException("Failed to read managed dependency BOM: " + bomArtifact, e);
         }
-
         for (Dependency dependency : result.getManagedDependencies()) {
             Artifact artifact = dependency.getArtifact();
             if (artifact == null) {
@@ -1256,14 +1259,12 @@ final class MavenClasspathResolver {
         return List.copyOf(resolved.values());
     }
 
-    private static List<String> repositoriesForModel(PyprojectModel model) {
+    private List<String> repositoriesForModel(PyprojectModel model) {
         if (model.pyronaut() == null) {
             return List.of();
         }
         List<String> repositories = model.pyronaut().repositories() == null ? List.of() : model.pyronaut().repositories();
-        if (model.pyronaut().coreVersion() == null
-            || !model.pyronaut().coreVersion().endsWith("-SNAPSHOT")
-            || !snapshotRepositoryEnabled()) {
+        if (!snapshotRepositoryRequired(model) || !snapshotRepositoryEnabled()) {
             return repositories;
         }
         List<String> withSnapshots = new ArrayList<>(repositories.size() + 2);
@@ -1271,10 +1272,25 @@ final class MavenClasspathResolver {
         boolean localConfigured = repositories.stream()
             .anyMatch(repository -> repository != null && "mavenlocal".equals(repository.trim().toLowerCase(Locale.ROOT)));
         if (!localConfigured) {
-            withSnapshots.add("mavenLocal");
+            withSnapshots.add(resolveLocalMavenRepository().toString());
         }
         withSnapshots.add(SONATYPE_SNAPSHOTS_REPOSITORY);
         return withSnapshots;
+    }
+
+    private boolean snapshotRepositoryRequired(PyprojectModel model) {
+        String coreVersion = normalizedVersion(model.pyronaut().coreVersion());
+        if (coreVersion != null && coreVersion.endsWith("-SNAPSHOT")) {
+            return true;
+        }
+
+        // Direct-source projects may use a released Micronaut platform while
+        // their versionless Pyronaut dependencies are managed by the
+        // snapshot BOM belonging to the running Pyronaut snapshot build.
+        String pyronautVersion = requiresPyronautManagedDependencies(model)
+            ? normalizedVersion(pyronautVersionProvider.get())
+            : null;
+        return pyronautVersion != null && pyronautVersion.endsWith("-SNAPSHOT");
     }
 
     /**

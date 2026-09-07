@@ -24,7 +24,7 @@ dependencies {
     }
     implementation(libs.micronaut.test.resources.build.tools)
     implementation(libs.micronaut.test.resources.core)
-    implementation(libs.tomlj)
+    implementation(libs.micronaut.toml)
     implementation(libs.javaparser.core)
 
     implementation(project(":micronaut-pyronaut-logback"))

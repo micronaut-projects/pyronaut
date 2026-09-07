@@ -4,7 +4,7 @@ plugins {
 
 dependencies {
     implementation(mn.micronaut.context)
-    implementation(libs.tomlj)
+    implementation(libs.micronaut.toml)
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

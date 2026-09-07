@@ -4,20 +4,19 @@ micronaut-picocli = "6.1.0"
 micronaut-logging = "2.1.0"
 micronaut-views = "6.2.0"
 micronaut-validation = "5.1.0"
-tomlj="1.1.1"
 annotations = "26.1.0"
 commons-codec = "1.22.1"
 icu4j = "78.3"
-graalvm-icu4j = "25.2.4"
+graalvm-icu4j = "25.3.4.1"
 gradle-tapi = "9.2.1"
 tamboui = "0.4.0"
-maven-resolver = "2.0.21"
+maven-resolver = "2.0.22"
 maven = "3.9.16"
 slf4j = "2.0.18"
 micronaut-test-resources = "4.1.0"
 micronaut-json-schema = "2.2.0"
 micronaut-toml = "3.1.0"
-graalpy = "25.2.4"
+graalpy = "25.3.4.1"
 micronaut-control-panel = "2.1.0"
 docker-java = "3.7.1"
 micronaut-test = "5.1.1"
@@ -35,7 +34,6 @@ micronaut-picocli = { module = 'io.micronaut.picocli:micronaut-picocli-bom', ver
 micronaut-test = { module = "io.micronaut.test:micronaut-test-bom", version.ref = "micronaut-test" }
 micronaut-openapi = { module = "io.micronaut.openapi:micronaut-openapi-bom", version.ref = "micronaut-openapi" }
 
-tomlj = { module = "org.tomlj:tomlj", version.ref="tomlj"}
 annotations = { module = "org.jetbrains:annotations", version.ref = "annotations" }
 commons-codec = { module = "commons-codec:commons-codec", version.ref = "commons-codec" }
 icu4j = { module = "com.ibm.icu:icu4j", version.ref = "icu4j" }

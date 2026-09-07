@@ -2,6 +2,7 @@ import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask
 import org.gradle.api.tasks.bundling.Compression
 import org.gradle.api.tasks.bundling.Tar
 import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.testing.Test
 import java.io.File
 import java.net.URLClassLoader
 import java.util.ServiceLoader
@@ -141,6 +142,14 @@ dependencies {
     implementation(mnTest.junit.jupiter.engine)
     implementation(mnTest.junit.platform.launcher)
 
+}
+
+tasks.named<Test>("test") {
+    // Direct-source tutorial tests launch a child JVM from the exploded test
+    // classpath, so package implementation metadata is not available there.
+    // Pass the Gradle project version explicitly for snapshot BOM resolution.
+    systemProperty("pyronaut.version", project.version.toString())
+    dependsOn(project(":micronaut-pyronaut").tasks.named("prepareSdkMavenLocalEnvironment"))
 }
 
 val bundleControlPanelJars by tasks.registering(Sync::class) {
@@ -530,6 +539,12 @@ val nativeImageRuntimeArgs = listOf(
     // OpenAPI ADOC loads pegdown AST/parser types reflectively.
     "-H:Preserve=package=org.pegdown.*",
     "-H:Preserve=package=org.parboiled.*",
+    // Parboiled transforms the PegDown parser on the first use. Its ASM
+    // transformer reads the original class files through ClassLoader
+    // resources, which native-image does not retain unless they are included
+    // explicitly.
+    "-H:IncludeResources=org/pegdown/.*\\.class",
+    "-H:IncludeResources=org/parboiled/.*\\.class",
     "-H:IncludeResources=template/.*",
     "-H:IncludeResources=templates/.*",
     "-H:Preserve=package=io.micronaut.test.*",

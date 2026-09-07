@@ -1187,7 +1187,6 @@ class OrchestratorTest(unittest.TestCase):
                 f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}",
                 "-Dmicronaut.environments=dev",
                 "-Dpyronaut.dev.direct.command=dev",
-                "-Dmicronaut.openapi.adoc.enabled=false",
                 "-Dmicronaut.control-panel.enabled=false",
                 "-Dmicronaut.graalvm.imagesingletons.enabled=false",
                 "-Dpyronaut.dev.direct.restartable=true",
@@ -1353,6 +1352,50 @@ class OrchestratorTest(unittest.TestCase):
                 entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
 
         self.assertEqual([str(binary.resolve())], entries)
+
+    def test_native_compile_classpath_falls_back_to_project_local_repository(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dir = root / "tools" / "pyronaut-dev" / "native"
+            native_dir.mkdir(parents=True)
+            native_dev = native_dir / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            filename = "micronaut-inject-python-5.2.0.jar"
+            descriptor = "\t".join((
+                "maven", "io.micronaut", "micronaut-inject-python", "5.2.0", "jar", "", filename
+            ))
+            (native_dir / "native-compile-classpath.txt").write_text(descriptor + "\n", encoding="utf-8")
+            project = root / "project"
+            artifact = project / ".pyronaut-m2" / "io" / "micronaut" / "micronaut-inject-python" / "5.2.0" / filename
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("inject-python", encoding="utf-8")
+
+            with patch("pathlib.Path.cwd", return_value=project):
+                with patch.dict(os.environ, {cli.LOCAL_REPOSITORY_ENV: str(root / "missing-repository")}):
+                    entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
+
+        self.assertEqual([str(artifact.resolve())], entries)
+
+    def test_native_compile_classpath_falls_back_to_launcher_distribution_lib(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dir = root / "build" / "native" / "nativeCompile"
+            native_dir.mkdir(parents=True)
+            native_dev = native_dir / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            filename = "micronaut-inject-python-5.2.0.jar"
+            (native_dir / "native-compile-classpath.txt").write_text(
+                "\t".join(("maven", "io.micronaut", "micronaut-inject-python", "5.2.0", "jar", "", filename)) + "\n",
+                encoding="utf-8",
+            )
+            distribution_lib = root / "build" / "install" / "micronaut-pyronaut-dev" / "lib"
+            distribution_lib.mkdir(parents=True)
+            artifact = distribution_lib / filename
+            artifact.write_text("inject-python", encoding="utf-8")
+
+            entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
+
+        self.assertEqual([str(artifact.resolve())], entries)
 
     def test_run_prefers_bundled_production_native_executable_with_application_classpath(self):
         executed = []
@@ -1727,6 +1770,7 @@ type = "native"
         self.assertNotIn(str(test_classes_dir.resolve()), entries)
         self.assertIsNotNone(command_line)
         assert command_line is not None
+        self.assertNotIn("-Dmicronaut.openapi.adoc.enabled=false", command_line)
         test_classpath = command_line[command_line.index("--test-classpath") + 1].split(os.pathsep)
         self.assertEqual(
             {*dependencies, str(compiler_jar.resolve())},
@@ -1833,7 +1877,7 @@ type = "native"
             with self.assertRaisesRegex(RuntimeError, "Invalid native compiler classpath descriptor"):
                 cli._native_launcher_compile_classpath_entries(str(native_dev / "pyronaut-dev"))
 
-    def test_native_direct_dev_disables_openapi_adoc_conversion(self):
+    def test_native_direct_dev_keeps_openapi_adoc_conversion_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
@@ -1845,7 +1889,7 @@ type = "native"
                 args=["app.py"],
             )
 
-        self.assertIn("-Dmicronaut.openapi.adoc.enabled=false", jvm_args)
+        self.assertNotIn("-Dmicronaut.openapi.adoc.enabled=false", jvm_args)
 
     def test_direct_source_dev_preserves_user_environment_property(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2175,7 +2219,10 @@ test-resources = "test-resources"
                 )
 
         self.assertEqual(0, exit_code)
-        self.assertEqual([[str(native_dev), "process", "--project-dir", str(project_dir)]], executed)
+        self.assertEqual(
+            [[str(native_dev), "process", "--project-dir", str(project_dir)]],
+            executed,
+        )
 
     def test_process_explicit_jvm_mode_overrides_native_toolchain(self):
         executed = []

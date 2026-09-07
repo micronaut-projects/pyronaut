@@ -159,6 +159,10 @@ final class FastApiTutorialSmokeTest {
         if (compilerClasspath != null) {
             command.add("-Dpyronaut.dev.compiler.class.path=" + compilerClasspath);
         }
+        String pyronautVersion = System.getProperty("pyronaut.version");
+        if (pyronautVersion != null) {
+            command.add("-Dpyronaut.version=" + pyronautVersion);
+        }
         command.add("-classpath");
         command.add(testProcessClasspath());
         command.add(SmokeLauncher.class.getName());
