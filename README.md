@@ -77,6 +77,18 @@ and downloaded tools are cached under `~/.pyronaut`; run `pyronaut setup`
 again after changing the wheel or use `pyronaut setup --refresh` to re-resolve
 the setup.
 
+Create a Python application directly with Micronaut Launch:
+
+```bash
+pyronaut create demo
+pyronaut create demo --features data-jdbc,mysql
+```
+
+The command fixes the language, build tool, and test framework to Python,
+Pyronaut, and pytest. It installs the matching Micronaut Launch CLI on demand
+under `~/.pyronaut/sdks` (or reuses an exact SDKMAN Micronaut candidate) and
+uses the configured proxy and download progress reporting.
+
 The package does not require cloning this repository or running Gradle. Pyronaut
 uses an embedded GraalPy runtime for application code. Commands that need Java
 use a compatible GraalVM JDK 25; Pyronaut discovers local installations and can

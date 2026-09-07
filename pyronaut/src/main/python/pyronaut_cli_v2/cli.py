@@ -34,7 +34,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"setup", "install", "process", "dev", "run", "test", "build", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -117,6 +117,38 @@ _DEFAULT_RESOURCES_DIR = "config"
 _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RESET = "\033[0m"
+_MICRONAUT_STARTER_RELEASES_URL = "https://github.com/micronaut-projects/micronaut-starter/releases/download"
+_MICRONAUT_CREATE_MIN_VERSION = (5, 2, 0)
+_MICRONAUT_CREATE_FIXED_ARGS = ("--lang", "python", "--build", "pyronaut", "--test", "pytest")
+# Keep this list aligned with PythonFeatureValidator in micronaut-starter. It
+# is deliberately a denylist: starter remains the source of truth for feature
+# validation, while this keeps the local catalog from advertising known JVM-
+# only features.
+_PYRONAUT_CREATE_DENYLIST_BY_MINOR: dict[tuple[int, int], frozenset[str]] = {
+    (5, 2): frozenset({
+        "jackson-databind", "sourcegen-generator",
+        "aws-codebuild-workflow-ci", "github-workflow-azure-container-instance",
+        "github-workflow-azure-container-instance-graalvm", "github-workflow-ci",
+        "github-workflow-docker-registry", "github-workflow-google-cloud-run",
+        "github-workflow-google-cloud-run-graalvm", "github-workflow-graal-docker-registry",
+        "github-workflow-oracle-cloud-functions", "github-workflow-oracle-cloud-functions-graalvm",
+        "gitlab-workflow-ci", "google-cloud-workflow-ci", "oracle-cloud-devops-build-ci",
+        "chatbots-basecamp-http", "chatbots-telegram-http", "http-client-jdk", "knative", "kubernetes",
+        "config4k", "properties", "yaml", "data-hibernate-reactive", "hibernate-jpa", "hibernate-reactive-jpa",
+        "jasync-sql", "mybatis", "assertj", "awaitility", "buildless", "hamcrest", "junit-params", "lombok",
+        "mockito", "openrewrite", "aws-parameter-store", "aws-secrets-manager", "azure-key-vault",
+        "coherence-distributed-configuration", "config-consul", "config-kubernetes", "gcp-secrets-manager",
+        "netflix-archaius", "oracle-cloud-vault", "groovy-datetime", "groovy-dateutil", "groovy-ginq",
+        "groovy-json", "groovy-sql", "groovy-toml", "groovy-xml", "groovy-yaml", "aws-alexa", "graalpy",
+        "kapt", "kotlin-extension-functions", "ksp", "amazon-cloudwatch-logging", "azure-logging", "gcp-logging",
+        "jul-to-slf4j", "liquibase-slf4j", "log4j2", "oracle-cloud-logging", "slf4j-simple", "slf4j-simple-logger",
+        "jmx", "crac", "jib", "micronaut-aot", "shade", "opensearch-restclient",
+        "http-poja", "http-server-jdk", "jetty-server", "ktor", "tomcat-server", "undertow-server",
+        "amazon-api-gateway", "amazon-api-gateway-http", "aws-lambda", "aws-lambda-custom-runtime", "azure-function",
+        "oracle-function", "discovery-kubernetes", "json-path", "json-smart", "junit-platform-suite-engine",
+        "test-netty-leak", "hibernate-validator", "views-react",
+    }),
+}
 _allow_draft_release = False
 _validated_setup_manifest: dict[str, object] | None = None
 
@@ -257,6 +289,9 @@ def run(
             print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
             return PLATFORM_UNSUPPORTED
         return _run_setup(setup_args, execute)
+
+    if command == "create":
+        return _run_create(list(argv[1:]), execute, current_platform)
 
     option_args = argv[: argv.index("--")] if "--" in argv else argv
     if "-V" in option_args[1:] or (
@@ -6878,6 +6913,303 @@ def _process_required(project_dir: Path, command: str) -> bool:
     return not classes_ready
 
 
+def _run_create(args: Sequence[str], runner: RunnerWithEnv, platform_name: str) -> int:
+    try:
+        create_args, show_help, list_features = _parse_create_args(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        _print_create_usage(stream=sys.stderr)
+        return USAGE_ERROR
+
+    if show_help:
+        _print_create_usage()
+        return SUCCESS
+
+    version = _micronaut_platform_version()
+    if version is None:
+        print(
+            "Unable to determine the Micronaut Platform version from the installed Pyronaut distribution.",
+            file=sys.stderr,
+        )
+        return PRECONDITION_FAILED
+    parsed_version = _parse_micronaut_version(version)
+    if parsed_version is None or parsed_version < _MICRONAUT_CREATE_MIN_VERSION:
+        minimum = ".".join(str(value) for value in _MICRONAUT_CREATE_MIN_VERSION)
+        print(
+            f"pyronaut create requires Micronaut Platform {minimum} or newer (configured: {version}).",
+            file=sys.stderr,
+        )
+        return PRECONDITION_FAILED
+
+    try:
+        mn = _ensure_micronaut_launch(version, platform_name=platform_name)
+    except _CreatePreconditionError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    except Exception as exc:
+        print(f"Project creation tooling failed: {exc}", file=sys.stderr)
+        return INTERNAL_ERROR
+
+    command_line = [str(mn), "create-app", *create_args, *_MICRONAUT_CREATE_FIXED_ARGS]
+    if list_features:
+        exit_code, stdout, stderr = _capture_subprocess(command_line)
+        if stderr:
+            sys.stderr.write(stderr)
+        if exit_code != SUCCESS:
+            return exit_code
+        sys.stdout.write(_filter_create_features(stdout, version))
+        return SUCCESS
+    return runner(command_line, None)
+
+
+class _CreatePreconditionError(RuntimeError):
+    """A create prerequisite is unavailable or does not match the request."""
+
+
+def _parse_create_args(args: Sequence[str]) -> tuple[list[str], bool, bool]:
+    forwarded: list[str] = []
+    name_seen = False
+    show_help = False
+    list_features = False
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"-h", "--help"}:
+            show_help = True
+            index += 1
+            continue
+        if token == "--list-features":
+            list_features = True
+            forwarded.append(token)
+            index += 1
+            continue
+        if token in {"-i", "--inplace", "-v", "--verbose", "-x", "--stacktrace"}:
+            forwarded.append(token)
+            index += 1
+            continue
+        if len(token) > 2 and token.startswith("-") and not token.startswith("--"):
+            short_flags = token[1:]
+            if all(flag in "hivx" for flag in short_flags):
+                show_help = show_help or "h" in short_flags
+                forwarded.extend(f"-{flag}" for flag in short_flags if flag != "h")
+                index += 1
+                continue
+        if token in {"-f", "--features"}:
+            if (
+                index + 1 >= len(args)
+                or not args[index + 1].strip()
+                or args[index + 1].startswith("-")
+            ):
+                raise ValueError(f"{token} requires a feature value")
+            forwarded.extend((token, args[index + 1]))
+            index += 2
+            continue
+        if token.startswith("-f=") or token.startswith("--features="):
+            if not token.split("=", 1)[1].strip():
+                raise ValueError(f"{token.split('=', 1)[0]} requires a feature value")
+            forwarded.append(token)
+            index += 1
+            continue
+        if token.startswith("-"):
+            raise ValueError(f"Unknown pyronaut create option: {token}")
+        if name_seen:
+            raise ValueError("Only one application NAME may be supplied")
+        name_seen = True
+        forwarded.append(token)
+        index += 1
+
+    denied = _denied_create_features(_micronaut_platform_version() or "")
+    for index, token in enumerate(forwarded):
+        if token not in {"-f", "--features"} and not token.startswith("-f=") and not token.startswith("--features="):
+            continue
+        value = token.split("=", 1)[1] if "=" in token else forwarded[index + 1]
+        for feature in (part.strip().lower() for part in value.split(",")):
+            if feature and feature in denied:
+                raise ValueError(
+                    f"Feature {feature} is not supported for Python applications; remove it from --features"
+                )
+    return forwarded, show_help, list_features
+
+
+def _micronaut_platform_version() -> str | None:
+    version_file = Path(__file__).with_name("version.properties")
+    if not version_file.is_file():
+        return None
+    try:
+        for line in version_file.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "micronaut.platform" and value.strip():
+                return value.strip()
+    except OSError:
+        return None
+    return None
+
+
+def _parse_micronaut_version(version: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", version.strip())
+    if match is None:
+        return None
+    return tuple(int(value) for value in match.groups())
+
+
+def _denied_create_features(version: str) -> frozenset[str]:
+    parsed = _parse_micronaut_version(version)
+    if parsed is None:
+        return frozenset()
+    minor = (parsed[0], parsed[1])
+    known = [key for key in _PYRONAUT_CREATE_DENYLIST_BY_MINOR if key <= minor]
+    return _PYRONAUT_CREATE_DENYLIST_BY_MINOR[max(known)] if known else frozenset()
+
+
+def _create_sdk_platform(platform_name: str, machine_name: str | None = None) -> tuple[str, str, str]:
+    current = platform_name.lower()
+    machine = (machine_name or platform.machine()).lower()
+    if current == "darwin":
+        if machine in {"x86_64", "amd64"}:
+            return "darwin", "amd64", "mn"
+        if machine in {"arm64", "aarch64"}:
+            return "darwin", "aarch64", "mn"
+    elif current.startswith("linux") and machine in {"x86_64", "amd64"}:
+        return "linux", "amd64", "mn"
+    elif current in {"win32", "windows", "cygwin", "msys"} and machine in {"x86_64", "amd64"}:
+        return "win", "amd64", "mn.exe"
+    raise _CreatePreconditionError(
+        f"Micronaut Launch SDK is not available for platform '{platform_name}' and architecture '{machine}'. "
+        "Supported combinations are macOS x64/arm64, Linux x64, and Windows x64."
+    )
+
+
+def _ensure_micronaut_launch(version: str, *, platform_name: str) -> Path:
+    os_segment, arch, executable_name = _create_sdk_platform(platform_name)
+    safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version)
+    if safe_version != version or not version:
+        raise _CreatePreconditionError(f"Invalid Micronaut Platform version: {version}")
+
+    sdkman_root = Path(_read_env("SDKMAN_DIR") or (Path.home() / ".sdkman")) / "candidates" / "micronaut"
+    candidates = [sdkman_root / version / "bin" / executable_name]
+    current = sdkman_root / "current"
+    try:
+        if current.is_symlink() and current.resolve().name == version:
+            candidates.append(current / "bin" / executable_name)
+    except OSError:
+        pass
+    cache_root = Path.home() / ".pyronaut" / "sdks" / "micronaut"
+    candidates.append(cache_root / version / "bin" / executable_name)
+    for candidate in candidates:
+        if _valid_micronaut_launch(candidate, version):
+            return candidate
+
+    if "-" in version or "+" in version:
+        raise _CreatePreconditionError(
+            f"Micronaut Launch SDK {version} is not a published release. Stage an exact 'mn' installation in "
+            f"{sdkman_root / version / 'bin'} or {cache_root / version / 'bin'}."
+        )
+
+    cache_root.mkdir(parents=True, exist_ok=True)
+    destination = cache_root / version
+    lock = cache_root / f".{safe_version}.lock"
+    with _native_image_cache_lock(lock):
+        if _valid_micronaut_launch(destination / "bin" / executable_name, version):
+            return destination / "bin" / executable_name
+        print("Project Creation Tooling is being installed", file=sys.stderr, flush=True)
+        archive_name = f"mn-{os_segment}-{arch}-v{version}.zip"
+        url = f"{_MICRONAUT_STARTER_RELEASES_URL}/v{version}/{archive_name}"
+        with tempfile.TemporaryDirectory(prefix=f".{safe_version}-", dir=cache_root) as temp_dir:
+            temp_root = Path(temp_dir)
+            archive = temp_root / archive_name
+            _download_url_with_progress(url, archive, "Downloading Micronaut Launch SDK")
+            staged = temp_root / "sdk"
+            _extract_micronaut_launch_archive(archive, staged, executable_name)
+            executable = staged / "bin" / executable_name
+            if not _valid_micronaut_launch(executable, version):
+                raise RuntimeError(f"Downloaded Micronaut Launch SDK does not report version {version}")
+            if destination.exists():
+                old_destination = temp_root / "old-sdk"
+                os.replace(destination, old_destination)
+                try:
+                    os.replace(staged, destination)
+                except OSError:
+                    if not destination.exists() and old_destination.exists():
+                        os.replace(old_destination, destination)
+                    raise
+                shutil.rmtree(old_destination, ignore_errors=True)
+            else:
+                os.replace(staged, destination)
+    return destination / "bin" / executable_name
+
+
+def _capture_subprocess(command_line: list[str]) -> tuple[int, str, str]:
+    try:
+        completed = subprocess.run(command_line, check=False, capture_output=True, text=True)
+        return int(completed.returncode), completed.stdout or "", completed.stderr or ""
+    except OSError as exc:
+        return INTERNAL_ERROR, "", str(exc)
+
+
+def _valid_micronaut_launch(executable: Path, version: str) -> bool:
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        return False
+    exit_code, stdout, _ = _capture_subprocess([str(executable), "--version"])
+    if exit_code != SUCCESS:
+        return False
+    match = re.search(r"Micronaut Version:\s*([^\s]+)", stdout)
+    return match is not None and match.group(1).strip() == version
+
+
+def _extract_micronaut_launch_archive(archive: Path, destination: Path, executable_name: str) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    try:
+        with zipfile.ZipFile(archive) as source:
+            members = source.infolist()
+            roots: set[str] = set()
+            expected = []
+            for member in members:
+                member_path = Path(member.filename)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise RuntimeError(f"Micronaut Launch archive contains an unsafe path: {member.filename}")
+                mode = (member.external_attr >> 16) & 0o170000
+                if mode == 0o120000:
+                    raise RuntimeError(f"Micronaut Launch archive contains a symlink: {member.filename}")
+                if not member.is_dir():
+                    if len(member_path.parts) < 2:
+                        raise RuntimeError("Micronaut Launch archive contains a file outside its root directory")
+                    roots.add(member_path.parts[0])
+                if member.filename.rstrip("/").endswith(f"/bin/{executable_name}"):
+                    expected.append(member)
+            if len(roots) != 1 or len(expected) != 1:
+                raise RuntimeError(f"Micronaut Launch archive must contain exactly one bin/{executable_name}")
+            archive_root = next(iter(roots))
+            for member in members:
+                if member.is_dir():
+                    continue
+                relative = Path(member.filename)
+                parts = relative.parts
+                if parts[0] != archive_root:
+                    raise RuntimeError("Micronaut Launch archive contains multiple roots")
+                target = destination.joinpath(*parts[1:])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with source.open(member) as input_file, target.open("wb") as output:
+                    shutil.copyfileobj(input_file, output)
+            executable = destination / "bin" / executable_name
+            executable.chmod(0o755)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise RuntimeError(f"Unable to unpack Micronaut Launch archive: {exc}") from exc
+
+
+def _filter_create_features(output: str, version: str) -> str:
+    denied = _denied_create_features(version)
+    if not denied:
+        return output
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    filtered: list[str] = []
+    for line in output.splitlines(keepends=True):
+        clean = ansi.sub("", line)
+        if any(re.match(rf"^\s*{re.escape(feature)}(?:\s|$|\(|\[)", clean) for feature in denied):
+            continue
+        filtered.append(line)
+    return "".join(filtered)
+
+
 def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> int:
     try:
         completed = subprocess.run(command_line, check=False, env=env)
@@ -7529,7 +7861,22 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+
+
+def _print_create_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
+        "Usage: pyronaut create [NAME] [-f=FEATURE[,FEATURE...]] [-ivx] [--list-features]\n"
+    )
+    stream.write("Creates a Python application using the Micronaut Launch CLI.\n")
+    stream.write("  -f, --features=FEATURE[,FEATURE...]  Features to include (repeatable).\n")
+    stream.write("  -i, --inplace                       Create using the current directory.\n")
+    stream.write("      --list-features                  List Python-compatible features.\n")
+    stream.write("  -v, --verbose                       Enable verbose generation output.\n")
+    stream.write("  -x, --stacktrace                    Show full stack traces on failures.\n")
+    stream.write("  -h, --help                          Show this help message and exit.\n")
 
 
 def _print_setup_usage(stream=None) -> None:
