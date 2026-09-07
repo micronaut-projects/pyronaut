@@ -245,7 +245,7 @@ class PytestFunctionInvokerTest {
     @Test
     void pytestRunnerAddsVirtualenvSitePackages() throws Exception {
         Path virtualenv = Files.createTempDirectory("graalpy-venv");
-        Files.createDirectories(virtualenv.resolve("lib/python3.12/site-packages"));
+        Files.createDirectories(virtualenv.resolve("lib/python3.13/site-packages"));
         try (Context context = Context.newBuilder("python")
             .allowAllAccess(true)
             .build()) {
@@ -275,7 +275,7 @@ class PytestFunctionInvokerTest {
                 sys.modules["pyronaut"] = pyronaut_module
                 sys.modules["pyronaut.test"] = pyronaut_test_module
                 pytest_runner_globals["run_pytest"](["tests/test_demo.py"], object(), None)
-                site_packages = str(Path(virtualenv) / "lib" / "python3.12" / "site-packages")
+                site_packages = str(Path(virtualenv) / "lib" / "python3.13" / "site-packages")
                 site_packages_loaded = site_packages in sys.path
                 """);
             assertTrue(context.getBindings("python").getMember("site_packages_loaded").asBoolean());
