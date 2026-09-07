@@ -72,6 +72,12 @@ val nativeImageCiArgs = providers.gradleProperty("pyronautNativeImageCiArgs")
     .map { it.trim().split(Regex("\\s+")).filter(String::isNotBlank) }
     .orElse(emptyList())
     .get()
+val isWindows = System.getProperty("os.name")
+    .lowercase()
+    .contains("windows")
+val nativeBuildInstallDirectory = nativeBuildProject.layout.buildDirectory.dir(
+    "install/micronaut-pyronaut-native-build"
+)
 val nativeBuildExecutable = nativeBuildProject.layout.buildDirectory.file(
     "install/micronaut-pyronaut-native-build/bin/pyronaut-native-build"
 )
@@ -166,13 +172,24 @@ tasks {
                 projectDirectory.resolve("__pyronaut__/resolved-runtime-dependencies"),
                 configurations.runtimeClasspath.get().files.joinToString(System.lineSeparator()) { it.absolutePath } + System.lineSeparator()
             )
-            val nativeBuildArgs = mutableListOf<Any>(
-                nativeBuildExecutable.get().asFile.absolutePath,
+            val nativeBuildArgs = mutableListOf<Any>()
+            if (isWindows) {
+                nativeBuildArgs.addAll(listOf(
+                    File(System.getProperty("java.home"), "bin/java.exe").absolutePath,
+                    "-cp", nativeBuildInstallDirectory.get().dir("lib").asFile.resolve("*").absolutePath,
+                    "io.micronaut.pyronaut.nativebuild.PyronautNativeBuildMain",
+                    "--native-image-executable",
+                    File(System.getProperty("java.home"), "bin/native-image.cmd").absolutePath
+                ))
+            } else {
+                nativeBuildArgs.add(nativeBuildExecutable.get().asFile.absolutePath)
+            }
+            nativeBuildArgs.addAll(listOf(
                 "--project-dir", projectDirectory.toString(),
                 "--output", cremaOutput.get().asFile.absolutePath,
                 "--native-base",
                 "--include-python"
-            )
+            ))
             nativeBuildArgs.addAll(nativeImageCiArgs)
             commandLine(nativeBuildArgs)
         }

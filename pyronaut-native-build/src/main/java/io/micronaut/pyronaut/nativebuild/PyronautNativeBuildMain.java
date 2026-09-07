@@ -951,15 +951,28 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     static final class ProcessNativeImageInvoker implements NativeImageInvoker {
         @Override
         public int run(List<String> command, Path workingDirectory) throws Exception {
-            ProcessBuilder processBuilder = new ProcessBuilder(command)
-                .directory(workingDirectory.toFile())
-                .inheritIO();
-            // The distribution launcher exports a broad CLASSPATH containing
-            // both production runners. Native images must use only the
-            // explicit language-specific -cp assembled above.
-            processBuilder.environment().remove("CLASSPATH");
-            Process process = processBuilder.start();
-            return process.waitFor();
+            Path argumentFile = null;
+            try {
+                List<String> processCommand = command;
+                if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")) {
+                    argumentFile = Files.createTempFile(workingDirectory, "native-image-", ".args");
+                    Files.write(argumentFile, command.subList(1, command.size()), StandardCharsets.UTF_8);
+                    processCommand = List.of(command.getFirst(), "@" + argumentFile.toAbsolutePath());
+                }
+                ProcessBuilder processBuilder = new ProcessBuilder(processCommand)
+                    .directory(workingDirectory.toFile())
+                    .inheritIO();
+                // The distribution launcher exports a broad CLASSPATH containing
+                // both production runners. Native images must use only the
+                // explicit language-specific -cp assembled above.
+                processBuilder.environment().remove("CLASSPATH");
+                Process process = processBuilder.start();
+                return process.waitFor();
+            } finally {
+                if (argumentFile != null) {
+                    Files.deleteIfExists(argumentFile);
+                }
+            }
         }
     }
 
