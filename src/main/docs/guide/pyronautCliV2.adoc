@@ -16,13 +16,15 @@ This separation keeps dependency resolution, processing, run/test execution, and
 
 == Platform support
 
-Phase 1 supports macOS and Linux.
+Phase 1 supports macOS and Linux for the Pyronaut runtime commands. The
+`pyronaut create` command additionally supports the published Micronaut Launch
+SDK for Windows x64.
 
 == Command syntax
 
 [source,bash]
 ----
-pyronaut [--version] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|validate-config|test-resources-server> [args...]
+pyronaut [--version] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ----
 
 == Quickstart workflow
@@ -101,6 +103,43 @@ repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]
 `--refresh` re-resolves and rewrites setup state while reusing healthy downloaded JDK and native images.
 `--offline` performs no JDK, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
 When setup is missing, corrupt, or stale, execution commands exit with code `8` and print `Pyronaut setup is missing or stale. Run pyronaut setup.`
+
+=== `pyronaut create`
+
+Creates a Python application by delegating to the Micronaut Launch native CLI:
+
+[source,bash]
+----
+pyronaut create [NAME] [options]
+----
+
+Pyronaut supplies `--lang python`, `--build pyronaut`, and `--test pytest`
+automatically. Supported options are:
+
+* `--features <feature[,feature...]>` (repeatable)
+* `--inplace`
+* `--list-features`
+* `--verbose`
+* `--stacktrace`
+
+`--lang`, `--build`, `--test`, and `--jdk` are intentionally not exposed. Use
+`pyronaut create --list-features` for the Python-compatible feature catalog;
+known reflection-dependent and JVM-only features are removed before the
+catalog is shown, while Micronaut Starter performs final validation.
+
+The command does not require `pyronaut setup`. It first looks for an exact
+matching Micronaut candidate in `SDKMAN_DIR/candidates/micronaut/<version>`
+(default `~/.sdkman`), then in
+`~/.pyronaut/sdks/micronaut/<version>`. If neither contains a matching
+executable, the platform-specific archive is downloaded from Micronaut
+Starter releases and installed in the latter location.
+
+Downloads use the same proxy settings, retry behavior, and progress indicator
+as the rest of the CLI. The first download prints `Project Creation Tooling is
+being installed`. Python creation requires Micronaut Platform 5.2.0 or newer.
+Published native archives are available for macOS x64/arm64, Linux x64, and
+Windows x64. A locally built snapshot must be staged at the exact versioned
+SDK path before it can be used.
 
 === `pyronaut install`
 
