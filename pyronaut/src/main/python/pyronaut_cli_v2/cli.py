@@ -6240,14 +6240,16 @@ def _download_url_with_progress(
     opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
 
     request = urllib.request.Request(url, headers=headers or {}) if headers else url
+    interactive = _progress_output_is_interactive()
     attempts = 3
     for attempt in range(1, attempts + 1):
         try:
+            _print_download_progress(label, 0, interactive=interactive)
             with opener.open(request) as response, destination.open("wb") as output:
                 total = int(response.headers.get("Content-Length", "0") or "0")
                 downloaded = 0
-                last_percent = -1
-                print(f"{label}... 0%", end="", file=sys.stderr, flush=True)
+                last_percent = 0
+                last_reported_percent = 0
                 while chunk := response.read(1024 * 1024):
                     output.write(chunk)
                     downloaded += len(chunk)
@@ -6255,8 +6257,14 @@ def _download_url_with_progress(
                         percent = min(100, downloaded * 100 // total)
                         if percent != last_percent:
                             last_percent = percent
-                            print(f"\r{label}... {percent}%", end="", file=sys.stderr, flush=True)
-                print(f"\r{label}... 100%", file=sys.stderr, flush=True)
+                            if interactive or percent == 100 or percent - last_reported_percent >= 10:
+                                _print_download_progress(label, percent, interactive=interactive)
+                                last_reported_percent = percent
+                if last_reported_percent == 100:
+                    if interactive:
+                        print(file=sys.stderr, flush=True)
+                else:
+                    _print_download_progress(label, 100, interactive=interactive, final=True)
             return
         except OSError:
             if attempt == attempts:
@@ -6267,6 +6275,36 @@ def _download_url_with_progress(
                 flush=True,
             )
             time.sleep(attempt)
+
+
+def _progress_output_is_interactive() -> bool:
+    """Return whether progress can safely use carriage-return rendering."""
+    try:
+        return (
+            sys.stderr.isatty()
+            and os.environ.get("TERM", "").lower() not in {"", "dumb"}
+            and "NO_COLOR" not in os.environ
+        )
+    except (AttributeError, OSError):
+        return False
+
+
+def _print_download_progress(
+    label: str,
+    percent: int,
+    *,
+    interactive: bool,
+    final: bool = False,
+) -> None:
+    if interactive:
+        print(
+            f"\r{label}... {percent}%",
+            end="\n" if final else "",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        print(f"{label}... {percent}%", file=sys.stderr, flush=True)
 
 
 def _download_native_image_archive(
@@ -7827,6 +7865,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
         _validate_setup_arguments(args)
         refresh = _extract_flag(args, "--refresh")
         offline = _extract_offline(args)
+        _setup_progress("checking the existing setup")
         manifest_path = _setup_manifest_path()
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = manifest_path.with_suffix(".lock")
@@ -7841,12 +7880,14 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     return SUCCESS
 
             expectation = _setup_expectation(args)
+            _setup_progress("locating or provisioning a compatible GraalVM JDK (JDK 25+)")
             java_home = _ensure_graalvm_java_home(None, offline=offline)
             if java_home is None:
                 qualifier = " cached" if offline else ""
                 raise RuntimeError(
                     f"Unable to locate or provision a{qualifier} compatible GraalVM JDK (requires JDK 25+)"
                 )
+            _setup_progress("provisioning native launchers")
             images: dict[str, Path] = {}
             for image_name in _SETUP_IMAGE_COMMANDS:
                 images[image_name] = (
@@ -7891,6 +7932,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 progress = _extract_option_value(args, "--progress")
                 if progress is not None:
                     command_line.extend(["--progress", progress])
+                _setup_progress("resolving SDK dependencies")
                 env = dict(os.environ)
                 env["JAVA_HOME"] = java_home
                 java_bin = str(Path(java_home) / "bin")
@@ -7948,6 +7990,10 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+
+
+def _setup_progress(message: str) -> None:
+    print(f"Pyronaut setup: {message}...", file=sys.stderr, flush=True)
 
 
 def _print_build_usage(stream=None) -> None:

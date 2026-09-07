@@ -6994,6 +6994,7 @@ java-version = 25
             self.assertEqual(payload, destination.read_bytes())
             self.assertEqual(2, len(attempts))
             self.assertIn("download interrupted; retrying", stderr.getvalue())
+            self.assertNotIn("\r", stderr.getvalue())
 
     def test_graalvm_sdk_download_uses_shared_progress_reporting(self):
         payload = b"graalvm-sdk"
@@ -7028,6 +7029,7 @@ java-version = 25
             self.assertEqual(payload, destination.read_bytes())
             self.assertIn("Downloading GraalVM SDK... 0%", stderr.getvalue())
             self.assertIn("Downloading GraalVM SDK... 100%", stderr.getvalue())
+            self.assertNotIn("\r", stderr.getvalue())
 
     def test_default_native_base_uses_host_bundle_selection(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -8303,6 +8305,7 @@ java-version = 25
                 return 0
 
             metadata = cli._GraalVmMetadata("25.0.3", 25, "ee")
+            stderr = io.StringIO()
             with (
                 patch.object(cli, "__file__", str(package / "cli.py")),
                 patch.object(cli, "_setup_manifest_path", return_value=manifest_path),
@@ -8316,10 +8319,14 @@ java-version = 25
                 patch.object(cli, "_resolved_tools_cache_complete", return_value=True),
                 patch.object(cli, "_read_graalvm_metadata", return_value=metadata),
                 patch("pathlib.Path.home", return_value=home),
+                redirect_stderr(stderr),
             ):
                 exit_code = cli._run_setup(["--refresh", "--progress", "off"], runner)
 
             self.assertEqual(cli.SUCCESS, exit_code)
+            self.assertIn("Pyronaut setup: locating or provisioning a compatible GraalVM JDK (JDK 25+)...", stderr.getvalue())
+            self.assertIn("Pyronaut setup: provisioning native launchers...", stderr.getvalue())
+            self.assertIn("Pyronaut setup: resolving SDK dependencies...", stderr.getvalue())
             self.assertEqual(["graalvm", *cli._SETUP_IMAGE_COMMANDS], provisioning_order)
             seed_repository.assert_called_once()
             self.assertEqual(1, len(commands))
