@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import time
 import unittest
+import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import socket
@@ -6869,6 +6870,78 @@ java-version = 25
         with self.assertRaises(RuntimeError):
             cli._native_image_platform(platform_name="Windows", machine_name="x86_64")
 
+    def test_create_sdk_platform_maps_published_native_archives(self):
+        self.assertEqual(("darwin", "amd64", "mn"), cli._create_sdk_platform("darwin", "x86_64"))
+        self.assertEqual(("darwin", "aarch64", "mn"), cli._create_sdk_platform("darwin", "arm64"))
+        self.assertEqual(("linux", "amd64", "mn"), cli._create_sdk_platform("linux", "amd64"))
+        self.assertEqual(("win", "amd64", "mn.exe"), cli._create_sdk_platform("win32", "AMD64"))
+        with self.assertRaises(cli._CreatePreconditionError):
+            cli._create_sdk_platform("linux", "aarch64")
+
+    def test_create_sdk_prefers_exact_sdkman_candidate_and_ignores_mismatched_current(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            exact = home / ".sdkman" / "candidates" / "micronaut" / "5.2.0" / "bin" / "mn"
+            exact.parent.mkdir(parents=True)
+            exact.write_text("#!/bin/sh\necho 'Micronaut Version: 5.2.0'\n", encoding="utf-8")
+            exact.chmod(0o755)
+            other = exact.parent.parent.parent / "5.1.3"
+            other_bin = other / "bin" / "mn"
+            other_bin.parent.mkdir(parents=True)
+            other_bin.write_text("#!/bin/sh\necho 'Micronaut Version: 5.1.3'\n", encoding="utf-8")
+            other_bin.chmod(0o755)
+            (exact.parent.parent.parent / "current").symlink_to(other)
+            with patch.object(cli.Path, "home", return_value=home), patch.object(cli.platform, "machine", return_value="x86_64"), \
+                    patch.dict(os.environ, {"SDKMAN_DIR": ""}, clear=False):
+                self.assertEqual(exact, cli._ensure_micronaut_launch("5.2.0", platform_name="darwin"))
+
+    def test_create_sdk_reuses_pyronaut_cache_and_does_not_download_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            cached = home / ".pyronaut" / "sdks" / "micronaut" / "5.2.0-SNAPSHOT" / "bin" / "mn"
+            cached.parent.mkdir(parents=True)
+            cached.write_text("#!/bin/sh\necho 'Micronaut Version: 5.2.0-SNAPSHOT'\n", encoding="utf-8")
+            cached.chmod(0o755)
+            with patch.object(cli.Path, "home", return_value=home), patch.object(cli.platform, "machine", return_value="x86_64"), \
+                    patch.dict(os.environ, {"SDKMAN_DIR": ""}, clear=False), \
+                    patch.object(cli, "_download_url_with_progress", side_effect=AssertionError("downloaded cached SDK")):
+                self.assertEqual(cached, cli._ensure_micronaut_launch("5.2.0-SNAPSHOT", platform_name="linux"))
+
+            missing = home / ".pyronaut" / "sdks" / "micronaut" / "5.2.1"
+            with patch.object(cli.Path, "home", return_value=home), patch.object(cli.platform, "machine", return_value="x86_64"), \
+                    patch.dict(os.environ, {"SDKMAN_DIR": ""}, clear=False):
+                with self.assertRaisesRegex(cli._CreatePreconditionError, "not a published release"):
+                    cli._ensure_micronaut_launch("5.2.1-SNAPSHOT", platform_name="linux")
+
+    def test_create_sdk_downloads_expected_release_archive_with_progress_and_installs_atomically(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            downloaded = []
+
+            def download(url, destination, label, headers=None):
+                downloaded.append((url, label, headers))
+                with zipfile.ZipFile(destination, "w") as archive:
+                    archive.writestr(
+                        "mn-linux-amd64-v5.2.0/bin/mn",
+                        "#!/bin/sh\necho 'Micronaut Version: 5.2.0'\n",
+                    )
+                    archive.writestr("mn-linux-amd64-v5.2.0/LICENSE", "license")
+
+            with patch.object(cli.Path, "home", return_value=home), patch.object(cli.platform, "machine", return_value="x86_64"), \
+                    patch.object(cli, "_download_url_with_progress", side_effect=download), redirect_stderr(io.StringIO()) as stderr:
+                executable = cli._ensure_micronaut_launch("5.2.0", platform_name="linux")
+
+            self.assertEqual(1, len(downloaded))
+            self.assertEqual(
+                "https://github.com/micronaut-projects/micronaut-starter/releases/download/v5.2.0/mn-linux-amd64-v5.2.0.zip",
+                downloaded[0][0],
+            )
+            self.assertEqual("Downloading Micronaut Launch SDK", downloaded[0][1])
+            self.assertEqual("Micronaut Version: 5.2.0", subprocess.check_output([str(executable), "--version"], text=True).strip())
+            self.assertTrue(executable.stat().st_mode & 0o111)
+            self.assertTrue((executable.parent.parent / "LICENSE").is_file())
+            self.assertIn("Project Creation Tooling is being installed", stderr.getvalue())
+
     def test_ensure_native_image_uses_bundle_from_local_checkout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -8085,21 +8158,134 @@ java-version = 25
             executed,
         )
 
-    def test_create_command_is_not_supported(self):
+    def test_create_command_delegates_to_micronaut_launch_with_fixed_python_options(self):
         executed = []
 
-        def runner(command_line):
+        def runner(command_line, env=None):
             executed.append(command_line)
             return 0
 
-        exit_code = cli.run(
-            ["create", "demo", "--features", "data-jdbc,mysql"],
-            runner=runner,
-            resolver=self._resolver(),
-            platform_name="linux",
+        with (
+            patch.object(cli, "_micronaut_platform_version", return_value="5.2.0"),
+            patch.object(cli, "_ensure_micronaut_launch", return_value=Path("/tmp/mn")),
+        ):
+            exit_code = cli.run(
+                ["create", "demo", "--features", "data-jdbc,mysql"],
+                runner_with_env=runner,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        self.assertEqual(
+            [[
+                "/tmp/mn", "create-app", "demo", "--features", "data-jdbc,mysql",
+                "--lang", "python", "--build", "pyronaut", "--test", "pytest",
+            ]],
+            executed,
         )
 
+    def test_create_rejects_hidden_micronaut_options(self):
+        executed = []
+
+        with patch.object(cli, "_micronaut_platform_version", return_value="5.2.0"):
+            exit_code = cli.run(
+                ["create", "demo", "--lang", "python"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
         self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertEqual([], executed)
+
+    def test_create_rejects_known_python_incompatible_feature(self):
+        executed = []
+        stderr = io.StringIO()
+        with (
+            patch.object(cli, "_micronaut_platform_version", return_value="5.2.0"),
+            redirect_stderr(stderr),
+        ):
+            exit_code = cli.run(
+                ["create", "demo", "--features", "jackson-databind"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertIn("not supported for Python", stderr.getvalue())
+        self.assertEqual([], executed)
+
+    def test_create_requires_micronaut_platform_5_2_or_newer(self):
+        executed = []
+        stderr = io.StringIO()
+        with (
+            patch.object(cli, "_micronaut_platform_version", return_value="5.1.0"),
+            patch.object(cli, "_ensure_micronaut_launch", side_effect=AssertionError("resolved too early")),
+            redirect_stderr(stderr),
+        ):
+            exit_code = cli.run(
+                ["create", "demo"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("requires Micronaut Platform 5.2.0 or newer", stderr.getvalue())
+        self.assertEqual([], executed)
+
+    def test_create_help_does_not_require_platform_metadata_or_mn(self):
+        executed = []
+        with patch.object(cli, "_micronaut_platform_version", return_value=None):
+            exit_code = cli.run(
+                ["create", "--help"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        self.assertEqual([], executed)
+
+    def test_create_accepts_combined_help_and_diagnostic_short_flags(self):
+        executed = []
+        with patch.object(cli, "_micronaut_platform_version", return_value=None):
+            exit_code = cli.run(
+                ["create", "-hiv"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        self.assertEqual([], executed)
+
+    def test_create_feature_output_filters_incompatible_rows(self):
+        output = (
+            "Available Features\n"
+            "  jackson-databind   Jackson\n"
+            "  data-jdbc          JDBC\n"
+            "  hibernate-jpa      JPA\n"
+            "  micrometer-new-relic Metrics\n"
+        )
+        executed = []
+        with (
+            patch.object(cli, "_micronaut_platform_version", return_value="5.2.0"),
+            patch.object(cli, "_ensure_micronaut_launch", return_value=Path("/tmp/mn")),
+            patch.object(cli, "_capture_subprocess", return_value=(0, output, "")) as capture,
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            exit_code = cli.run(
+                ["create", "--list-features"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        capture.assert_called_once_with([
+            "/tmp/mn", "create-app", "--list-features",
+            "--lang", "python", "--build", "pyronaut", "--test", "pytest",
+        ])
+        self.assertIn("data-jdbc", stdout.getvalue())
+        self.assertIn("micrometer-new-relic", stdout.getvalue())
+        self.assertNotIn("jackson-databind", stdout.getvalue())
+        self.assertNotIn("hibernate-jpa", stdout.getvalue())
         self.assertEqual([], executed)
 
     def test_test_resources_server_returns_precondition_when_executable_missing(self):
