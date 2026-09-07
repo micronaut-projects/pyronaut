@@ -21,6 +21,8 @@ import org.graalvm.polyglot.Value;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -47,6 +49,7 @@ class PytestFunctionInvokerTest {
             PytestFunctionInvoker.Result result = PytestFunctionInvoker.call(testFunction);
 
             assertFalse(result.success);
+            assertEquals("java.lang.IllegalStateException", result.exceptionClass);
             assertTrue(result.stack.contains("java.lang.IllegalStateException"));
             assertTrue(result.stack.contains("boom"));
         }
@@ -236,6 +239,46 @@ class PytestFunctionInvokerTest {
             assertEquals("-p", recordedArgs.getArrayElement(0).asString());
             assertEquals("no:cacheprovider", recordedArgs.getArrayElement(1).asString());
             assertEquals("tests/test_demo.py", recordedArgs.getArrayElement(2).asString());
+        }
+    }
+
+    @Test
+    void pytestRunnerAddsVirtualenvSitePackages() throws Exception {
+        Path virtualenv = Files.createTempDirectory("graalpy-venv");
+        Files.createDirectories(virtualenv.resolve("lib/python3.12/site-packages"));
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String pytestRunner = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/pytest_runner.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.getBindings("python").putMember("pytest_runner_source", pytestRunner);
+            context.getBindings("python").putMember("virtualenv", virtualenv.toString());
+            context.eval("python", """
+                import os
+                import sys
+                from pathlib import Path
+
+                os.environ["VIRTUAL_ENV"] = virtualenv
+                pytest_runner_globals = {"__name__": "pyronaut.test.pytest_runner"}
+                exec(pytest_runner_source, pytest_runner_globals)
+                import types
+
+                pytest_module = types.ModuleType("pytest")
+                pytest_module.main = lambda args, plugins=None: 0
+                sys.modules["pytest"] = pytest_module
+                pyronaut_module = types.ModuleType("pyronaut")
+                pyronaut_test_module = types.ModuleType("pyronaut.test")
+                pyronaut_test_module.create_plugin = lambda listener: object()
+                sys.modules["pyronaut"] = pyronaut_module
+                sys.modules["pyronaut.test"] = pyronaut_test_module
+                pytest_runner_globals["run_pytest"](["tests/test_demo.py"], object(), None)
+                site_packages = str(Path(virtualenv) / "lib" / "python3.12" / "site-packages")
+                site_packages_loaded = site_packages in sys.path
+                """);
+            assertTrue(context.getBindings("python").getMember("site_packages_loaded").asBoolean());
         }
     }
 

@@ -309,7 +309,12 @@ run_pytest
 
     private void ensurePytestInstalled() {
         try {
-            context.eval("python", "import pytest\npytest.__version__");
+            context.eval("python", """
+                from pyronaut.test.pytest_runner import setup_virtual_filesystem
+                setup_virtual_filesystem()
+                import pytest
+                pytest.__version__
+                """);
         } catch (Exception e) {
             if (isMissingPytest(e)) {
                 throw new PytestPreconditionException(PYTEST_MISSING_MESSAGE, e);

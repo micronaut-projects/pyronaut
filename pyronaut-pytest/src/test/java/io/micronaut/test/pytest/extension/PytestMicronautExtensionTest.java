@@ -101,6 +101,29 @@ class PytestMicronautExtensionTest {
     }
 
     @Test
+    void pytestRunnerLoadsPytestFromVirtualEnvSitePackages() throws Exception {
+        String virtualEnv = System.getenv("VIRTUAL_ENV");
+        assumeTrue(virtualEnv != null && !virtualEnv.isBlank());
+
+        PythonContextRuntime.setReuseContext(false);
+        PythonContextRuntime.resetContext();
+        try (Context context = GraalPyContextFactory.bootstrapReusableContext(
+            PytestMicronautExtensionTest.class.getClassLoader()
+        )) {
+            Value version = context.eval("python", """
+                from pyronaut.test.pytest_runner import setup_virtual_filesystem
+                setup_virtual_filesystem()
+                import pytest
+                pytest.__version__
+                """);
+            assertTrue(version.isString());
+        } finally {
+            PythonContextRuntime.setReuseContext(false);
+            PythonContextRuntime.resetContext();
+        }
+    }
+
+    @Test
     void applicationContextClassLoaderFallsBackToThreadContextClassLoader() {
         ClassLoader threadClassLoader = new ClassLoader() {
         };
@@ -212,7 +235,7 @@ class PytestMicronautExtensionTest {
     }
 
     @Test
-    void pytestRunReportsHostExceptionThrownByJavaMethodWithoutForeignExceptionLeak() throws Exception {
+    void pytestRunReportsHostExceptionWithoutWrapperLeak() throws Exception {
         Path testFile = tempDir.resolve("test_host_exception.py");
         Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
         Path eventsReport = reportsDir.resolve("events.ndjson");
