@@ -476,7 +476,6 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.micronaut.core.beans.*",
     "-H:Preserve=package=io.micronaut.core.convert.*",
     "-H:Preserve=package=io.micronaut.core.async.*",
-    "-H:Preserve=package=io.micronaut.core.io.*",
     "-H:Preserve=package=io.micronaut.core.exceptions.*",
     "-H:Preserve=package=io.micronaut.core.order.*",
     "-H:Preserve=package=io.micronaut.core.propagation.*",
