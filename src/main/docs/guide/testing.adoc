@@ -3,6 +3,8 @@
 Pyronaut supports JUnit 5 tests, pytest tests, or both through the JUnit Platform.
 Use `pyronaut test` when tests need the Micronaut classpath, processed sources, test resources, or Micronaut test integration.
 
+If you are used to pytest, keep using it: write ordinary `test_*.py` modules with fixtures, parametrization and marks, and use the `MicronautTest` fixture described in <<micronautTest,Using MicronautTest>> when a test needs a running application. The JUnit 5 Python module style described below trades pytest's fixture model for direct dependency injection into the test module; it is the better fit for direct-source tests and for tests that share an application context across many test functions.
+
 == Selecting a Test Engine
 
 Configure the engine under `[tool.pyronaut.test]`:

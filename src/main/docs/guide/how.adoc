@@ -52,17 +52,18 @@ The same applies to packages and methods, for example `micronaut.core.async_.ann
 
 == Using Java classes directly
 
-Micronaut annotations and most Micronaut types can be imported with a normal `import` statement. Other Java classes, including classes from libraries you add to `pyproject.toml` and generic reactive types, are obtained with `java.type`:
+Any Java class on the classpath can be imported with a normal `import` statement, whether it belongs to Micronaut, the JDK or a library you added to `pyproject.toml`. The Java package is the Python module:
 
 [source,python]
 ----
-import java
-
-Mono = java.type("reactor.core.publisher.Mono")
-StringUtils = java.type("org.apache.commons.lang3.StringUtils")
+from java.time import Duration
+from org.apache.commons.lang3 import StringUtils
 
 print(StringUtils.capitalize("hello"))
+timeout = Duration.ofSeconds(5)
 ----
+
+`java.type("org.apache.commons.lang3.StringUtils")` is an equivalent way to obtain the same class. The Micronaut examples use it for reactive types such as `Mono` and `Publisher`, and it is handy when a Java package name would shadow a Python module.
 
 Java objects behave like Python objects: call methods with the Java names (`response.getHeaders()`), index Java lists and maps, and iterate over Java collections. Python `str`, `int`, `float`, `bool`, `list`, `dict`, `datetime` and `uuid.UUID` values convert to the matching Java types automatically when passed to Java code. See <<usingPackagesJavaLibraries,Using Python Packages & Java Libraries>> for declaring dependencies.
 

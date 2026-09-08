@@ -70,7 +70,7 @@ class ReactiveController:
         return Mono.just("hello")
 ----
 
-Java classes that are not Micronaut annotations are obtained with `java.type(...)`. Note the module name `micronaut.core.async_`: `async` is a Python keyword, so the Java package `io.micronaut.core.async` is imported with a trailing underscore. The same rule renames Java methods, for example `Flux.from_(publisher)` calls `Flux.from`.
+`Mono` and `Publisher` are obtained with `java.type(...)` here, as in the Micronaut examples; `from reactor.core.publisher import Mono` is equivalent. Note the module name `micronaut.core.async_`: `async` is a Python keyword, so the Java package `io.micronaut.core.async` is imported with a trailing underscore. The same rule renames Java methods, for example `Flux.from_(publisher)` calls `Flux.from`.
 
 == Streaming responses
 
