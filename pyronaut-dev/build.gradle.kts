@@ -342,21 +342,21 @@ val runtimeMetadataExclusion = providers.provider {
                 name == "micronaut-test-resources-control-panel" ||
                 group == "io.micronaut.controlpanel"
         }
-        .map { artifact -> artifact.file.toPath().toAbsolutePath().normalize() }
+        .map { artifact -> artifact.file.name }
     buildList {
-        excludedArtifacts.forEach { jar ->
+        excludedArtifacts.forEach { jarName ->
             add("--exclude-config")
-            add("\\Q$jar\\E")
+            add(".*\\Q$jarName\\E.*")
             add("^/META-INF/native-image/.*")
         }
     configurations.nativeImageClasspath.get().resolvedConfiguration.resolvedArtifacts
             .filter { artifact ->
                 artifact.moduleVersion.id.group == "io.micronaut" && artifact.name == "micronaut-core"
             }
-            .map { artifact -> artifact.file.toPath().toAbsolutePath().normalize() }
-            .forEach { jar ->
+            .map { artifact -> artifact.file.name }
+            .forEach { jarName ->
                 add("--exclude-config")
-                add("\\Q$jar\\E")
+                add(".*\\Q$jarName\\E.*")
                 add("^/META-INF/native-image/io\\.micronaut/micronaut-core/native-image\\.properties$")
             }
     }
