@@ -42,6 +42,7 @@ class PyronautNativeImageBuilderTest {
         assertFalse(defaultCommand.contains("--emit"));
         assertFalse(defaultCommand.contains("-H:IncludeSBOM=embed,export"));
         assertFalse(defaultCommand.contains("--no-fallback"));
+        assertTrue(defaultCommand.contains("-H:-PreserveIncludesJNI"));
         assertFalse(defaultCommand.contains("-H:Preserve=package=org.graalvm.*"));
         assertTrue(defaultCommand.contains("-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management,module=java.naming,module=java.rmi"));
         assertTrue(defaultCommand.contains("-H:Preserve=package=java.util.*"));
@@ -94,6 +95,7 @@ class PyronautNativeImageBuilderTest {
         String classpath = command.get(command.indexOf("-cp") + 1);
         assertTrue(classpath.contains(pythonClasspathEntry.toString()));
         assertTrue(command.contains("--enable-native-access=org.graalvm.truffle"));
+        assertTrue(command.contains("-H:-PreserveIncludesJNI"));
         assertFalse(command.contains("--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary"));
         assertFalse(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
         assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.*"));
