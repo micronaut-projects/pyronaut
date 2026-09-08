@@ -138,6 +138,20 @@ class _ExpectedFailure:
         self.reason = reason or "Expected failure"
 
 
+class _SkippedTest:
+    def __init__(self, reason: str):
+        self.reason = reason or "Skipped"
+
+
+def _skip_reason(report) -> str:
+    longrepr = getattr(report, "longrepr", None)
+    if isinstance(longrepr, tuple) and len(longrepr) >= 3:
+        return f"{longrepr[2]}"
+    if longrepr is None:
+        return "Skipped"
+    return f"{longrepr}"
+
+
 class MicronautPytestPlugin:
     """
     Pytest plugin that communicates with Java PytestTestListener.
@@ -204,13 +218,27 @@ class MicronautPytestPlugin:
         return True
 
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_runtest_setup(self, item):
+        """Notify Java that a test started once its setup phase completes.
+
+        pytest never invokes ``pytest_runtest_call`` when setup skips or fails, so the
+        start notification must come from the setup phase to guarantee that
+        ``executionStarted`` precedes ``executionFinished``.  The notification is sent
+        after fixtures ran so the Micronaut extension attached by the fixture is visible
+        to the Java listener; when setup did not succeed the item is withheld so no
+        Java lifecycle callbacks run for a test that will not execute.
+        """
+        test_id = self._get_test_id(item)
+        outcome = yield
+        setup_ok = getattr(outcome, 'excinfo', None) is None
+        self.listener.beforeTest(test_id, item if setup_ok else None)
+
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_runtest_call(self, item):
         """Wrap the test call to capture stdout/stderr reliably and forward to Java.
         Avoid double emission with pytest capture by not forwarding here when pytest has already captured output.
         """
         test_id = self._get_test_id(item)
-        # Notify Java before executing the test body so the engine can mark it started
-        self.listener.beforeTest(test_id, item)
         import io, contextlib
         buf_out = io.StringIO()
         buf_err = io.StringIO()
@@ -236,8 +264,12 @@ class MicronautPytestPlugin:
 
         # Store the test result for later use in teardown
         if call.excinfo is not None:
-            # Test failed
-            self.test_results[test_id] = call.excinfo.value
+            if call.excinfo.errisinstance(pytest.skip.Exception):
+                # Skipped (pytest.skip(), @pytest.mark.skip, skipif) is not a failure
+                self.test_results[test_id] = _SkippedTest(f"{call.excinfo.value}")
+            else:
+                # Test failed
+                self.test_results[test_id] = call.excinfo.value
         else:
             # Test passed
             self.test_results[test_id] = None
@@ -285,6 +317,10 @@ class MicronautPytestPlugin:
 
         # On failure, forward framework-formatted details similar to terminal output (once per test)
         was_xfail = getattr(report, "wasxfail", None)
+        if getattr(report, "skipped", False) and not was_xfail:
+            # Skipped tests (including skips raised during setup) are reported as aborted, not failed
+            self.test_results[test_id] = _SkippedTest(_skip_reason(report))
+            return
         if phase == "call" and was_xfail:
             if getattr(report, "skipped", False):
                 self.test_results[test_id] = _ExpectedFailure(str(was_xfail))
@@ -328,7 +364,7 @@ class MicronautPytestPlugin:
         test_id = self._get_test_id(item)
         exception = self.test_results.get(test_id)
 
-        if isinstance(exception, _ExpectedFailure):
+        if isinstance(exception, (_ExpectedFailure, _SkippedTest)):
             result = self.listener.abortedResult(exception.reason)
         elif exception is not None:
             result = self.listener.failedAssertionResult(

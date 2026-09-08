@@ -73,6 +73,231 @@ class RequestsResponseTest {
     }
 
     @Test
+    void responseHandlesNonStandardStatusCodes() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+
+                from pyronaut.requests import Response
+
+                response = Response(
+                    "http://localhost/closed",
+                    HttpResponse.status(499, "Client Closed Request"),
+                    body=b"",
+                )
+                response.status_code == 499 and response.reason == "Client Closed Request" and not response.ok
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
+    void responseHeadersSupportIterationAndDictConversion() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+                MediaType = java.type("io.micronaut.http.MediaType")
+
+                from pyronaut.requests import Response
+
+                response = Response(
+                    "http://localhost/headers",
+                    HttpResponse.ok().contentType(MediaType.APPLICATION_JSON_TYPE).header("X-Trace", "abc"),
+                    body=b"{}",
+                )
+                names = [h for h in response.headers]
+                as_dict = dict(response.headers)
+                (
+                    len(response.headers) == 2
+                    and set(names) == {"Content-Type", "X-Trace"}
+                    and as_dict["X-Trace"] == "abc"
+                    and "x-trace" in response.headers
+                    and response.headers["content-type"] == "application/json"
+                    and sorted(response.headers.keys()) == ["Content-Type", "X-Trace"]
+                    and sorted(response.headers.values()) == ["abc", "application/json"]
+                )
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
+    void stringQueryParametersAreAppendedAsIs() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+                import pyronaut.requests as requests
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+
+                class FakeInvoker:
+                    captured = []
+
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        FakeInvoker.captured.append(request)
+                        return type("Result", (), {
+                            "success": True,
+                            "response": HttpResponse.ok(),
+                            "body": b"",
+                        })()
+
+                requests.HttpClientInvoker = FakeInvoker
+                response = requests.Session(register=False).get("/fruits/q", params="names=apple&names=pineapple")
+                uri = str(FakeInvoker.captured[0].getUri())
+                response.status_code == 200 and uri == "/fruits/q?names=apple&names=pineapple"
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
+    void userSuppliedContentTypeIsNotDuplicated() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import java
+                import pyronaut.requests as requests
+
+                HttpResponse = java.type("io.micronaut.http.HttpResponse")
+
+                class FakeInvoker:
+                    captured = []
+
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        FakeInvoker.captured.append(request)
+                        return type("Result", (), {
+                            "success": True,
+                            "response": HttpResponse.ok(),
+                            "body": b"",
+                        })()
+
+                requests.HttpClientInvoker = FakeInvoker
+                requests.Session(register=False).post(
+                    "/rooms",
+                    data={"name": "Room A"},
+                    headers={"content-type": "application/x-www-form-urlencoded; charset=utf-8"},
+                )
+                headers = FakeInvoker.captured[0].getHeaders()
+                values = list(headers.getAll("Content-Type"))
+                len(values) == 1 and str(values[0]) == "application/x-www-form-urlencoded; charset=utf-8"
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
+    void sessionSupportsContextManagerAndUnregistersOnClose() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import pyronaut.requests as requests
+
+                class FakeClient:
+                    closed = False
+
+                    def close(self):
+                        self.closed = True
+
+                class FakeRegistry:
+                    registered = []
+                    unregistered = []
+
+                    @staticmethod
+                    def register(client):
+                        FakeRegistry.registered.append(client)
+
+                    @staticmethod
+                    def unregister(client):
+                        FakeRegistry.unregistered.append(client)
+
+                requests.ClientRegistry = FakeRegistry
+                fake = FakeClient()
+                with requests.Session(client=fake) as session:
+                    entered = session
+                (
+                    FakeRegistry.registered == [fake]
+                    and FakeRegistry.unregistered == [fake]
+                    and fake.closed
+                    and entered is session
+                )
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
+    void temporaryClientIsClosedWhenRequestFails() {
+        try (Context context = newPythonContext()) {
+            Value result = context.eval("python", """
+                import pyronaut.requests as requests
+
+                class FakeClient:
+                    closed = False
+
+                    def close(self):
+                        self.closed = True
+
+                class FakeRegistry:
+                    unregistered = []
+
+                    @staticmethod
+                    def register(client):
+                        pass
+
+                    @staticmethod
+                    def unregister(client):
+                        FakeRegistry.unregistered.append(client)
+
+                temp_clients = []
+
+                class FakeHttpClient:
+                    @staticmethod
+                    def create(url, cfg=None):
+                        client = FakeClient()
+                        temp_clients.append(client)
+                        return client
+
+                class FakeInvoker:
+                    @staticmethod
+                    def exchange(client, request, body_type):
+                        return type("Result", (), {
+                            "success": False,
+                            "response": None,
+                            "message": "connect timeout",
+                            "exceptionClass": "io.micronaut.http.client.exceptions.ReadTimeoutException",
+                        })()
+
+                requests.ClientRegistry = FakeRegistry
+                requests.HttpClient = FakeHttpClient
+                requests.HttpClientInvoker = FakeInvoker
+                session = requests.Session(register=False, client=FakeClient())
+                raised = False
+                try:
+                    session.get("/slow", timeout=0.5)
+                except requests.exceptions.Timeout:
+                    raised = True
+                (
+                    raised
+                    and len(temp_clients) == 1
+                    and temp_clients[0].closed
+                    and FakeRegistry.unregistered == temp_clients
+                )
+                """);
+
+            assertTrue(result.asBoolean());
+        }
+    }
+
+    @Test
     void repeatedQueryParametersArePreserved() {
         try (Context context = newPythonContext()) {
             Value result = context.eval("python", """

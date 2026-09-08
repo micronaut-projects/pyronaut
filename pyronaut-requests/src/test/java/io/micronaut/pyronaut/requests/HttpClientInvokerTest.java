@@ -41,4 +41,15 @@ class HttpClientInvokerTest {
         assertArrayEquals(new String[] {"Content-Type"}, result.headerNames);
         assertArrayEquals(new String[] {"application/json"}, result.headerValues);
     }
+
+    @Test
+    void successHandlesNonStandardStatusCodes() {
+        HttpResponse<?> response = HttpResponse.status(499, "Client Closed Request").body("closed");
+
+        HttpClientInvoker.Result result = HttpClientInvoker.Result.success(response);
+
+        assertEquals(499, result.statusCode);
+        assertEquals("Client Closed Request", result.reason);
+        assertArrayEquals("closed".getBytes(StandardCharsets.UTF_8), result.body);
+    }
 }

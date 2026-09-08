@@ -137,9 +137,17 @@ def _restore_system_properties(prev: Dict[str, Optional[str]]):
         pass
 
 
+# Sentinel key marking a pre-encoded query string that is appended to the URL verbatim
+_RAW_QUERY = object()
+
+
 def _flatten_params(params):
     if not params:
         return []
+    if isinstance(params, (str, bytes)):
+        # requests appends a string as a pre-encoded query string as-is
+        raw = params.decode('utf-8') if isinstance(params, bytes) else params
+        return [(_RAW_QUERY, raw.lstrip('?&'))]
     if hasattr(params, 'items') and callable(getattr(params, 'items')):
         iterable = params.items()
     else:
@@ -302,14 +310,69 @@ class CaseInsensitiveDict:
     def __getitem__(self, key):
         return self._store[key.lower()][1]
 
+    def __delitem__(self, key):
+        del self._store[key.lower()]
+
     def get(self, key, default=None):
         return self._store.get(key.lower(), (None, default))[1]
 
+    def setdefault(self, key, default=None):
+        lower = key.lower()
+        if lower not in self._store:
+            self._store[lower] = (key, default)
+        return self._store[lower][1]
+
+    def update(self, *args, **kwargs):
+        if args:
+            other = args[0]
+            if hasattr(other, 'items') and callable(getattr(other, 'items')):
+                other = other.items()
+            for k, v in other:
+                self[k] = v
+        for k, v in kwargs.items():
+            self[k] = v
+
+    def pop(self, key, *default):
+        try:
+            return self._store.pop(key.lower())[1]
+        except KeyError:
+            if default:
+                return default[0]
+            raise
+
     def items(self):
-        return ((k, v) for k, (k, v) in self._store.items())
+        return ((original, value) for original, value in self._store.values())
+
+    def keys(self):
+        return (original for original, _ in self._store.values())
+
+    def values(self):
+        return (value for _, value in self._store.values())
+
+    def __iter__(self):
+        return (original for original, _ in self._store.values())
+
+    def __len__(self):
+        return len(self._store)
 
     def __contains__(self, key):
-        return key.lower() in self._store
+        try:
+            return key.lower() in self._store
+        except AttributeError:
+            return False
+
+    def __eq__(self, other):
+        if isinstance(other, CaseInsensitiveDict):
+            other = dict(other.items())
+        elif not hasattr(other, 'items'):
+            return NotImplemented
+        return {k.lower(): v for k, v in self.items()} == {str(k).lower(): v for k, v in dict(other).items()}
+
+    def copy(self):
+        return CaseInsensitiveDict(dict(self.items()))
+
+    def __repr__(self):
+        return repr(dict(self.items()))
 
 
 def _response_body_bytes(body) -> bytes:
@@ -326,6 +389,11 @@ class Response:
         if hasattr(resp, 'statusCode'):
             self.status_code = int(resp.statusCode)
             self.reason = str(resp.reason or '')
+        elif hasattr(resp, 'code') and callable(getattr(resp, 'code')):
+            # Prefer the numeric code: getStatus() throws for non-standard codes such as 499 or 599
+            self.status_code = int(resp.code())
+            reason = resp.reason() if hasattr(resp, 'reason') and callable(getattr(resp, 'reason')) else None
+            self.reason = str(reason) if reason is not None else ''
         else:
             self.status_code = resp.getStatus().getCode()
             self.reason = str(resp.getStatus().getReason()) if hasattr(resp, 'getStatus') else ''
@@ -449,9 +517,20 @@ class Session:
 
     def close(self):
         try:
+            ClientRegistry.unregister(self._client)
+        except BaseException:
+            pass
+        try:
             self._client.close()
         except BaseException:
             pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return False
 
     # Core request method
     def request(self, method: str, url: str, params: Dict[str, Any] = None, data: Any = None,
@@ -460,8 +539,8 @@ class Session:
                 allow_redirects: bool = True, verify: Optional[Union[bool, str]] = None, files: Any = None):
         full_url = self._resolve_url(url)
         req = HttpRequest.create(HttpMethod.valueOf(method.upper()), _jstring(full_url))
-        # headers
-        merged_headers: Dict[str, str] = {}
+        # headers (case-insensitive so a user supplied 'content-type' is not duplicated)
+        merged_headers = CaseInsensitiveDict()
         merged_headers.update(self.headers or {})
         if headers:
             merged_headers.update(headers)
@@ -481,9 +560,16 @@ class Session:
         merged_params = _merge_params(getattr(self, 'params', None), params)
         if merged_params:
             uri = UriBuilder.of(_jstring(full_url))
+            raw_queries = []
             for k, v in merged_params:
+                if k is _RAW_QUERY:
+                    if v:
+                        raw_queries.append(v)
+                    continue
                 uri = uri.queryParam(_jstring(k), _jstring(v))
             full_url = str(uri.build())
+            for raw in raw_queries:
+                full_url += ('&' if '?' in full_url else '?') + raw
             req = HttpRequest.create(HttpMethod.valueOf(method.upper()), _jstring(full_url))
 
         # body
@@ -564,56 +650,11 @@ class Session:
         except Exception:
             prev_props = None
 
-        # Use Java invoker to prevent ForeignException crossing into pytest
-        result = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
-        if getattr(result, 'success', False) or getattr(result, 'response', None) is not None:
-            response = Response(full_url, result.response, history=[], body=getattr(result, 'body', None), mapper=self._mapper)
-            try:
-                for name, sc in response.headers.items():
-                    if str(name).lower() != "set-cookie":
-                        continue
-                    s = str(sc)
-                    if '=' in s:
-                        pair = s.split(';', 1)[0]
-                        if '=' in pair:
-                            ck, cv = pair.split('=', 1)
-                            if getattr(self, 'cookies', None) is not None:
-                                self.cookies[ck] = cv
-            except Exception:
-                pass
-        else:
-            # No response to build from; raise a Python exception mapped to requests-like types
-            message = getattr(result, 'message', None) or 'No response from client invoker'
-            exclass = (getattr(result, 'exceptionClass', None) or 'HttpClientError')
-            low = f"{exclass} {message}".lower()
-            if 'timeout' in low:
-                raise _exc.Timeout(message)
-            if 'connection' in low or 'closed' in low or 'unavailable' in low:
-                raise _exc.ConnectionError(message)
-            raise _exc.RequestException(message)
-
-        # manual redirects with history and requests-like semantics
-        redirects = 0
-        history = []
-        while bool(allow_redirects) and response.status_code in (301, 302, 303, 307, 308) and redirects < DEFAULT_MAX_REDIRECTS:
-            redirects += 1
-            location = response.headers.get('Location')
-            if not location:
-                break
-            # Append current response to history
-            history.append(response)
-            # 303 -> GET; 301/302 -> GET if original was not GET/HEAD
-            if response.status_code == 303 or (response.status_code in (301, 302) and method.upper() not in ('GET', 'HEAD')):
-                method = 'GET'
-                req = HttpRequest.create(HttpMethod.valueOf('GET'), _jstring(self._resolve_url(location)))
-            else:
-                req = HttpRequest.create(HttpMethod.valueOf(method.upper()), _jstring(self._resolve_url(location)))
-            # reapply headers (no body on GET)
-            for k, v in (merged_headers or {}).items():
-                req = req.header(_jstring(k), _jstring(v))
-            r2 = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
-            if getattr(r2, 'success', False) or getattr(r2, 'response', None) is not None:
-                response = Response(self._resolve_url(location), r2.response, history=list(history), body=getattr(r2, 'body', None), mapper=self._mapper)
+        try:
+            # Use Java invoker to prevent ForeignException crossing into pytest
+            result = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
+            if getattr(result, 'success', False) or getattr(result, 'response', None) is not None:
+                response = Response(full_url, result.response, history=[], body=getattr(result, 'body', None), mapper=self._mapper)
                 try:
                     for name, sc in response.headers.items():
                         if str(name).lower() != "set-cookie":
@@ -628,8 +669,9 @@ class Session:
                 except Exception:
                     pass
             else:
-                message = getattr(r2, 'message', None) or 'No response from client invoker'
-                exclass = (getattr(r2, 'exceptionClass', None) or 'HttpClientError')
+                # No response to build from; raise a Python exception mapped to requests-like types
+                message = getattr(result, 'message', None) or 'No response from client invoker'
+                exclass = (getattr(result, 'exceptionClass', None) or 'HttpClientError')
                 low = f"{exclass} {message}".lower()
                 if 'timeout' in low:
                     raise _exc.Timeout(message)
@@ -637,37 +679,82 @@ class Session:
                     raise _exc.ConnectionError(message)
                 raise _exc.RequestException(message)
 
-        if bool(allow_redirects) and response.status_code in (301, 302, 303, 307, 308) and redirects >= DEFAULT_MAX_REDIRECTS:
-            raise _exc.TooManyRedirects(f"Exceeded {DEFAULT_MAX_REDIRECTS} redirects for {url}")
-
-        try:
-            hooks = getattr(self, 'hooks', None)
-            if hooks and isinstance(hooks, dict):
-                resphooks = hooks.get('response') or []
-                for h in resphooks:
+            # manual redirects with history and requests-like semantics
+            redirects = 0
+            history = []
+            while bool(allow_redirects) and response.status_code in (301, 302, 303, 307, 308) and redirects < DEFAULT_MAX_REDIRECTS:
+                redirects += 1
+                location = response.headers.get('Location')
+                if not location:
+                    break
+                # Append current response to history
+                history.append(response)
+                # 303 -> GET; 301/302 -> GET if original was not GET/HEAD
+                if response.status_code == 303 or (response.status_code in (301, 302) and method.upper() not in ('GET', 'HEAD')):
+                    method = 'GET'
+                    req = HttpRequest.create(HttpMethod.valueOf('GET'), _jstring(self._resolve_url(location)))
+                else:
+                    req = HttpRequest.create(HttpMethod.valueOf(method.upper()), _jstring(self._resolve_url(location)))
+                # reapply headers (no body on GET)
+                for k, v in (merged_headers or {}).items():
+                    req = req.header(_jstring(k), _jstring(v))
+                r2 = HttpClientInvoker.exchange(client_to_use, req, JByteArray)
+                if getattr(r2, 'success', False) or getattr(r2, 'response', None) is not None:
+                    response = Response(self._resolve_url(location), r2.response, history=list(history), body=getattr(r2, 'body', None), mapper=self._mapper)
                     try:
-                        h(response)
+                        for name, sc in response.headers.items():
+                            if str(name).lower() != "set-cookie":
+                                continue
+                            s = str(sc)
+                            if '=' in s:
+                                pair = s.split(';', 1)[0]
+                                if '=' in pair:
+                                    ck, cv = pair.split('=', 1)
+                                    if getattr(self, 'cookies', None) is not None:
+                                        self.cookies[ck] = cv
                     except Exception:
                         pass
-        except Exception:
-            pass
+                else:
+                    message = getattr(r2, 'message', None) or 'No response from client invoker'
+                    exclass = (getattr(r2, 'exceptionClass', None) or 'HttpClientError')
+                    low = f"{exclass} {message}".lower()
+                    if 'timeout' in low:
+                        raise _exc.Timeout(message)
+                    if 'connection' in low or 'closed' in low or 'unavailable' in low:
+                        raise _exc.ConnectionError(message)
+                    raise _exc.RequestException(message)
 
-        # cleanup temp client
-        if temp_client is not None:
+            if bool(allow_redirects) and response.status_code in (301, 302, 303, 307, 308) and redirects >= DEFAULT_MAX_REDIRECTS:
+                raise _exc.TooManyRedirects(f"Exceeded {DEFAULT_MAX_REDIRECTS} redirects for {url}")
+
             try:
-                ClientRegistry.unregister(temp_client)
-                temp_client.close()
-            except BaseException:
+                hooks = getattr(self, 'hooks', None)
+                if hooks and isinstance(hooks, dict):
+                    resphooks = hooks.get('response') or []
+                    for h in resphooks:
+                        try:
+                            h(response)
+                        except Exception:
+                            pass
+            except Exception:
                 pass
 
-        # restore proxy properties
-        try:
-            if prev_props is not None:
-                _restore_system_properties(prev_props)
-        except Exception:
-            pass
+            return response
+        finally:
+            # cleanup temp client (always, even when the request raised)
+            if temp_client is not None:
+                try:
+                    ClientRegistry.unregister(temp_client)
+                    temp_client.close()
+                except BaseException:
+                    pass
 
-        return response
+            # restore proxy properties
+            try:
+                if prev_props is not None:
+                    _restore_system_properties(prev_props)
+            except Exception:
+                pass
 
     # convenience methods
     def get(self, url, **kwargs):
