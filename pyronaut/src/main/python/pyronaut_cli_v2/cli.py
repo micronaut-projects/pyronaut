@@ -82,6 +82,12 @@ _DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i3"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
 _SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
+# Layout of an unpacked native image bundle in the shared version/platform cache
+# directory. Version 3 isolated per-image classpath manifests; version 4 nests
+# copied language resources under the bundle's own "resources" directory instead
+# of flattening them into the cache root. Bump this whenever the unpacked layout
+# changes so an older cache is rebuilt rather than silently reused.
+_NATIVE_IMAGE_BUNDLE_FORMAT = 4
 _NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
 _SETUP_IMAGE_COMMANDS = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
 _SETUP_SCHEMA_VERSION = 1
@@ -3204,6 +3210,10 @@ def _copytree_if_exists(source: Path, target: Path) -> None:
 def _stage_native_bundle_support(bundle_dir: Path, target_dir: Path) -> None:
     """Keep external native-image runtime inputs beside the staged launcher."""
     target_dir.mkdir(parents=True, exist_ok=True)
+    if bundle_dir.resolve() == target_dir.resolve():
+        # A native base configured beside its own output already has the
+        # bundle laid out correctly; copying it onto itself fails.
+        return
     _copytree_if_exists(bundle_dir / "resources", target_dir / "resources")
     for pattern in ("*.so", "*.dylib", "*.dll"):
         for runtime_library in bundle_dir.glob(pattern):
@@ -6479,9 +6489,7 @@ def _ensure_native_image(
         "version": version,
         "release-tag": release_tag,
         "platform": f"{os_segment}-{arch}",
-        # Version 3 isolates per-image manifests/resources in the shared
-        # version/platform cache directory.
-        "bundle-format": 3,
+        "bundle-format": _NATIVE_IMAGE_BUNDLE_FORMAT,
     }
     # A local checkout keeps the same URL while Gradle replaces the archive
     # in place. Record its cheap filesystem fingerprint so a rebuilt bundle is
@@ -6551,10 +6559,13 @@ def _ensure_native_image(
             # though the launcher itself is a single executable.
             for item in extracted.parent.iterdir():
                 # Several native bundles contain identically named manifests
-                # (native-compile-classpath.txt, native-provided-classpath.txt)
-                # and resources. Keep those image-specific files separate;
-                # otherwise provisioning pyronaut-run after pyronaut-dev
-                # silently replaces the compiler manifest used by pyronaut-dev.
+                # (native-compile-classpath.txt, native-provided-classpath.txt).
+                # Keep those image-specific files separate; otherwise
+                # provisioning pyronaut-run after pyronaut-dev silently replaces
+                # the compiler manifest used by pyronaut-dev. Copied language
+                # resources are deliberately not isolated: native-image resolves
+                # them from "resources" beside the executable, and every bundle
+                # of a given version ships the same GraalPy home.
                 if item.name in {"native-compile-classpath.txt", "native-provided-classpath.txt"}:
                     target = executable.parent / "resources" / image_name / item.name
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -8263,7 +8274,7 @@ def _cached_native_image(
         "version": version,
         "release-tag": release_tag,
         "platform": f"{os_segment}-{arch}",
-        "bundle-format": 3,
+        "bundle-format": _NATIVE_IMAGE_BUNDLE_FORMAT,
     }
     if not isinstance(cached_metadata, dict) or any(
         cached_metadata.get(key) != value for key, value in expected.items()

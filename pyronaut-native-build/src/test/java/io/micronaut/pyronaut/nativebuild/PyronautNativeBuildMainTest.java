@@ -157,6 +157,43 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void keepsClasspathEntriesBelowDirectoriesNamedAfterPythonArtifacts() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+        // A checkout directory may legitimately be named after a Python
+        // artifact. Its entries are still ordinary Java classpath entries.
+        Path checkout = Files.createDirectories(tempDir.resolve("graalpy-truffle-worktree"));
+        Path applicationJar = Files.createFile(checkout.resolve("application-1.0.jar"));
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+        String classpath = System.getProperty("java.class.path");
+        int exit;
+        try {
+            System.setProperty("java.class.path", classpath + java.io.File.pathSeparator + applicationJar);
+            PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+            exit = new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image");
+        } finally {
+            System.setProperty("java.class.path", classpath);
+        }
+
+        assertEquals(0, exit);
+        assertEquals(1, executed.size());
+        List<String> nativeCommand = executed.getFirst();
+        assertTrue(nativeCommand.get(nativeCommand.indexOf("-cp") + 1).contains(applicationJar.toString()));
+    }
+
+    @Test
     void ignoresNonGradlePathsWhoseParentWalkReachesRoot() throws Exception {
         var method = PyronautNativeBuildMain.class.getDeclaredMethod("isGradleVersionDirectory", Path.class);
         method.setAccessible(true);

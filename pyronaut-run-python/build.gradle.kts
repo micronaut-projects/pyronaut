@@ -214,6 +214,9 @@ tasks {
             include("*.so", "*.dylib", "*.dll", "resources/**")
         }
         into(dockerBundle)
+        // The Dockerfile lives beside the synced bundle directory rather than
+        // inside it, so declare it explicitly to keep up-to-date checks honest.
+        outputs.file(dockerContext.map { it.file("Dockerfile") })
         doLast {
             val dockerfile = dockerContext.get().file("Dockerfile").asFile
             dockerfile.writeText(

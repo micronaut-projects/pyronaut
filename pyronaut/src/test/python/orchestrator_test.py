@@ -7220,6 +7220,30 @@ java-version = 25
                     offline=True,
                 )
 
+    def test_local_native_base_in_output_directory_keeps_existing_bundle_support(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            staged = project_dir / "__pyronaut__" / "native"
+            staged.mkdir(parents=True)
+            source = staged / "pyronaut-run-python"
+            source.write_bytes(b"native")
+            (staged / "resources" / "python").mkdir(parents=True)
+            (staged / "resources" / "python" / "stdlib.txt").write_text("stdlib", encoding="utf-8")
+            (staged / "libpython.dylib").write_bytes(b"library")
+
+            cli._stage_native_base_executable(  # noqa: SLF001
+                str(source),
+                project_dir=project_dir,
+                target=staged / "demo",
+                offline=False,
+            )
+
+            self.assertEqual(b"native", (staged / "demo").read_bytes())
+            self.assertEqual(
+                "stdlib", (staged / "resources" / "python" / "stdlib.txt").read_text(encoding="utf-8")
+            )
+            self.assertEqual(b"library", (staged / "libpython.dylib").read_bytes())
+
     def test_tui_smoke_delegates_install_process_run(self):
         executed = []
 

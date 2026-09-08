@@ -73,6 +73,21 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String GENERATED_NATIVE_IMAGE_CONFIG_DIR = "__pyronaut__/native-image-config";
     private static final Set<String> NATIVE_RUNTIME_LIBRARY_SUFFIXES = Set.of(".so", ".dylib", ".dll");
+    private static final Set<String> PYTHON_ONLY_ARTIFACT_NAMES = Set.of(
+        "pyronaut-run-python",
+        "pyronaut-logback",
+        "context-python",
+        "inject-python",
+        "graalpy",
+        "python-",
+        "truffle-",
+        "polyglot-",
+        "logback-"
+    );
+    private static final Set<String> PYTHON_ONLY_MODULE_DIRECTORIES = Set.of(
+        "pyronaut-run-python",
+        "pyronaut-logback"
+    );
     private static final Map<Path, String> GAV_CACHE = new ConcurrentHashMap<>();
     private static final Map<Path, List<Path>> POM_CACHE = new ConcurrentHashMap<>();
     private static final String DEFAULT_METADATA_VERSION = loadDefaultMetadataVersion();
@@ -177,12 +192,16 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
             // Keep the Java launcher free of Python/Truffle and logback
             // artifacts. The Python launcher opts in through --include-python.
-            List<Path> nativeClasspath = new ArrayList<>(runnerClasspath);
-            nativeClasspath.addAll(applicationRuntimeClasspath);
+            List<Path> nativeRunnerClasspath = new ArrayList<>(runnerClasspath);
             if (!includePython) {
-                nativeClasspath.removeIf(PyronautNativeBuildMain::isPythonOnlyClasspathEntry);
+                nativeRunnerClasspath.removeIf(PyronautNativeBuildMain::isPythonOnlyClasspathEntry);
+                applicationRuntimeClasspath.removeIf(PyronautNativeBuildMain::isPythonOnlyClasspathEntry);
             }
-            removeDuplicateVirtualFileSystemEntries(nativeClasspath, runnerClasspath.size());
+            List<Path> nativeClasspath = new ArrayList<>(nativeRunnerClasspath);
+            nativeClasspath.addAll(applicationRuntimeClasspath);
+            // The runner prefix must be measured after filtering; the unfiltered
+            // size can exceed the classpath and overrun the duplicate scan.
+            removeDuplicateVirtualFileSystemEntries(nativeClasspath, nativeRunnerClasspath.size());
             nativeClasspath.add(classesDir);
             Path configDir = root.resolve(DEFAULT_CONFIG_DIR).normalize();
             if (Files.isDirectory(configDir)) {
@@ -417,16 +436,22 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     }
 
     private static boolean isPythonOnlyClasspathEntry(Path path) {
-        String location = path.toString().toLowerCase(Locale.ROOT);
-        return location.contains("pyronaut-run-python")
-            || location.contains("pyronaut-logback")
-            || location.contains("context-python")
-            || location.contains("inject-python")
-            || location.contains("graalpy")
-            || location.contains("python-")
-            || location.contains("truffle-")
-            || location.contains("polyglot-")
-            || location.contains("logback-");
+        Path fileName = path.getFileName();
+        String name = fileName == null ? "" : fileName.toString().toLowerCase(Locale.ROOT);
+        if (PYTHON_ONLY_ARTIFACT_NAMES.stream().anyMatch(name::contains)) {
+            return true;
+        }
+        // Project outputs are directories such as
+        // pyronaut-run-python/build/classes/java/main, so compare whole path
+        // segments. Matching an arbitrary substring of the absolute path would
+        // discard every entry whenever the checkout directory happens to be
+        // named after one of these modules.
+        for (Path segment : path) {
+            if (PYTHON_ONLY_MODULE_DIRECTORIES.contains(segment.toString().toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static List<Path> excludeRunnerProvidedModules(List<Path> runtimeClasspath, List<Path> runnerClasspath) {
@@ -453,7 +478,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         for (int i = 0; i < runtimeEntries && i < classpath.size(); i++) {
             runtimeResources.addAll(virtualFileSystemEntries(classpath.get(i)));
         }
-        Iterator<Path> entries = classpath.listIterator(runtimeEntries);
+        Iterator<Path> entries = classpath.listIterator(Math.min(runtimeEntries, classpath.size()));
         while (entries.hasNext()) {
             Path entry = entries.next();
             Set<String> resources = virtualFileSystemEntries(entry);
