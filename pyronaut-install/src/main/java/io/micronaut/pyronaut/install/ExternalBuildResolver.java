@@ -263,7 +263,10 @@ final class ExternalBuildResolver {
             Files.deleteIfExists(output);
             Files.deleteIfExists(script);
             return new GradleSourceSets(List.of(mainJava, testJava, mainResources, testResources), testResourcesEnabled);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             deleteQuietly(cache.resolve("external-gradle-sources.txt"));
             deleteQuietly(cache.resolve("external-gradle-sources.gradle"));
             return new GradleSourceSets(List.of(List.of(), List.of(), List.of(), List.of()), false);
@@ -391,7 +394,7 @@ final class ExternalBuildResolver {
         pom.append("</project>");
         Files.writeString(processorPom, pom, StandardCharsets.UTF_8);
         try {
-            List<String> command = new ArrayList<>(List.of(mavenCommand(root), "-f", processorPom.toString(), "dependency:build-classpath", "-Dmdep.outputFile=" + output, "-Dmdep.includeScope=compile"));
+            List<String> command = new ArrayList<>(List.of(mavenCommand(root), "-f", processorPom.toString(), "dependency:build-classpath", "-Dmdep.outputFile=" + output, "-DincludeScope=compile"));
             if (offline) {
                 command.add("-o");
             }
@@ -513,6 +516,13 @@ final class ExternalBuildResolver {
             if (exitCode != 0) {
                 throw new IOException("External " + kind.name().toLowerCase(java.util.Locale.ROOT)
                     + " dependency resolution failed (exit code " + exitCode + ")");
+            }
+            if (!Files.isRegularFile(output)) {
+                throw new IOException("External " + kind.name().toLowerCase(java.util.Locale.ROOT)
+                    + " dependency resolution produced no classpath for scope '" + scope + "'"
+                    + (kind == ProjectKind.GRADLE
+                        ? "; the root Gradle project must apply the 'java' plugin so that its configurations can be resolved"
+                        : ""));
             }
             String value = Files.readString(output, StandardCharsets.UTF_8);
             return java.util.Arrays.stream(value.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))

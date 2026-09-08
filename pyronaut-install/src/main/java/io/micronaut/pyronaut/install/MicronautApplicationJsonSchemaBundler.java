@@ -87,11 +87,13 @@ final class MicronautApplicationJsonSchemaBundler {
         String presentState = "present:" + classpathHash + "\n" + optionState;
         String emptyState = "empty:" + classpathHash + "\n" + optionState;
         if (Files.exists(stateFile)) {
+            // Compare trimmed values: with no processor options the state ends in a
+            // newline that the trimmed read would otherwise never match.
             String existingState = Files.readString(stateFile, StandardCharsets.UTF_8).trim();
-            if (existingState.equals(presentState) && Files.exists(schemaFile)) {
+            if (existingState.equals(presentState.trim()) && Files.exists(schemaFile)) {
                 return SchemaWriteResult.cached();
             }
-            if (existingState.equals(emptyState)) {
+            if (existingState.equals(emptyState.trim())) {
                 return SchemaWriteResult.none();
             }
         }

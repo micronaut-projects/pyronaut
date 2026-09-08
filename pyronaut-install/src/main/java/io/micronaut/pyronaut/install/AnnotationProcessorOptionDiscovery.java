@@ -25,8 +25,10 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
+import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import java.util.TreeSet;
 
@@ -66,7 +68,21 @@ final class AnnotationProcessorOptionDiscovery {
             URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
             try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
                 Class<?> visitorType = Class.forName("io.micronaut.inject.visitor.TypeElementVisitor", true, loader);
-                ServiceLoader.load(visitorType, loader).stream().forEach(provider -> {
+                // Iterate manually so that a single provider that cannot be loaded
+                // (ServiceConfigurationError / LinkageError) is skipped instead of
+                // aborting discovery and caching an empty option set.
+                Iterator<? extends ServiceLoader.Provider<?>> providers = ServiceLoader.load(visitorType, loader).stream().iterator();
+                while (true) {
+                    ServiceLoader.Provider<?> provider;
+                    try {
+                        if (!providers.hasNext()) {
+                            break;
+                        }
+                        provider = providers.next();
+                    } catch (ServiceConfigurationError | LinkageError skipped) {
+                        // A provider whose class is missing from the classpath must not hide the others.
+                        continue;
+                    }
                     // skip micronaut data since it uses Micronaut's service loader which causes issues and doesn't define any options anyway
                     String processorName = provider.type().getName();
                     if (!processorName.startsWith("io.micronaut.data") && !processorName.startsWith("io.micronaut.python.processing")) {
@@ -81,12 +97,12 @@ final class AnnotationProcessorOptionDiscovery {
                                         .map(String::trim)
                                         .forEach(options::add);
                             }
-                        } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
+                        } catch (ReflectiveOperationException | LinkageError | RuntimeException | ServiceConfigurationError ignored) {
                             // A processor with optional dependencies must not make installation fail.
                         }
                     }
-                });
-            } catch (ClassNotFoundException | LinkageError | RuntimeException | java.util.ServiceConfigurationError ignored) {
+                }
+            } catch (ClassNotFoundException | LinkageError | RuntimeException | ServiceConfigurationError ignored) {
                 // Keep an empty option set when the processor classpath cannot be loaded.
             }
         }

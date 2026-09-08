@@ -322,7 +322,8 @@ public final class PyronautInstallMain implements Callable<Integer> {
                             localRepo,
                             offline,
                             bypassRequested,
-                            progressListener(progressReporter, installScope)
+                            progressListener(progressReporter, installScope),
+                            root
                         )));
                     }
                     for (InstallScope installScope : activeScopes) {
@@ -528,7 +529,8 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     localRepo,
                     offline,
                     refresh || noCache,
-                    progressListener(progressReporter, installScope)
+                    progressListener(progressReporter, installScope),
+                    root
                 )));
             }
             for (InstallScope installScope : scopes) {

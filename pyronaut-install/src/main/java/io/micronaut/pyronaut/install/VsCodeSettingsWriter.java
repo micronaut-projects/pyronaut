@@ -152,8 +152,8 @@ final class VsCodeSettingsWriter implements EditorSettingsWriter {
         if (!Files.exists(settingsFile)) {
             return new LinkedHashMap<>();
         }
-        try {
-            Object parsed = jsonMapper.readValue(Files.newInputStream(settingsFile), Map.class);
+        try (var input = Files.newInputStream(settingsFile)) {
+            Object parsed = jsonMapper.readValue(input, Map.class);
             if (parsed instanceof Map<?, ?> map) {
                 return new LinkedHashMap<>((Map<String, Object>) map);
             }

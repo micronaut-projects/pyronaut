@@ -66,8 +66,8 @@ final class ResolutionCache {
     static String externalInstallHash(Path projectRoot, Path localRepositoryPath) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update("external-install-v4-complete-test-resources-server-classpath".getBytes(StandardCharsets.UTF_8));
-            for (String name : List.of("project.toml", "pom.xml", "mvnw", "settings.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradle.properties")) {
+            digest.update("external-install-v5-sdk-versions".getBytes(StandardCharsets.UTF_8));
+            for (String name : List.of("pyproject.toml", "pom.xml", "mvnw", "settings.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradle.properties")) {
                 Path file = projectRoot.resolve(name);
                 if (Files.isRegularFile(file)) {
                     digest.update(name.getBytes(StandardCharsets.UTF_8));
@@ -86,6 +86,17 @@ final class ResolutionCache {
                 }
             }
             digest.update(localRepositoryPath.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8));
+            // The cached external layout embeds SDK derived classpaths, so an SDK
+            // upgrade must invalidate it just like it invalidates installHash.
+            digest.update((byte) 0);
+            digest.update("micronautCoreVersion=".getBytes(StandardCharsets.UTF_8));
+            digest.update(PyronautManagedVersions.micronautCoreVersion().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update("micronautPlatformVersion=".getBytes(StandardCharsets.UTF_8));
+            digest.update(PyronautManagedVersions.micronautPlatformVersion().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update("micronautControlPanelVersion=".getBytes(StandardCharsets.UTF_8));
+            digest.update(PyronautManagedVersions.micronautControlPanelVersion().getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
