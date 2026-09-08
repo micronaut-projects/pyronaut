@@ -194,6 +194,31 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void keepsDistinctRunnerClasspathEntriesWithTheSameGavAndDeduplicatesNormalizedPaths() throws Exception {
+        Path first = createJarWithPom(tempDir.resolve("first/example-1.0.jar"));
+        Path second = createJarWithPom(tempDir.resolve("second/example-1.0.jar"));
+        Path duplicate = first.resolveSibling(".").resolve(first.getFileName());
+        String originalClasspath = System.getProperty("java.class.path");
+        var method = PyronautNativeBuildMain.class.getDeclaredMethod("pyronautRunClasspathEntries", boolean.class);
+        method.setAccessible(true);
+
+        List<?> entries;
+        try {
+            System.setProperty("java.class.path", String.join(
+                java.io.File.pathSeparator,
+                first.toString(),
+                second.toString(),
+                duplicate.toString()
+            ));
+            entries = (List<?>) method.invoke(null, false);
+        } finally {
+            System.setProperty("java.class.path", originalClasspath);
+        }
+
+        assertEquals(List.of(first.toAbsolutePath().normalize(), second.toAbsolutePath().normalize()), entries);
+    }
+
+    @Test
     void ignoresNonGradlePathsWhoseParentWalkReachesRoot() throws Exception {
         var method = PyronautNativeBuildMain.class.getDeclaredMethod("isGradleVersionDirectory", Path.class);
         method.setAccessible(true);
@@ -813,6 +838,18 @@ class PyronautNativeBuildMainTest {
                 zip.closeEntry();
             }
         }
+        return jar;
+    }
+
+    private static Path createJarWithPom(Path jar) throws IOException {
+        createJar(jar);
+        Files.writeString(jar.resolveSibling("example-1.0.pom"), """
+            <project>
+              <groupId>org.example</groupId>
+              <artifactId>example</artifactId>
+              <version>1.0</version>
+            </project>
+            """);
         return jar;
     }
 }
