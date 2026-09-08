@@ -156,6 +156,7 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=io.micronaut.toml.*",
             "-H:Preserve=package=io.micronaut.views.*",
             "-H:Preserve=package=io.micronaut.web.router.*",
+            "-H:Preserve=package=io.micronaut.pyronaut.logback.*",
 
 
             /* netty.* */
@@ -175,6 +176,7 @@ public final class PyronautNativeImageBuilder {
             /* other runtime APIs */
             "-H:Preserve=package=javax.xml.namespace.*",
             "-H:Preserve=package=org.reactivestreams.*",
+            "-H:Preserve=package=picocli.*",
 
             /* other */
             "-H:Preserve=package=com.fasterxml.jackson.annotation.*",

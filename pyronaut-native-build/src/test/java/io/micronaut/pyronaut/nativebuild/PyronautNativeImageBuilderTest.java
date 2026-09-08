@@ -57,17 +57,29 @@ class PyronautNativeImageBuilderTest {
 
     @Test
     void preservesOnlyPackagesPresentOnTheEffectiveClasspath() throws Exception {
-        Path classpathEntry = tempDir.resolve("jackson-core.jar");
-        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {
+        Path matchingClasspathEntry = tempDir.resolve("matching-runtime.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(matchingClasspathEntry))) {
             output.putNextEntry(new ZipEntry("tools/jackson/core/JsonFactory.class"));
             output.write(0);
             output.closeEntry();
+            output.putNextEntry(new ZipEntry("io/micronaut/pyronaut/logback/PyronautContextSelector.class"));
+            output.write(0);
+            output.closeEntry();
+            output.putNextEntry(new ZipEntry("picocli/CommandLine.class"));
+            output.write(0);
+            output.closeEntry();
         }
+        Path emptyClasspathEntry = Files.createFile(tempDir.resolve("empty-runtime.jar"));
 
-        List<String> command = build(classpathEntry, false, false);
+        List<String> matchingCommand = build(matchingClasspathEntry, false, false);
+        List<String> emptyCommand = build(emptyClasspathEntry, false, false);
 
-        assertTrue(command.contains("-H:Preserve=package=tools.jackson.core.*"));
-        assertFalse(command.contains("-H:Preserve=package=io.micronaut.expressions.*"));
+        assertTrue(matchingCommand.contains("-H:Preserve=package=tools.jackson.core.*"));
+        assertTrue(matchingCommand.contains("-H:Preserve=package=io.micronaut.pyronaut.logback.*"));
+        assertTrue(matchingCommand.contains("-H:Preserve=package=picocli.*"));
+        assertFalse(matchingCommand.contains("-H:Preserve=package=io.micronaut.expressions.*"));
+        assertFalse(emptyCommand.contains("-H:Preserve=package=io.micronaut.pyronaut.logback.*"));
+        assertFalse(emptyCommand.contains("-H:Preserve=package=picocli.*"));
     }
 
     @Test
