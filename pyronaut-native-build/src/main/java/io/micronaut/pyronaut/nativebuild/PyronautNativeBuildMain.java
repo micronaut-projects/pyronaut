@@ -72,6 +72,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private static final String DEFAULT_RUNTIME_MANIFEST = "__pyronaut__/resolved-runtime-dependencies";
     private static final String DEFAULT_CONFIG_DIR = "config";
     private static final String GENERATED_NATIVE_IMAGE_CONFIG_DIR = "__pyronaut__/native-image-config";
+    private static final Set<String> NATIVE_RUNTIME_LIBRARY_SUFFIXES = Set.of(".so", ".dylib", ".dll");
     private static final Map<Path, String> GAV_CACHE = new ConcurrentHashMap<>();
     private static final Map<Path, List<Path>> POM_CACHE = new ConcurrentHashMap<>();
     private static final String DEFAULT_METADATA_VERSION = loadDefaultMetadataVersion();
@@ -263,11 +264,48 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         if (!source.equals(outputPath)) {
             Files.copy(source, outputPath, StandardCopyOption.REPLACE_EXISTING);
         }
+        copyNativeImageSupport(source, outputPath);
         if (!outputPath.toFile().setExecutable(true, false)) {
             throw new IOException("Unable to mark prebuilt default native base executable: " + outputPath);
         }
         System.out.println("Prebuilt default native base copied: " + outputPath);
         return SUCCESS;
+    }
+
+    private static void copyNativeImageSupport(Path sourceExecutable, Path targetExecutable) throws IOException {
+        Path sourceDirectory = sourceExecutable.getParent();
+        Path targetDirectory = targetExecutable.getParent();
+        if (sourceDirectory == null || targetDirectory == null || sourceDirectory.equals(targetDirectory)) {
+            return;
+        }
+        Path sourceResources = sourceDirectory.resolve("resources");
+        if (Files.isDirectory(sourceResources)) {
+            copyDirectory(sourceResources, targetDirectory.resolve("resources"));
+        }
+        try (var files = Files.list(sourceDirectory)) {
+            for (Path file : files.filter(Files::isRegularFile).toList()) {
+                String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
+                if (NATIVE_RUNTIME_LIBRARY_SUFFIXES.stream().anyMatch(fileName::endsWith)) {
+                    Files.copy(file, targetDirectory.resolve(file.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    private static void copyDirectory(Path source, Path target) throws IOException {
+        Files.walkFileTree(source, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
+                Files.createDirectories(target.resolve(source.relativize(directory)));
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                Files.copy(file, target.resolve(source.relativize(file)), StandardCopyOption.REPLACE_EXISTING);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     private Integer buildNativeBase(Path root,

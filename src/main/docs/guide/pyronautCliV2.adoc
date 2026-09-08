@@ -502,7 +502,7 @@ JVM Docker mode (`pyronaut build --docker`):
 - Stages a compact build context under a temporary `app/` root containing the configured resources directory, any `additional-resources` directories, `pyproject.toml`, processed classes, the project-local Maven cache, and the delegated `pyronaut-run` distribution.
 - Generates a default Dockerfile when `Dockerfile` is not present.
 - Builds an image tagged `<image-name>:<project-version>`.
-- Uses `tool.pyronaut.build.docker.jvm-base-image` when configured, otherwise defaults to `container-registry.oracle.com/graalvm/jdk:25i1`.
+- Uses `tool.pyronaut.build.docker.jvm-base-image` when configured, otherwise defaults to `container-registry.oracle.com/graalvm/jdk:25i3`.
 
 Native mode:
 
@@ -510,6 +510,9 @@ Native mode:
 - Runs install/process preflight.
 - Delegates to `pyronaut-native-build`.
 - Produces `__pyronaut__/native/application` by default.
+- For Python-capable images, keeps the copied GraalPy `resources` directory
+  and adjacent native libraries beside the executable in wheel and Docker
+  distributions.
 
 Native Docker mode (`pyronaut build --native --docker`):
 
@@ -602,7 +605,8 @@ base-image = "registry.example.com/acme/pyronaut-runtime:1"
 With `build.docker.base-image`, native Docker builds copy only application
 configuration, processed classes, and schemas into a new layer over that
 runtime image. The base image contains `/opt/pyronaut/bin/pyronaut-run` (or
-`pyronaut-run-python`); the application layer uses it with
+`pyronaut-run-python`), with any copied language resources under the adjacent
+`/opt/pyronaut/bin/resources` directory; the application layer uses it with
 `--project-dir /app`.
 
 ==== Production packaging matrix
@@ -659,7 +663,7 @@ Example `pyproject.toml` Docker settings:
 ----
 [tool.pyronaut.build.docker]
 image-name = "acme/demo"
-jvm-base-image = "container-registry.oracle.com/graalvm/jdk:25i1"
+jvm-base-image = "container-registry.oracle.com/graalvm/jdk:25i3"
 native-builder-image = "container-registry.oracle.com/graalvm/native-image:25"
 native-base-image = "gcr.io/distroless/base"
 static-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25-muslib"

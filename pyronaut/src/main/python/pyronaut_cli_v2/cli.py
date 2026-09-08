@@ -78,7 +78,7 @@ PACKAGING_FORMATS = {
 }
 DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
-_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i2"
+_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i3"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
 _SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
@@ -3069,6 +3069,7 @@ def _prepare_build_wheel_staging(
         (pyronaut_dir / "native").mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary_path, pyronaut_dir / "native" / binary_name)
         (pyronaut_dir / "native" / binary_name).chmod(0o755)
+        _stage_native_bundle_support(binary_path.parent, pyronaut_dir / "native")
         if native_bundle_dir is not None:
             _stage_native_bundle_support(native_bundle_dir, pyronaut_dir / "native")
         classes_dir = project_dir / "__pyronaut__" / "classes"
@@ -3164,11 +3165,24 @@ def _copytree_if_exists(source: Path, target: Path) -> None:
 
 def _stage_native_bundle_support(bundle_dir: Path, target_dir: Path) -> None:
     """Keep external native-image runtime inputs beside the staged launcher."""
+    target_dir.mkdir(parents=True, exist_ok=True)
     _copytree_if_exists(bundle_dir / "resources", target_dir / "resources")
-    for pattern in ("*.so", "*.dylib"):
+    for pattern in ("*.so", "*.dylib", "*.dll"):
         for runtime_library in bundle_dir.glob(pattern):
             if runtime_library.is_file():
-                shutil.copy2(runtime_library, target_dir / runtime_library.name)
+                target = target_dir / runtime_library.name
+                if runtime_library.resolve() != target.resolve():
+                    shutil.copy2(runtime_library, target)
+
+
+def _remove_native_bundle_support(bundle_dir: Path) -> None:
+    resources = bundle_dir / "resources"
+    if resources.is_dir():
+        shutil.rmtree(resources)
+    for pattern in ("*.so", "*.dylib", "*.dll"):
+        for runtime_library in bundle_dir.glob(pattern):
+            if runtime_library.is_file():
+                runtime_library.unlink()
 
 
 def _stage_manifest_artifacts(
@@ -3327,6 +3341,7 @@ def _stage_native_base_executable(
             raise RuntimeError(f"Invalid native base URL: {configured}")
         if offline:
             raise RuntimeError("Cannot download --native-base while offline")
+        _remove_native_bundle_support(target.parent)
         try:
             _download_url_with_progress(configured, target, "Downloading native base")
         except Exception as exc:
@@ -3342,7 +3357,10 @@ def _stage_native_base_executable(
                 f"Configured native base does not exist: {source}. Run pyronaut build --native-base first."
             )
         if source.resolve() != target.resolve():
+            if source.parent.resolve() != target.parent.resolve():
+                _remove_native_bundle_support(target.parent)
             shutil.copy2(source, target)
+            _stage_native_bundle_support(source.parent, target.parent)
     if not target.is_file() or target.stat().st_size == 0:
         target.unlink(missing_ok=True)
         raise RuntimeError(f"Native base is empty or missing: {configured}")

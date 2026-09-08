@@ -280,6 +280,10 @@ class PyronautNativeBuildMainTest {
         Path source = tempDir.resolve("pyronaut-run");
         Files.writeString(source, "prebuilt-base", java.nio.charset.StandardCharsets.UTF_8);
         source.toFile().setExecutable(true, false);
+        Files.createDirectories(tempDir.resolve("resources/python"));
+        Files.writeString(tempDir.resolve("resources/python/stdlib.txt"), "stdlib");
+        Files.writeString(tempDir.resolve("libpython.dylib"), "library");
+        Files.writeString(tempDir.resolve("ignored.txt"), "ignored");
         Path output = tempDir.resolve("output").resolve("pyronaut-run");
         List<List<String>> executed = new ArrayList<>();
         var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
@@ -303,6 +307,9 @@ class PyronautNativeBuildMainTest {
         assertTrue(executed.isEmpty());
         assertEquals("prebuilt-base", Files.readString(output));
         assertTrue(output.toFile().canExecute());
+        assertEquals("stdlib", Files.readString(output.getParent().resolve("resources/python/stdlib.txt")));
+        assertEquals("library", Files.readString(output.getParent().resolve("libpython.dylib")));
+        assertFalse(Files.exists(output.getParent().resolve("ignored.txt")));
     }
 
     @Test
