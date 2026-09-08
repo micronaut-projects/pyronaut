@@ -40,7 +40,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -394,17 +393,14 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         if (classpath.isBlank()) {
             throw new IllegalStateException("Unable to locate the bundled Pyronaut runner classpath");
         }
-        LinkedHashMap<String, Path> unique = new LinkedHashMap<>();
+        Set<Path> unique = new LinkedHashSet<>();
         java.util.Arrays.stream(classpath.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
             .map(Path::of)
             .map(path -> path.toAbsolutePath().normalize())
             .filter(Files::exists)
             .filter(path -> isProductionRunnerClasspathEntry(path, includePython))
-            .forEach(path -> {
-                String gav = gavFromClasspathEntry(path);
-                unique.putIfAbsent(gav == null ? path.toString() : gav, path);
-            });
-        return unique.values().stream().toList();
+            .forEach(unique::add);
+        return unique.stream().toList();
     }
 
     private static boolean isProductionRunnerClasspathEntry(Path path, boolean includePython) {
