@@ -74,6 +74,25 @@ class InstallProgressReporterTest {
     }
 
     @Test
+    void interactiveModeTruncatesLongArtifactNamesToKeepRowsFromWrapping() {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        String coordinate = "io.micronaut.pyronaut:micronaut-pyronaut-config-model:jar:0.0.2-SNAPSHOT";
+        try (InstallProgressReporter reporter = new InstallProgressReporter(new PrintStream(buffer), InstallProgressReporter.ProgressMode.ON, true)) {
+            reporter.startScope(InstallScope.DEVELOPMENT_RUNTIME);
+            reporter.artifactPlanned(InstallScope.DEVELOPMENT_RUNTIME, coordinate);
+        }
+
+        String output = buffer.toString(StandardCharsets.UTF_8);
+        assertFalse(output.contains(coordinate));
+        for (String frame : output.split("\\r")) {
+            String visible = frame.replaceAll("\\u001B\\[[0-9;]*[A-Za-z]", "");
+            if (!visible.isBlank()) {
+                assertTrue(visible.length() <= 79, () -> "Progress frame wrapped: " + visible);
+            }
+        }
+    }
+
+    @Test
     void offModeSuppressesProgressOutput() {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (InstallProgressReporter reporter = new InstallProgressReporter(new PrintStream(buffer), InstallProgressReporter.ProgressMode.OFF, true)) {
