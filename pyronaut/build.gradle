@@ -318,13 +318,15 @@ tasks.register("prepareWheelSources", Sync) {
                         .resolvedArtifacts
                         .groupBy { it.file.name }
                     def descriptorLines = classpathEntries.unique().collect { fileName ->
-                        // Keep the installer bootstrap self-contained, but do not
-                        // classify an external artifact as bundled merely because
-                        // the installer also uses it. Snapshot Micronaut artifacts
-                        // must be resolved from the selected repository for each
-                        // tool runtime; otherwise a wheel can retain an older
-                        // same-version snapshot and fail with linkage errors.
-                        if (fileName.startsWith("micronaut-pyronaut-") && fileName.endsWith(".jar")) {
+                        // Keep the installer bootstrap self-contained. For every
+                        // other tool, do not classify an external artifact as
+                        // bundled merely because the installer also uses it.
+                        // Snapshot Micronaut artifacts must be resolved from the
+                        // selected repository for each tool runtime; otherwise a
+                        // wheel can retain an older same-version snapshot and
+                        // fail with linkage errors.
+                        if ((toolDir.name == "pyronaut-install" && installerClasspathEntries.contains(fileName))
+                            || (fileName.startsWith("micronaut-pyronaut-") && fileName.endsWith(".jar"))) {
                             return "bundled\t${fileName}"
                         }
                         def matches = artifactsByName[fileName] ?: []
@@ -576,7 +578,13 @@ tasks.register("buildSdkWheel", Exec) {
             include("**/tools/shared/lib/*")
             include("**/tools/*/lib/control-panel/*")
         }.files.collect { it.name } as Set
-        def unexpectedExternalArtifacts = packagedArtifactNames.intersect(externalArtifactNames - controlPanelArtifactNames)
+        // The installer bootstrap retains its complete classpath in the wheel,
+        // while the other tools resolve those same external artifacts from the
+        // selected Maven repository. Those shared bootstrap files are not the
+        // runtime versions used by the installed tool cache.
+        def unexpectedExternalArtifacts = packagedArtifactNames.intersect(
+            externalArtifactNames - bundledArtifactNames - controlPanelArtifactNames
+        )
         if (!unexpectedExternalArtifacts.isEmpty()) {
             throw new GradleException("Wheel contains externally resolved tool artifacts: ${unexpectedExternalArtifacts.sort()}")
         }
