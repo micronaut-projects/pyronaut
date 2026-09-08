@@ -165,6 +165,30 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void dispatchesDirectTestsWithDirectorySource(@TempDir Path tempDir) throws IOException {
+        Path source = tempDir.resolve("main.py");
+        Path testSource = tempDir.resolve("test_main.py");
+        Files.writeString(source, "print('ok')\n");
+        Files.writeString(testSource, "def test_main(): pass\n");
+        List<PyronautDevMain.DirectSourceInvocation> invocations = new ArrayList<>();
+
+        assertEquals(0, PyronautDevMain.execute(
+            new String[]{"test", tempDir.toString(), "--", testSource.toString()},
+            (command, arguments) -> 0,
+            (invocation, stagingRoot) -> {
+                invocations.add(invocation);
+                return 0;
+            }
+        ));
+
+        assertEquals(1, invocations.size());
+        PyronautDevMain.DirectSourceInvocation invocation = invocations.getFirst();
+        assertTrue(invocation.test());
+        assertEquals(List.of(tempDir), invocation.sources());
+        assertEquals(List.of(testSource), invocation.testSources());
+    }
+
+    @Test
     void implicitPythonTestDiscoveryMatchesDocumentedPatternsAndPrunesToolDirectories(@TempDir Path tempDir) throws IOException {
         Path nested = Files.createDirectories(tempDir.resolve("nested"));
         Path pythonTest = nested.resolve("NestedTest.py");

@@ -27,6 +27,9 @@ import java.util.Set;
 @SuppressWarnings({"checkstyle:NeedBraces", "checkstyle:LeftCurly"})
 final class InstallProgressReporter implements AutoCloseable {
     private static final int BAR_WIDTH = 13;
+    // Keep ANSI-managed rows below the width of a standard terminal. A wrapped
+    // row makes the cursor movement used by the multi-scope display unreliable.
+    private static final int MAX_RENDERED_LINE_WIDTH = 79;
     private static final char[] UNICODE_BLOCKS = {' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
 
     private final PrintStream output;
@@ -284,9 +287,14 @@ final class InstallProgressReporter implements AutoCloseable {
         boolean indeterminate = !state.finished && total > 0 && state.completed >= total;
         if (indeterminate) percent = state.animationFrame++ % 2 == 0 ? 99 : 98;
         String bar = unicode ? unicodeBar(percent) : asciiBar(percent);
-        String suffix = state.failed ? " FAILED" : " " + (state.current == null ? "" : state.current);
-        if (indeterminate) suffix += " (resolving)";
-        return String.format("%-21s %s %3d%%%s", scope.cliValue(), bar, percent, suffix);
+        String prefix = String.format("%-21s %s %3d%%", scope.cliValue(), bar, percent);
+        String status = indeterminate ? " (resolving)" : "";
+        if (state.failed) {
+            return prefix + " FAILED";
+        }
+        int available = MAX_RENDERED_LINE_WIDTH - prefix.length() - status.length() - 1;
+        String current = state.current == null ? "" : truncate(state.current, Math.max(0, available));
+        return prefix + " " + current + status;
     }
 
     private void debug(InstallScope scope, String event, String name, State state) {
@@ -316,6 +324,15 @@ final class InstallProgressReporter implements AutoCloseable {
         String clean = name.replace('\u001b', '?').replace('\n', '?').replace('\r', '?');
         int slash = Math.max(clean.lastIndexOf('/'), clean.lastIndexOf('\\'));
         return slash >= 0 ? clean.substring(slash + 1) : clean;
+    }
+
+    private static String truncate(String value, int maxWidth) {
+        if (maxWidth <= 0) return "";
+        if (value.length() <= maxWidth) return value;
+        if (maxWidth <= 3) return value.substring(0, maxWidth);
+        int head = (maxWidth - 3) / 2;
+        int tail = maxWidth - 3 - head;
+        return value.substring(0, head) + "..." + value.substring(value.length() - tail);
     }
 
     private static final class State {
