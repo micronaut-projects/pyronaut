@@ -196,6 +196,32 @@ test('marks unreported included items as errored', () => {
   assert.equal(finished.has(missing.id), true);
 });
 
+test('aggregates parametrized finished events so any failing parameter fails the item', () => {
+  const item = { id: 'test-values' };
+  const run = recordingRun();
+  const started = new Set();
+  const finished = new Set();
+
+  applyResultEvents(
+    run,
+    [{ item, selector: 'tests/test_app.py::test_values' }],
+    [
+      { eventType: 'test_finished', testId: 'tests/test_app.py::test_values[1]', status: 'SUCCESSFUL' },
+      { eventType: 'test_finished', testId: 'tests/test_app.py::test_values[2]', status: 'FAILED', payload: { failure: 'boom' } },
+      { eventType: 'test_finished', testId: 'tests/test_app.py::test_values[3]', status: 'SUCCESSFUL' }
+    ],
+    { makeMessage: text => ({ text }), started, finished }
+  );
+
+  assert.deepEqual(run.calls, [
+    ['started', item],
+    ['passed', item],
+    ['failed', item, { text: '[2]: boom' }]
+  ]);
+  assert.equal(started.has(item.id), true);
+  assert.equal(finished.has(item.id), true);
+});
+
 function recordingRun() {
   const calls = [];
   return {
