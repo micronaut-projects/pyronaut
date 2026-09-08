@@ -718,11 +718,20 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
     private static URI metadataSource(MetadataOptions options) {
         if (options.repositoryUrl != null && !options.repositoryUrl.isBlank()) {
-            return URI.create(options.repositoryUrl);
+            try {
+                return URI.create(options.repositoryUrl.trim());
+            } catch (IllegalArgumentException e) {
+                // Reported as a configuration (precondition) failure rather than an internal error.
+                throw new IllegalStateException("Invalid [tool.pyronaut.build.metadata] repository-url '" + options.repositoryUrl + "': " + e.getMessage(), e);
+            }
         }
         if (options.version != null && !options.version.isBlank()) {
             String version = options.version.trim();
-            return URI.create(String.format(Locale.ROOT, VERSIONED_METADATA_URL_TEMPLATE, version, version));
+            try {
+                return URI.create(String.format(Locale.ROOT, VERSIONED_METADATA_URL_TEMPLATE, version, version));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalStateException("Invalid [tool.pyronaut.build.metadata] version '" + options.version + "': " + e.getMessage(), e);
+            }
         }
         return URI.create(DEFAULT_METADATA_URL);
     }
@@ -994,7 +1003,10 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 List<String> processCommand = command;
                 if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")) {
                     argumentFile = Files.createTempFile(workingDirectory, "native-image-", ".args");
-                    Files.write(argumentFile, command.subList(1, command.size()), StandardCharsets.UTF_8);
+                    List<String> quotedArguments = command.subList(1, command.size()).stream()
+                        .map(ProcessNativeImageInvoker::quoteArgumentFileEntry)
+                        .toList();
+                    Files.write(argumentFile, quotedArguments, StandardCharsets.UTF_8);
                     processCommand = List.of(command.getFirst(), "@" + argumentFile.toAbsolutePath());
                 }
                 ProcessBuilder processBuilder = new ProcessBuilder(processCommand)
@@ -1011,6 +1023,16 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                     Files.deleteIfExists(argumentFile);
                 }
             }
+        }
+
+        /**
+         * Quotes an argument for a native-image {@code @argfile}. The launcher
+         * tokenises the file on whitespace, so arguments containing spaces
+         * (for example paths under {@code C:\Users\John Smith}) must be quoted,
+         * with embedded backslashes and quotes escaped.
+         */
+        static String quoteArgumentFileEntry(String argument) {
+            return "\"" + argument.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
         }
     }
 

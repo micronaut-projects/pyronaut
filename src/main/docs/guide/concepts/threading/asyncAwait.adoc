@@ -1,0 +1,141 @@
+Pyronaut supports `async def` routes, clients and bean methods using standard Python `asyncio` syntax. Under the hood Micronaut provides the event loop: each coroutine is bound to the Netty event loop handling the current request, and awaiting a Micronaut client call, a timer or a supported network operation suspends the coroutine without holding a thread.
+
+There is no `asyncio.run()` and no `uvicorn`. The loop already exists when your function is called.
+
+== Writing an async route
+
+Declare the route with `async def` and await whatever you need. The return type hint describes the awaited result, and Micronaut exposes the method to Java as a `CompletionStage`:
+
+[source,python]
+----
+import asyncio
+
+from micronaut.http.annotation import Get
+
+
+@Get("/slow-hello")
+async def slow_hello() -> str:
+    await asyncio.sleep(0.5)   # does not block the event loop
+    return "hello"
+----
+
+The same works for controller methods and for methods of any `@Singleton` bean.
+
+== Async HTTP clients
+
+A declarative client method declared as `async def` returns an awaitable. Combining an async route with an async client is the main reason to use coroutines: many outbound calls can be in flight while the event loop keeps serving other requests.
+
+[source,python]
+----
+from abc import ABC, abstractmethod
+from typing import Annotated
+
+from jakarta.inject import Inject
+from micronaut.http.annotation import Get
+from micronaut.http.client.annotation import Client
+
+
+@Client("https://api.example.com")
+class BackendClient(ABC):
+    @Get("/message")
+    @abstractmethod
+    async def message(self) -> str:
+        ...
+
+
+backend: Annotated[BackendClient, Inject]
+
+
+@Get("/proxy-message")
+async def proxy_message() -> str:
+    return "proxied: " + await backend.message()
+----
+
+The low-level `HttpClient` can be awaited too. Inject it with a `@Client` qualifier and await `exchange` or `retrieve`:
+
+[source,python]
+----
+import java
+from typing import Annotated
+
+from jakarta.inject import Inject
+from micronaut.http import HttpRequest
+from micronaut.http.annotation import Controller, Get
+from micronaut.http.client import HttpClient
+from micronaut.http.client.annotation import Client
+
+String = java.type("java.lang.String")
+
+
+@Controller("/demo")
+class DemoController:
+    http_client: Annotated[HttpClient, Inject, Client("/")]
+
+    @Get("/exchange")
+    async def exchange(self) -> str:
+        response = await self.http_client.exchange(HttpRequest.GET("/backend/message"), String)
+        return "exchange: " + response.body()
+----
+
+== Running work concurrently
+
+`asyncio.gather` and `asyncio.TaskGroup` schedule several coroutines on the Micronaut loop and wait for all of them:
+
+[source,python]
+----
+import asyncio
+
+from micronaut.http.annotation import Get
+
+
+@Get("/dashboard")
+async def dashboard() -> dict:
+    async with asyncio.TaskGroup() as group:
+        orders = group.create_task(orders_client.recent())
+        stock = group.create_task(stock_client.levels())
+    return {"orders": orders.result(), "stock": stock.result()}
+----
+
+Cancellation, `except*` handling of `ExceptionGroup`, `asyncio.wait_for` timeouts and `asyncio.shield` behave as in CPython.
+
+== Supported asyncio APIs
+
+The Micronaut-managed loop implements the parts of `asyncio` that make sense inside a server:
+
+* `asyncio.get_running_loop()`, `loop.create_future()` and `loop.create_task(...)`
+* `loop.call_soon(...)`, `loop.call_soon_threadsafe(...)`, `loop.call_later(...)` and `loop.call_at(...)`
+* `asyncio.sleep(...)`, `asyncio.gather(...)`, `asyncio.TaskGroup` and task cancellation
+* `loop.run_in_executor(None, ...)`, which uses Micronaut's blocking executor
+* Networking: `asyncio.open_connection`, `asyncio.start_server`, `loop.create_connection`, `loop.create_server`, Unix-domain sockets, datagram endpoints and the `sock_*` helpers, all backed by Netty channels, with TLS for TCP and Unix-domain connections
+
+The following are not implemented and fail immediately with `NotImplementedError` rather than silently blocking:
+
+* `loop.run_forever()` and `loop.run_until_complete(...)` on Micronaut-managed loops
+* `run_in_executor` with a custom executor
+* Eager task start (`eager_start=True`)
+* Python `ssl.SSLContext` objects. Use `ssl=True` or the Micronaut TLS mapping described in the https://docs.micronaut.io/latest/guide/#asyncioNetworking[Micronaut guide]
+* `sendfile` and `start_tls`
+* `add_reader`, `remove_reader`, `add_writer` and `remove_writer`
+* `subprocess_exec` and `subprocess_shell`
+
+Third-party async libraries that only rely on the supported primitives (timers, futures, `open_connection`) generally work. Libraries that need selector registration or their own event loop implementation do not.
+
+== Async event listeners and scheduled jobs
+
+Coroutines are not limited to HTTP. An `async def` method on any bean is exposed to Java as a `CompletionStage`, so Java code and other Micronaut modules can await it. Event listeners, scheduled jobs and message consumers can therefore be written as coroutines when they need to await other async APIs.
+
+== Graceful shutdown
+
+Active coroutine bridges participate in Micronaut's graceful shutdown. With `micronaut.lifecycle.graceful-shutdown.enabled = true`, shutdown waits for in-flight Python coroutines up to the configured grace period before stopping the server.
+
+== Disabling the bridge
+
+The asyncio bridge is enabled by default. It can be switched off, in which case `async def` methods are still valid Python but are executed to completion on a Micronaut executor instead of on the event loop:
+
+[source,toml]
+----
+[micronaut.python.asyncio]
+enabled = false
+----
+
+The Netty-backed event loop is provided by the `micronaut-context-python-netty` module. The Pyronaut development and production launchers include it, so no dependency needs to be declared.

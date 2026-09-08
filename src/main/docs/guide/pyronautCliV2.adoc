@@ -24,7 +24,7 @@ SDK for Windows x64.
 
 [source,bash]
 ----
-pyronaut [--version] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
+pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ----
 
 == Quickstart workflow
@@ -409,8 +409,9 @@ pyronaut test -t Foo.java -- FooTest.java
 Direct test output includes per-test progress and a final execution summary on the console. Direct mode writes JUnit XML and HTML reports to
 `__pyronaut__/reports/tests` and prints a terminal link to the HTML report. The
 report includes container startup failures that prevent tests from starting.
-Pass a directory after `--report` to choose another location. The option is also
-accepted by project-based `pyronaut test` and controls its report directory.
+Pass a directory after `--report` to choose another location. Project-based
+`pyronaut test` always writes to `__pyronaut__/reports/tests` (or
+`target/pyronaut` / `build/pyronaut` for Maven and Gradle projects).
 
 [source,bash]
 ----
@@ -458,7 +459,7 @@ Common options:
 - `--native-base=<path-or-HTTP(S)-URL>`: package against a custom native launcher
 - `--native-base-output <path>`: choose the local output for bare `--native-base`
 - `--name <name>` / `--version <version>`: package metadata for direct Java or Python sources
-- `--verbose` (native mode, forwarded to `native-image`)
+- `--verbose`: print the native-image exclusion summary (native mode)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 
 JVM mode:
@@ -541,8 +542,8 @@ The repository's own runtime images use this exact same builder: run
 
 The native-base builder includes the application's runtime dependencies, so custom
 dependencies declared in `pyproject.toml` are available to subsequent
-application builds. Native-base builds enable the native-image build report and
-SBOM export; inspect the generated report to verify included dependencies.
+application builds. Native-base builds export an SBOM; inspect it to verify the
+included dependencies.
 
 Use `--native-base=default` when application dependencies do not need to be
 included in a custom base. Host builds resolve the bundle for the current
@@ -553,7 +554,7 @@ uses the `[native-images]` repository, version, release, authentication, and
 proxy settings in `~/.pyronaut/settings.toml`; missing bundles are downloaded
 with progress reporting. The equivalent `pyproject.toml` setting is
 `native-base = "default"`. Bare `--native-base`
-continues to create a custom base and export its report and SBOM.
+continues to create a custom base and export its SBOM.
 
 [source,toml]
 ----
@@ -629,6 +630,7 @@ default. Set `PYRONAUT_PACKAGING_E2E_WORKSPACE` to change that location and
 Results, command logs, and `follow-up-issues.md` are written to
 `build/packaging-e2e`.
 
+[[custom-dockerfiles]]
 ==== Custom Dockerfiles with a reusable base
 
 Custom Dockerfiles receive `PYRONAUT_BASE_IMAGE` as a build argument. A
@@ -867,6 +869,7 @@ pyronaut build --native --project-dir /path/to/app -- \
 
 `--` is supported to explicitly separate orchestrator arguments from native-image passthrough arguments.
 
+[[reachability-metadata]]
 === Reachability metadata repository (native mode)
 
 Native builds integrate GraalVM reachability metadata repository selection.

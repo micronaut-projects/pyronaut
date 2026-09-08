@@ -654,6 +654,37 @@ class PyronautNativeBuildMainTest {
         assertTrue(nativeCommand.contains("io.netty.util.ResourceLeakDetector"));
     }
 
+    @Test
+    void reportsMalformedRepositoryUrlAsPreconditionFailure() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            repository-url = "https://example.com/metadata with space.zip"
+            """);
+
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> 0;
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        int exit = new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image");
+
+        assertEquals(8, exit);
+    }
+
+    @Test
+    void quotesArgumentFileEntriesForWhitespaceAndEscapes() {
+        assertEquals("\"--no-fallback\"", PyronautNativeBuildMain.ProcessNativeImageInvoker.quoteArgumentFileEntry("--no-fallback"));
+        assertEquals(
+            "\"-H:Path=C:\\\\Users\\\\John Smith\\\\app\"",
+            PyronautNativeBuildMain.ProcessNativeImageInvoker.quoteArgumentFileEntry("-H:Path=C:\\Users\\John Smith\\app")
+        );
+        assertEquals("\"say \\\"hi\\\"\"", PyronautNativeBuildMain.ProcessNativeImageInvoker.quoteArgumentFileEntry("say \"hi\""));
+    }
+
     private Path prepareProject(String pyprojectContent) throws IOException {
         Path project = tempDir.resolve("project-" + System.nanoTime());
         Path pyronautDir = project.resolve("__pyronaut__");

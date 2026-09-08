@@ -169,8 +169,13 @@ final class PyprojectEditorSupport {
             return;
         }
         if (isManagedDirective(existing, schemaDirective)) {
-            int bodyStart = existing.indexOf("\n\n");
-            String remainder = bodyStart >= 0 ? existing.substring(bodyStart + 2) : "";
+            // Keep everything after the generated marker line, stripping at most the
+            // single blank line that separates the managed block from the body.
+            int markerEnd = existing.indexOf(GENERATED_MARKER + "\n") + GENERATED_MARKER.length() + 1;
+            String remainder = existing.substring(markerEnd);
+            if (remainder.startsWith("\n")) {
+                remainder = remainder.substring(1);
+            }
             Files.writeString(file, content + remainder, StandardCharsets.UTF_8);
             return;
         }

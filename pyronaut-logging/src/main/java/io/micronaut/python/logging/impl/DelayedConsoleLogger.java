@@ -46,6 +46,10 @@ final class DelayedConsoleLogger implements Logger {
     private volatile boolean warnEnabled = true;
     private volatile boolean errorEnabled = true;
     private volatile PythonLogger delegate;
+    // Creating the Python delegate evaluates Python code, which can itself emit
+    // GraalPy log records through this logger. Fall back to the console while a
+    // delegate is being created on the current thread to avoid infinite recursion.
+    private static final ThreadLocal<Boolean> CREATING_DELEGATE = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     public DelayedConsoleLogger(String name) {
         this.name = name;
@@ -69,9 +73,17 @@ final class DelayedConsoleLogger implements Logger {
     PythonLogger getDelegate() {
         if (PythonContextRuntime.isInitialized() && shouldDelegateToPython()) {
             if (delegate == null) {
+                if (CREATING_DELEGATE.get()) {
+                    return null;
+                }
                 synchronized (this) {
                     if (delegate == null) {
-                        delegate = new PythonLogger(name);
+                        CREATING_DELEGATE.set(Boolean.TRUE);
+                        try {
+                            delegate = new PythonLogger(name);
+                        } finally {
+                            CREATING_DELEGATE.set(Boolean.FALSE);
+                        }
                     }
                 }
             }

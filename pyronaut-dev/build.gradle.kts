@@ -850,6 +850,7 @@ graalvmNative {
             buildArgs.addAll(nativeImageBuildReportArgs)
             buildArgs.addAll(nativeImagePgoArgs)
             buildArgs.addAll(runtimeMetadataExclusion)
+            buildArgs.add("-H:-PreserveIncludesJNI")
         }
         all {
             resources.autodetect()

@@ -31,7 +31,7 @@ final class DirectSourceLaunchCommand {
         List<Path> applicationSources = new ArrayList<>();
         List<Path> testSources = new ArrayList<>();
         for (Path source : sourceFiles) {
-            (isTestSource(source) ? testSources : applicationSources).add(source);
+            (isTestSource(projectDir, source) ? testSources : applicationSources).add(source);
         }
         List<Path> developmentSources = applicationSources.isEmpty() ? sourceFiles : applicationSources;
         String test = applicationSources.isEmpty() || testSources.isEmpty()
@@ -74,7 +74,7 @@ final class DirectSourceLaunchCommand {
         return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
-    private static boolean isTestSource(Path source) {
+    static boolean isTestSource(Path projectDir, Path source) {
         String fileName = source.getFileName().toString().toLowerCase(Locale.ROOT);
         if (fileName.endsWith("test.java")
             || fileName.endsWith("tests.java")
@@ -84,7 +84,15 @@ final class DirectSourceLaunchCommand {
             || fileName.endsWith("_test.py")) {
             return true;
         }
-        for (Path segment : source) {
+        // Only inspect the path below the project directory so that a project
+        // located under a directory such as ".../tests/app" is not treated as
+        // consisting solely of test sources.
+        Path normalizedProject = projectDir.toAbsolutePath().normalize();
+        Path normalizedSource = source.toAbsolutePath().normalize();
+        Path relative = normalizedSource.startsWith(normalizedProject)
+            ? normalizedProject.relativize(normalizedSource)
+            : normalizedSource.getFileName();
+        for (Path segment : relative) {
             String name = segment.toString().toLowerCase(Locale.ROOT);
             if ("test".equals(name) || "tests".equals(name) || "test-java".equals(name)) {
                 return true;

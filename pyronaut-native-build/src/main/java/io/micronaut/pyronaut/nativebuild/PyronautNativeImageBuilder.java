@@ -51,6 +51,7 @@ public final class PyronautNativeImageBuilder {
             "-H:+AllowJRTFileSystem",
             "-H:+SharedArenaSupport",
             "-H:-SupportCompileInIsolates",
+            "-H:-PreserveIncludesJNI",
             "-Dmicronaut.graalvm.imagesingletons.enabled=false",
             "--enable-http",
             "--enable-https",

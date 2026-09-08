@@ -23,6 +23,8 @@ pyronaut install
 Lowercase variants such as `https_proxy` and `no_proxy` are also recognized.
 If both HTTP and HTTPS proxy variables are set, HTTPS takes precedence.
 
+Bypass entries are matched as host-name patterns in which `*` is a wildcard. A leading dot (`.internal`) is treated as `*.internal` and a trailing port is ignored; CIDR ranges are not supported.
+
 == Pyronaut Settings
 
 Use `~/.pyronaut/settings.toml` when proxy settings should apply to Pyronaut without changing the shell environment:

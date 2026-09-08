@@ -15,10 +15,12 @@
  */
 package io.micronaut.pyronaut.install;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 /**
  * Filters noisy checksum warning stack traces from Maven Resolver while retaining the warning line itself.
@@ -73,7 +75,10 @@ final class ChecksumWarningFilter implements AutoCloseable {
 
     private static final class FilteringOutputStream extends OutputStream {
         private final PrintStream delegate;
-        private final StringBuilder lineBuffer = new StringBuilder();
+        // Raw UTF-8 bytes are buffered until a full line is available so that
+        // multi-byte characters (progress bars, non-ASCII paths) are decoded
+        // intact instead of byte by byte.
+        private final ByteArrayOutputStream lineBuffer = new ByteArrayOutputStream();
         private final boolean[] suppressChecksumTrace = new boolean[1];
 
         private FilteringOutputStream(PrintStream delegate) {
@@ -82,24 +87,40 @@ final class ChecksumWarningFilter implements AutoCloseable {
 
         @Override
         public void write(int b) throws IOException {
-            char c = (char) b;
-            lineBuffer.append(c);
-            if (c == '\n') {
+            lineBuffer.write(b);
+            if (b == '\n') {
                 flushLine();
             }
         }
 
         @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            Objects.checkFromIndexSize(offset, length, bytes.length);
+            int start = offset;
+            int end = offset + length;
+            for (int i = offset; i < end; i++) {
+                if (bytes[i] == '\n') {
+                    lineBuffer.write(bytes, start, i - start + 1);
+                    flushLine();
+                    start = i + 1;
+                }
+            }
+            if (start < end) {
+                lineBuffer.write(bytes, start, end - start);
+            }
+        }
+
+        @Override
         public void flush() throws IOException {
-            if (!lineBuffer.isEmpty()) {
+            if (lineBuffer.size() > 0) {
                 flushLine();
             }
             delegate.flush();
         }
 
         private void flushLine() {
-            String line = lineBuffer.toString();
-            lineBuffer.setLength(0);
+            String line = lineBuffer.toString(StandardCharsets.UTF_8);
+            lineBuffer.reset();
             String filtered = filterLine(stripTrailingNewline(line), suppressChecksumTrace);
             if (filtered != null) {
                 delegate.print(filtered);

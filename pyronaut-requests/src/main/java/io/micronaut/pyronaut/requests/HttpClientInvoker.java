@@ -85,8 +85,9 @@ public final class HttpClientInvoker {
             this.response = response;
             this.body = response instanceof HttpResponse<?> httpResponse ? responseBodyBytes(httpResponse) : null;
             if (response instanceof HttpResponse<?> httpResponse) {
-                this.statusCode = httpResponse.getStatus().getCode();
-                this.reason = httpResponse.getStatus().getReason();
+                // Use the raw code/reason: getStatus() throws for non-standard codes such as 499 or 599
+                this.statusCode = httpResponse.code();
+                this.reason = httpResponse.reason();
                 HeaderPairs headers = HeaderPairs.from(httpResponse.getHeaders().asMap());
                 this.headerNames = headers.names();
                 this.headerValues = headers.values();

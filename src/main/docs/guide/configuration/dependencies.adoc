@@ -2,7 +2,7 @@
 
 Pyronaut uses normal Python packaging for Python dependencies and Maven coordinates for Java dependencies.
 
-For one-file/direct source applications without `pyproject.toml`, see <<configuration.directSourceDeclarations,Declaring Direct Source Dependencies>>.
+For one-file/direct source applications without `pyproject.toml`, see <<directSourceDeclarations,Declaring Direct Source Dependencies>>.
 
 == Python Dependencies
 

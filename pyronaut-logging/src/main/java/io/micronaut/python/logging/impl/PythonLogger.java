@@ -44,8 +44,11 @@ final class PythonLogger implements Logger {
 
     PythonLogger(String name) {
         this.name = name;
-        this.pythonLogger = PythonContextRuntime.getContext()
-            .eval(PythonContextRuntime.PYTHON, "import logging; logging.getLogger('" + name + "')");
+        // Obtain the getLogger function and call it with the name as an argument rather than
+        // splicing the name into Python source, which breaks for names containing quotes.
+        Value getLogger = PythonContextRuntime.getContext()
+            .eval(PythonContextRuntime.PYTHON, "import logging; logging.getLogger");
+        this.pythonLogger = getLogger.execute(name);
         this.debugMember = pythonLogger.getMember("debug");
         this.infoMember = pythonLogger.getMember("info");
         this.warningMember = pythonLogger.getMember("warning");
@@ -127,7 +130,7 @@ final class PythonLogger implements Logger {
 
     @Override
     public boolean isDebugEnabled() {
-        return isEnabledMember.execute(20).asBoolean();
+        return isEnabledMember.execute(10).asBoolean();
     }
 
     @Override
@@ -194,7 +197,7 @@ final class PythonLogger implements Logger {
 
     @Override
     public boolean isInfoEnabled() {
-        return isEnabledMember.execute(30).asBoolean();
+        return isEnabledMember.execute(20).asBoolean();
     }
 
     @Override
@@ -261,7 +264,7 @@ final class PythonLogger implements Logger {
 
     @Override
     public boolean isWarnEnabled() {
-        return isEnabledMember.execute(40).asBoolean();
+        return isEnabledMember.execute(30).asBoolean();
     }
 
     @Override
@@ -328,7 +331,7 @@ final class PythonLogger implements Logger {
 
     @Override
     public boolean isErrorEnabled() {
-        return isEnabledMember.execute(50).asBoolean();
+        return isEnabledMember.execute(40).asBoolean();
     }
 
     @Override

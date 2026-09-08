@@ -221,21 +221,24 @@ final class ProxyConfigurationLoader {
     }
 
     private static Element selectProxyElement(NodeList proxies) {
-        Element first = null;
+        // Maven treats a proxy without an <active> element as active and skips
+        // proxies explicitly marked <active>false</active>.
+        Element fallback = null;
         for (int i = 0; i < proxies.getLength(); i++) {
             Node node = proxies.item(i);
             if (!(node instanceof Element element)) {
                 continue;
             }
-            if (first == null) {
-                first = element;
-            }
             String active = textValue(element, "active");
-            if (active != null && active.equalsIgnoreCase("true")) {
+            if (active == null) {
+                if (fallback == null) {
+                    fallback = element;
+                }
+            } else if (active.equalsIgnoreCase("true")) {
                 return element;
             }
         }
-        return first;
+        return fallback;
     }
 
     private static String textValue(Element parent, String tagName) {
@@ -248,7 +251,12 @@ final class ProxyConfigurationLoader {
     }
 
     private static ProxyConfiguration parseProxyUrl(String value, String nonProxyHosts, String source) {
-        URI uri = URI.create(value.contains("://") ? value : "http://" + value);
+        URI uri;
+        try {
+            uri = URI.create(value.contains("://") ? value : "http://" + value);
+        } catch (IllegalArgumentException e) {
+            throw new PyprojectModelException("Invalid proxy URL in " + source + ": " + value + " (" + e.getMessage() + ")", e);
+        }
         String protocol = normalizeProtocol(uri.getScheme());
         if (protocol == null) {
             protocol = "http";
@@ -353,11 +361,33 @@ final class ProxyConfigurationLoader {
         List<String> parts = java.util.Arrays.stream(trimmed.split("[,|]"))
             .map(String::trim)
             .filter(part -> !part.isEmpty())
+            .map(ProxyConfigurationLoader::normalizeNonProxyHost)
+            .filter(part -> !part.isEmpty())
+            .distinct()
             .toList();
         if (parts.isEmpty()) {
             return null;
         }
         return String.join("|", parts);
+    }
+
+    /**
+     * Rewrites a {@code NO_PROXY} style entry into the glob form understood by
+     * Maven Resolver: a leading {@code .suffix} becomes {@code *.suffix} and a
+     * trailing {@code :port} is dropped.
+     */
+    private static String normalizeNonProxyHost(String part) {
+        String host = part;
+        if (!host.startsWith("[")) {
+            int colon = host.lastIndexOf(':');
+            if (colon > 0 && colon == host.indexOf(':') && host.substring(colon + 1).chars().allMatch(Character::isDigit)) {
+                host = host.substring(0, colon);
+            }
+        }
+        if (host.startsWith(".")) {
+            host = "*" + host;
+        }
+        return host;
     }
 
     private static String firstNonBlank(String... values) {
