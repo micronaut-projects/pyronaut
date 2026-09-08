@@ -65,6 +65,7 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 micronautBuild {
     useStandardizedProjectNames=true
+    requiresDevelopmentVersion("micronaut-core", "5.2.x")
     importMicronautCatalog("micronaut-picocli")
     importMicronautCatalog("micronaut-serde")
     importMicronautCatalog("micronaut-logging")
