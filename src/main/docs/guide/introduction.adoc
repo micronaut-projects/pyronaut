@@ -34,6 +34,37 @@ Pyronaut compiles the module, starts a server on port 8080 and reloads it when t
 * *Java libraries are one import away.* Any Java library can be declared in `pyproject.toml` and imported in Python, which opens up mature drivers, clients and tools without waiting for a Python binding.
 * *Threads and asyncio both work.* Plain `def` routes run on a thread pool, `async def` routes run on the Netty event loop, and Python coroutines can await Java asynchronous results directly.
 
+== Why choose Pyronaut
+
+A typical production Python service is assembled from separate projects: FastAPI or Flask, Uvicorn or Gunicorn, Pydantic and pydantic-settings, pytest with Testcontainers fixtures, structlog, an OpenAPI setup, a Dockerfile and CI templates. Each piece is good, but the integration work between them is yours, and every team assembles it slightly differently. Pyronaut ships those concerns as one application model on top of Micronaut, so the same Python types and decorators drive HTTP, validation, serialization, OpenAPI, dependency injection, editor completion and tests. The https://pyronaut.io[Pyronaut site] summarises this as "stop assembling your Python backend". The main benefits are:
+
+Production-grade observability::
+Micronaut's management endpoints (health, info, environment, loggers, routes, thread dumps) are part of the runtime. Add the Micronaut modules for https://micronaut-projects.github.io/micronaut-micrometer/latest/guide/[Micrometer] metrics with registries for Prometheus, Datadog, CloudWatch and others, https://micronaut-projects.github.io/micronaut-tracing/latest/guide/[OpenTelemetry] distributed tracing, and https://micronaut-projects.github.io/micronaut-kubernetes/latest/guide/[Kubernetes] service discovery, configuration and health probes, all through `[tool.pyronaut.dependencies]`. Because the application runs on the JVM, mature production tooling such as Java Flight Recorder, heap and thread analysis and JMX apply to your Python service too.
+
+Scaling with the JVM and Netty::
+Requests are served by Netty's event loop and Micronaut's thread pools, the same foundation used by high-throughput Java services, with HTTP/2 and HTTP/3 support. Synchronous Python routes run on a thread pool and `async def` routes on the event loop, so both models scale. GraalPy runs Python in several interpreter contexts inside one process, so Python code can execute in parallel without a single global interpreter lock deciding your throughput. See <<threading,Threading, Blocking Work and asyncio>>.
+
+Simplified testing with Test Resources::
+`pyronaut test` runs pytest against the real application context and embedded server. https://micronaut-projects.github.io/micronaut-test-resources/latest/guide/[Micronaut Test Resources] starts the databases, message brokers and other services your tests need in Docker containers through Testcontainers, and injects their connection settings, so a test that declares a MySQL data source needs no fixtures, URLs or credentials. The same mechanism serves `pyronaut dev`, so local development uses real infrastructure without hand-written Docker Compose files. See <<testResources,Test Resources & Docker>>.
+
+Errors before deployment, not at 3 a.m.::
+Routes, dependency injection, serializers and validation rules are generated at build time, so a missing bean, a typo in a decorator or an unsatisfiable dependency fails `pyronaut process` rather than the first request in production. `pyronaut validate-config` checks configuration and the dependency injection graph per environment, and `pyronaut dev`, `pyronaut test` and `pyronaut build` run it automatically. See <<validateConfig,Configuration Validation>>.
+
+Optimise in Java instead of native extensions::
+When a code path needs more speed than Python offers, write it in Java in the same project (under `src-java` by default) and inject it into your Python code like any other bean. There is no C extension to compile, no binding layer to maintain and no separate build; both languages share one dependency injection container, one configuration and one test run. See <<usingPackagesJavaLibraries,Using Python Packages & Java Libraries>>.
+
+The Java ecosystem, one import away::
+JDBC drivers, Kafka and RabbitMQ clients, cloud SDKs, PDF and document libraries and thousands of other Java libraries can be declared in `pyproject.toml` and imported from Python. Micronaut modules add https://micronaut-projects.github.io/micronaut-data/latest/guide/[Micronaut Data] repositories, https://micronaut-projects.github.io/micronaut-security/latest/guide/[Micronaut Security] (JWT, OAuth 2.0, OpenID Connect), Kafka and RabbitMQ listeners, caching, scheduling, views and more, each usable through Python decorators.
+
+One CLI from project creation to packaging::
+`pyronaut create`, `dev`, `test`, `validate-config` and `build` cover the whole lifecycle. The same project produces a Python wheel, a runnable JAR, a container image, a GraalVM native executable with fast startup and low memory use, or a reusable Crema runtime image, without changing application code. See <<packaging,Packaging & Deployment>>.
+
+Write once, run anywhere::
+The packaged application runs on any platform with a compatible JVM, and native executables are built for Linux, macOS and Windows. The embedded GraalPy runtime is part of the artifact, so the deployment target needs no particular Python installation.
+
+Editor support that understands the framework::
+`pyronaut install` generates stubs for Micronaut and Java APIs so Pylance and PyCharm offer completion and type checking for decorators, injected beans and Java classes, and writes JSON schemas so `pyproject.toml` and `application.toml` are validated as you type.
+
 == What a project looks like
 
 A typical Pyronaut project contains:

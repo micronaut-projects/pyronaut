@@ -60,6 +60,49 @@ Many common Python library use cases have high-performance JVM alternatives that
 |https://github.com/HubSpot/jinjava[Jinjava]
 |===
 
+== Optimise Hot Paths in Java
+
+Python is the right language for most of a Pyronaut application, but a CPU-bound loop, a tight parsing routine or a numeric kernel can be faster on the JVM. Instead of writing a C extension, add a Java class to the project's Java source directory (`src-java` by default, see <<projectStructure,Pyronaut Toolchain & Project Layout>>) and make it a bean:
+
+[source,java]
+----
+package bookstore;
+
+import jakarta.inject.Singleton;
+
+@Singleton
+public class PriceCalculator {
+    public double total(double[] prices, double taxRate) {
+        double sum = 0;
+        for (double price : prices) {
+            sum += price;
+        }
+        return sum * (1 + taxRate);
+    }
+}
+----
+
+`pyronaut process` compiles Java and Python sources together, so the bean can be injected into Python code by its type hint:
+
+[source,python]
+----
+from bookstore import PriceCalculator
+from micronaut.http.annotation import Controller, Get
+
+
+@Controller("/orders")
+class OrderController:
+    def __init__(self, calculator: PriceCalculator):
+        self.calculator = calculator
+
+    @Get("/{order_id}/total")
+    def total(self, order_id: int) -> float:
+        prices = load_prices(order_id)
+        return self.calculator.total(prices, 0.2)
+----
+
+Python lists convert to Java arrays and collections automatically, and the Java class participates in the same dependency injection, configuration and tests as the rest of the application. The reverse also works: Java code can inject Python beans and call `async def` methods as `CompletionStage` values (see <<reactiveInterop,Awaiting Reactive and Java Async Types>>). Java tests belong under `test-java` and run in the same `pyronaut test` invocation.
+
 == Use a Java Library from Python
 
 Declare Java dependencies by scope under `[tool.pyronaut.dependencies]`.
