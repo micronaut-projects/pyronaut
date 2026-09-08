@@ -302,8 +302,11 @@ public final class PyronautNativeImageBuilder {
 
     private static final List<String> PYTHON_ARGUMENTS = List.of(
         "--enable-native-access=org.graalvm.truffle",
+        "-H:+UnlockExperimentalVMOptions",
+        "-H:+CopyLanguageResources",
         "-H:Preserve=package=org.graalvm.home.*",
-        "-H:Preserve=package=org.graalvm.polyglot"
+        "-H:Preserve=package=org.graalvm.polyglot",
+        "-H:-UnlockExperimentalVMOptions"
     );
 
     private final Path output;
@@ -539,6 +542,14 @@ public final class PyronautNativeImageBuilder {
         command.add(normalizedOutput.toString());
         List<String> nativeImageCmd = List.copyOf(command);
         int exitCode = commandExecutor.execute(nativeImageCmd, normalizedWorkingDirectory);
+        if (exitCode == 0 && includePython) {
+            Path languageResources = normalizedOutput.resolveSibling("resources");
+            if (!Files.isDirectory(languageResources)) {
+                throw new IllegalStateException(
+                    "Python native image did not copy language resources beside the executable: " + languageResources
+                );
+            }
+        }
         return new BuildResult(exitCode, normalizedOutput, normalizedWorkingDirectory);
     }
 

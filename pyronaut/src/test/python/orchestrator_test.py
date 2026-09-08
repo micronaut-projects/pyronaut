@@ -4755,7 +4755,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("PYRONAUT_BUILD_MODE=jvm", docker_command)
         self.assertIn("PYRONAUT_PROJECT_NAME=demo-app", docker_command)
         self.assertIn("PYRONAUT_PROJECT_VERSION=1.2.3", docker_command)
-        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i2", docker_command)
+        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i3", docker_command)
         self.assertIn("-t", docker_command)
         self.assertIn("demo-app:1.2.3", docker_command)
         self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
@@ -4997,7 +4997,7 @@ additional-test-resources = ["test-fixtures"]
             self.assertEqual(0, exit_code_jvm)
             self.assertEqual("Dockerfile.jvm", captured["dockerfile_name"])
             self.assertIn("ARG PYRONAUT_PROJECT_NAME", captured["dockerfile"])
-            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i2", captured["docker_command"])
+            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i3", captured["docker_command"])
 
             captured.clear()
             executed.clear()
@@ -5011,7 +5011,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code_native)
         self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
         self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
-        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i2", captured["docker_command"])
+        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i3", captured["docker_command"])
 
     def test_build_docker_reuses_configured_base_with_custom_runtime_dockerfile(self):
         captured: dict[str, object] = {}
@@ -5149,6 +5149,8 @@ additional-test-resources = ["test-fixtures"]
                 captured["dockerfile"] = dockerfile.name
                 captured["contents"] = dockerfile.read_text(encoding="utf-8")
                 captured["launcher"] = (context_dir / "bundled-base" / "pyronaut-run").read_bytes()
+                captured["resource"] = (context_dir / "bundled-base" / "resources" / "python-home.txt").read_text(encoding="utf-8")
+                captured["library"] = (context_dir / "bundled-base" / "python.dll").read_bytes()
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir, patch.object(
@@ -5166,6 +5168,9 @@ additional-test-resources = ["test-fixtures"]
             configured = project_dir / "runtime" / "local-wheel-base"
             configured.parent.mkdir(parents=True)
             configured.write_bytes(b"native-runner")
+            (configured.parent / "resources").mkdir()
+            (configured.parent / "resources" / "python-home.txt").write_text("python-home", encoding="utf-8")
+            (configured.parent / "python.dll").write_bytes(b"library")
 
             exit_code = cli.run(
                 ["build", "--project-dir", str(project_dir)],
@@ -5178,6 +5183,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual("DockerfileNativeBase", captured["dockerfile"])
         self.assertIn("COPY bundled-base/ /opt/pyronaut/bin/", captured["contents"])
         self.assertEqual(b"native-runner", captured["launcher"])
+        self.assertEqual("python-home", captured["resource"])
+        self.assertEqual(b"library", captured["library"])
 
     def test_prepare_jvm_build_wheel_staging_rewrites_manifest_and_generates_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5272,6 +5279,36 @@ additional-test-resources = ["test-fixtures"]
             ).read_text(encoding="utf-8")
             self.assertNotIn("provided-1.0.jar", manifest)
             self.assertIn("application-1.0.jar", manifest)
+
+    def test_prepare_closed_world_native_wheel_stages_generated_bundle_support(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = root / "native-wheel"
+            native_dir = project_dir / "__pyronaut__" / "native"
+            native_dir.mkdir(parents=True)
+            (native_dir / "demo").write_bytes(b"launcher")
+            (native_dir / "resources" / "python").mkdir(parents=True)
+            (native_dir / "resources" / "python" / "stdlib.txt").write_text("stdlib", encoding="utf-8")
+            (native_dir / "libpython.dylib").write_bytes(b"library")
+            (project_dir / "__pyronaut__" / "classes").mkdir()
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text("", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"demo\"\nversion = \"1.0\"\n", encoding="utf-8"
+            )
+            staging_dir = root / "stage"
+
+            cli._prepare_build_wheel_staging(  # noqa: SLF001
+                project_dir=project_dir,
+                staging_dir=staging_dir,
+                project_name="demo",
+                project_version="1.0",
+                mode="native",
+                main_class="",
+            )
+
+            staged_native = staging_dir / "demo_launcher" / "app" / "__pyronaut__" / "native"
+            self.assertEqual("stdlib", (staged_native / "resources" / "python" / "stdlib.txt").read_text(encoding="utf-8"))
+            self.assertEqual(b"library", (staged_native / "libpython.dylib").read_bytes())
 
     def test_prepare_native_docker_context_stages_distribution_and_rewrites_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5632,6 +5669,7 @@ additional-test-resources = ["test-fixtures"]
 
     def test_native_wheel_reuses_configured_local_native_base(self):
         executed = []
+        captured: dict[str, bytes] = {}
 
         def runner_with_env(command_line, env):
             executed.append((command_line, env))
@@ -5639,6 +5677,14 @@ additional-test-resources = ["test-fixtures"]
                 output = Path(command_line[command_line.index("--output") + 1])
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text("base", encoding="utf-8")
+                (output.parent / "resources" / "python").mkdir(parents=True)
+                (output.parent / "resources" / "python" / "stdlib.txt").write_text("stdlib", encoding="utf-8")
+                (output.parent / "libpython.so").write_bytes(b"library")
+            if len(command_line) >= 3 and command_line[1:3] == ["-m", "pip"] and "wheel" in command_line:
+                staging_dir = Path(command_line[-1])
+                staged_native = staging_dir / "demo_launcher" / "app" / "__pyronaut__" / "native"
+                captured["resource"] = (staged_native / "resources" / "python" / "stdlib.txt").read_bytes()
+                captured["library"] = (staged_native / "libpython.so").read_bytes()
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5672,6 +5718,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, wheel_exit)
         native_commands = [command for command, _ in executed if command and command[0] == "/tmp/pyronaut-native-build"]
         self.assertEqual(1, len(native_commands))
+        self.assertEqual(b"stdlib", captured["resource"])
+        self.assertEqual(b"library", captured["library"])
 
     def test_cli_native_base_overrides_configured_base_for_wheel(self):
         captured: dict[str, bytes] = {}
@@ -6290,8 +6338,8 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         with patch.object(cli.platform, "system", return_value="Linux"), \
                 patch.object(cli.platform, "machine", return_value="aarch64"):
             url = cli._resolve_graalvm_archive_url(spec)
-        self.assertIn("gds.oracle.com/download/graal/25i2/latest/", url)
-        self.assertIn("graalvm-jdk-25i2-25_linux-aarch64_bin.tar.gz", url)
+        self.assertIn("gds.oracle.com/download/graal/25i3/latest/", url)
+        self.assertIn("graalvm-jdk-25i3-25_linux-aarch64_bin.tar.gz", url)
 
     def test_read_pyproject_toolchain_spec_uses_packaged_default_when_not_explicit(self):
         packaged = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
@@ -7143,6 +7191,9 @@ java-version = 25
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir)
             target = project_dir / "staged" / "pyronaut-run"
+            (target.parent / "resources").mkdir(parents=True)
+            (target.parent / "resources" / "stale.txt").write_text("stale", encoding="utf-8")
+            (target.parent / "stale.dll").write_bytes(b"stale")
 
             def download(url, destination, label):
                 self.assertEqual("https://example.test/pyronaut-run", url)
@@ -7159,6 +7210,8 @@ java-version = 25
 
             self.assertEqual(b"native", target.read_bytes())
             self.assertTrue(target.stat().st_mode & 0o100)
+            self.assertFalse((target.parent / "resources").exists())
+            self.assertFalse((target.parent / "stale.dll").exists())
             with self.assertRaisesRegex(RuntimeError, "offline"):
                 cli._stage_native_base_executable(  # noqa: SLF001
                     "https://example.test/pyronaut-run",
@@ -7166,6 +7219,30 @@ java-version = 25
                     target=target,
                     offline=True,
                 )
+
+    def test_local_native_base_in_output_directory_keeps_existing_bundle_support(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            staged = project_dir / "__pyronaut__" / "native"
+            staged.mkdir(parents=True)
+            source = staged / "pyronaut-run-python"
+            source.write_bytes(b"native")
+            (staged / "resources" / "python").mkdir(parents=True)
+            (staged / "resources" / "python" / "stdlib.txt").write_text("stdlib", encoding="utf-8")
+            (staged / "libpython.dylib").write_bytes(b"library")
+
+            cli._stage_native_base_executable(  # noqa: SLF001
+                str(source),
+                project_dir=project_dir,
+                target=staged / "demo",
+                offline=False,
+            )
+
+            self.assertEqual(b"native", (staged / "demo").read_bytes())
+            self.assertEqual(
+                "stdlib", (staged / "resources" / "python" / "stdlib.txt").read_text(encoding="utf-8")
+            )
+            self.assertEqual(b"library", (staged / "libpython.dylib").read_bytes())
 
     def test_tui_smoke_delegates_install_process_run(self):
         executed = []

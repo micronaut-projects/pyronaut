@@ -177,7 +177,11 @@ the CLI downloader. Running `./gradlew :micronaut-pyronaut-dev:assemble`,
 `:micronaut-pyronaut-run-python:assemble` creates a versioned `.tar.gz` under
 the module's `build/distributions` directory. Each archive contains the native
 executable, generated native classpath manifests, and the native-image
-`resources` directory.
+`resources` directory. Python-capable images are built with
+`-H:+CopyLanguageResources`, so `resources` is a runtime input and must remain
+beside its executable when an archive is extracted, copied into a wheel, or
+installed in a container. Adjacent native runtime libraries are part of the
+same bundle contract.
 
 [source,toml]
 ----
@@ -209,7 +213,9 @@ native-base = "build/pyronaut-base/pyronaut-run-python"
 
 The value may instead be an HTTP(S) URL to a native executable. Pyronaut uses
 the configured proxy settings and displays download progress. URL-based native
-bases are unavailable with `--offline`.
+bases are unavailable with `--offline`. A raw URL continues to represent a
+self-contained executable; use a published Pyronaut native bundle when
+external language resources must be transported with the launcher.
 
 Crema avoids rebuilding the native runtime for each source change. The native
 base is the only expensive native-image build; subsequent application builds

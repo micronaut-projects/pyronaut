@@ -26,6 +26,7 @@ val nativeBundleArch = when (System.getProperty("os.arch").lowercase()) {
     "x86_64", "amd64" -> "amd64"
     else -> System.getProperty("os.arch").lowercase()
 }
+val nativeImageOutputDirectory = layout.buildDirectory.dir("native/nativeCompile")
 
 dependencies {
     implementation(project(":micronaut-pyronaut-build-annotations"))
@@ -386,6 +387,7 @@ val nativeImageRuntimeArgs = listOf(
     "--enable-native-access=org.graalvm.truffle",
     "--add-modules=jdk.compiler,java.net.http,java.naming,java.rmi",
     "-H:+UnlockExperimentalVMOptions",
+    "-H:+CopyLanguageResources",
     "-H:EnableURLProtocols=jar",
     "-H:+RuntimeClassLoading",
     "-H:+AllowJRTFileSystem",
@@ -785,6 +787,12 @@ tasks {
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")
     nativeCompileTask.configure {
         dependsOn(writeNativeClasspathManifests)
+        doLast {
+            val resourcesDirectory = nativeImageOutputDirectory.get().dir("resources").asFile
+            check(resourcesDirectory.isDirectory) {
+                "pyronaut-dev native image did not copy language resources beside the executable: $resourcesDirectory"
+            }
+        }
     }
     val nativeBundle = register<Tar>("nativeBundle") {
         group = "distribution"
@@ -795,13 +803,16 @@ tasks {
         destinationDirectory.set(layout.buildDirectory.dir("distributions"))
         archiveFileName.set("pyronaut-dev-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
         compression = Compression.GZIP
-        from(nativeCompileTask.flatMap { it.outputFile })
+        from(nativeCompileTask.flatMap { it.outputFile }) {
+            filePermissions {
+                unix("rwxr-xr-x")
+            }
+        }
         // GraalVM native-image may emit runtime libraries beside the
         // executable. Keep them at the bundle root with the launcher.
-        from(layout.buildDirectory.dir("native/nativeCompile")) {
-            include("*.so", "*.dylib")
+        from(nativeImageOutputDirectory) {
+            include("*.so", "*.dylib", "*.dll", "resources/**")
         }
-        from(layout.buildDirectory.dir("native/nativeCompile/resources"))
         from(layout.buildDirectory.dir("generated/native-classpaths")) {
             include("native-compile-classpath.txt", "native-provided-classpath.txt")
         }

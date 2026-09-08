@@ -67,7 +67,8 @@ application {
 
 val nativeBuildProject = project(":micronaut-pyronaut-native-build")
 val cremaProjectDirectory = layout.buildDirectory.dir("crema-native-image")
-val cremaOutput = layout.buildDirectory.file("native/nativeCompile/pyronaut-run-python")
+val nativeImageOutputDirectory = layout.buildDirectory.dir("native/nativeCompile")
+val cremaOutput = nativeImageOutputDirectory.map { it.file("pyronaut-run-python") }
 val nativeImageCiArgs = providers.gradleProperty("pyronautNativeImageCiArgs")
     .map { it.trim().split(Regex("\\s+")).filter(String::isNotBlank) }
     .orElse(emptyList())
@@ -82,6 +83,7 @@ val nativeBuildExecutable = nativeBuildProject.layout.buildDirectory.file(
     "install/micronaut-pyronaut-native-build/bin/pyronaut-native-build"
 )
 val dockerContext = layout.buildDirectory.dir("docker/pyronaut-run-python")
+val dockerBundle = dockerContext.map { it.dir("bundle") }
 val dockerAvailable = providers.provider<Boolean> {
     if (!System.getProperty("os.name").lowercase().contains("linux")) {
         false
@@ -203,16 +205,25 @@ tasks {
         group = "docker"
         description = "Stages the pyronaut-run-python native executable for Docker image creation"
         dependsOn(buildCremaNativeImage)
-        from(cremaOutput)
-        into(dockerContext)
-        rename { "pyronaut-run-python" }
+        from(cremaOutput) {
+            filePermissions {
+                unix("rwxr-xr-x")
+            }
+        }
+        from(nativeImageOutputDirectory) {
+            include("*.so", "*.dylib", "*.dll", "resources/**")
+        }
+        into(dockerBundle)
+        // The Dockerfile lives beside the synced bundle directory rather than
+        // inside it, so declare it explicitly to keep up-to-date checks honest.
+        outputs.file(dockerContext.map { it.file("Dockerfile") })
         doLast {
             val dockerfile = dockerContext.get().file("Dockerfile").asFile
             dockerfile.writeText(
                 """
                 FROM gcr.io/distroless/base
                 WORKDIR /opt/pyronaut
-                COPY pyronaut-run-python /opt/pyronaut/bin/pyronaut-run-python
+                COPY bundle/ /opt/pyronaut/bin/
                 """.trimIndent() + "\n"
             )
         }
@@ -249,13 +260,16 @@ tasks {
         destinationDirectory.set(layout.buildDirectory.dir("distributions"))
         archiveFileName.set("pyronaut-run-python-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
         compression = Compression.GZIP
-        from(cremaOutput)
+        from(cremaOutput) {
+            filePermissions {
+                unix("rwxr-xr-x")
+            }
+        }
         // Crema/native-image emits platform libraries beside the executable;
         // include them in the same bundle directory.
-        from(layout.buildDirectory.dir("native/nativeCompile")) {
-            include("*.so", "*.dylib")
+        from(nativeImageOutputDirectory) {
+            include("*.so", "*.dylib", "*.dll", "resources/**")
         }
-        from(layout.buildDirectory.dir("native/nativeCompile/resources"))
         from(layout.buildDirectory.dir("generated/native-classpaths")) {
             include("native-compile-classpath.txt", "native-provided-classpath.txt")
         }
