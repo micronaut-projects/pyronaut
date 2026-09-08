@@ -90,4 +90,4 @@ AppConfig(name="datasources.default.dialect", value="Oracle")
 Declare a repository with `MavenRepository("https://repository.example.com/maven/")` in Java or Python.
 Maven Central is used when no repository is declared; once a repository is declared, only declared repositories are used.
 
-Pyronaut records resolved direct-source dependencies and the declaration fingerprint in `__pyronaut__` in the current working directory. The cached launch metadata includes command eligibility, sorted inline runtime configuration, and the positive or negative Test Resources decision. A subsequent launch with unchanged inputs reuses that cache.
+Pyronaut records resolved direct-source dependencies and the declaration fingerprint in `__pyronaut__` under the project directory (the current working directory unless `--project-dir` is given). The cached launch metadata includes command eligibility, sorted inline runtime configuration, and the positive or negative Test Resources decision. A subsequent launch with unchanged inputs reuses that cache.

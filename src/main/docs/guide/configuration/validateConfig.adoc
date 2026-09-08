@@ -37,6 +37,8 @@ The default report files are:
 
 Pyronaut also writes `__pyronaut__/.config-validation-cache.properties` to avoid repeating unchanged validations.
 
+For Maven and Gradle projects the reports and the cache are written under `target/pyronaut` or `build/pyronaut` instead of `__pyronaut__`.
+
 == Project Configuration
 
 [source,toml]

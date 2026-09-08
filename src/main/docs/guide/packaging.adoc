@@ -122,7 +122,7 @@ time: every application-native build performs native-image analysis. Native
 image analysis also uses a closed-world model, so libraries that use reflection,
 dynamic proxies, resources, or other dynamic behavior may need reachability
 metadata or explicit native-image configuration. See
-xref:pyronautCliV2.adoc#reachability-metadata-repository-native-mode[] for the
+<<reachability-metadata,Reachability metadata repository (native mode)>> for the
 metadata repository settings.
 
 Pyronaut derives application packages from processed output and preserves them
@@ -216,8 +216,8 @@ base is the only expensive native-image build; subsequent application builds
 package processed classes and application dependencies for runtime loading.
 They retain native startup time without requiring each application to meet the
 same closed-world reflection configuration requirements as a fully
-application-native image. Inspect the native-base native-image report and SBOM
-to confirm that its shared dependencies are included.
+application-native image. Inspect the SBOM exported with the native base to
+confirm that its shared dependencies are included.
 
 For Docker, build and tag the native base layer, then build the application
 layer:
@@ -251,7 +251,7 @@ base-image = "registry.example.com/acme/pyronaut-runtime:1"
 
 The final image then adds only the application configuration, processed
 classes, and schemas on top of the shared production runtime layer. For a
-custom layering arrangement, see xref:pyronautCliV2.adoc#custom-dockerfiles-with-a-reusable-base[].
+custom layering arrangement, see <<custom-dockerfiles,Custom Dockerfiles with a reusable base>>.
 
 == Direct-source applications
 
