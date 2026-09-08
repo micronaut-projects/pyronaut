@@ -239,6 +239,32 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void validateConfigCacheIsInvalidatedWhenOutputDirectoryChanges() throws Exception {
+        Path project = prepareProject();
+        AtomicInteger calls = new AtomicInteger();
+        PyronautValidateConfigMain command = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                calls.incrementAndGet();
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                Files.writeString(reportDir.resolve("configuration-errors.json"), "{}\n");
+                Files.writeString(reportDir.resolve("configuration-errors.html"), "<html></html>\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(false);
+            }
+        );
+
+        int first = new CommandLine(command).execute("--project-dir", project.toString(), "--out", "reports-a");
+        int second = new CommandLine(command).execute("--project-dir", project.toString(), "--out", "reports-b");
+
+        assertEquals(0, first);
+        assertEquals(0, second);
+        assertEquals(2, calls.get());
+        assertTrue(Files.isRegularFile(project.resolve("reports-a/configuration-errors.json")));
+        assertTrue(Files.isRegularFile(project.resolve("reports-b/configuration-errors.json")));
+    }
+
+    @Test
     void validateConfigNoCacheForcesExecutionOnEachRun() throws Exception {
         Path project = prepareProject();
         AtomicInteger calls = new AtomicInteger();

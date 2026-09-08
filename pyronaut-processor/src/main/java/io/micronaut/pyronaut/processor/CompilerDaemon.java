@@ -68,6 +68,7 @@ final class CompilerDaemon {
     private static final Duration START_TIMEOUT = Duration.ofSeconds(15);
     private static final int CONNECT_TIMEOUT_MILLIS = 2_000;
     private static final int ACCEPT_POLL_MILLIS = 1_000;
+    private static final int REQUEST_TIMEOUT_MILLIS = 30_000;
     private static final long DEFAULT_IDLE_TIMEOUT_SECONDS = 600;
     private static final String METADATA_FILE = "daemon.properties";
     private static final String LOCK_FILE = "daemon.lock";
@@ -89,11 +90,8 @@ final class CompilerDaemon {
                 return compile(endpoint, arguments);
             } catch (IOException e) {
                 lastFailure = e;
-                if (endpoint != null
-                    && ProcessHandle.of(endpoint.pid()).map(ProcessHandle::isAlive).orElse(false)) {
-                    invalidate(directory);
-                    break;
-                }
+                // Drop the stale or unresponsive endpoint so the next attempt starts a
+                // replacement daemon under the startup lock.
                 invalidate(directory);
             }
         }
@@ -120,12 +118,22 @@ final class CompilerDaemon {
                 ));
                 long deadline = System.nanoTime() + idleTimeoutNanos;
                 while (System.nanoTime() < deadline) {
-                    try (Socket socket = server.accept()) {
+                    Socket socket;
+                    try {
+                        socket = server.accept();
+                    } catch (SocketTimeoutException ignored) {
+                        // Poll the idle deadline.
+                        continue;
+                    }
+                    try (socket) {
+                        // Bound the request header phase so a stalled client cannot wedge the daemon.
+                        socket.setSoTimeout(REQUEST_TIMEOUT_MILLIS);
                         if (serve(socket, token, executor)) {
                             deadline = System.nanoTime() + idleTimeoutNanos;
                         }
-                    } catch (SocketTimeoutException ignored) {
-                        // Poll the idle deadline.
+                    } catch (IOException e) {
+                        // A failed connection must not take down the daemon.
+                        appendDaemonFailure(directory, e);
                     }
                 }
             }

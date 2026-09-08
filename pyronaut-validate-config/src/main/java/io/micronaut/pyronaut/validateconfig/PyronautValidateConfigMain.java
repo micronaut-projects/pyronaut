@@ -48,6 +48,13 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     private static final String TEST_DEPENDENCIES_MANIFEST = "__pyronaut__/resolved-test-dependencies";
 
     private static final String DEFAULT_SCENARIO = "production";
+    private static final List<String> EXTERNAL_DEFAULT_SUPPRESSIONS = List.of("micronaut.config", "micronaut.graalvm", "micronaut.openapi", "micronaut.processing");
+    private static final PyprojectModel.ValidationScenario EMPTY_SCENARIO_CONFIG =
+        new PyprojectModel.ValidationScenario(null, List.of(), null, null, List.of(), List.of(), List.of(), null);
+    private static final PyprojectModel.Validation EMPTY_VALIDATION_CONFIG = new PyprojectModel.Validation(
+        null, null, null, null, null, null, List.of(), List.of(), null, List.of(),
+        EMPTY_SCENARIO_CONFIG, EMPTY_SCENARIO_CONFIG, EMPTY_SCENARIO_CONFIG
+    );
     private static final String MICRONAUT_SECURITY_GROUP_PATH = "/io/micronaut/security/";
     private static final String MICRONAUT_SECURITY_ARTIFACT_PREFIX = "micronaut-security";
 
@@ -221,20 +228,83 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
         if ("dev".equals(normalizedScenario) || "test".equals(normalizedScenario)) {
             resources.addAll(layout.testResources());
         }
+        if (!resourcesDirs.isEmpty()) {
+            resources = new ArrayList<>();
+            for (String entry : resourcesDirs) {
+                resources.add(root.resolve(entry).normalize());
+            }
+        }
         // External build layouts keep resources separate from compiled classes. Include
         // them on the validator classpath so application.properties/yaml are actually
         // loaded during configuration validation.
         resources.forEach(path -> classpath.add(path.toString()));
-        ValidationSettings configured = model == null ? null : resolveSettings(root, model, normalizedScenario);
-        return new ValidationSettings(configured == null || configured.enabled(), configured == null || configured.failOnNotPresent(),
-            configured != null && configured.deduceEnvironments(), configured == null || configured.validateDependencyInjection(),
-            configured == null ? "reachable" : configured.dependencyInjectionValidationStrategy(),
-            configured == null ? ReportFormat.BOTH : configured.format(),
-            output.resolve("reports/config-validation").resolve(normalizedScenario), root,
-            configured == null ? ("dev".equals(normalizedScenario) ? List.of("dev") : "test".equals(normalizedScenario) ? List.of("test") : List.of()) : configured.environments(),
+
+        // Apply the same CLI-over-configuration precedence as pyproject projects, using an
+        // empty configuration when the external project has no project.toml.
+        PyprojectModel.Validation validation = model == null ? EMPTY_VALIDATION_CONFIG : model.pyronaut().validation();
+        PyprojectModel.ValidationScenario scenarioConfig = scenarioConfig(validation, normalizedScenario);
+        EffectiveOptions options = resolveEffectiveOptions(validation, scenarioConfig, model == null);
+        List<String> effectiveEnvironments = model == null
+            ? mergeEnvironments("dev".equals(normalizedScenario) ? List.of("dev") : "test".equals(normalizedScenario) ? List.of("test") : List.of())
+            : resolveEnvironments(scenarioConfig, normalizedScenario);
+        LinkedHashSet<String> effectiveSuppressions = new LinkedHashSet<>(
+            model == null ? EXTERNAL_DEFAULT_SUPPRESSIONS : mergeSuppressions(validation)
+        );
+        addNonBlank(effectiveSuppressions, suppressions);
+        addNonBlank(effectiveSuppressions, suppress);
+        Path outputDir = out != null
+            ? root.resolve(out).normalize()
+            : output.resolve("reports/config-validation").resolve(normalizedScenario);
+        return new ValidationSettings(options.enabled(), options.failOnNotPresent(),
+            options.deduceEnvironments(), options.validateDependencyInjection(),
+            options.dependencyInjectionValidationStrategy(),
+            options.format(),
+            outputDir, resolveProjectBaseDir(root, validation),
+            effectiveEnvironments,
             List.copyOf(classpath), List.copyOf(resources),
-            configured == null ? List.of("micronaut.config", "micronaut.graalvm", "micronaut.openapi", "micronaut.processing") : configured.suppressions(),
-            configured == null ? List.of() : configured.suppressedInjectErrors(), normalizedScenario);
+            List.copyOf(effectiveSuppressions),
+            mergeSuppressInjectErrors(validation), normalizedScenario);
+    }
+
+    private static PyprojectModel.ValidationScenario scenarioConfig(PyprojectModel.Validation validation, String normalizedScenario) {
+        return switch (normalizedScenario) {
+            case "dev", "run" -> validation.run();
+            case "test" -> validation.test();
+            default -> validation.production();
+        };
+    }
+
+    private EffectiveOptions resolveEffectiveOptions(PyprojectModel.Validation validation,
+                                                     PyprojectModel.ValidationScenario scenarioConfig,
+                                                     boolean defaultValidateDependencyInjection) {
+        boolean enabled = valueOrDefault(validation.enabled(), true) && valueOrDefault(scenarioConfig.enabled(), true);
+        boolean effectiveFailOnNotPresent = failOnNotPresent != null ? failOnNotPresent : valueOrDefault(validation.failOnNotPresent(), true);
+        boolean effectiveDeduceEnvironments = deduceEnvironments != null ? deduceEnvironments : valueOrDefault(validation.deduceEnvironments(), false);
+        boolean effectiveValidateDi = validateDependencyInjection != null
+            ? validateDependencyInjection
+            : valueOrDefault(validation.validateDependencyInjection(), defaultValidateDependencyInjection);
+
+        String strategyRaw = dependencyInjectionValidationStrategy != null
+            ? dependencyInjectionValidationStrategy
+            : validation.dependencyInjectionValidationStrategy();
+        String effectiveDiStrategy = normalizeDiStrategy(strategyRaw);
+        String formatRaw = format != null ? format : validation.format();
+        ReportFormat effectiveFormat = normalizeFormat(formatRaw);
+        return new EffectiveOptions(
+            enabled,
+            effectiveFailOnNotPresent,
+            effectiveDeduceEnvironments,
+            effectiveValidateDi,
+            effectiveDiStrategy,
+            effectiveFormat
+        );
+    }
+
+    private Path resolveProjectBaseDir(Path root, PyprojectModel.Validation validation) {
+        if (projectBaseDir != null) {
+            return root.resolve(projectBaseDir).normalize();
+        }
+        return validation.projectBaseDir() != null ? root.resolve(validation.projectBaseDir()).normalize() : root;
     }
 
     private static boolean isTraceEnabled() {
@@ -246,41 +316,22 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
                                                PyprojectModel model,
                                                String normalizedScenario) throws IOException {
         PyprojectModel.Validation validation = model.pyronaut().validation();
-        PyprojectModel.ValidationScenario scenarioConfig = switch (normalizedScenario) {
-            case "dev", "run" -> validation.run();
-            case "test" -> validation.test();
-            default -> validation.production();
-        };
-
-        boolean enabled = valueOrDefault(validation.enabled(), true) && valueOrDefault(scenarioConfig.enabled(), true);
-        boolean effectiveFailOnNotPresent = failOnNotPresent != null ? failOnNotPresent : valueOrDefault(validation.failOnNotPresent(), true);
-        boolean effectiveDeduceEnvironments = deduceEnvironments != null ? deduceEnvironments : valueOrDefault(validation.deduceEnvironments(), false);
-        boolean effectiveValidateDi = validateDependencyInjection != null
-            ? validateDependencyInjection
-            : valueOrDefault(validation.validateDependencyInjection(), false);
-
-        String strategyRaw = dependencyInjectionValidationStrategy != null
-            ? dependencyInjectionValidationStrategy
-            : validation.dependencyInjectionValidationStrategy();
-        String effectiveDiStrategy = normalizeDiStrategy(strategyRaw);
-        String formatRaw = format != null ? format : validation.format();
-        ReportFormat effectiveFormat = normalizeFormat(formatRaw);
+        PyprojectModel.ValidationScenario scenarioConfig = scenarioConfig(validation, normalizedScenario);
+        EffectiveOptions options = resolveEffectiveOptions(validation, scenarioConfig, false);
 
         List<String> effectiveEnvironments = resolveEnvironments(scenarioConfig, normalizedScenario);
         List<String> effectiveClasspath = resolveClasspath(root, normalizedScenario, scenarioConfig);
         List<Path> effectiveResources = resolveResourcesDirs(root, validation, scenarioConfig);
-        Path effectiveProjectBaseDir = projectBaseDir != null
-            ? root.resolve(projectBaseDir).normalize()
-            : (validation.projectBaseDir() != null ? root.resolve(validation.projectBaseDir()).normalize() : root);
+        Path effectiveProjectBaseDir = resolveProjectBaseDir(root, validation);
         Path outputDir = resolveOutputDir(root, scenarioConfig, normalizedScenario);
 
         return new ValidationSettings(
-            enabled,
-            effectiveFailOnNotPresent,
-            effectiveDeduceEnvironments,
-            effectiveValidateDi,
-            effectiveDiStrategy,
-            effectiveFormat,
+            options.enabled(),
+            options.failOnNotPresent(),
+            options.deduceEnvironments(),
+            options.validateDependencyInjection(),
+            options.dependencyInjectionValidationStrategy(),
+            options.format(),
             outputDir,
             effectiveProjectBaseDir,
             effectiveEnvironments,
@@ -293,10 +344,11 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     }
 
     private List<String> resolveEnvironments(PyprojectModel.ValidationScenario scenarioConfig, String scenario) {
-        Set<String> resolved = new LinkedHashSet<>();
-        if (!"run".equals(scenario)) {
-            resolved.addAll(scenarioConfig.environments());
-        }
+        return mergeEnvironments("run".equals(scenario) ? List.of() : scenarioConfig.environments());
+    }
+
+    private List<String> mergeEnvironments(List<String> configured) {
+        Set<String> resolved = new LinkedHashSet<>(configured);
         resolved.addAll(env);
         resolved.addAll(environments);
         resolved.removeIf(String::isBlank);
@@ -528,10 +580,21 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
                 Boolean.toString(validateDependencyInjection),
                 dependencyInjectionValidationStrategy,
                 format.name(),
+                outputDir.toString(),
+                projectBaseDir.toString(),
+                resourcesDirs.toString(),
                 classpath(),
                 classpathFingerprint
             );
         }
+    }
+
+    private record EffectiveOptions(boolean enabled,
+                                    boolean failOnNotPresent,
+                                    boolean deduceEnvironments,
+                                    boolean validateDependencyInjection,
+                                    String dependencyInjectionValidationStrategy,
+                                    ReportFormat format) {
     }
 
     record ValidationExecutionResult(boolean hasErrors) {
