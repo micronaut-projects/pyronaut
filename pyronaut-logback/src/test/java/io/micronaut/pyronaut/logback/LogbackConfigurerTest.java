@@ -160,6 +160,152 @@ class LogbackConfigurerTest {
     }
 
     @Test
+    void testPythonLevelNamesAndNumbersAreMapped() {
+        assertEquals(ch.qos.logback.classic.Level.WARN, LogbackConfigurer.toLogbackLevel("WARNING"));
+        assertEquals(ch.qos.logback.classic.Level.WARN, LogbackConfigurer.toLogbackLevel("warning"));
+        assertEquals(ch.qos.logback.classic.Level.ERROR, LogbackConfigurer.toLogbackLevel("CRITICAL"));
+        assertEquals(ch.qos.logback.classic.Level.ERROR, LogbackConfigurer.toLogbackLevel("FATAL"));
+        assertEquals(ch.qos.logback.classic.Level.TRACE, LogbackConfigurer.toLogbackLevel("TRACE"));
+        assertEquals(ch.qos.logback.classic.Level.INFO, LogbackConfigurer.toLogbackLevel("INFO"));
+        assertNull(LogbackConfigurer.toLogbackLevel("NOTSET"));
+        assertNull(LogbackConfigurer.toLogbackLevel(null));
+        assertNull(LogbackConfigurer.toLogbackLevel(0));
+        assertEquals(ch.qos.logback.classic.Level.TRACE, LogbackConfigurer.toLogbackLevel(5));
+        assertEquals(ch.qos.logback.classic.Level.DEBUG, LogbackConfigurer.toLogbackLevel(10));
+        assertEquals(ch.qos.logback.classic.Level.INFO, LogbackConfigurer.toLogbackLevel(20));
+        assertEquals(ch.qos.logback.classic.Level.WARN, LogbackConfigurer.toLogbackLevel(30));
+        assertEquals(ch.qos.logback.classic.Level.ERROR, LogbackConfigurer.toLogbackLevel(40));
+        assertEquals(ch.qos.logback.classic.Level.ERROR, LogbackConfigurer.toLogbackLevel(50L));
+        assertEquals(ch.qos.logback.classic.Level.INFO, LogbackConfigurer.toLogbackLevel("20"));
+        assertThrows(IllegalArgumentException.class, () -> LogbackConfigurer.toLogbackLevel("VERBOSE"));
+    }
+
+    @Test
+    void testLoggerLevelsAcceptPythonNamesAndNumbers() {
+        Map<String, Object> loggers = new HashMap<>();
+        loggers.put("test.warning", Map.of("level", "WARNING"));
+        loggers.put("test.critical", Map.of("level", "CRITICAL"));
+        loggers.put("test.numeric", Map.of("level", 20));
+        loggers.put("test.notset", Map.of("level", "NOTSET"));
+
+        Map<String, Object> config = new HashMap<>();
+        config.put("loggers", loggers);
+        config.put("root", Map.of("level", "NOTSET"));
+
+        LogbackConfigurer.configure(config);
+
+        assertEquals(ch.qos.logback.classic.Level.WARN, classicLogger("test.warning").getLevel());
+        assertEquals(ch.qos.logback.classic.Level.ERROR, classicLogger("test.critical").getLevel());
+        assertEquals(ch.qos.logback.classic.Level.INFO, classicLogger("test.numeric").getLevel());
+        assertNull(classicLogger("test.notset").getLevel());
+        assertNotNull(classicLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).getLevel(), "root logger must keep a level");
+    }
+
+    @Test
+    void testPythonFormatTokensAreTranslatedWithModifiers() {
+        assertEquals(
+                "%d{yyyy-MM-dd HH:mm:ss.SSS} %-8level [%thread] %logger %file:%line %method %logger{0} %property{PID} - %msg%n",
+                LogbackConfigurer.translatePythonFormatToLogback(
+                        "%(asctime)s %(levelname)-8s [%(threadName)s] %(name)s %(filename)s:%(lineno)d %(funcName)s %(module)s %(process)d - %(message)s"
+                )
+        );
+        assertEquals("%X{request_id} 100\\% %msg%n", LogbackConfigurer.translatePythonFormatToLogback("%(request_id)s 100%% %(message)s"));
+        assertEquals("%msg%n", LogbackConfigurer.translatePythonFormatToLogback("%(message)s%n"));
+    }
+
+    @Test
+    void testHandlerLevelBecomesThresholdFilter() {
+        Map<String, Object> consoleHandler = new HashMap<>();
+        consoleHandler.put("class", "logging.StreamHandler");
+        consoleHandler.put("level", "WARNING");
+
+        Map<String, Object> config = new HashMap<>();
+        config.put("handlers", Map.of("console", consoleHandler));
+        config.put("root", Map.of("level", "DEBUG", "handlers", java.util.List.of("console")));
+
+        LogbackConfigurer.configure(config);
+
+        ch.qos.logback.core.Appender<?> appender = classicLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).iteratorForAppenders().next();
+        ch.qos.logback.classic.filter.ThresholdFilter filter = assertInstanceOf(
+                ch.qos.logback.classic.filter.ThresholdFilter.class,
+                appender.getCopyOfAttachedFiltersList().get(0)
+        );
+        ch.qos.logback.classic.spi.LoggingEvent infoEvent = new ch.qos.logback.classic.spi.LoggingEvent();
+        infoEvent.setLevel(ch.qos.logback.classic.Level.INFO);
+        ch.qos.logback.classic.spi.LoggingEvent warnEvent = new ch.qos.logback.classic.spi.LoggingEvent();
+        warnEvent.setLevel(ch.qos.logback.classic.Level.WARN);
+        assertEquals(ch.qos.logback.core.spi.FilterReply.DENY, filter.decide(infoEvent));
+        assertEquals(ch.qos.logback.core.spi.FilterReply.NEUTRAL, filter.decide(warnEvent));
+    }
+
+    @Test
+    void testRotatingFileHandlerUsesFixedWindowSizeBasedRotation() throws Exception {
+        java.nio.file.Path logFile = java.nio.file.Files.createTempFile("pyronaut-rotating", ".log");
+        try {
+            Map<String, Object> handler = new HashMap<>();
+            handler.put("class", "logging.handlers.RotatingFileHandler");
+            handler.put("filename", logFile.toString());
+            handler.put("maxBytes", 2048);
+            handler.put("backupCount", 3);
+
+            Map<String, Object> config = new HashMap<>();
+            config.put("handlers", Map.of("rotating", handler));
+            config.put("root", Map.of("level", "INFO", "handlers", java.util.List.of("rotating")));
+
+            LogbackConfigurer.configure(config);
+
+            ch.qos.logback.core.rolling.RollingFileAppender<?> appender = assertInstanceOf(
+                    ch.qos.logback.core.rolling.RollingFileAppender.class,
+                    classicLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).iteratorForAppenders().next()
+            );
+            ch.qos.logback.core.rolling.FixedWindowRollingPolicy rollingPolicy = assertInstanceOf(
+                    ch.qos.logback.core.rolling.FixedWindowRollingPolicy.class,
+                    appender.getRollingPolicy()
+            );
+            assertEquals(1, rollingPolicy.getMinIndex());
+            assertEquals(3, rollingPolicy.getMaxIndex());
+            assertEquals(logFile + ".%i", rollingPolicy.getFileNamePattern());
+            ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy<?> triggeringPolicy = assertInstanceOf(
+                    ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy.class,
+                    appender.getTriggeringPolicy()
+            );
+            assertEquals(2048L, triggeringPolicy.getMaxFileSize().getSize());
+        } finally {
+            LogbackConfigurer.configure(new HashMap<>());
+            java.nio.file.Files.deleteIfExists(logFile);
+        }
+    }
+
+    @Test
+    void testRotatingFileHandlerWithoutBackupsDoesNotRotate() throws Exception {
+        java.nio.file.Path logFile = java.nio.file.Files.createTempFile("pyronaut-plain", ".log");
+        try {
+            Map<String, Object> handler = new HashMap<>();
+            handler.put("class", "logging.handlers.RotatingFileHandler");
+            handler.put("filename", logFile.toString());
+            handler.put("maxBytes", 2048);
+            handler.put("backupCount", 0);
+
+            Map<String, Object> config = new HashMap<>();
+            config.put("handlers", Map.of("rotating", handler));
+            config.put("root", Map.of("level", "INFO", "handlers", java.util.List.of("rotating")));
+
+            LogbackConfigurer.configure(config);
+
+            ch.qos.logback.core.Appender<?> appender = classicLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).iteratorForAppenders().next();
+            assertInstanceOf(ch.qos.logback.core.FileAppender.class, appender);
+            assertFalse(appender instanceof ch.qos.logback.core.rolling.RollingFileAppender);
+        } finally {
+            LogbackConfigurer.configure(new HashMap<>());
+            java.nio.file.Files.deleteIfExists(logFile);
+        }
+    }
+
+    private static ch.qos.logback.classic.Logger classicLogger(String name) {
+        return (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(name);
+    }
+
+    @Test
     void testLoggerCaching() {
         // Test that LogbackConfigurer.getLogger returns the same instance
         Logger logger1 = LogbackConfigurer.getLogger("test.cache");

@@ -1,25 +1,17 @@
-= Python Logging with Logback
-
-Pyronaut provides a Python-friendly logging configuration API that uses Logback as the backend instead of Python's built-in logging system. This eliminates GIL/threading issues in GraalPy applications and provides unified logging across Java and Python components.
+Pyronaut routes Python logging through https://logback.qos.ch[Logback], the logging backend used by Micronaut, instead of Python's own handlers. You keep writing `logging.getLogger(__name__).info(...)` and configuring logging with the familiar `dictConfig` schema; the records are formatted and written by Logback appenders alongside the framework's own log output.
 
 == Why Logback for Python?
 
-In traditional Python applications, logging is handled by Python's built-in `logging` module. However, when running Python code on GraalPy within a Java application:
+When Python runs inside a Micronaut application, two logging systems would otherwise compete: Python's `logging` module writing to its own handlers, and Logback writing the framework's messages. Routing Python records into Logback gives:
 
-- Python's logging system can create GIL contention
-- Log output is isolated from the main application's logging
-- Configuration and management becomes fragmented
+- *One log stream.* Python and Java messages share the same appenders, format, ordering and files.
+- *One configuration.* Log levels for Python loggers, Micronaut packages and libraries are set in one place, and Micronaut's management endpoints can change them at runtime.
+- *Less contention.* Formatting and writing happen on Logback's side, outside the GraalPy interpreter lock, so logging from many threads does not serialise Python execution.
+- *Logback's ecosystem.* Rolling files, syslog, email, JSON encoders and every other Logback appender are available to Python code.
 
-By using Logback as the backend for Python logging, you get:
+== Basic configuration
 
-- **Unified logging**: All logs (Java and Python) go through the same Logback infrastructure
-- **Better performance**: No GIL issues with logging operations
-- **Centralized configuration**: Configure all logging from one place
-- **Rich ecosystem**: Access to Logback's extensive appender and filtering capabilities
-
-== Basic Configuration
-
-Use the familiar Python `dictConfig` format to configure logging. See the https://docs.python.org/3/library/logging.config.html#logging-config-dictschema[Python dictConfig documentation] for the complete schema reference.
+Call `dictConfig` from the `logback.config` module with a dictionary that follows the https://docs.python.org/3/library/logging.config.html#logging-config-dictschema[Python dictConfig schema]:
 
 [source,python]
 ----
@@ -31,7 +23,7 @@ LOGGING = {
 
     "formatters": {
         "standard": {
-            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+            "format": "%(asctime)s [%(levelname)-5s] %(name)s: %(message)s"
         }
     },
 
@@ -43,12 +35,11 @@ LOGGING = {
         },
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
-            "level": "INFO",
+            "level": "DEBUG",
             "formatter": "standard",
             "filename": "app.log",
             "maxBytes": 10_000_000,
-            "backupCount": 5,
-            "encoding": "utf-8"
+            "backupCount": 5
         }
     },
 
@@ -69,114 +60,120 @@ LOGGING = {
 dictConfig(LOGGING)
 ----
 
-== Handler Translation
+Call `dictConfig` once, early, for example at the top of your main module. Loggers created before the call, such as module-level `logging.getLogger(__name__)` loggers, are routed to Logback as well. `disable_existing_loggers` is honoured only when it is explicitly `True`; the Python default of disabling pre-existing loggers is not applied, because it would silence exactly those module-level loggers.
 
-Pyronaut automatically translates Python logging handlers to Logback appenders:
+Levels use Python's names (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) or numeric values and are mapped to the corresponding Logback levels. `NOTSET` inherits the parent level; an unknown level name raises `ValueError`, as it does in Python.
 
-| Python Handler | Logback Appender | Notes |
-|---------------|------------------|--------|
-| `logging.StreamHandler` | `ConsoleAppender` | Outputs to System.out |
-| `logging.FileHandler` | `FileAppender` | Basic file logging |
-| `logging.handlers.RotatingFileHandler` | `RollingFileAppender` | Size-based rotation |
+== Handler translation
 
-=== Handler Configuration
+Python handler classes are translated to Logback appenders:
 
-Most handler configuration options are translated directly. For example:
+[cols="1,1,2", options="header"]
+|===
+|Python handler |Logback appender |Notes
 
-[source,python]
-----
-"handlers": {
-    "file": {
-        "class": "logging.handlers.RotatingFileHandler",
-        "filename": "app.log",
-        "maxBytes": 10_000_000,
-        "backupCount": 5,
-        "encoding": "utf-8"
-    }
-}
-----
+|`logging.StreamHandler`
+|`ConsoleAppender`
+|Writes to standard output. (Python's `StreamHandler` defaults to standard error.)
 
-Becomes a Logback `RollingFileAppender` with:
-- File: `app.log`
-- SizeAndTimeBasedRollingPolicy with maxFileSize: 10MB
-- FixedWindowRollingPolicy with maxIndex: 5
+|`logging.FileHandler`
+|`FileAppender`
+|Plain file logging. `filename` is required.
 
-== Format Translation
+|`logging.handlers.RotatingFileHandler`
+|`RollingFileAppender`
+|Size-based rotation. `maxBytes` becomes the size trigger and `backupCount` the number of rotated files (`app.log.1` to `app.log.N`).
+|===
 
-Python format strings are automatically translated to Logback patterns:
+A handler's `level` becomes a threshold filter on the appender, so a `DEBUG` root logger with an `INFO` console handler prints `INFO` and above on the console, as it would in Python. The `encoding` and `mode` options are not translated.
 
-| Python Format | Logback Pattern |
-|---------------|-----------------|
-| `%(asctime)s` | `%d{yyyy-MM-dd HH:mm:ss.SSS}` |
-| `%(levelname)s` | `%level` |
-| `%(name)s` | `%logger` |
-| `%(message)s` | `%msg` |
+== Format translation
 
-Logback patterns automatically include newlines (`%n`) for proper log separation.
+Format strings in `%(name)s` style are translated to Logback patterns. Width and alignment modifiers are preserved, so `%(levelname)-5s` becomes `%-5level`:
 
-== Using Logback Appenders Directly
+[cols="1,1", options="header"]
+|===
+|Python format |Logback pattern
 
-For advanced use cases, you can bypass the translation layer and use Logback appenders directly:
+|`%(asctime)s`
+|`%d{yyyy-MM-dd HH:mm:ss.SSS}`
+
+|`%(levelname)s`
+|`%level`
+
+|`%(name)s`
+|`%logger`
+
+|`%(message)s`
+|`%msg`
+
+|`%(threadName)s`
+|`%thread`
+
+|`%(lineno)d`
+|`%line`
+
+|`%(filename)s`
+|`%file`
+
+|`%(funcName)s`
+|`%method`
+|===
+
+A newline (`%n`) is appended automatically. `%(process)d` renders the JVM process id, and a record attribute with no Logback equivalent becomes an MDC lookup (`%X{name}`), which renders as empty text unless your code puts that key into the MDC.
+
+== Using Logback appenders directly
+
+Any Logback appender can be configured by giving its fully qualified class name as the handler `class`. Keys other than `class`, `level` and `formatter` are applied as properties of the appender:
 
 [source,python]
 ----
 LOGGING = {
     "version": 1,
     "handlers": {
-        "smtp": {
-            "class": "ch.qos.logback.classic.net.SMTPAppender",
-            "smtpHost": "smtp.example.com",
-            "to": ["admin@example.com", "user@example.com"],
-            "from": "noreply@example.com",
-            "subject": "Application Error",
-            "layout": {
-                "class": "ch.qos.logback.classic.PatternLayout",
-                "pattern": "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
-            }
+        "syslog": {
+            "class": "ch.qos.logback.classic.net.SyslogAppender",
+            "syslogHost": "logs.example.com",
+            "facility": "USER",
+            "suffixPattern": "%logger %msg"
         }
     },
     "root": {
         "level": "ERROR",
-        "handlers": ["smtp"]
+        "handlers": ["syslog"]
     }
 }
 ----
 
-=== Property Configuration
+Property mapping rules:
 
-When using Logback appenders directly:
+- A scalar value `"name": "value"` calls the appender's `setName(value)` method. Only `String`, `int`, `long`, `boolean` and similar simple parameters are converted; a property whose setter needs another type is skipped with a warning on standard error.
+- A list value `"name": ["a", "b"]` calls `addName(...)` once per element.
+- Nested objects (for example a custom `layout` or `encoder`) are not supported. Configure such appenders in a `logback.xml` on the classpath instead.
 
-- **Simple properties**: Use `"propertyName": "value"` for `setPropertyName(value)` calls
-- **List properties**: Use `"propertyName": ["value1", "value2"]` for multiple `addPropertyName(value)` calls
-- **Nested objects**: Some appenders support nested configuration objects
+Commonly used appenders include `ch.qos.logback.core.ConsoleAppender`, `ch.qos.logback.core.FileAppender`, `ch.qos.logback.core.rolling.RollingFileAppender`, `ch.qos.logback.classic.net.SyslogAppender` and `ch.qos.logback.classic.net.SMTPAppender`. See the https://logback.qos.ch/manual/appenders.html[Logback appenders reference] for their properties.
 
-=== Supported Appenders
+== Writing log messages
 
-You can use any Logback appender by specifying its full class name. Common appenders include:
-
-- `ch.qos.logback.core.ConsoleAppender` - Console output
-- `ch.qos.logback.core.FileAppender` - File output
-- `ch.qos.logback.classic.net.SMTPAppender` - Email notifications
-- `ch.qos.logback.classic.net.SyslogAppender` - Syslog output
-- `ch.qos.logback.core.rolling.RollingFileAppender` - Advanced file rotation
-
-See the https://logback.qos.ch/manual/appenders.html[Logback documentation] for available appenders and their configuration options.
-
-== Integration with Python Logging
-
-Once configured, use Python logging normally:
+Once configured, use the standard `logging` API:
 
 [source,python]
 ----
 import logging
 
 logger = logging.getLogger(__name__)
-logger.info("This log message goes through Logback")
+logger.info("Started processing order %s", order_id)
+logger.warning("Slow response from %s", service)
 ----
 
-The logs will appear in your configured Logback appenders with proper formatting and routing.
+Messages are formatted with Python's `%` arguments and then passed to Logback, so `%s` placeholders and lazy formatting work as usual.
+
+== Combining with logback.xml
+
+Micronaut applications can also ship a `logback.xml` in the `config` directory. Loggers and appenders declared there apply to Python loggers too, because Python records are delivered to the same Logback context. Use `logback.xml` for appenders that need nested configuration and `dictConfig` for settings you want to keep in Python.
 
 == Links
 
 - https://logback.qos.ch/manual/configuration.html[Logback configuration manual]
 - https://logback.qos.ch/manual/appenders.html[Logback appenders reference]
+- https://docs.micronaut.io/latest/guide/#logging[Micronaut logging guide]

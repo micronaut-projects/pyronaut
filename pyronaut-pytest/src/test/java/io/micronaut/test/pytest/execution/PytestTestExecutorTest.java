@@ -114,7 +114,7 @@ class PytestTestExecutorTest {
     void reportedTestFailuresDoNotFailSessionAgain() {
         JUnitPytestTestListener listener = new JUnitPytestTestListener(
             EngineExecutionListener.NOOP,
-            Set.of()
+            Set.of(descriptor(Path.of("/workspace/tests/test_demo.py"), "tests/test_demo.py", "test_failure"))
         );
         listener.afterTest(
             "tests/test_demo.py::test_failure",
@@ -124,6 +124,42 @@ class PytestTestExecutorTest {
         listener.onResult(TestExecutionResult.failed(new RuntimeException("Pytest session failed with exit code: 1")));
 
         assertDoesNotThrow(() -> PytestTestExecutor.failIfPytestFailed(listener, Value.asValue(1)));
+    }
+
+    @Test
+    void parametrizedTestFailuresAreReportedAgainstTheirDescriptor() {
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of(descriptor(Path.of("/workspace/tests/test_demo.py"), "tests/test_demo.py", "test_param"))
+        );
+        listener.afterTest(
+            "tests/test_demo.py::test_param[2]",
+            Value.asValue(null),
+            TestExecutionResult.failed(new PythonAssertionError("assert 2 == 3"))
+        );
+        listener.onResult(TestExecutionResult.failed(new RuntimeException("Pytest session failed with exit code: 1")));
+
+        assertTrue(listener.hasReportedTestFailures());
+        assertDoesNotThrow(() -> PytestTestExecutor.failIfPytestFailed(listener, Value.asValue(1)));
+    }
+
+    @Test
+    void failuresWithoutMatchingDescriptorStillFailSession() {
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            EngineExecutionListener.NOOP,
+            Set.of()
+        );
+        listener.afterTest(
+            "tests/test_demo.py::test_failure",
+            Value.asValue(null),
+            TestExecutionResult.failed(new PythonAssertionError("assert 1 == 2"))
+        );
+        listener.onResult(TestExecutionResult.failed(new RuntimeException("Pytest session failed with exit code: 1")));
+
+        assertThrows(
+            IllegalStateException.class,
+            () -> PytestTestExecutor.failIfPytestFailed(listener, Value.asValue(1))
+        );
     }
 
     @Test

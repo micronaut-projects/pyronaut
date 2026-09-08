@@ -88,7 +88,10 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
         for (Root root : roots) {
             JarEntry entry = findEntry(root, name);
             if (entry != null) {
-                return entryUrl(entry);
+                URL url = entryUrlOrNull(entry);
+                if (url != null) {
+                    return url;
+                }
             }
         }
         return null;
@@ -100,7 +103,10 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
         for (Root root : roots) {
             JarEntry entry = findEntry(root, name);
             if (entry != null) {
-                resources.add(entryUrl(entry));
+                URL url = entryUrlOrNull(entry);
+                if (url != null) {
+                    resources.add(url);
+                }
             }
         }
         return Collections.enumeration(resources);
@@ -171,16 +177,47 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
         }
     }
 
-    private URL entryUrl(JarEntry entry) {
+    private URL entryUrlOrNull(JarEntry entry) {
         try {
-            return URI.create("jar:" + archive.toUri() + "!/" + entry.getName()).toURL();
-        } catch (MalformedURLException e) {
-            throw new IllegalStateException("Invalid FAT JAR resource URL for " + entry.getName(), e);
+            return URI.create("jar:" + archive.toUri() + "!/" + encodeEntryName(entry.getName())).toURL();
+        } catch (MalformedURLException | IllegalArgumentException e) {
+            // Resource lookups must never fail because of an unusual entry name.
+            return null;
         }
     }
 
     private URL rootUrl(String prefix) throws MalformedURLException {
-        return URI.create("jar:" + archive.toUri() + "!/" + prefix).toURL();
+        return URI.create("jar:" + archive.toUri() + "!/" + encodeEntryName(prefix)).toURL();
+    }
+
+    /**
+     * Percent-encodes a JAR entry name for use in a {@code jar:} URL. Each
+     * {@code /}-separated segment is encoded individually so that spaces,
+     * {@code %}, {@code #} and non-ASCII characters neither break URI parsing
+     * nor truncate the entry path; the JAR URL handler decodes them again.
+     */
+    static String encodeEntryName(String name) {
+        StringBuilder encoded = new StringBuilder(name.length() + 16);
+        for (byte b : name.getBytes(StandardCharsets.UTF_8)) {
+            char c = (char) (b & 0xFF);
+            if (isUnreservedUrlPathCharacter(c)) {
+                encoded.append(c);
+            } else {
+                encoded.append('%')
+                    .append(Character.toUpperCase(Character.forDigit((c >> 4) & 0xF, 16)))
+                    .append(Character.toUpperCase(Character.forDigit(c & 0xF, 16)));
+            }
+        }
+        return encoded.toString();
+    }
+
+    private static boolean isUnreservedUrlPathCharacter(char c) {
+        return (c >= 'a' && c <= 'z')
+            || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9')
+            || c == '/' || c == '-' || c == '.' || c == '_' || c == '~'
+            || c == '$' || c == '!' || c == '*' || c == '\'' || c == '(' || c == ')'
+            || c == ',' || c == '+' || c == '=' || c == '@' || c == ':' || c == ';' || c == '&';
     }
 
     private void definePackageIfNecessary(String className, Root root) {

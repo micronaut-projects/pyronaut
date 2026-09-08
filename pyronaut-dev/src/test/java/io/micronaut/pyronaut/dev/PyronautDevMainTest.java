@@ -165,6 +165,73 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void implicitPythonTestDiscoveryMatchesDocumentedPatternsAndPrunesToolDirectories(@TempDir Path tempDir) throws IOException {
+        Path nested = Files.createDirectories(tempDir.resolve("nested"));
+        Path pythonTest = nested.resolve("NestedTest.py");
+        Path pythonPytest = nested.resolve("test_nested.py");
+        Files.writeString(pythonTest, "class NestedTest: pass\n");
+        Files.writeString(pythonPytest, "def test_nested(): pass\n");
+        Files.writeString(nested.resolve("conftest.py"), "pass\n");
+        Files.writeString(nested.resolve("latest.py"), "pass\n");
+        Files.writeString(nested.resolve("lowercasetest.py"), "pass\n");
+        for (String pruned : List.of(".git", ".venv", "venv", "node_modules", "__pyronaut__", ".hidden")) {
+            Path directory = Files.createDirectories(tempDir.resolve(pruned));
+            Files.writeString(directory.resolve("test_pruned.py"), "def test_pruned(): pass\n");
+            Files.writeString(directory.resolve("PrunedTest.java"), "class PrunedTest {}\n");
+        }
+
+        assertEquals(List.of(pythonTest, pythonPytest), PyronautDevMain.findImplicitTestSources(tempDir, PyronautDevMain.SourceType.PYTHON));
+        assertEquals(List.of(), PyronautDevMain.findImplicitTestSources(tempDir, PyronautDevMain.SourceType.JAVA));
+    }
+
+    @Test
+    void bareReportOptionUsesDefaultReportLocation() {
+        PyronautDevMain.DirectSourceInvocation bare = PyronautDevMain.parseDirectTestSourceArgs(List.of("--report", "App.py"));
+        PyronautDevMain.DirectSourceInvocation explicit = PyronautDevMain.parseDirectTestSourceArgs(List.of("--report", "out/reports", "App.py"));
+        PyronautDevMain.DirectSourceInvocation none = PyronautDevMain.parseDirectTestSourceArgs(List.of("App.py"));
+
+        assertEquals(none.report(), bare.report());
+        assertEquals(List.of(Path.of("App.py")), bare.sources());
+        assertEquals(Path.of("out/reports"), explicit.report());
+    }
+
+    @Test
+    void directTestWithoutApplicationSourcesReturnsUsageError() {
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
+        try {
+            assertEquals(2, PyronautDevMain.execute(new String[]{"test", "--", "FooTest.py"}, (command, arguments) -> 0));
+        } finally {
+            System.setErr(originalErr);
+        }
+        assertTrue(stderr.toString(StandardCharsets.UTF_8).contains("application source"));
+    }
+
+    @Test
+    void exclusionKeysUseGroupAndArtifactForVersionlessCoordinates() {
+        assertEquals("io.micronaut:micronaut-http", PyronautDevMain.moduleKey("io.micronaut:micronaut-http"));
+        assertEquals("io.micronaut:micronaut-http", PyronautDevMain.moduleKey("io.micronaut:micronaut-http:4.0.0"));
+        assertEquals("io.micronaut:micronaut-http", PyronautDevMain.moduleKey("io.micronaut:micronaut-http:jar:4.0.0"));
+        assertEquals("micronaut-http", PyronautDevMain.moduleKey("micronaut-http"));
+    }
+
+    @Test
+    void javaTestClassDiscoveryIgnoresCommentedTypeNames() {
+        String stripped = PyronautDevMain.stripJavaComments("""
+            package demo;
+            /** Docs mention class Ignored and interface AlsoIgnored. */
+            // class LineIgnored
+            class RealTest { String url = "http://example.com"; /* class Inline */ }
+            """);
+
+        assertTrue(stripped.contains("class RealTest"));
+        assertTrue(stripped.contains("http://example.com"));
+        assertFalse(stripped.contains("Ignored"));
+        assertFalse(stripped.contains("Inline"));
+    }
+
+    @Test
     void explicitEmptyTestSourceSeparatorIsPreserved() {
         PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectTestSourceArgs(List.of("App.java", "--"));
 
@@ -693,7 +760,8 @@ final class PyronautDevMainTest {
             "--report", "App.java", "--", "AppTest.java"
         ));
 
-        assertEquals(Path.of("__pyronaut__", "reports", "tests"), invocation.report());
+        // A bare --report resolves to the same default as no --report (under the direct-source cache directory).
+        assertNull(invocation.report());
         assertEquals(List.of(Path.of("App.java")), invocation.sources());
         assertEquals(List.of(Path.of("AppTest.java")), invocation.testSources());
     }

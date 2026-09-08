@@ -159,6 +159,32 @@ class PythonLoggingServiceProviderTest {
     }
 
     @Test
+    void testPythonLoggerProbesMatchingPythonLevels() {
+        graalContext.eval("python", "import logging; logging.getLogger('test.probe').setLevel(logging.INFO)");
+        PythonLogger logger = new PythonLogger("test.probe");
+
+        assertFalse(logger.isDebugEnabled(), "DEBUG must be disabled when the Python logger level is INFO");
+        assertTrue(logger.isInfoEnabled(), "INFO must be enabled when the Python logger level is INFO");
+        assertTrue(logger.isWarnEnabled(), "WARN must be enabled when the Python logger level is INFO");
+        assertTrue(logger.isErrorEnabled(), "ERROR must be enabled when the Python logger level is INFO");
+
+        graalContext.eval("python", "logging.getLogger('test.probe').setLevel(logging.ERROR)");
+        assertFalse(logger.isWarnEnabled(), "WARN must be disabled when the Python logger level is ERROR");
+        assertTrue(logger.isErrorEnabled(), "ERROR must still be enabled when the Python logger level is ERROR");
+    }
+
+    @Test
+    void testPythonLoggerNamesWithQuotesAreSupported() {
+        String name = "test.quote'd\"name";
+        PythonLogger logger = new PythonLogger(name);
+
+        assertEquals(name, logger.getName());
+        Value pythonName = graalContext.eval("python", "import logging; logging.getLogger(\"test.quote'd\\\"name\").name");
+        assertEquals(name, pythonName.asString());
+        assertTrue(logger.isErrorEnabled());
+    }
+
+    @Test
     void testLoggerFactoryReturnsSameInstance() {
         Logger logger1 = LoggerFactory.getLogger("test.singleton");
         Logger logger2 = LoggerFactory.getLogger("test.singleton");

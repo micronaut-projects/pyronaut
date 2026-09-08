@@ -279,6 +279,49 @@ class JUnitPytestTestListenerTest {
     }
 
     @Test
+    void parametrizedNodeIdsMatchTheirDiscoveredDescriptor() {
+        PytestTestDescriptor descriptor = testDescriptor("tests/test_params.py", "test_square");
+
+        assertTrue(descriptor.matchesId("tests/test_params.py::test_square"));
+        assertTrue(descriptor.matchesId("tests/test_params.py::test_square[2]"));
+        assertTrue(descriptor.matchesId("tests/test_params.py::test_square[a-b]"));
+        assertTrue(descriptor.matchesId("/workspace/tests/test_params.py::test_square[x[0]]"));
+        assertFalse(descriptor.matchesId("tests/test_params.py::test_square_other[2]"));
+    }
+
+    @Test
+    void parametrizedResultsAreForwardedToJUnit() {
+        PytestTestDescriptor descriptor = testDescriptor("tests/test_params.py", "test_square");
+        AtomicReference<TestDescriptor> started = new AtomicReference<>();
+        AtomicReference<TestExecutionResult> finishedResult = new AtomicReference<>();
+        JUnitPytestTestListener listener = new JUnitPytestTestListener(
+            new EngineExecutionListener() {
+                @Override
+                public void executionStarted(TestDescriptor testDescriptor) {
+                    started.set(testDescriptor);
+                }
+
+                @Override
+                public void executionFinished(TestDescriptor testDescriptor, TestExecutionResult testExecutionResult) {
+                    finishedResult.set(testExecutionResult);
+                }
+            },
+            Set.of(descriptor)
+        );
+
+        listener.beforeTest("tests/test_params.py::test_square[2]", null);
+        listener.afterTest(
+            "tests/test_params.py::test_square[2]",
+            null,
+            TestExecutionResult.failed(new PythonAssertionError("assert 4 == 5"))
+        );
+
+        assertEquals(descriptor, started.get());
+        assertEquals(TestExecutionResult.Status.FAILED, finishedResult.get().getStatus());
+        assertTrue(listener.hasReportedTestFailures());
+    }
+
+    @Test
     void reportsJavaLifecycleExceptionAsFailedTestWithoutThrowingIntoPytest() throws Exception {
         Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
         Path eventsReport = reportsDir.resolve("events.ndjson");

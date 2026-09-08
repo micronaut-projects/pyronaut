@@ -1,10 +1,9 @@
-Pyronaut exposes the entirety of the https://docs.micronaut.io/latest/[Micronaut API] to Python by representing any Java annotation as a Python decorator at the source level.
+Pyronaut exposes the whole https://docs.micronaut.io/latest/guide/[Micronaut framework] to Python by treating every Java annotation as a Python decorator. This section explains that mapping, what the `pyronaut` command does with your source code before it runs, and which parts of the runtime are already included for you.
 
-This means you can use any documented Micronaut construct in Python code.
+== Decorators are annotations
 
-For example controllers are defined with Python decorators that bridge to Micronaut's annotations used in other languages like Java, Kotlin and Groovy:
+Micronaut is driven by annotations: `@Controller`, `@Get`, `@Singleton`, `@Value` and hundreds more. In Pyronaut each of them is available as a decorator, imported from the Java package with the leading `io.` removed:
 
-.Using HTTP decorators
 [source,python]
 ----
 from micronaut.http.annotation import Get
@@ -15,43 +14,103 @@ def index() -> str:
     return "Hello from Pyronaut"
 ----
 
-One caveat is that the packages you import start with `micronaut` instead of `io.micronaut` so when refering to the https://docs.micronaut.io/latest/api/[API Reference] you need to omit the `io.` on any import declaration. This wrinkle is due to the fact Python itself forbids defining packages that are part of the core Python API and since `io` is a core Python package this would otherwise conflict and produce a runtime error.
+The `io.` prefix is dropped because `io` is a module in the Python standard library and Python does not allow a package to shadow it. When you look up an annotation in the https://docs.micronaut.io/latest/api/[Micronaut API reference] and see `io.micronaut.http.annotation.Get`, import it as `micronaut.http.annotation.Get`. Packages that do not start with `io.micronaut` keep their name, for example `jakarta.inject.Singleton` and `jakarta.validation.constraints.NotBlank`.
 
-This flexibility to use any Java side annotation as a Python decorator means you can leverage advanced features of Micronaut such as Micronaut serialization to define JSON mapping using Jackson:
+The decorator accepts the annotation's members as keyword arguments (`@Get(value="/", produces="text/plain")`), or a single positional argument for the `value` member (`@Get("/")`). A decorator applied to a Python class corresponds to a type-level annotation; applied to a function or method it corresponds to a method-level annotation.
 
-.Writing Serializable data classes
-[source, python]
+Annotations that Java applies to fields or parameters are expressed with `typing.Annotated`, which keeps the type hint and the annotation together:
+
+[source,python]
+----
+from typing import Annotated
+
+from jakarta.validation.constraints import NotBlank, Size
+from micronaut.http.annotation import Body
+
+
+def save(name: Annotated[str, NotBlank, Size(min=1, max=30)], payload: Annotated[Item, Body]) -> Item:
+    ...
+----
+
+A bare name inside `Annotated` (such as `NotBlank`) applies the annotation with default values; call it to pass members.
+
+=== Names that clash with Python keywords
+
+Some Java members and methods have names that are reserved in Python. Append an underscore and Pyronaut maps it back to the Java name:
+
+[source,python]
+----
+from micronaut.http.annotation import Error
+
+
+@Error(global_=True)          # Java member: global
+def handle(request, error):
+    ...
+----
+
+The same applies to packages and methods, for example `micronaut.core.async_.annotation` for `io.micronaut.core.async.annotation` and `Flux.from_(publisher)` for `Flux.from`.
+
+== Using Java classes directly
+
+Any Java class on the classpath can be imported with a normal `import` statement, whether it belongs to Micronaut, the JDK or a library you added to `pyproject.toml`. The Java package is the Python module:
+
+[source,python]
+----
+from java.time import Duration
+from org.apache.commons.lang3 import StringUtils
+
+print(StringUtils.capitalize("hello"))
+timeout = Duration.ofSeconds(5)
+----
+
+`java.type("org.apache.commons.lang3.StringUtils")` is an equivalent way to obtain the same class. The Micronaut examples use it for reactive types such as `Mono` and `Publisher`, and it is handy when a Java package name would shadow a Python module.
+
+Java objects behave like Python objects: call methods with the Java names (`response.getHeaders()`), index Java lists and maps, and iterate over Java collections. Python `str`, `int`, `float`, `bool`, `list`, `dict`, `datetime` and `uuid.UUID` values convert to the matching Java types automatically when passed to Java code. See <<usingPackagesJavaLibraries,Using Python Packages & Java Libraries>> for declaring dependencies.
+
+== What happens during processing
+
+Micronaut does its work at compile time. When you run `pyronaut dev`, `pyronaut run` or `pyronaut test`, the CLI first runs `pyronaut process`, which parses your Python sources and hands the decorators, type hints, dataclasses and abstract classes to the Micronaut compiler. The compiler generates Java classes alongside your code:
+
+* Bean definitions describing how to construct each `@Singleton`, `@Controller` or `@Factory` and which dependencies to inject.
+* Route metadata for every HTTP method decorator, including how to bind each parameter.
+* Serializers and deserializers for `@Serdeable` dataclasses.
+* Validation metadata for `jakarta.validation` constraints.
+* Bridge code that lets Java call your Python functions and lets Python receive Java objects.
+* An OpenAPI description of the routes.
+
+The output is written to `__pyronaut__/classes` and cached; unchanged sources are not reprocessed. This is why Pyronaut applications start quickly and why many errors, such as an unsatisfied dependency or a route whose path variable has no parameter, are reported before the server starts. It also means the processor must be able to see your decorators statically; see <<incrementalProcessing,Incremental Processing>> for the constructs it can and cannot follow.
+
+For example, given this data class:
+
+.Writing serializable data classes
+[source,python]
 ----
 from dataclasses import dataclass
 from typing import Annotated
 
+from com.fasterxml.jackson.annotation import JsonProperty
 from jakarta.validation.constraints import NotBlank, Pattern, Size
 from micronaut.serde.annotation import Serdeable
-from com.fasterxml.jackson.annotation import JsonProperty
 
-@Serdeable # (1)
+
+@Serdeable                                                   # <1>
 @dataclass
 class Person:
-    """Create/update form for Owner."""
-
-    name: Annotated[str, NotBlank, Size(min=1, max=30)] # (2) 
-    telephone: Annotated[str | None, NotBlank, Pattern(regexp=r"\d{10}", message="Telephone must be a 10-digit number")] = None
-    age: Annotated[int, JsonProperty("person_age")] # (3)
+    name: Annotated[str, NotBlank, Size(min=1, max=30)]      # <2>
+    age: Annotated[int, JsonProperty("person_age")]          # <3>
+    telephone: Annotated[str | None, Pattern(regexp=r"\d{10}")] = None
 ----
 
-<1> Here the `@Serdeable` decorator is used to indicate that the data class can be serialized and deserialized
-<2> The `name` attribute has some `jakarta.validation` constraints applied to it via decorators
-<3> The `age` attribute is mapped to a different JSON attribute name ("person_age") using `JsonProperty`
+<1> `@Serdeable` asks Micronaut Serialization to generate a JSON encoder and decoder for the class.
+<2> The `jakarta.validation` constraints are checked whenever a `Person` is validated, for example as a request body annotated with `Valid`.
+<3> `JsonProperty` renames the attribute in JSON to `person_age`.
 
+processing produces a serializer that writes `{"name": ..., "person_age": ...}`, a validator that enforces the constraints, and the Python-to-Java bridge that lets a controller return a `Person` directly. No reflection is used at runtime and no schema is built when the application starts.
 
-So what happens is during the execution of `pyronaut process` which is executed prior to running the application Micronaut at build time produces additional artefacts during this processing step that know how to serialization and deserialization the `Person` data class plus some code that bridges that enable Python <--> Java interop.
+== What is already included
 
-Any Java API can be imported and used directly from Python and advanced features like https://docs.micronaut.io/latest/validation/[Micronaut Validation], https://docs.micronaut.io/latest/serde/[Micronaut Serialization] and https://docs.micronaut.io/latest/data[Micronaut Data] "just work" in the context of Python enabling a highly productive, scalable and portable development platform for Python developers.
+You do not need to declare the Micronaut runtime in `pyproject.toml`. The Pyronaut launchers used by `pyronaut dev` and `pyronaut run` bundle the modules that most applications need: the Netty HTTP server and client, Micronaut Serialization, Micronaut Validation, the TOML configuration loader, management endpoints, retry, scheduling, WebSocket support, OpenAPI annotations, the Python asyncio bridge and the Logback logging integration. Add other Micronaut modules, such as Micronaut Data or Micronaut Security, and any third-party Java library under `[tool.pyronaut.dependencies]`.
 
-A Pyronaut decorator can be used at the type or function level using the regular decorator syntax (for example `@Get`). 
+== Where to go next
 
-Named arguments can be used used with decorators which are map to the underlying Java annotation values (for example `@Get(value="/", produces="text/plain")`).
-
-The standard `typing.Annotated` Python construct can be use to apply Pyronaut decorators to class attributes or function arguments (for example `Annotated[str, NotBlank, Size(min=1, max=30)]`).
-
-For more information checkout the https://docs.micronaut.io/latest/core/#core-introduction[Micronaut core documentation] which has been updated with Python examples and a dedicated https://docs.micronaut.io/latest/core/#core-python[Python Section] cover features specific to Python such as async/await support. 
+The <<concepts,Micronaut Concepts for Python Developers>> chapter explains dependency injection, configuration injection, AOP, HTTP APIs and threading in Python terms. The https://docs.micronaut.io/latest/guide/[Micronaut guide] contains Python examples for most sections and a dedicated https://docs.micronaut.io/latest/guide/#python[Micronaut for Python] section covering type ordering, standard-library type conversions, keyword handling, module scripts, GraalPy tools and async/await.

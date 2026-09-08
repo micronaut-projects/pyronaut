@@ -3,6 +3,8 @@
 Pyronaut supports JUnit 5 tests, pytest tests, or both through the JUnit Platform.
 Use `pyronaut test` when tests need the Micronaut classpath, processed sources, test resources, or Micronaut test integration.
 
+If you are used to pytest, keep using it: write ordinary `test_*.py` modules with fixtures, parametrization and marks, and use the `MicronautTest` fixture described in <<micronautTest,Using MicronautTest>> when a test needs a running application. The JUnit 5 Python module style described below trades pytest's fixture model for direct dependency injection into the test module; it is the better fit for direct-source tests and for tests that share an application context across many test functions.
+
 == Selecting a Test Engine
 
 Configure the engine under `[tool.pyronaut.test]`:
@@ -37,7 +39,7 @@ pyronaut test
 
 VS Code's Python pytest support invokes pytest directly and is not suitable for Micronaut-backed Pyronaut tests.
 Use the Pyronaut VS Code Test Explorer extension when running these tests from VS Code.
-See xref:configuration/vscodeExtension.adoc[].
+See <<vscodeExtension,VS Code Test Explorer Extension>>.
 
 `pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts configured project test resources, and delegates discovery to the configured engines. For direct sources, Test Resources starts only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. Use `--disable-test-resources` to disable either form of automatic orchestration.
 

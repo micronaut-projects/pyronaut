@@ -6,7 +6,20 @@ gettingStarted:
   title: Getting Started
   prerequisites: Prerequisites
   fastApiTutorial: The FastAPI Tutorial
-how: How Pyronaut Works  
+how: How Pyronaut Works
+concepts:
+  title: Micronaut Concepts for Python Developers
+  dependencyInjection: Dependency Injection
+  configurationInjection: Configuration Injection
+  aop: Aspect-Oriented Programming (AOP)
+  httpApis: Building HTTP APIs
+  threading:
+    title: Threading, Blocking Work and asyncio
+    threadingModel: The Threading Model
+    blockingWork: Running Blocking Code
+    asyncAwait: Using async/await
+    reactiveInterop: Awaiting Reactive and Java Async Types
+    contextPool: The GIL and the Context Pool
 projectStructure:
   title: Pyronaut Toolchain & Project Layout
 usingPackagesJavaLibraries: Using Python Packages & Java Libraries

@@ -1,0 +1,274 @@
+Pyronaut applications expose HTTP APIs with the same decorators that Micronaut uses in Java, but the resulting code looks very much like FastAPI: functions with type hints, path variables in braces and dataclasses for request and response bodies. This section shows the day-to-day patterns and how they map to Flask and FastAPI.
+
+== Routes
+
+A route is a function decorated with an HTTP method decorator from `micronaut.http.annotation`. The decorators are `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete`, `@Head` and `@Options`. Routes can live at module level, which is the quickest way to start, or inside a `@Controller` class, which groups related routes under a common prefix and lets them share injected dependencies:
+
+[source,python]
+----
+from micronaut.http.annotation import Controller, Get, Post
+
+
+@Controller("/books")
+class BookController:
+    def __init__(self, service: BookService):
+        self.service = service
+
+    @Get("/")
+    def list_books(self) -> list[Book]:
+        return self.service.list()
+
+    @Get("/{isbn}")
+    def get_book(self, isbn: str) -> Book | None:
+        return self.service.find(isbn)
+----
+
+A module with routes but no `@Controller` receives an implicit controller mounted at `/`. Call `Controller("/prefix")` at module level to change the prefix without introducing a class.
+
+Path variables use `{name}` in the route and a parameter of the same name in the function. The parameter's type hint drives conversion, so `item_id: int` rejects non-numeric values with `400 Bad Request`.
+
+== Binding request data
+
+Micronaut binds function parameters from the request using the parameter name, the type hint and an optional decorator inside `typing.Annotated`:
+
+[cols="2,3", options="header"]
+|===
+|Parameter |Bound from
+
+|`item_id: int` with `{item_id}` in the route
+|The path variable.
+
+|`q: str \| None = None`
+|The query parameter `q`. Parameters that are not path variables bind from the query string; a default value makes them optional.
+
+|`Annotated[str, QueryValue("page-size")]`
+|A query parameter whose name differs from the Python name.
+
+|`Annotated[str, Header("X-Request-Id")]`
+|A request header. `Annotated[str, Header]` infers the header name from the parameter name.
+
+|`Annotated[str, CookieValue("session")]`
+|A cookie.
+
+|`Annotated[Item, Body]`
+|The request body, decoded from JSON into the dataclass. `Annotated[str, Body]` receives the raw text.
+
+|`request: HttpRequest`
+|The full request object, for headers, the URI or attributes.
+|===
+
+A JSON body is modelled with a dataclass decorated with `@Serdeable` from `micronaut.serde.annotation`. This replaces a Pydantic `BaseModel`: the decorator makes Micronaut generate the JSON encoder and decoder at build time, without reflection or runtime schema building:
+
+[source,python]
+----
+from dataclasses import dataclass
+from typing import Annotated
+
+from jakarta.validation import Valid
+from jakarta.validation.constraints import NotBlank, Positive
+from micronaut.http.annotation import Body, Post
+from micronaut.serde.annotation import Serdeable
+
+
+@Serdeable
+@dataclass
+class Item:
+    name: Annotated[str, NotBlank]
+    price: Annotated[float, Positive]
+    is_offer: bool | None = None
+
+
+@Post("/items")
+def create_item(item: Annotated[Item, Body, Valid]) -> Item:
+    return item
+----
+
+`Valid` asks Micronaut Validation to check the constraints declared on the dataclass before the function runs. Constraints can also be applied directly to parameters, for example `page: Annotated[int, Min(1)] = 1`.
+
+TIP: Dataclasses may reference each other and contain lists, dictionaries, enums, `datetime`, `date`, `timedelta` and `uuid.UUID` fields. Quote forward references (`"Room | None"`) when the referenced class is declared later in the file. Rename a JSON property with `Annotated[int, JsonProperty("person_age")]` from `com.fasterxml.jackson.annotation`.
+
+== Responses
+
+The return type hint decides how the response is encoded:
+
+[cols="1,2", options="header"]
+|===
+|Return type |Response
+
+|`dict`, `list`, a `@Serdeable` dataclass, or a list of them
+|JSON with `Content-Type: application/json`.
+
+|`str`
+|Text. Set `@Get(produces="text/plain")` or `@Produces(MediaType.TEXT_PLAIN)` to send plain text rather than a JSON string.
+
+|`None`
+|`404 Not Found`. Returning `None` from a lookup is the idiomatic "not found" response.
+
+|`HttpResponse`
+|Full control of status, headers and body: `HttpResponse.created(item)`, `HttpResponse.notFound()`, `HttpResponse.ok(body).header("X-Total", "3")`.
+
+|`HttpStatus`
+|An empty response with the given status.
+
+|`Publisher`, `Mono`, `CompletionStage`, or an `async def` function
+|Asynchronous responses; see <<threading,Threading, Blocking Work and asyncio>>.
+|===
+
+Change the status of a successful response with `@Status`:
+
+[source,python]
+----
+from micronaut.http import HttpStatus
+from micronaut.http.annotation import Post, Status
+
+
+@Post("/items")
+@Status(HttpStatus.CREATED)
+def create_item(item: Annotated[Item, Body]) -> Item:
+    return item
+----
+
+== Errors
+
+Exceptions raised from a route become `500 Internal Server Error` responses with a JSON error body. Validation failures and binding failures become `400 Bad Request`. To customise error handling, declare an `@Error` method. Inside a controller it handles errors from that controller; with `global_=True` it handles errors from every route:
+
+[source,python]
+----
+from micronaut.http import HttpRequest, HttpResponse, HttpStatus
+from micronaut.http.annotation import Controller, Error, Get
+from micronaut.http.hateoas import JsonError
+
+
+class BookNotFound(Exception):
+    pass
+
+
+@Controller("/books")
+class BookController:
+    @Get("/{isbn}")
+    def get_book(self, isbn: str) -> Book:
+        raise BookNotFound(isbn)
+
+    @Error
+    def on_not_found(self, request: HttpRequest, e: BookNotFound) -> HttpResponse:
+        return HttpResponse.notFound().body(JsonError(f"No book {e}"))
+
+    @Error(status=HttpStatus.NOT_FOUND)
+    def on_404(self, request: HttpRequest) -> HttpResponse:
+        return HttpResponse.notFound().body(JsonError("Nothing here"))
+----
+
+The exception type of the second parameter selects which exceptions the handler receives, and `status=` selects a status code instead. For application-wide handling of one exception type, implement an `ExceptionHandler` bean as shown in the https://docs.micronaut.io/latest/guide/#exceptionHandler[Micronaut guide].
+
+== Calling other services
+
+The `requests` library works in Pyronaut through the `pyronaut-requests` shim (see <<pyronautRequests,Pyronaut Requests>>), but for services you call regularly a declarative client is more convenient. Declare an abstract class describing the remote API and Micronaut implements it:
+
+[source,python]
+----
+from abc import ABC, abstractmethod
+
+from micronaut.http.annotation import Get
+from micronaut.http.client.annotation import Client
+
+
+@Client("https://api.example.com/catalog")
+class CatalogClient(ABC):
+    @Get("/books/{isbn}")
+    @abstractmethod
+    def find(self, isbn: str) -> Book:
+        ...
+----
+
+Inject `CatalogClient` like any bean. Declaring the method `async def` returns an awaitable instead of blocking; see <<asyncAwait,Using async/await>>. `@Client("catalog")` with a `micronaut.http.services.catalog.url` property keeps the URL in configuration.
+
+== OpenAPI documentation
+
+Pyronaut generates an OpenAPI description from your routes and dataclasses during processing and serves Swagger UI at `/swagger-ui/index.html` and ReDoc at `/redoc/index.html` in development mode. Add descriptions with the annotations in `io.swagger.v3.oas.annotations`, which are available as decorators.
+
+== Coming from FastAPI
+
+[cols="1,1", options="header"]
+|===
+|FastAPI |Pyronaut
+
+|`@app.get("/items/{id}")`
+|`@Get("/items/{id}")`
+
+|`def read(id: int, q: str \| None = None)`
+|Identical.
+
+|`Query(..., alias="page-size")`
+|`Annotated[int, QueryValue("page-size")]`
+
+|`Header()`
+|`Annotated[str, Header]`
+
+|`class Item(BaseModel)`
+|`@Serdeable @dataclass class Item`
+
+|`item: Item` body parameter
+|`item: Annotated[Item, Body, Valid]`
+
+|`raise HTTPException(404)`
+|Return `None`, return `HttpResponse.notFound()`, or raise an exception and handle it with `@Error`
+
+|`Depends(get_service)`
+|Constructor injection: `def __init__(self, service: Service)`
+
+|`BackgroundTasks`
+|`@Async` on a bean method
+
+|`@app.on_event("startup")`
+|`@EventListener` for `StartupEvent`
+
+|`response_model=Item`
+|The `-> Item` return type hint
+
+|`uvicorn main:app --reload`
+|`pyronaut dev`
+
+|`TestClient(app)`
+|`requests.with_context(context)`
+|===
+
+== Coming from Flask
+
+[cols="1,1", options="header"]
+|===
+|Flask |Pyronaut
+
+|`@app.route("/items", methods=["POST"])`
+|`@Post("/items")`
+
+|`request.args.get("q")`
+|`q: str \| None = None` parameter
+
+|`request.get_json()`
+|`Annotated[Item, Body]` parameter
+
+|`jsonify(data)`
+|Return a `dict` or dataclass
+
+|`abort(404)`
+|Return `None` or `HttpResponse.notFound()`
+
+|`@app.errorhandler(NotFound)`
+|`@Error(status=HttpStatus.NOT_FOUND)`
+
+|`app.config["KEY"]`
+|`@Value("${key}")` or a `@ConfigurationProperties` class
+
+|`g` and `current_app`
+|Dependency injection
+
+|Blueprints
+|`@Controller("/prefix")` classes
+
+|`flask run --debug`
+|`pyronaut dev`
+|===
+
+== Further reading
+
+The https://docs.micronaut.io/latest/guide/#httpServer[HTTP Server chapter] of the Micronaut guide documents every feature with Python examples, including file uploads, server-sent events, WebSockets, filters, CORS, sessions and API versioning.

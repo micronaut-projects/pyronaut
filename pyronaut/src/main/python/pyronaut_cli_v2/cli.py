@@ -245,7 +245,8 @@ def run(
     global _allow_draft_release, _validated_setup_manifest
     _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
     _validated_setup_manifest = None
-    argv = [value for value in argv if value != "--allow-draft-release"]
+    option_argv, application_argv = _split_application_args(argv)
+    argv = [value for value in option_argv if value != "--allow-draft-release"] + application_argv
 
     if monotonic is None:
         monotonic = time.monotonic
@@ -305,7 +306,7 @@ def run(
                 and enforce_setup and _setup_is_required()):
             if not _require_setup(argv):
                 return PRECONDITION_FAILED
-        tui_args = [value for value in argv if value != "--tui"]
+        tui_args = _split_tui_mode_token([value for value in argv if value != "--tui"])[1]
         tui_project_dir = (
             Path.cwd()
             if _looks_like_direct_source_invocation(tui_args)
@@ -331,7 +332,10 @@ def run(
     forwarded_args = _remove_no_validate(forwarded_args)
     continuous = _extract_continuous(forwarded_args)
     forwarded_args = _remove_continuous(forwarded_args)
-    debug_vm = _extract_debug_vm(forwarded_args)
+    try:
+        debug_vm = _extract_debug_vm(forwarded_args)
+    except ValueError as exc:
+        return _usage_error(str(exc))
     forwarded_args = _remove_debug_vm(forwarded_args)
 
     if command not in SUPPORTED_COMMANDS:
@@ -374,6 +378,15 @@ def run(
     if enforce_setup and _setup_is_required() and not _require_setup(forwarded_args):
         return PRECONDITION_FAILED
 
+    if debug_vm:
+        port_ok, error = _check_port_available(5005)
+        if not port_ok:
+            print(
+                "Cannot enable --debug-vm because port 5005 is already in use." + (f" ({error})" if error else ""),
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
+
     if command == "dev" and not _looks_like_direct_source_invocation(forwarded_args):
         default_source = _default_dev_source(forwarded_args)
         if default_source is not None:
@@ -394,6 +407,7 @@ def run(
                 process_runner or _spawn_subprocess,
                 locate,
                 java_home_provider=direct_source_java_home_provider,
+                debug_vm=debug_vm,
                 watch_poll_interval=watch_poll_interval,
                 watch_debounce_seconds=watch_debounce_seconds,
                 monotonic=monotonic,
@@ -405,6 +419,7 @@ def run(
             execute,
             locate,
             java_home_provider=direct_source_java_home_provider,
+            debug_vm=debug_vm,
         )
 
     if command == "test" and _looks_like_direct_source_invocation(forwarded_args):
@@ -423,6 +438,7 @@ def run(
                 process_runner or _spawn_subprocess,
                 locate,
                 java_home_provider=direct_source_java_home_provider,
+                debug_vm=debug_vm,
                 watch_poll_interval=watch_poll_interval,
                 watch_debounce_seconds=watch_debounce_seconds,
                 monotonic=monotonic,
@@ -434,6 +450,7 @@ def run(
             execute,
             locate,
             java_home_provider=direct_source_java_home_provider,
+            debug_vm=debug_vm,
         )
 
     if not _is_supported_platform(current_platform):
@@ -444,8 +461,11 @@ def run(
     # Report locations are selected by the native test launcher from the
     # project layout. Do not forward the CLI's internal report path option;
     # pyronaut-test intentionally does not expose --report-dir.
-    no_cache = _extract_no_cache(forwarded_args)
-    local_repository = _extract_local_repository(forwarded_args)
+    try:
+        no_cache = _extract_no_cache(forwarded_args)
+        local_repository = _extract_local_repository(forwarded_args)
+    except ValueError as exc:
+        return _usage_error(str(exc))
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
     delegated_args = _strip_local_repository_args(delegated_args) if command in {"dev", "run", "test"} else delegated_args
     # Keep the dev process under the Python auto-restart loop for both managed
@@ -485,21 +505,12 @@ def run(
         )
 
     if command == "test-resources-server" and _is_test_resources_start(forwarded_args):
-        install_args = ["--project-dir", project_dir, *_local_repository_install_args()]
+        install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
         if no_cache:
             install_args.append("--refresh")
         install_code = _delegate("install", install_args, execute, locate, java_home_provider=effective_java_home_provider)
         if install_code != SUCCESS:
             return install_code
-
-    if debug_vm:
-        port_ok, error = _check_port_available(5005)
-        if not port_ok:
-            print(
-                "Cannot enable --debug-vm because port 5005 is already in use." + (f" ({error})" if error else ""),
-                file=sys.stderr,
-            )
-            return PRECONDITION_FAILED
 
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
@@ -508,13 +519,15 @@ def run(
         # produced by install. Refresh it before deciding whether to own a
         # server; otherwise a stale layout from an earlier invocation can
         # incorrectly start Test Resources.
+        external_install_done = False
         if command == "test" and _is_external_build_project(Path(project_dir)):
             install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
             if no_cache:
                 install_args.append("--no-cache")
-            install_code = _delegate("install", install_args, execute, locate)
+            install_code = _delegate("install", install_args, execute, locate, java_home_provider=effective_java_home_provider)
             if install_code != SUCCESS:
                 return install_code
+            external_install_done = True
         test_resources_enabled = _test_resources_enabled(Path(project_dir))
         if command in {"dev", "test"} and test_resources_enabled:
             tr_session = _OwnedTestResourcesSession(
@@ -652,6 +665,7 @@ def run(
                     input_reader=input_reader,
                     java_home_provider=effective_java_home_provider,
                     local_repository=local_repository,
+                    external_install_done=external_install_done,
                 )
 
             test_exit_code, _ = _run_test_cycle(
@@ -666,6 +680,7 @@ def run(
                 no_validate=no_validate,
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
+                external_install_done=external_install_done,
             )
             return test_exit_code
 
@@ -924,12 +939,13 @@ def _delegate_direct_source(
     resolver: Callable[[str], str | None],
     *,
     java_home_provider: JavaHomeProvider | None = None,
+    debug_vm: bool = False,
 ) -> int:
     forwarded_args = _strip_orchestrator_only_args(
         [value for value in args if value not in {"--jvm", "--native"}]
     )
     try:
-        executable_path = _resolve_direct_source_dev_executable(forwarded_args, resolver)
+        executable_path = _resolve_direct_source_dev_executable(forwarded_args, resolver, debug_vm=debug_vm)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -941,6 +957,8 @@ def _delegate_direct_source(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+    if debug_vm:
+        env = _apply_debug_vm_env(env)
     jvm_args = _build_direct_source_native_jvm_args(
         executable_path,
         env,
@@ -970,6 +988,7 @@ def _run_direct_source(
     resolver: Callable[[str], str | None],
     *,
     java_home_provider: JavaHomeProvider | None = None,
+    debug_vm: bool = False,
     watch_poll_interval: float,
     watch_debounce_seconds: float,
     monotonic: Callable[[], float],
@@ -982,9 +1001,10 @@ def _run_direct_source(
             runner,
             resolver,
             java_home_provider=java_home_provider,
+            debug_vm=debug_vm,
         )
     try:
-        executable_path = _resolve_direct_source_dev_executable(args, resolver)
+        executable_path = _resolve_direct_source_dev_executable(args, resolver, debug_vm=debug_vm)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -996,6 +1016,8 @@ def _run_direct_source(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+    if debug_vm:
+        env = _apply_debug_vm_env(env)
     if command == "dev":
         env = _apply_project_virtualenv(env, Path.cwd())
     snapshot = _snapshot_direct_source_inputs(args)
@@ -1020,15 +1042,31 @@ def _run_direct_source(
     )
 
 
-def _resolve_direct_source_dev_executable(args: Sequence[str], resolver: Callable[[str], str | None]) -> str | None:
+def _resolve_direct_source_dev_executable(
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool = False,
+) -> str | None:
     """Select the direct-source launcher, honoring the command-line override."""
     mode = _extract_build_mode_flag(args)
     if mode is None and (Path.cwd() / "pyproject.toml").is_file():
         mode = _read_pyproject_toolchain_type(Path.cwd())
+    if debug_vm:
+        # JDWP needs a HotSpot JVM; the native launcher cannot load the agent.
+        mode = TOOLCHAIN_TYPE_JVM
     if mode == TOOLCHAIN_TYPE_JVM:
         bundled = _bundled_executable(DEV_NATIVE_EXECUTABLE)
         return str(bundled) if bundled is not None and bundled.exists() else resolver(DEV_NATIVE_EXECUTABLE)
     return _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
+
+def _apply_debug_vm_env(env: dict[str, str] | None) -> dict[str, str]:
+    """Enable JDWP for launcher-script delegates through JAVA_TOOL_OPTIONS."""
+    updated = dict(env) if env is not None else dict(os.environ)
+    existing = updated.get("JAVA_TOOL_OPTIONS", "").strip()
+    updated["JAVA_TOOL_OPTIONS"] = f"{existing} {_JDWP_FLAGS}".strip()
+    return updated
+
 
 def _stop_direct_source_test_resources_server(
     *,
@@ -5059,6 +5097,7 @@ def _run_test_cycle(
     no_validate: bool,
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
+    external_install_done: bool = False,
 ) -> tuple[int, dict[str, str] | None]:
     if _is_external_build_project(project_dir):
         preflight_code = _run_preflight(
@@ -5067,7 +5106,8 @@ def _run_test_cycle(
             local_repository,
             execute,
             resolver,
-            install=not (_pyronaut_output_dir(project_dir) / "project-layout.properties").exists(),
+            install=not external_install_done
+            and not (_pyronaut_output_dir(project_dir) / "project-layout.properties").exists(),
             process_pass="all",
             java_home_provider=java_home_provider,
         )
@@ -5140,6 +5180,7 @@ def _run_test_continuously(
     input_reader: Callable[[float | None], str | None] | None,
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
+    external_install_done: bool = False,
 ) -> int:
     project_root = project_dir.resolve()
     snapshot = snapshotter(project_root)
@@ -5189,7 +5230,10 @@ def _run_test_continuously(
                     no_validate=no_validate,
                     java_home_provider=java_home_provider,
                     local_repository=local_repository,
+                    external_install_done=external_install_done,
                 )
+                # Only the first cycle can reuse the install performed by run().
+                external_install_done = False
                 snapshot = snapshotter(project_root)
                 _print_continuous_test_banner()
                 if not interactive:
@@ -6718,7 +6762,7 @@ def _dev_build_asset_name(release_tag: str, os_segment: str, arch: str, ext: str
 
 
 def _extract_debug_vm(args: Sequence[str]) -> bool:
-    for token in args:
+    for token in _orchestrator_args(args):
         if token == "--debug-vm":
             return True
         if token.startswith("--debug-vm="):
@@ -6732,12 +6776,13 @@ def _extract_debug_vm(args: Sequence[str]) -> bool:
 
 
 def _remove_debug_vm(args: list[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
     normalized: list[str] = []
-    for token in args:
+    for token in option_args:
         if token == "--debug-vm" or token.startswith("--debug-vm="):
             continue
         normalized.append(token)
-    return normalized
+    return normalized + application_args
 
 
 def _check_port_available(port: int) -> tuple[bool, str | None]:
@@ -6817,7 +6862,7 @@ def _has_tests_selection(args: Sequence[str]) -> bool:
 
 
 def _extract_no_cache(args: Sequence[str]) -> bool:
-    for token in args:
+    for token in _orchestrator_args(args):
         if token == "--no-cache":
             return True
         if token.startswith("--no-cache="):
@@ -6839,15 +6884,17 @@ def _is_test_resources_start(args: Sequence[str]) -> bool:
 
 
 def _strip_no_cache_flag(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
     filtered: list[str] = []
-    for token in args:
+    for token in option_args:
         if token == "--no-cache" or token.startswith("--no-cache="):
             continue
         filtered.append(token)
-    return filtered
+    return filtered + application_args
 
 
 def _extract_local_repository(args: Sequence[str]) -> str | None:
+    args = _orchestrator_args(args)
     for index, token in enumerate(args):
         if token in {"--local-repository", "--local-repo"}:
             if index + 1 >= len(args):
@@ -6871,9 +6918,10 @@ def _extract_option_value(args: Sequence[str], option: str) -> str | None:
 
 
 def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
     filtered: list[str] = []
     skip_next = False
-    for token in args:
+    for token in option_args:
         if skip_next:
             skip_next = False
             continue
@@ -6883,16 +6931,17 @@ def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
         if token.startswith("--local-repository=") or token.startswith("--local-repo="):
             continue
         filtered.append(token)
-    return filtered
+    return filtered + application_args
 
 
 def _strip_orchestrator_only_args(args: Sequence[str]) -> list[str]:
     """Remove CLI options consumed before invoking a native runner."""
+    option_args, application_args = _split_application_args(args)
     filtered: list[str] = []
     skip_next = False
     value_options = {"--local-repository", "--local-repo", "--color", "--progress"}
     flag_options = {"--offline", "--no-validate", "--no-cache"}
-    for token in args:
+    for token in option_args:
         if skip_next:
             skip_next = False
             continue
@@ -6902,23 +6951,44 @@ def _strip_orchestrator_only_args(args: Sequence[str]) -> list[str]:
         if token in flag_options or any(token.startswith(option + "=") for option in value_options | flag_options):
             continue
         filtered.append(token)
-    return filtered
+    return filtered + application_args
+
+
+def _split_application_args(args: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Split at the first ``--``; orchestrator options only precede it."""
+    values = list(args)
+    if "--" in values:
+        index = values.index("--")
+        return values[:index], values[index:]
+    return values, []
+
+
+def _orchestrator_args(args: Sequence[str]) -> list[str]:
+    return _split_application_args(args)[0]
+
+
+def _usage_error(message: str) -> int:
+    print(message, file=sys.stderr)
+    _print_usage(stream=sys.stderr)
+    return USAGE_ERROR
 
 
 def _extract_no_validate(args: Sequence[str]) -> bool:
-    return any(token == "--no-validate" for token in args)
+    return any(token == "--no-validate" for token in _orchestrator_args(args))
 
 
 def _remove_no_validate(args: Sequence[str]) -> list[str]:
-    return [token for token in args if token != "--no-validate"]
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token != "--no-validate"] + application_args
 
 
 def _extract_continuous(args: Sequence[str]) -> bool:
-    return any(token in {"-t", "--continuous"} for token in args)
+    return any(token in {"-t", "--continuous"} for token in _orchestrator_args(args))
 
 
 def _remove_continuous(args: Sequence[str]) -> list[str]:
-    return [token for token in args if token not in {"-t", "--continuous"}]
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token not in {"-t", "--continuous"}] + application_args
 
 
 def _extract_project_dir(args: Sequence[str]) -> str:
@@ -8496,7 +8566,7 @@ def _run_tui(
     from .tui.app import TuiApp, TuiOptions
     from .tui.reports import render_summary_line
 
-    args = [a for a in argv if a != "--tui"]
+    mode_token, args = _split_tui_mode_token([a for a in argv if a != "--tui"])
 
     if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
         return _delegate_to_tui_binary(["--help"], runner_with_env, resolver)
@@ -8510,9 +8580,9 @@ def _run_tui(
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
-    smoke = _extract_flag(args, "--smoke") or _extract_flag(args, "--non-interactive")
+    smoke = _extract_flag(args, "--smoke")
     non_interactive = _extract_flag(args, "--non-interactive")
-    initial_mode = "test" if _extract_flag(args, "--test") else "run"
+    initial_mode = "test" if mode_token == "test" or _extract_flag(args, "--test") else "run"
     report_dir = (_extract_path_flag(args, "--report-dir") or _extract_tui_report_path(args, project_dir) or (_pyronaut_output_dir(project_dir) / "reports" / "tests")).resolve()
     trace_delegation = _delegation_trace_enabled() or _extract_flag(args, "--trace-delegation")
 
@@ -8665,6 +8735,7 @@ class _OwnedTestResourcesSession:
         if self._shared_server:
             self._emit_status("[test-resources] stop skipped (shared server mode)")
             self._remove_session_file()
+            self._started = False
             return
 
         if not self._session_matches_owner():
@@ -8686,6 +8757,7 @@ class _OwnedTestResourcesSession:
         )
         if exit_code == SUCCESS:
             self._remove_session_file()
+            self._started = False
         else:
             self._emit_status(f"[test-resources] stop failed (exit code {exit_code}); preserving session state for retry")
 
@@ -8928,6 +9000,14 @@ def _should_mirror_test_resources_log_line(line: str) -> bool:
     )
 
 
+def _split_tui_mode_token(args: Sequence[str]) -> tuple[str | None, list[str]]:
+    """Consume a leading ``run``/``test`` command token for the TUI."""
+    values = list(args)
+    if values and values[0] in {"run", "test"}:
+        return values[0], values[1:]
+    return None, values
+
+
 def _direct_tui_arguments(args: Sequence[str]) -> list[str]:
     """Return direct-source arguments for the delegating TUI."""
     result: list[str] = []
@@ -9021,13 +9101,19 @@ def _run_tamboui_tui(
     if direct_dev_executable is not None:
         delegated = {}
     else:
-        delegated = {
-            "validate-config": _resolve_delegate_executable_path("validate-config", ["--project-dir", str(project_dir)], resolver),
-            "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
-            "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
-            "run": _resolve_delegate_executable_path("run", ["--project-dir", str(project_dir)], resolver),
-            "test": _resolve_delegate_executable_path("test", ["--project-dir", str(project_dir)], resolver),
-        }
+        try:
+            delegated = {
+                "validate-config": _resolve_delegate_executable_path("validate-config", ["--project-dir", str(project_dir)], resolver),
+                "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
+                "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
+                "run": _resolve_delegate_executable_path("run", ["--project-dir", str(project_dir)], resolver),
+                "test": _resolve_delegate_executable_path("test", ["--project-dir", str(project_dir)], resolver),
+            }
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            if tr_session is not None:
+                tr_session.stop_if_owned(runner=runner, resolver=resolver)
+            return PRECONDITION_FAILED
     missing = [name for (name, path) in delegated.items() if path is None]
     if missing:
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
@@ -9142,7 +9228,7 @@ def _resolve_required_tui_executable(resolver: Callable[[str], str | None]) -> s
 
 
 def _extract_flag(argv: Sequence[str], name: str) -> bool:
-    return any(token == name or token.startswith(name + "=") for token in argv)
+    return any(token == name or token.startswith(name + "=") for token in _orchestrator_args(argv))
 
 
 def _extract_path_flag(argv: Sequence[str], name: str) -> Path | None:

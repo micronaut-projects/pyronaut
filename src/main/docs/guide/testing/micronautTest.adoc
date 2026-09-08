@@ -23,9 +23,9 @@ def my_context(request):
     fixture.stop()
 ----
 
-`MicronautTest()` defaults to `transactional=False`.
-Set `transactional=True` only for tests that need Micronaut transaction handling.
-`rollback` defaults to `True` and applies when transactions are enabled.
+`MicronautTest()` mirrors the options of the Java `@MicronautTest` annotation. The `environments`, `packages`, `start_application`, `properties` and `sql` options are fully supported by the pytest integration.
+
+WARNING: The pytest fixture integration does not currently drive Micronaut Test's per-test transaction and context-rebuild lifecycle. `transactional`, `rollback` and `rebuild_context` are accepted for compatibility but have no effect, and `Sql` scripts declared with `Sql.Phase.AFTER_ALL` do not run. Use explicit clean-up in a fixture, or write the test as a JUnit 5 Python module (see <<testing,Testing>>), when transactional rollback is required.
 
 == Common Options
 
@@ -145,3 +145,4 @@ MicronautTest(
 
 `Sql` defaults to the `default` datasource and `javax.sql.DataSource`.
 Use `data_source_name` or `resource_type` when the test needs another SQL resource.
+`Sql.Phase.BEFORE_ALL`, `BEFORE_EACH` and `AFTER_EACH` are executed by the pytest integration; see the warning above regarding `AFTER_ALL`.

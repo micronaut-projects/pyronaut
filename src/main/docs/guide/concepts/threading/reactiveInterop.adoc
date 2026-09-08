@@ -1,0 +1,107 @@
+Micronaut is a reactive framework. Many of its APIs, and many Java libraries you will use from Python, return asynchronous types rather than plain values:
+
+[cols="1,2", options="header"]
+|===
+|Java type |Meaning
+
+|`java.util.concurrent.CompletionStage` and `CompletableFuture`
+|A single value that will be available later. The closest analogue is an `asyncio.Future`.
+
+|`org.reactivestreams.Publisher`
+|A stream of zero or more values with back-pressure. Micronaut's HTTP client and server use this type for streaming.
+
+|`reactor.core.publisher.Mono`
+|A Project Reactor `Publisher` that emits at most one value.
+
+|`reactor.core.publisher.Flux`
+|A Project Reactor `Publisher` that emits any number of values.
+|===
+
+You can work with these types from Python in two ways: await them inside a coroutine, or return them from a route and let Micronaut subscribe.
+
+== Awaiting Java async values
+
+Inside an `async def` function, `await` accepts Java async values directly:
+
+* A `CompletionStage` awaits to its result.
+* A `Publisher` or `Mono` is treated as a single value. Micronaut requests one item, completes the await with it and cancels the subscription. An empty publisher awaits to `None`; an error fails the await with an exception.
+
+[source,python]
+----
+from micronaut.http.annotation import Get
+
+
+@Get("/first-headline")
+async def first_headline() -> str:
+    headline = await headline_client.latest()   # client method returns Mono[Headline]
+    return headline.title
+----
+
+A `Flux` that emits several items is *not* collected into a list automatically; awaiting it returns only the first item. Use a reactive operator to collect the stream first:
+
+[source,python]
+----
+@Get("/all-headlines")
+async def all_headlines() -> list[str]:
+    headlines = await headline_client.stream().collectList()
+    return [h.title for h in headlines]
+----
+
+== Returning reactive types from synchronous code
+
+You can also return a reactive value from a plain `def` route. Micronaut subscribes on the event loop and writes the response when the value arrives, which lets Python code participate in reactive pipelines without a coroutine. Because Java generic types are not visible to Python, declare the element type with `@SingleResult` for single values:
+
+[source,python]
+----
+import java
+
+from micronaut.core.async_.annotation import SingleResult
+from micronaut.http.annotation import Controller, Get
+
+Mono = java.type("reactor.core.publisher.Mono")
+Publisher = java.type("org.reactivestreams.Publisher")
+
+
+@Controller("/reactive")
+class ReactiveController:
+    @Get("/message")
+    @SingleResult
+    def message(self) -> Publisher[str]:
+        return Mono.just("hello")
+----
+
+`Mono` and `Publisher` are obtained with `java.type(...)` here, as in the Micronaut examples; `from reactor.core.publisher import Mono` is equivalent. Note the module name `micronaut.core.async_`: `async` is a Python keyword, so the Java package `io.micronaut.core.async` is imported with a trailing underscore. The same rule renames Java methods, for example `Flux.from_(publisher)` calls `Flux.from`.
+
+== Streaming responses
+
+A route that returns a `Publisher` of several items streams them to the client. With `MediaType.APPLICATION_JSON_STREAM` each item is written as a JSON document as it becomes available, and with `MediaType.TEXT_EVENT_STREAM` the response is a server-sent event stream:
+
+[source,python]
+----
+import java
+
+from micronaut.http import MediaType
+from micronaut.http.annotation import Controller, Get
+from micronaut.http.sse import Event
+
+Duration = java.type("java.time.Duration")
+Flux = java.type("reactor.core.publisher.Flux")
+Publisher = java.type("org.reactivestreams.Publisher")
+
+
+@Controller("/headlines")
+class HeadlineController:
+    @Get(value="/stream", processes=MediaType.APPLICATION_JSON_STREAM)
+    def stream(self) -> Publisher[Headline]:
+        return Flux.fromIterable([Headline("one"), Headline("two")]).delayElements(Duration.ofSeconds(1))
+
+    @Get(value="/events", produces=MediaType.TEXT_EVENT_STREAM)
+    def events(self) -> Publisher:
+        return Flux.fromIterable([Event.of(Headline("one")), Event.of(Headline("two"))])
+----
+
+Reactive operators run on Reactor's schedulers or on the event loop, not on Python threads, so a generator-style approach that produces items from blocking Python code should use `Flux.fromCallable(...)` combined with `subscribeOn(Schedulers.fromExecutorService(executor))`, where the executor is Micronaut's `io` executor injected with `Annotated[ExecutorService, Named(TaskExecutors.IO)]`. The https://docs.micronaut.io/latest/guide/#reactiveServer[Reactive HTTP Request Processing] section shows this pattern.
+
+== Python coroutines seen from Java
+
+The bridge works in both directions. An `async def` method on a Python bean appears to Java callers as a method returning `CompletionStage<T>`, so Java code can call `.thenApply(...)` on it or a Java controller can return it. This lets a mixed project put its I/O orchestration in Python and its heavy lifting in Java, or the reverse, without either side knowing which language implemented the method.

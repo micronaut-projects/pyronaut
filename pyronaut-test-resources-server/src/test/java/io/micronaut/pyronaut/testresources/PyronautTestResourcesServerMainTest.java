@@ -5,9 +5,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.ConnectException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -54,6 +57,28 @@ class PyronautTestResourcesServerMainTest {
         int exit = new CommandLine(command).execute("status", "--project-dir", project.toString());
 
         assertEquals(0, exit);
+    }
+
+    @Test
+    void invalidActionReturnsUsageErrorAndListsValidActions() throws Exception {
+        Path project = prepareProject("");
+        RecordingServerManager manager = new RecordingServerManager();
+        PyronautTestResourcesServerMain command = new PyronautTestResourcesServerMain(new PyprojectModelReader(), manager);
+
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
+        int exit;
+        try {
+            exit = new CommandLine(command).execute("restart", "--project-dir", project.toString());
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        assertEquals(CommandLine.ExitCode.USAGE, exit);
+        assertTrue(stderr.toString(StandardCharsets.UTF_8).contains("start|stop|status"));
+        assertNull(manager.lastStartRequest);
+        assertEquals(0, manager.stopInvocations);
     }
 
     @Test

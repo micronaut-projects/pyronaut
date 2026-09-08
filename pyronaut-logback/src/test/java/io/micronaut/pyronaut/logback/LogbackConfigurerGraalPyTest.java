@@ -256,6 +256,53 @@ result = 'success'
     }
 
     @Test
+    void testLoggersCreatedBeforeDictConfigReachLogback() throws Exception {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
+        System.setOut(new PrintStream(outputStream));
+
+        try {
+            String pythonCode =
+                    """
+                            import logging
+                            # Created at "import time", before dictConfig runs
+                            early_logger = logging.getLogger('pyronaut.early.module')
+
+                            from logback.config import dictConfig
+                            dictConfig({
+                                'version': 1,
+                                'handlers': {
+                                    'console': {
+                                        'class': 'logging.StreamHandler'
+                                    }
+                                },
+                                'root': {
+                                    'level': 'INFO',
+                                    'handlers': ['console']
+                                }
+                            })
+
+                            early_logger.info('Message from a pre-existing logger')
+                            early_logger.debug('Debug message that must be filtered')
+                            result = 'success'
+                            """;
+
+            graalContext.eval("python", pythonCode);
+            assertEquals("success", graalContext.eval("python", "result").asString());
+
+            String capturedOutput = outputStream.toString();
+            assertTrue(capturedOutput.contains("Message from a pre-existing logger"),
+                    "Records from loggers created before dictConfig should reach logback. Captured: '" + capturedOutput + "'");
+            assertTrue(capturedOutput.contains("pyronaut.early.module"),
+                    "Logger name should be preserved. Captured: '" + capturedOutput + "'");
+            assertFalse(capturedOutput.contains("Debug message that must be filtered"),
+                    "Root level INFO should filter debug records. Captured: '" + capturedOutput + "'");
+        } finally {
+            System.setOut(originalOut);
+        }
+    }
+
+    @Test
     void testPythonCustomLogbackAppenderOutputsToSystemErr() throws Exception {
         // Test that custom Logback appenders can be configured via reflection
         // Capture System.err

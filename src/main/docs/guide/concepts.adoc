@@ -1,0 +1,50 @@
+Micronaut has its own vocabulary. Words such as _bean_, _dependency injection_, _configuration injection_ and _AOP_ appear throughout the Micronaut documentation and in Pyronaut error messages. None of them are difficult, but they are rarely used in the Python web ecosystem, so this chapter explains each one from the point of view of a developer who already knows Flask or FastAPI.
+
+If you only read one chapter beyond the tutorial, read this one. The remaining chapters of this guide assume you know these concepts.
+
+== A quick vocabulary
+
+[cols="1,3", options="header"]
+|===
+|Micronaut term |What it means for a Python developer
+
+|Bean
+|An object whose creation and lifetime is managed by Micronaut instead of by your code. You declare a bean by decorating a class with `@Singleton` (or another scope) and never call its constructor yourself.
+
+|Application context
+|The container that creates beans, wires them together, reads configuration and starts the HTTP server. `pyronaut dev` and `pyronaut run` create one for you. In tests you interact with it through `MicronautTest`.
+
+|Dependency injection (DI)
+|Micronaut looks at the type hints of a bean's `__init__` parameters (or of `Annotated[..., Inject]` attributes) and passes in the matching beans automatically. It replaces module-level globals and FastAPI's `Depends()`.
+
+|Scope
+|How long a bean lives. `@Singleton` means one instance per application; `@Prototype` means a new instance every time it is injected; `@RequestScope` means one instance per HTTP request.
+
+|Qualifier
+|A label such as `@Named("v8")` used to pick one bean when several beans implement the same interface.
+
+|Configuration property
+|A value read from `application.toml`, an environment variable or the command line. Configuration injection delivers these values to your beans as typed Python attributes.
+
+|Aspect-oriented programming (AOP)
+|Behaviour that wraps a method call, such as retrying on failure, validating arguments or running the method on another thread. In Pyronaut this is expressed with decorators like `@Retryable`, `@Validated` and `@ExecuteOn`.
+
+|Executor
+|A named thread pool. Micronaut decides which executor runs each request based on whether your function is `def` or `async def` and on decorators such as `@ExecuteOn`.
+
+|Publisher, Mono, Flux, CompletionStage
+|Java's asynchronous result types. You can `await` them from `async def` Python code; see <<threading,Threading, Blocking Work and asyncio>>.
+|===
+
+== Everything happens at build time
+
+The most important difference between Pyronaut and a framework like FastAPI is _when_ decorators are interpreted.
+
+FastAPI reads your decorators and type hints while the process starts and builds its routing table in memory. Pyronaut reads them during `pyronaut process`, which runs automatically before `pyronaut dev`, `pyronaut run` and `pyronaut test`. During that step Micronaut generates Java classes that hold the route table, the injection plan for every bean, the JSON serializers for your dataclasses and the validation rules for your type hints.
+
+This has two practical consequences:
+
+* Mistakes such as injecting a type that has no bean, or a route with a missing path variable, are reported before the application starts, not when the first request arrives.
+* Decorators must be declared in a way the processor can see. Applying a decorator dynamically (for example inside a function or from a string name) does not work; see <<incrementalProcessing,Incremental Processing>> for the constructs the processor understands.
+
+The rest of this chapter walks through each concept in turn.

@@ -32,13 +32,13 @@ Pyronaut can resolve versionless Micronaut coordinates from configured BOM versi
 [source,toml]
 ----
 [tool.pyronaut.core]
-version = "4.9.0"
+version = "5.2.0"
 
 [tool.pyronaut.platform]
-version = "4.9.0"
+version = "5.1.0"
 ----
 
-If these tables are omitted, Pyronaut uses the managed versions bundled with the current Pyronaut distribution.
+If these tables are omitted, Pyronaut uses the managed versions bundled with the current Pyronaut distribution, which `pyronaut --version` prints. Python support requires Micronaut Core 5.2 or later.
 
 == Source Layout
 

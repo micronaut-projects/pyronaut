@@ -20,6 +20,7 @@ import io.micronaut.context.ApplicationContextConfigurer;
 import io.micronaut.core.order.OrderUtil;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.net.JarURLConnection;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -164,8 +165,14 @@ public final class ContextClassLoaderApplicationContextConfigurers {
             if (instance instanceof ApplicationContextConfigurer configurer) {
                 configurers.add(configurer);
             }
-        } catch (NoClassDefFoundError | ClassNotFoundException ignored) {
+        } catch (LinkageError | ClassNotFoundException ignored) {
             // Ignore optional configurers whose dependencies are unavailable in this runtime.
+        } catch (InvocationTargetException e) {
+            if (e.getCause() instanceof LinkageError) {
+                // A constructor that fails to link behaves like a class that fails to load.
+                return;
+            }
+            throw new IllegalStateException("Unable to instantiate application context configurer " + className, e);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Unable to instantiate application context configurer " + className, e);
         }

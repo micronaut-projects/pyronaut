@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.jarbuild.launcher;
 
+import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
@@ -39,7 +40,12 @@ public final class PyronautFatJarLauncher {
         Path archive = Path.of(PyronautFatJarLauncher.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         Thread thread = Thread.currentThread();
         ClassLoader previous = thread.getContextClassLoader();
-        try (IndexedJarClassLoader classLoader = new IndexedJarClassLoader(archive)) {
+        IndexedJarClassLoader classLoader = new IndexedJarClassLoader(archive);
+        // The target main may start a server (or other non-daemon threads) and
+        // return immediately; those threads still load classes lazily from the
+        // archive, so it is closed at JVM shutdown rather than when main returns.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(classLoader), "pyronaut-fat-jar-close"));
+        try {
             System.setProperty(PACKAGED_JAR_PROPERTY, Boolean.TRUE.toString());
             thread.setContextClassLoader(classLoader);
             Class<?> target = Class.forName(classLoader.mainClass(), true, classLoader);
@@ -51,6 +57,14 @@ public final class PyronautFatJarLauncher {
             }
         } finally {
             thread.setContextClassLoader(previous);
+        }
+    }
+
+    private static void closeQuietly(IndexedJarClassLoader classLoader) {
+        try {
+            classLoader.close();
+        } catch (IOException ignored) {
+            // Nothing useful can be done while the JVM is shutting down.
         }
     }
 }

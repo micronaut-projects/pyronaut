@@ -221,7 +221,22 @@ final class MavenClasspathResolver {
                                              boolean offline,
                                              boolean forceUpdates,
                                              DependencyProgressListener progressListener) {
-        return resolveScopeDetails(model, scope, localRepositoryPath, offline, forceUpdates, progressListener, true);
+        return resolveScopeDetails(model, scope, localRepositoryPath, offline, forceUpdates, progressListener, null);
+    }
+
+    /**
+     * Resolves a scope for a project rooted at {@code projectDirectory}. Relative
+     * file based repositories configured in {@code pyproject.toml} are resolved
+     * against that directory rather than the JVM working directory.
+     */
+    ResolvedScopeDetails resolveScopeDetails(PyprojectModel model,
+                                             InstallScope scope,
+                                             Path localRepositoryPath,
+                                             boolean offline,
+                                             boolean forceUpdates,
+                                             DependencyProgressListener progressListener,
+                                             Path projectDirectory) {
+        return resolveScopeDetails(model, scope, localRepositoryPath, offline, forceUpdates, progressListener, projectDirectory, true);
     }
 
     ResolvedScopeDetails resolveTestResourcesProviderDetails(PyprojectModel model,
@@ -234,6 +249,7 @@ final class MavenClasspathResolver {
             localRepositoryPath,
             offline,
             forceUpdates,
+            null,
             null,
             false
         );
@@ -253,13 +269,23 @@ final class MavenClasspathResolver {
                                     boolean offline,
                                     boolean forceUpdates,
                                     DependencyProgressListener progressListener) {
+        return resolveToolArtifacts(model, artifacts, localRepositoryPath, offline, forceUpdates, progressListener, null);
+    }
+
+    List<Path> resolveToolArtifacts(PyprojectModel model,
+                                    List<Artifact> artifacts,
+                                    Path localRepositoryPath,
+                                    boolean offline,
+                                    boolean forceUpdates,
+                                    DependencyProgressListener progressListener,
+                                    Path projectDirectory) {
         if (artifacts.isEmpty()) {
             return List.of();
         }
         // Keep repository identities in offline mode so Maven Resolver's
         // enhanced local repository manager can match _remote.repositories
         // provenance. The offline session still prohibits every download.
-        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates);
+        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener)) {
             List<ArtifactRequest> requests = artifacts.stream()
@@ -311,23 +337,14 @@ final class MavenClasspathResolver {
                                                      boolean offline,
                                                      boolean forceUpdates,
                                                      DependencyProgressListener progressListener,
+                                                     Path projectDirectory,
                                                      boolean includeDefaultDependencies) {
-        List<RemoteRepository> configuredRepositories = toRepositories(repositoriesForModel(model), forceUpdates);
-        final List<RemoteRepository> repositories;
-        if (offline) {
-            // Offline resolution must not even consider network repositories. Maven
-            // Resolver's offline flag prevents downloads, but retaining remote
-            // repositories can still trigger metadata lookups and misleading
-            // connection errors. Keep only local/file based repositories.
-            repositories = configuredRepositories.stream()
-                .filter(repository -> {
-                    String url = repository.getUrl();
-                    return url == null || !url.matches("(?i)^https?://.*");
-                })
-                .toList();
-        } else {
-            repositories = configuredRepositories;
-        }
+        // Pass the configured repositories unchanged, also in offline mode. Maven
+        // Resolver's enhanced local repository manager only serves artifacts whose
+        // recorded origin repository (_remote.repositories) is part of the request,
+        // so dropping the remote repositories would reject previously downloaded
+        // artifacts. The offline session still prohibits every download.
+        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
@@ -1205,6 +1222,12 @@ final class MavenClasspathResolver {
     }
 
     static List<RemoteRepository> toRepositories(List<String> configuredRepositories, boolean forceUpdates) {
+        return toRepositories(configuredRepositories, forceUpdates, null);
+    }
+
+    static List<RemoteRepository> toRepositories(List<String> configuredRepositories,
+                                                 boolean forceUpdates,
+                                                 Path projectDirectory) {
         List<String> repositories = configuredRepositories == null || configuredRepositories.isEmpty()
             ? List.of("mavenCentral")
             : configuredRepositories;
@@ -1230,11 +1253,19 @@ final class MavenClasspathResolver {
                 );
             } else {
                 String id = "repo-" + resolved.size();
-                String url = value.contains("://") ? value : Path.of(value).toAbsolutePath().toUri().toString();
+                String url = value.contains("://") ? value : repositoryPath(value, projectDirectory).toUri().toString();
                 resolved.put(id, newRemoteRepository(id, url, forceUpdates));
             }
         }
         return List.copyOf(resolved.values());
+    }
+
+    private static Path repositoryPath(String value, Path projectDirectory) {
+        Path path = Path.of(value);
+        if (!path.isAbsolute() && projectDirectory != null) {
+            path = projectDirectory.resolve(path);
+        }
+        return path.toAbsolutePath().normalize();
     }
 
     private List<String> repositoriesForModel(PyprojectModel model) {

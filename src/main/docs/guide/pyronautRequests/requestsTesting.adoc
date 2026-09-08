@@ -77,4 +77,4 @@ def test_typed_json(client):
     assert message.message.startswith("Hello")
 ----
 
-Created Micronaut clients are closed when the Micronaut context shuts down.
+Created Micronaut clients are closed when a Micronaut context shuts down; see <<pyronautRequests,Pyronaut Requests>> for the lifecycle details.

@@ -79,6 +79,41 @@ class ContextClassLoaderApplicationContextConfigurersTest {
         }
     }
 
+    @Test
+    void ignoresConfigurersWhoseConstructorFailsToLink() throws Exception {
+        Path serviceFile = tempDir
+            .resolve("META-INF/services")
+            .resolve(ApplicationContextConfigurer.class.getName());
+        Files.createDirectories(serviceFile.getParent());
+        Files.writeString(
+            serviceFile,
+            LinkageFailingConfigurer.class.getName() + System.lineSeparator()
+                + StandardServiceConfigurer.class.getName() + System.lineSeparator(),
+            StandardCharsets.UTF_8
+        );
+
+        try (URLClassLoader classLoader = new URLClassLoader(new java.net.URL[] { tempDir.toUri().toURL() }, getClass().getClassLoader())) {
+            ApplicationContextBuilder builder = ApplicationContext.builder();
+
+            ContextClassLoaderApplicationContextConfigurers.configure(builder, classLoader);
+
+            try (ApplicationContext context = builder.start()) {
+                assertEquals("standard", context.getProperty("test.configurer.source", String.class).orElse(null));
+            }
+        }
+    }
+
+    public static final class LinkageFailingConfigurer implements ApplicationContextConfigurer {
+        public LinkageFailingConfigurer() {
+            throw new NoClassDefFoundError("optional/MissingDependency");
+        }
+
+        @Override
+        public void configure(ApplicationContextBuilder builder) {
+            builder.properties(java.util.Map.of("test.configurer.source", "linkage-failure"));
+        }
+    }
+
     public static final class MetadataConfigurer implements ApplicationContextConfigurer {
         @Override
         public void configure(ApplicationContextBuilder builder) {
