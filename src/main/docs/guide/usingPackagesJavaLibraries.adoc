@@ -31,7 +31,7 @@ When a project contains `.venv`, Pyronaut automatically uses its Python executab
 The virtual environment must be created with GraalPy; packages from a CPython-created virtual environment cannot be provided to Pyronaut's embedded GraalPy runtime.
 
 Pyronaut does not install Python packages when you run `pyronaut install`.
-You can also record Python dependencies in the standard `[project].dependencies` table in `pyproject.toml`; see <<configuration.dependencies,Installing Python & Java Dependencies>>.
+You can also record Python dependencies in the standard `[project].dependencies` table in `pyproject.toml`; see <<dependencies,Installing Python & Java Dependencies>>.
 
 == Python Package Compatibility
 
@@ -97,5 +97,5 @@ print(message)
 Use `group:artifact:version` coordinates for libraries such as Apache Commons Lang that are not managed by the configured Micronaut BOMs.
 Micronaut dependencies managed by the Micronaut platform, Micronaut core, or Pyronaut BOMs can use versionless `group:artifact` coordinates.
 
-For the complete dependency scopes and install options, see <<configuration.dependencies,Installing Python & Java Dependencies>>.
-See also <<configuration.pyproject,Configuring pyproject.toml>>, <<configuration.mavenRepositories,Configuring Maven Repositories>>, and <<configuration.directSourceDeclarations,Declaring Direct Source Dependencies>>.
+For the complete dependency scopes and install options, see <<dependencies,Installing Python & Java Dependencies>>.
+See also <<pyproject,Configuring pyproject.toml>>, <<mavenRepositories,Configuring Maven Repositories>>, and <<directSourceDeclarations,Declaring Direct Source Dependencies>>.

@@ -37,7 +37,7 @@ pyronaut test
 
 VS Code's Python pytest support invokes pytest directly and is not suitable for Micronaut-backed Pyronaut tests.
 Use the Pyronaut VS Code Test Explorer extension when running these tests from VS Code.
-See xref:configuration/vscodeExtension.adoc[].
+See <<vscodeExtension,VS Code Test Explorer Extension>>.
 
 `pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts configured project test resources, and delegates discovery to the configured engines. For direct sources, Test Resources starts only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. Use `--disable-test-resources` to disable either form of automatic orchestration.
 
