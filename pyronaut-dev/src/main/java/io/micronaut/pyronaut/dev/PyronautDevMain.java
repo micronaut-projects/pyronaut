@@ -456,11 +456,19 @@ public final class PyronautDevMain implements Callable<Integer> {
             if ("--project-dir".equals(argument)) {
                 return false;
             }
-            if ("--".equals(argument) || argument.endsWith(".java") || argument.endsWith(".py")) {
+            if ("--".equals(argument) || isSourceSelector(argument) || isDirectory(argument)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean isDirectory(String value) {
+        try {
+            return Files.isDirectory(Path.of(value));
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private static void addSourceSelector(List<Path> destination, String token) {
