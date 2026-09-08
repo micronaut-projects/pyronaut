@@ -1,0 +1,171 @@
+Aspect-oriented programming (AOP) sounds abstract but describes something every Python developer has done: writing a decorator that wraps a function to add behaviour such as logging, retrying, caching or timing. Micronaut ships many such decorators ready to use, and lets you write your own in a way that integrates with dependency injection.
+
+== AOP compared with Python decorators
+
+A plain Python decorator replaces the function object at import time:
+
+[source,python]
+----
+def retry(func):
+    def wrapper(*args, **kwargs):
+        for attempt in range(3):
+            try:
+                return func(*args, **kwargs)
+            except Exception:
+                if attempt == 2:
+                    raise
+    return wrapper
+----
+
+A Micronaut _advice_ decorator does not change the function at all. It records metadata at build time. When the bean is created, Micronaut generates a proxy that intercepts calls to the decorated method and hands them to an _interceptor_, an ordinary bean that can receive its own dependencies. The important consequences are:
+
+* Advice only applies to beans obtained through dependency injection. If you call `BookService()` yourself, none of the decorators below have any effect.
+* Interceptors can be configured through `application.toml` and can use other beans, which is hard to do with a closure-based decorator.
+* The same decorator works on Python and Java beans.
+
+== Advice you will use every day
+
+The following decorators are built in and require no code from you:
+
+[cols="1,2", options="header"]
+|===
+|Decorator |Effect
+
+|`@Validated` (`micronaut.validation`) with `jakarta.validation` constraints
+|Validates method arguments before the method runs and raises a `ConstraintViolationException` (a `400 Bad Request` in controllers). Module-level routes enable validation automatically when a constraint is present.
+
+|`@Retryable` and `@CircuitBreaker` (`micronaut.retry.annotation`)
+|Retry a failing call with configurable attempts and delay, optionally opening a circuit after repeated failures.
+
+|`@Scheduled` (`micronaut.scheduling.annotation`)
+|Run the method on a fixed rate, fixed delay or cron schedule. Replaces Celery beat or APScheduler for in-process jobs.
+
+|`@Async` (`micronaut.scheduling.annotation`)
+|Run the method on a background executor and return immediately. Replaces FastAPI's `BackgroundTasks` for fire-and-forget work.
+
+|`@ExecuteOn` (`micronaut.scheduling.annotation`)
+|Run the method on a named thread pool. See <<blockingWork,Running Blocking Code>>.
+
+|`@Cacheable`, `@CachePut`, `@CacheInvalidate` (`micronaut.cache.annotation`)
+|Cache the return value keyed by the arguments. Requires a cache implementation such as `io.micronaut.cache:micronaut-cache-caffeine` in `[tool.pyronaut.dependencies].runtime`.
+
+|`@Transactional` (`jakarta.transaction`)
+|Wrap the method in a database transaction when using Micronaut Data.
+
+|`@Client` (`micronaut.http.client.annotation`)
+|Turn an abstract class into an HTTP client. Micronaut implements every method for you. See <<httpApis,Building HTTP APIs>>.
+|===
+
+For example, a retrying service needs only a decorator:
+
+[source,python]
+----
+from jakarta.inject import Singleton
+from micronaut.retry.annotation import Retryable
+
+
+@Singleton
+class CatalogClient:
+    @Retryable(attempts="5", delay="2s")
+    def find_book(self, isbn: str) -> Book:
+        ...
+----
+
+Annotation members accept configuration placeholders, so the retry policy can be tuned without changing code:
+
+[source,python]
+----
+@Retryable(attempts="${catalog.retry.attempts:3}", delay="${catalog.retry.delay:1s}")
+def find_book(self, isbn: str) -> Book:
+    ...
+----
+
+A scheduled job is a bean with a decorated method:
+
+[source,python]
+----
+from jakarta.inject import Singleton
+from micronaut.scheduling.annotation import Scheduled
+
+
+@Singleton
+class ReportJob:
+    @Scheduled(fixedRate="10m", initialDelay="1m")
+    def generate(self) -> None:
+        print("generating report")
+
+    @Scheduled(cron="0 15 10 ? * MON")
+    def weekly(self) -> None:
+        print("it is Monday")
+----
+
+NOTE: Annotation member names keep their Java spelling (`fixedRate`, not `fixed_rate`). Members that clash with Python keywords take a trailing underscore, for example `@Error(global_=True)`.
+
+== Writing your own advice
+
+Custom advice has two parts: a decorator that marks the methods to intercept, and an interceptor bean that implements the behaviour.
+
+First define the decorator. It is a plain function that returns its argument unchanged; the `@Around` decorator tells Micronaut it is an AOP marker and `@Executable` makes the target methods callable through the proxy:
+
+[source,python]
+----
+from micronaut.aop import Around
+from micronaut.context.annotation import Executable
+
+
+@Executable
+@Around
+def Timed(func):
+    return func
+----
+
+Then implement a `MethodInterceptor` bound to the decorator. `context.proceed()` calls the original method:
+
+[source,python]
+----
+import java
+import time
+
+from micronaut.aop import InterceptorBean, MethodInvocationContext
+
+from .Timed import Timed
+
+MethodInterceptor = java.type("io.micronaut.aop.MethodInterceptor")
+
+
+@InterceptorBean(Timed)
+class TimedInterceptor(MethodInterceptor):
+    def intercept(self, context: MethodInvocationContext):
+        started = time.perf_counter()
+        try:
+            return context.proceed()
+        finally:
+            elapsed = time.perf_counter() - started
+            print(f"{context.getMethodName()} took {elapsed:.3f}s")
+----
+
+Finally apply the decorator to any bean method:
+
+[source,python]
+----
+from jakarta.inject import Singleton
+
+from .Timed import Timed
+
+
+@Singleton
+class BookService:
+    @Timed
+    def list_books(self) -> list[Book]:
+        ...
+----
+
+The interceptor is a bean, so it can receive dependencies through its constructor, for example a metrics registry. `MethodInvocationContext` exposes the target object, method name, argument values and return type; see the https://docs.micronaut.io/latest/api/io/micronaut/aop/MethodInvocationContext.html[API reference].
+
+== Introduction advice
+
+_Around_ advice wraps an existing implementation. _Introduction_ advice supplies the implementation of an abstract method. `@Client` is the best-known example: you declare an abstract class describing the remote API and Micronaut generates the code that performs the HTTP calls. Micronaut Data repositories work the same way. Writing your own introduction advice is rarely necessary; the https://docs.micronaut.io/latest/guide/#introductionAdvice[Micronaut guide] shows how.
+
+== Further reading
+
+The https://docs.micronaut.io/latest/guide/#aop[Aspect Oriented Programming chapter] of the Micronaut guide covers interceptor ordering, constructor interception, lifecycle advice and the built-in validation, caching, retry and scheduling advice in depth, with Python examples for each.

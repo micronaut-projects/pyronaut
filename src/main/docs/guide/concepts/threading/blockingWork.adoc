@@ -1,0 +1,106 @@
+Blocking code is any code that makes the current thread wait: a database query, a synchronous HTTP call, reading a large file, `time.sleep()` or CPU-heavy computation. The rules for handling it depend on the kind of function you are in.
+
+== In a `def` route: nothing to do
+
+Synchronous Python routes already run on the `io` executor, so blocking is acceptable. This is the right choice for most CRUD endpoints:
+
+[source,python]
+----
+from micronaut.http.annotation import Controller, Get
+
+
+@Controller("/books")
+class BookController:
+    def __init__(self, repository: BookRepository):
+        self.repository = repository
+
+    @Get("/{isbn}")
+    def find(self, isbn: str) -> Book | None:
+        return self.repository.findByIsbn(isbn)   # blocking JDBC call is fine here
+----
+
+== Choosing a different pool with `@ExecuteOn`
+
+`@ExecuteOn` from `micronaut.scheduling.annotation` moves a method (or every method of a controller) to a named executor. Use it to isolate slow work on its own pool so that it cannot starve the `io` executor used by everything else:
+
+[source,python]
+----
+from micronaut.http.annotation import Controller, Get
+from micronaut.scheduling import TaskExecutors
+from micronaut.scheduling.annotation import ExecuteOn
+
+
+@Controller("/reports")
+@ExecuteOn(TaskExecutors.BLOCKING)
+class ReportController:
+    @Get("/{year}")
+    def yearly(self, year: int) -> Report:
+        return build_report(year)   # slow, runs on the blocking executor
+----
+
+Custom executors are declared in configuration and referenced by name:
+
+[source,toml]
+----
+[micronaut.executors.reports]
+type = "fixed"
+n-threads = 4
+----
+
+[source,python]
+----
+@ExecuteOn("reports")
+def yearly(self, year: int) -> Report:
+    ...
+----
+
+Micronaut Data repositories and other Java libraries that perform blocking I/O are commonly combined with `@ExecuteOn(TaskExecutors.BLOCKING)` in Java code. In Python code this is optional, because synchronous Python methods already avoid the event loop, but it remains useful for separating pools.
+
+== In an `async def` route: use `run_in_executor`
+
+A coroutine runs on the event loop, so blocking inside it blocks Netty. Hand the blocking call to Micronaut's blocking executor with `loop.run_in_executor(None, ...)` and await the result:
+
+[source,python]
+----
+import asyncio
+
+from micronaut.http.annotation import Get
+
+
+@Get("/report")
+async def report() -> Report:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, build_report)
+----
+
+The `None` executor argument selects Micronaut's blocking executor. Passing your own `concurrent.futures.Executor` is not supported and raises `NotImplementedError`. Pass arguments with `functools.partial` or a lambda:
+
+[source,python]
+----
+from functools import partial
+
+result = await loop.run_in_executor(None, partial(build_report, year=2026))
+----
+
+== Background work with `@Async`
+
+To start work and return immediately, decorate a bean method with `@Async`. The caller returns as soon as the task is submitted to the `scheduled` executor:
+
+[source,python]
+----
+from jakarta.inject import Singleton
+from micronaut.scheduling.annotation import Async
+
+
+@Singleton
+class Mailer:
+    @Async
+    def send_welcome(self, address: str) -> None:
+        deliver(address)   # runs on a background thread
+----
+
+This is the equivalent of FastAPI's `BackgroundTasks`. Because the method runs on another bean, the call must go through dependency injection for the decorator to take effect.
+
+== Threads and `threading`
+
+The standard `threading` module works on GraalPy, and threads created this way execute Python code subject to the interpreter lock described in <<contextPool,The GIL and the Context Pool>>. Prefer Micronaut executors over creating threads by hand: they are sized through configuration, shut down with the application and are visible to Micronaut's metrics and management endpoints.
