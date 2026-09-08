@@ -79,8 +79,8 @@ final class VsCodeLaunchWriter {
         if (!Files.exists(launchFile)) {
             return new LinkedHashMap<>();
         }
-        try {
-            Object parsed = jsonMapper.readValue(Files.newInputStream(launchFile), Map.class);
+        try (var input = Files.newInputStream(launchFile)) {
+            Object parsed = jsonMapper.readValue(input, Map.class);
             if (parsed instanceof Map<?, ?> map) {
                 return new LinkedHashMap<>((Map<String, Object>) map);
             }

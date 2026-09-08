@@ -93,6 +93,13 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
 
     @Override
     public Integer call() {
+        Action normalizedAction;
+        try {
+            normalizedAction = normalizeAction(action);
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            return CommandLine.ExitCode.USAGE;
+        }
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             PyprojectModel.TestResources config = ExternalProjectLayout.isExternal(root)
@@ -102,7 +109,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             Path portFile = settingsDir.resolve("server.port");
             Path sessionFile = outputDirectory(root).resolve("test-resources-session.json").toAbsolutePath().normalize();
 
-            return switch (normalizeAction(action)) {
+            return switch (normalizedAction) {
                 case START -> start(root, settingsDir, logsDir, portFile, config);
                 case STATUS -> status(settingsDir);
                 case STOP -> stop(settingsDir, sessionFile);
@@ -400,7 +407,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
             case "start" -> Action.START;
             case "stop" -> Action.STOP;
             case "status" -> Action.STATUS;
-            default -> throw new IllegalStateException("Invalid action: " + raw + ". Use start|stop|status");
+            default -> throw new IllegalArgumentException("Invalid action: " + raw + ". Valid actions: start|stop|status");
         };
     }
 

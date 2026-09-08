@@ -6,7 +6,7 @@ This gives Python editors stubs for Java-backed APIs such as Micronaut annotatio
 Generated editor files include:
 
 - `__pyronaut__/schemas/pyronaut-pyproject.schema.json`
-- `__pyronaut__/schemas/micronaut-application.schema.json` when `application.toml` exists
+- `__pyronaut__/schemas/micronaut-application.schema.json` (the `#:schema` directive is only added to `application.toml` when that file exists)
 - `__pyronaut__/ide-stubs`
 - `__pyronaut__/resolved-editor-artifacts.json`
 - `__pyronaut__/reports/editor-stubs/stub-generation-report.txt`
@@ -30,11 +30,11 @@ Stub generation is best effort; APIs that cannot be rendered cleanly are skipped
 
 == VS Code
 
-When `ide = "vscode"` and the project does not already own Pyright configuration, Pyronaut writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the generated stub directory.
+When `ide = "vscode"` and the project does not already own Pyright configuration, Pyronaut writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the generated stub directory. When the Python executable or site-packages directory is known (from the project `.venv`, the `PYRONAUT_PYTHON_EXECUTABLE` or `PYRONAUT_PYTHON_SITE_PACKAGES` environment variables, or the matching `pyronaut.python.*` system properties), the site-packages directory is added to `extraPaths` and `python.defaultInterpreterPath` is set as well.
 
 If `pyrightconfig.json` or `[tool.pyright]` already exists, Pyronaut leaves the configuration user-managed and records that decision in the editor stub report.
 
-For VS Code Test Explorer integration, see xref:configuration/vscodeExtension.adoc[].
+For VS Code Test Explorer integration, see <<vscodeExtension,VS Code Test Explorer Extension>>.
 
 == PyCharm
 
@@ -44,4 +44,7 @@ The generated module marks the stub directory as a source root without rewriting
 == Refreshing IDE State
 
 Run `pyronaut install` after changing dependencies, source layout, or IDE stub settings.
-Delete `__pyronaut__/ide-stubs` if you want the next install to rebuild stubs from scratch.
+
+Generated stubs are cached per classpath under `~/.pyronaut/ide-stubs` and shared between projects on the same machine. Deleting `__pyronaut__/ide-stubs` makes the next install restore the stubs from that cache; delete the matching cache directory as well (or the whole of `~/.pyronaut/ide-stubs`) to force regeneration.
+
+WARNING: `destination-dir` must point at a directory that Pyronaut owns. The generator replaces the directory's contents on every install and refuses to run when the directory contains files it did not generate.

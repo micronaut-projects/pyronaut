@@ -1,10 +1,16 @@
 const { matchJUnitResult } = require('./junitResults');
-const { matchNodeId } = require('./testEvents');
+const { matchNodeId, stripParameters } = require('./testEvents');
+const { normalizeNodeId } = require('./pathUtils');
+
+// Mirrors VS Code's own terminal state ordering: a later, less severe state
+// never replaces an earlier more severe one for the same item.
+const EVENT_STATUS_PRIORITY = { SUCCESSFUL: 0, ABORTED: 1, FAILED: 2 };
 
 function applyResultEvents(run, candidates, events, options) {
   const seen = new Set();
-  const started = new Set();
-  const finished = new Set();
+  const started = options.started || new Set();
+  const finished = options.finished || new Set();
+  const reported = new Map();
   const makeMessage = options.makeMessage;
   const toOutput = options.toOutput || (text => text);
 
@@ -21,7 +27,14 @@ function applyResultEvents(run, candidates, events, options) {
       run.appendOutput(toOutput(payload.text || ''), undefined, candidate.item);
     } else if (event.eventType === 'test_finished') {
       startItem(run, candidate.item, started);
-      finishEventItem(run, candidate.item, event, makeMessage);
+      // Parametrized tests emit one finished event per parameter set for the
+      // same TestItem: any failure fails the item, otherwise keep the most severe.
+      const priority = eventStatusPriority(event.status);
+      const previous = reported.get(candidate.item.id);
+      if (previous === undefined || priority >= previous) {
+        finishEventItem(run, candidate.item, event, makeMessage, parameterLabel(event.testId));
+        reported.set(candidate.item.id, priority);
+      }
       seen.add(candidate.item.id);
       finished.add(candidate.item.id);
     }
@@ -70,15 +83,30 @@ function startItem(run, item, started) {
   }
 }
 
-function finishEventItem(run, item, event, makeMessage) {
+function finishEventItem(run, item, event, makeMessage, label) {
   const payload = event.payload || {};
   if (event.status === 'SUCCESSFUL') {
     run.passed(item);
   } else if (event.status === 'ABORTED') {
     run.skipped(item);
   } else {
-    run.failed(item, makeMessage(payload.failure || 'Test failed'));
+    const failure = payload.failure || 'Test failed';
+    run.failed(item, makeMessage(label ? `${label}: ${failure}` : failure));
   }
+}
+
+function eventStatusPriority(status) {
+  const priority = EVENT_STATUS_PRIORITY[status];
+  return priority === undefined ? EVENT_STATUS_PRIORITY.FAILED : priority;
+}
+
+function parameterLabel(testId) {
+  if (typeof testId !== 'string') {
+    return '';
+  }
+  const normalized = normalizeNodeId(testId);
+  const stripped = stripParameters(normalized);
+  return stripped === normalized ? '' : normalized.substring(stripped.length);
 }
 
 function finishJUnitItem(run, item, result, makeMessage) {

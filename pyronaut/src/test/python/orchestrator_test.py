@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import time
 import unittest
+import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import socket
@@ -4754,7 +4755,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("PYRONAUT_BUILD_MODE=jvm", docker_command)
         self.assertIn("PYRONAUT_PROJECT_NAME=demo-app", docker_command)
         self.assertIn("PYRONAUT_PROJECT_VERSION=1.2.3", docker_command)
-        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i2", docker_command)
+        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i3", docker_command)
         self.assertIn("-t", docker_command)
         self.assertIn("demo-app:1.2.3", docker_command)
         self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
@@ -4996,7 +4997,7 @@ additional-test-resources = ["test-fixtures"]
             self.assertEqual(0, exit_code_jvm)
             self.assertEqual("Dockerfile.jvm", captured["dockerfile_name"])
             self.assertIn("ARG PYRONAUT_PROJECT_NAME", captured["dockerfile"])
-            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i2", captured["docker_command"])
+            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i3", captured["docker_command"])
 
             captured.clear()
             executed.clear()
@@ -5010,7 +5011,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code_native)
         self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
         self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
-        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i2", captured["docker_command"])
+        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i3", captured["docker_command"])
 
     def test_build_docker_reuses_configured_base_with_custom_runtime_dockerfile(self):
         captured: dict[str, object] = {}
@@ -5148,6 +5149,8 @@ additional-test-resources = ["test-fixtures"]
                 captured["dockerfile"] = dockerfile.name
                 captured["contents"] = dockerfile.read_text(encoding="utf-8")
                 captured["launcher"] = (context_dir / "bundled-base" / "pyronaut-run").read_bytes()
+                captured["resource"] = (context_dir / "bundled-base" / "resources" / "python-home.txt").read_text(encoding="utf-8")
+                captured["library"] = (context_dir / "bundled-base" / "python.dll").read_bytes()
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir, patch.object(
@@ -5165,6 +5168,9 @@ additional-test-resources = ["test-fixtures"]
             configured = project_dir / "runtime" / "local-wheel-base"
             configured.parent.mkdir(parents=True)
             configured.write_bytes(b"native-runner")
+            (configured.parent / "resources").mkdir()
+            (configured.parent / "resources" / "python-home.txt").write_text("python-home", encoding="utf-8")
+            (configured.parent / "python.dll").write_bytes(b"library")
 
             exit_code = cli.run(
                 ["build", "--project-dir", str(project_dir)],
@@ -5177,6 +5183,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual("DockerfileNativeBase", captured["dockerfile"])
         self.assertIn("COPY bundled-base/ /opt/pyronaut/bin/", captured["contents"])
         self.assertEqual(b"native-runner", captured["launcher"])
+        self.assertEqual("python-home", captured["resource"])
+        self.assertEqual(b"library", captured["library"])
 
     def test_prepare_jvm_build_wheel_staging_rewrites_manifest_and_generates_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5271,6 +5279,36 @@ additional-test-resources = ["test-fixtures"]
             ).read_text(encoding="utf-8")
             self.assertNotIn("provided-1.0.jar", manifest)
             self.assertIn("application-1.0.jar", manifest)
+
+    def test_prepare_closed_world_native_wheel_stages_generated_bundle_support(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = root / "native-wheel"
+            native_dir = project_dir / "__pyronaut__" / "native"
+            native_dir.mkdir(parents=True)
+            (native_dir / "demo").write_bytes(b"launcher")
+            (native_dir / "resources" / "python").mkdir(parents=True)
+            (native_dir / "resources" / "python" / "stdlib.txt").write_text("stdlib", encoding="utf-8")
+            (native_dir / "libpython.dylib").write_bytes(b"library")
+            (project_dir / "__pyronaut__" / "classes").mkdir()
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text("", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = \"demo\"\nversion = \"1.0\"\n", encoding="utf-8"
+            )
+            staging_dir = root / "stage"
+
+            cli._prepare_build_wheel_staging(  # noqa: SLF001
+                project_dir=project_dir,
+                staging_dir=staging_dir,
+                project_name="demo",
+                project_version="1.0",
+                mode="native",
+                main_class="",
+            )
+
+            staged_native = staging_dir / "demo_launcher" / "app" / "__pyronaut__" / "native"
+            self.assertEqual("stdlib", (staged_native / "resources" / "python" / "stdlib.txt").read_text(encoding="utf-8"))
+            self.assertEqual(b"library", (staged_native / "libpython.dylib").read_bytes())
 
     def test_prepare_native_docker_context_stages_distribution_and_rewrites_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5634,6 +5672,7 @@ additional-test-resources = ["test-fixtures"]
 
     def test_native_wheel_reuses_configured_local_native_base(self):
         executed = []
+        captured: dict[str, bytes] = {}
 
         def runner_with_env(command_line, env):
             executed.append((command_line, env))
@@ -5641,6 +5680,14 @@ additional-test-resources = ["test-fixtures"]
                 output = Path(command_line[command_line.index("--output") + 1])
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text("base", encoding="utf-8")
+                (output.parent / "resources" / "python").mkdir(parents=True)
+                (output.parent / "resources" / "python" / "stdlib.txt").write_text("stdlib", encoding="utf-8")
+                (output.parent / "libpython.so").write_bytes(b"library")
+            if len(command_line) >= 3 and command_line[1:3] == ["-m", "pip"] and "wheel" in command_line:
+                staging_dir = Path(command_line[-1])
+                staged_native = staging_dir / "demo_launcher" / "app" / "__pyronaut__" / "native"
+                captured["resource"] = (staged_native / "resources" / "python" / "stdlib.txt").read_bytes()
+                captured["library"] = (staged_native / "libpython.so").read_bytes()
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -5674,6 +5721,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, wheel_exit)
         native_commands = [command for command, _ in executed if command and command[0] == "/tmp/pyronaut-native-build"]
         self.assertEqual(1, len(native_commands))
+        self.assertEqual(b"stdlib", captured["resource"])
+        self.assertEqual(b"library", captured["library"])
 
     def test_cli_native_base_overrides_configured_base_for_wheel(self):
         captured: dict[str, bytes] = {}
@@ -6292,8 +6341,8 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         with patch.object(cli.platform, "system", return_value="Linux"), \
                 patch.object(cli.platform, "machine", return_value="aarch64"):
             url = cli._resolve_graalvm_archive_url(spec)
-        self.assertIn("gds.oracle.com/download/graal/25i2/latest/", url)
-        self.assertIn("graalvm-jdk-25i2-25_linux-aarch64_bin.tar.gz", url)
+        self.assertIn("gds.oracle.com/download/graal/25i3/latest/", url)
+        self.assertIn("graalvm-jdk-25i3-25_linux-aarch64_bin.tar.gz", url)
 
     def test_read_pyproject_toolchain_spec_uses_packaged_default_when_not_explicit(self):
         packaged = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
@@ -6872,6 +6921,78 @@ java-version = 25
         with self.assertRaises(RuntimeError):
             cli._native_image_platform(platform_name="Windows", machine_name="x86_64")
 
+    def test_create_sdk_platform_maps_published_native_archives(self):
+        self.assertEqual(("darwin", "amd64", "mn"), cli._create_sdk_platform("darwin", "x86_64"))
+        self.assertEqual(("darwin", "aarch64", "mn"), cli._create_sdk_platform("darwin", "arm64"))
+        self.assertEqual(("linux", "amd64", "mn"), cli._create_sdk_platform("linux", "amd64"))
+        self.assertEqual(("win", "amd64", "mn.exe"), cli._create_sdk_platform("win32", "AMD64"))
+        with self.assertRaises(cli._CreatePreconditionError):
+            cli._create_sdk_platform("linux", "aarch64")
+
+    def test_create_sdk_prefers_exact_sdkman_candidate_and_ignores_mismatched_current(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            exact = home / ".sdkman" / "candidates" / "micronaut" / "5.2.0" / "bin" / "mn"
+            exact.parent.mkdir(parents=True)
+            exact.write_text("#!/bin/sh\necho 'Micronaut Version: 5.2.0'\n", encoding="utf-8")
+            exact.chmod(0o755)
+            other = exact.parent.parent.parent / "5.1.3"
+            other_bin = other / "bin" / "mn"
+            other_bin.parent.mkdir(parents=True)
+            other_bin.write_text("#!/bin/sh\necho 'Micronaut Version: 5.1.3'\n", encoding="utf-8")
+            other_bin.chmod(0o755)
+            (exact.parent.parent.parent / "current").symlink_to(other)
+            with patch.object(cli.Path, "home", return_value=home), patch.object(cli.platform, "machine", return_value="x86_64"), \
+                    patch.dict(os.environ, {"SDKMAN_DIR": ""}, clear=False):
+                self.assertEqual(exact, cli._ensure_micronaut_launch("5.2.0", platform_name="darwin"))
+
+    def test_create_sdk_reuses_pyronaut_cache_and_does_not_download_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            cached = home / ".pyronaut" / "sdks" / "micronaut" / "5.2.0-SNAPSHOT" / "bin" / "mn"
+            cached.parent.mkdir(parents=True)
+            cached.write_text("#!/bin/sh\necho 'Micronaut Version: 5.2.0-SNAPSHOT'\n", encoding="utf-8")
+            cached.chmod(0o755)
+            with patch.object(cli.Path, "home", return_value=home), patch.object(cli.platform, "machine", return_value="x86_64"), \
+                    patch.dict(os.environ, {"SDKMAN_DIR": ""}, clear=False), \
+                    patch.object(cli, "_download_url_with_progress", side_effect=AssertionError("downloaded cached SDK")):
+                self.assertEqual(cached, cli._ensure_micronaut_launch("5.2.0-SNAPSHOT", platform_name="linux"))
+
+            missing = home / ".pyronaut" / "sdks" / "micronaut" / "5.2.1"
+            with patch.object(cli.Path, "home", return_value=home), patch.object(cli.platform, "machine", return_value="x86_64"), \
+                    patch.dict(os.environ, {"SDKMAN_DIR": ""}, clear=False):
+                with self.assertRaisesRegex(cli._CreatePreconditionError, "not a published release"):
+                    cli._ensure_micronaut_launch("5.2.1-SNAPSHOT", platform_name="linux")
+
+    def test_create_sdk_downloads_expected_release_archive_with_progress_and_installs_atomically(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            downloaded = []
+
+            def download(url, destination, label, headers=None):
+                downloaded.append((url, label, headers))
+                with zipfile.ZipFile(destination, "w") as archive:
+                    archive.writestr(
+                        "mn-linux-amd64-v5.2.0/bin/mn",
+                        "#!/bin/sh\necho 'Micronaut Version: 5.2.0'\n",
+                    )
+                    archive.writestr("mn-linux-amd64-v5.2.0/LICENSE", "license")
+
+            with patch.object(cli.Path, "home", return_value=home), patch.object(cli.platform, "machine", return_value="x86_64"), \
+                    patch.object(cli, "_download_url_with_progress", side_effect=download), redirect_stderr(io.StringIO()) as stderr:
+                executable = cli._ensure_micronaut_launch("5.2.0", platform_name="linux")
+
+            self.assertEqual(1, len(downloaded))
+            self.assertEqual(
+                "https://github.com/micronaut-projects/micronaut-starter/releases/download/v5.2.0/mn-linux-amd64-v5.2.0.zip",
+                downloaded[0][0],
+            )
+            self.assertEqual("Downloading Micronaut Launch SDK", downloaded[0][1])
+            self.assertEqual("Micronaut Version: 5.2.0", subprocess.check_output([str(executable), "--version"], text=True).strip())
+            self.assertTrue(executable.stat().st_mode & 0o111)
+            self.assertTrue((executable.parent.parent / "LICENSE").is_file())
+            self.assertIn("Project Creation Tooling is being installed", stderr.getvalue())
+
     def test_ensure_native_image_uses_bundle_from_local_checkout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -6997,6 +7118,7 @@ java-version = 25
             self.assertEqual(payload, destination.read_bytes())
             self.assertEqual(2, len(attempts))
             self.assertIn("download interrupted; retrying", stderr.getvalue())
+            self.assertNotIn("\r", stderr.getvalue())
 
     def test_graalvm_sdk_download_uses_shared_progress_reporting(self):
         payload = b"graalvm-sdk"
@@ -7031,6 +7153,7 @@ java-version = 25
             self.assertEqual(payload, destination.read_bytes())
             self.assertIn("Downloading GraalVM SDK... 0%", stderr.getvalue())
             self.assertIn("Downloading GraalVM SDK... 100%", stderr.getvalue())
+            self.assertNotIn("\r", stderr.getvalue())
 
     def test_default_native_base_uses_host_bundle_selection(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -7071,6 +7194,9 @@ java-version = 25
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir)
             target = project_dir / "staged" / "pyronaut-run"
+            (target.parent / "resources").mkdir(parents=True)
+            (target.parent / "resources" / "stale.txt").write_text("stale", encoding="utf-8")
+            (target.parent / "stale.dll").write_bytes(b"stale")
 
             def download(url, destination, label):
                 self.assertEqual("https://example.test/pyronaut-run", url)
@@ -7087,6 +7213,8 @@ java-version = 25
 
             self.assertEqual(b"native", target.read_bytes())
             self.assertTrue(target.stat().st_mode & 0o100)
+            self.assertFalse((target.parent / "resources").exists())
+            self.assertFalse((target.parent / "stale.dll").exists())
             with self.assertRaisesRegex(RuntimeError, "offline"):
                 cli._stage_native_base_executable(  # noqa: SLF001
                     "https://example.test/pyronaut-run",
@@ -7094,6 +7222,30 @@ java-version = 25
                     target=target,
                     offline=True,
                 )
+
+    def test_local_native_base_in_output_directory_keeps_existing_bundle_support(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            staged = project_dir / "__pyronaut__" / "native"
+            staged.mkdir(parents=True)
+            source = staged / "pyronaut-run-python"
+            source.write_bytes(b"native")
+            (staged / "resources" / "python").mkdir(parents=True)
+            (staged / "resources" / "python" / "stdlib.txt").write_text("stdlib", encoding="utf-8")
+            (staged / "libpython.dylib").write_bytes(b"library")
+
+            cli._stage_native_base_executable(  # noqa: SLF001
+                str(source),
+                project_dir=project_dir,
+                target=staged / "demo",
+                offline=False,
+            )
+
+            self.assertEqual(b"native", (staged / "demo").read_bytes())
+            self.assertEqual(
+                "stdlib", (staged / "resources" / "python" / "stdlib.txt").read_text(encoding="utf-8")
+            )
+            self.assertEqual(b"library", (staged / "libpython.dylib").read_bytes())
 
     def test_tui_smoke_delegates_install_process_run(self):
         executed = []
@@ -8086,21 +8238,134 @@ java-version = 25
             executed,
         )
 
-    def test_create_command_is_not_supported(self):
+    def test_create_command_delegates_to_micronaut_launch_with_fixed_python_options(self):
         executed = []
 
-        def runner(command_line):
+        def runner(command_line, env=None):
             executed.append(command_line)
             return 0
 
-        exit_code = cli.run(
-            ["create", "demo", "--features", "data-jdbc,mysql"],
-            runner=runner,
-            resolver=self._resolver(),
-            platform_name="linux",
+        with (
+            patch.object(cli, "_micronaut_platform_version", return_value="5.2.0"),
+            patch.object(cli, "_ensure_micronaut_launch", return_value=Path("/tmp/mn")),
+        ):
+            exit_code = cli.run(
+                ["create", "demo", "--features", "data-jdbc,mysql"],
+                runner_with_env=runner,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        self.assertEqual(
+            [[
+                "/tmp/mn", "create-app", "demo", "--features", "data-jdbc,mysql",
+                "--lang", "python", "--build", "pyronaut", "--test", "pytest",
+            ]],
+            executed,
         )
 
+    def test_create_rejects_hidden_micronaut_options(self):
+        executed = []
+
+        with patch.object(cli, "_micronaut_platform_version", return_value="5.2.0"):
+            exit_code = cli.run(
+                ["create", "demo", "--lang", "python"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
         self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertEqual([], executed)
+
+    def test_create_rejects_known_python_incompatible_feature(self):
+        executed = []
+        stderr = io.StringIO()
+        with (
+            patch.object(cli, "_micronaut_platform_version", return_value="5.2.0"),
+            redirect_stderr(stderr),
+        ):
+            exit_code = cli.run(
+                ["create", "demo", "--features", "jackson-databind"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertIn("not supported for Python", stderr.getvalue())
+        self.assertEqual([], executed)
+
+    def test_create_requires_micronaut_platform_5_2_or_newer(self):
+        executed = []
+        stderr = io.StringIO()
+        with (
+            patch.object(cli, "_micronaut_platform_version", return_value="5.1.0"),
+            patch.object(cli, "_ensure_micronaut_launch", side_effect=AssertionError("resolved too early")),
+            redirect_stderr(stderr),
+        ):
+            exit_code = cli.run(
+                ["create", "demo"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("requires Micronaut Platform 5.2.0 or newer", stderr.getvalue())
+        self.assertEqual([], executed)
+
+    def test_create_help_does_not_require_platform_metadata_or_mn(self):
+        executed = []
+        with patch.object(cli, "_micronaut_platform_version", return_value=None):
+            exit_code = cli.run(
+                ["create", "--help"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        self.assertEqual([], executed)
+
+    def test_create_accepts_combined_help_and_diagnostic_short_flags(self):
+        executed = []
+        with patch.object(cli, "_micronaut_platform_version", return_value=None):
+            exit_code = cli.run(
+                ["create", "-hiv"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        self.assertEqual([], executed)
+
+    def test_create_feature_output_filters_incompatible_rows(self):
+        output = (
+            "Available Features\n"
+            "  jackson-databind   Jackson\n"
+            "  data-jdbc          JDBC\n"
+            "  hibernate-jpa      JPA\n"
+            "  micrometer-new-relic Metrics\n"
+        )
+        executed = []
+        with (
+            patch.object(cli, "_micronaut_platform_version", return_value="5.2.0"),
+            patch.object(cli, "_ensure_micronaut_launch", return_value=Path("/tmp/mn")),
+            patch.object(cli, "_capture_subprocess", return_value=(0, output, "")) as capture,
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            exit_code = cli.run(
+                ["create", "--list-features"],
+                runner_with_env=lambda command_line, env=None: executed.append(command_line) or 0,
+                platform_name="linux",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        capture.assert_called_once_with([
+            "/tmp/mn", "create-app", "--list-features",
+            "--lang", "python", "--build", "pyronaut", "--test", "pytest",
+        ])
+        self.assertIn("data-jdbc", stdout.getvalue())
+        self.assertIn("micrometer-new-relic", stdout.getvalue())
+        self.assertNotIn("jackson-databind", stdout.getvalue())
+        self.assertNotIn("hibernate-jpa", stdout.getvalue())
         self.assertEqual([], executed)
 
     def test_test_resources_server_returns_precondition_when_executable_missing(self):
@@ -8306,6 +8571,7 @@ java-version = 25
                 return 0
 
             metadata = cli._GraalVmMetadata("25.0.3", 25, "ee")
+            stderr = io.StringIO()
             with (
                 patch.object(cli, "__file__", str(package / "cli.py")),
                 patch.object(cli, "_setup_manifest_path", return_value=manifest_path),
@@ -8319,10 +8585,14 @@ java-version = 25
                 patch.object(cli, "_resolved_tools_cache_complete", return_value=True),
                 patch.object(cli, "_read_graalvm_metadata", return_value=metadata),
                 patch("pathlib.Path.home", return_value=home),
+                redirect_stderr(stderr),
             ):
                 exit_code = cli._run_setup(["--refresh", "--progress", "off"], runner)
 
             self.assertEqual(cli.SUCCESS, exit_code)
+            self.assertIn("Pyronaut setup: locating or provisioning a compatible GraalVM JDK (JDK 25+)...", stderr.getvalue())
+            self.assertIn("Pyronaut setup: provisioning native launchers...", stderr.getvalue())
+            self.assertIn("Pyronaut setup: resolving SDK dependencies...", stderr.getvalue())
             self.assertEqual(["graalvm", *cli._SETUP_IMAGE_COMMANDS], provisioning_order)
             seed_repository.assert_called_once()
             self.assertEqual(1, len(commands))
@@ -8457,6 +8727,287 @@ java-version = 25
                 patch.object(cli, "_bundled_executable", return_value=bundled),
             ):
                 self.assertEqual(str(bundled), cli._resolve_executable("pyronaut-run"))
+
+    def test_tui_non_interactive_test_mode_propagates_delegate_failure(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            if command_line[0] in {"/tmp/pyronaut-validate-config", "/tmp/pyronaut-processor"}:
+                return 0
+            return 3
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            expected_project_dir = project_dir.resolve()
+            with redirect_stderr(io.StringIO()):
+                exit_code = cli.run(
+                    ["--tui", "--non-interactive", "--test", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(3, exit_code)
+        self.assertEqual(3, len(executed))
+        self._assert_test_delegate(executed[2], str(expected_project_dir), expect_project_jars=False)
+
+    def test_tui_non_interactive_run_mode_delegates_run(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            expected_project_dir = project_dir.resolve()
+            with redirect_stderr(io.StringIO()):
+                exit_code = cli.run(
+                    ["--tui", "--non-interactive", "--project-dir", str(project_dir)],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["/tmp/pyronaut-processor", "--project-dir", str(expected_project_dir), "--pass", "main"],
+            executed[0],
+        )
+        self._assert_run_delegate(executed[-1], str(expected_project_dir))
+
+    def test_tui_leading_command_token_selects_test_mode(self):
+        for argv_prefix in (["--tui", "test"], ["test", "--tui"]):
+            with self.subTest(argv=argv_prefix):
+                executed = []
+
+                def runner_with_env(command_line, env):
+                    executed.append(command_line)
+                    return 0
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    project_dir = Path(temp_dir) / "demo"
+                    project_dir.mkdir(parents=True, exist_ok=True)
+                    expected_project_dir = project_dir.resolve()
+                    with redirect_stderr(io.StringIO()):
+                        exit_code = cli.run(
+                            [*argv_prefix, "--smoke", "--project-dir", str(project_dir)],
+                            runner_with_env=runner_with_env,
+                            resolver=self._resolver(),
+                            platform_name="linux",
+                        )
+
+                self.assertEqual(0, exit_code)
+                self.assertEqual(
+                    ["/tmp/pyronaut-validate-config", "--project-dir", str(expected_project_dir), "--scenario", "test"],
+                    executed[0],
+                )
+                self._assert_test_delegate(executed[-1], str(expected_project_dir), expect_project_jars=False)
+
+    def test_tui_interactive_reports_missing_delegate_executable(self):
+        base_resolver = self._resolver()
+
+        def resolver(command_name):
+            if command_name == "pyronaut-validate-config":
+                return None
+            return base_resolver(command_name)
+
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            with redirect_stderr(stderr):
+                exit_code = cli.run(
+                    ["--tui", "--project-dir", str(project_dir)],
+                    runner_with_env=lambda command_line, env: 0,
+                    resolver=resolver,
+                    platform_name="linux",
+                )
+
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("Missing delegated executable: pyronaut-validate-config", stderr.getvalue())
+
+    def test_malformed_orchestrator_options_return_usage_error(self):
+        cases = (
+            (["run", "--project-dir", "/tmp/demo", "--debug-vm=maybe"], "Invalid value for --debug-vm"),
+            (["run", "--project-dir", "/tmp/demo", "--local-repository"], "Missing value for --local-repository"),
+            (["run", "--project-dir", "/tmp/demo", "--no-cache=bogus"], "Invalid value for --no-cache"),
+        )
+        for argv, message in cases:
+            with self.subTest(argv=argv):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    exit_code = cli.run(
+                        argv,
+                        runner=self._runner_ok(),
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                    )
+                self.assertEqual(cli.USAGE_ERROR, exit_code)
+                self.assertIn(message, stderr.getvalue())
+                self.assertIn("Usage: pyronaut", stderr.getvalue())
+
+    def test_orchestrator_flag_helpers_stop_at_separator(self):
+        self.assertFalse(cli._extract_flag(["--", "--help"], "--help"))
+        self.assertTrue(cli._extract_flag(["--help", "--"], "--help"))
+        self.assertFalse(cli._extract_continuous(["--", "-t"]))
+        self.assertEqual(["--", "-t"], cli._remove_continuous(["-t", "--", "-t"]))
+        self.assertFalse(cli._extract_no_validate(["--", "--no-validate"]))
+        self.assertEqual(["--", "--no-validate"], cli._remove_no_validate(["--no-validate", "--", "--no-validate"]))
+        self.assertFalse(cli._extract_debug_vm(["--", "--debug-vm=maybe"]))
+        self.assertEqual(["--", "--debug-vm"], cli._remove_debug_vm(["--debug-vm", "--", "--debug-vm"]))
+        self.assertFalse(cli._extract_no_cache(["--", "--no-cache=bogus"]))
+        self.assertEqual(["--", "--no-cache"], cli._strip_no_cache_flag(["--no-cache", "--", "--no-cache"]))
+        self.assertIsNone(cli._extract_local_repository(["--", "--local-repository"]))
+        self.assertEqual(
+            ["--", "--local-repository", "/tmp/repo"],
+            cli._strip_local_repository_args(["--local-repository", "/tmp/other", "--", "--local-repository", "/tmp/repo"]),
+        )
+        self.assertEqual(["--", "--offline"], cli._strip_orchestrator_only_args(["--offline", "--", "--offline"]))
+
+    def test_run_forwards_application_arguments_after_separator(self):
+        executed = []
+        project_dir = Path("/tmp/demo")
+        (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+        self._write_manifests(project_dir)
+        stdout = io.StringIO()
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            return 0
+
+        with redirect_stdout(stdout):
+            exit_code = cli.run(
+                ["run", "--project-dir", "/tmp/demo", "--", "--help", "-t", "--debug-vm"],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertNotIn("Usage:", stdout.getvalue())
+        self._assert_run_delegate(executed[-1], "/tmp/demo", ["--", "--help", "-t", "--debug-vm"])
+        self.assertNotIn(self._JDWP_FLAG, executed[-1])
+
+    def test_run_direct_source_debug_vm_uses_jvm_launcher_with_jdwp(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            source = Path(temp_dir) / "controller.py"
+            source.write_text("print('ok')\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                return 0
+
+            with patch.object(cli, "_check_port_available", return_value=(True, None)):
+                with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                    exit_code = cli.run(
+                        ["run", "--debug-vm", str(source)],
+                        runner_with_env=runner,
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                        java_home_provider=lambda: "/tmp/java-home",
+                    )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, len(executed))
+        command_line, env = executed[0]
+        self.assertEqual(str(self._fake_dev_delegate_root / "bin" / "pyronaut-dev"), command_line[0])
+        self.assertNotIn("--debug-vm", command_line)
+        self.assertEqual(str(source), command_line[-1])
+        self.assertIn(self._JDWP_FLAG, env["JAVA_TOOL_OPTIONS"].split())
+
+    def test_owned_test_resources_session_stop_is_not_repeated(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = (Path(temp_dir) / "demo").resolve()
+            (project_dir / "__pyronaut__").mkdir(parents=True, exist_ok=True)
+            executed = []
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir, owner_command="pyronaut test")
+            session._persist_session(started_at=time.time())  # noqa: SLF001 - simulate a started owned server
+            session._started = True  # noqa: SLF001
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                session.stop_if_owned(runner=runner, resolver=self._resolver())
+                session.stop_if_owned(runner=runner, resolver=self._resolver())
+
+        self.assertEqual(1, len(executed))
+        self._assert_test_resources_stop(executed[0], str(project_dir))
+        self.assertNotIn("ownership mismatch", stderr.getvalue())
+
+    def test_owned_test_resources_session_shared_stop_skip_is_reported_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = (Path(temp_dir) / "demo").resolve()
+            project_dir.mkdir(parents=True, exist_ok=True)
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir, owner_command="pyronaut test")
+            session._shared_server = True  # noqa: SLF001
+            session._started = True  # noqa: SLF001
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                session.stop_if_owned(runner=lambda command_line, env=None: 0, resolver=self._resolver())
+                session.stop_if_owned(runner=lambda command_line, env=None: 0, resolver=self._resolver())
+
+        self.assertEqual(1, stderr.getvalue().count("stop skipped (shared server mode)"))
+
+    def test_test_resources_server_start_forwards_local_repository_to_install(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = str(Path(temp_dir) / "repo")
+            exit_code = cli.run(
+                ["test-resources-server", "start", "--project-dir", "/tmp/demo", "--local-repository", repository],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            ["/tmp/pyronaut-install", "--project-dir", "/tmp/demo", "--local-repository", repository],
+            executed[0],
+        )
+
+    def test_external_test_install_uses_java_home_provider_once(self):
+        delegated = []
+        java_home_provider = lambda: "/tmp/java-home"
+
+        def delegate(command, *args, **kwargs):
+            delegated.append((command, kwargs.get("java_home_provider")))
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "external"
+            project_dir.mkdir()
+            (project_dir / "build.gradle").write_text("plugins { id 'java' }\n", encoding="utf-8")
+            with patch.object(cli, "_delegate", side_effect=delegate):
+                with patch.object(cli, "_run_lifecycle_validation", return_value=0):
+                    exit_code = cli.run(
+                        ["test", "--project-dir", str(project_dir)],
+                        runner_with_env=lambda command_line, env=None: 0,
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                        java_home_provider=java_home_provider,
+                    )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(("install", java_home_provider), delegated[0])
+        self.assertEqual(1, sum(1 for command, _ in delegated if command == "install"))
+        self.assertEqual("test", delegated[-1][0])
 
     @staticmethod
     def _resolver():

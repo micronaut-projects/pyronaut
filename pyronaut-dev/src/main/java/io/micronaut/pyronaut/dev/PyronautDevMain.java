@@ -37,7 +37,7 @@ import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceL
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
-import io.micronaut.python.processing.visitor.ScriptDef;
+import io.micronaut.python.processing.model.ScriptDef;
 import io.micronaut.pyronaut.testresources.DirectSourceTestResourcesSession;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
 import io.micronaut.pyronaut.validateconfig.PyronautValidateConfigMain;
@@ -69,10 +69,13 @@ import java.io.ByteArrayOutputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.URLDecoder;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -148,6 +151,8 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
     private static final Pattern JAVA_PACKAGE_PATTERN = Pattern.compile("(?m)^\\s*package\\s+([A-Za-z_][\\w.]*)\\s*;");
     private static final Pattern JAVA_TYPE_PATTERN = Pattern.compile("\\b(?:class|interface|record|enum)\\s+([A-Za-z_][\\w]*)");
+    private static final Pattern JAVA_BLOCK_COMMENT_PATTERN = Pattern.compile("(?s)/\\*.*?\\*/");
+    private static final Pattern JAVA_LINE_COMMENT_PATTERN = Pattern.compile("(?m)(?:^|(?<=\\s))//[^\\n]*");
     private static final Pattern PYTHON_TYPE_PATTERN = Pattern.compile("(?m)^\\s*class\\s+([A-Za-z_][\\w]*)\\s*[:(]");
     private static final Pattern PYTHON_JUNIT_MODULE_PATTERN = Pattern.compile(
         "(?m)^\\s*from\\s+micronaut\\.test\\.extensions\\.junit5\\.annotation\\s+import\\s+.*\\bMicronautTest\\b.*$"
@@ -155,6 +160,13 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final List<String> BUNDLED_TEST_RESOURCES_JARS = List.of(
         "micronaut-test-resources-",
         "micronaut-pyronaut-test-resources-server-"
+    );
+    private static final Set<String> PRUNED_TEST_DISCOVERY_DIRECTORIES = Set.of(
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        DEFAULT_PYRONAUT_DIR
     );
     private static final Set<String> TOOL_COMMANDS = Set.of(
         "install",
@@ -323,7 +335,13 @@ public final class PyronautDevMain implements Callable<Integer> {
             return USAGE_ERROR;
         }
         if (invocation.sources().isEmpty()) {
-            commandSpec.commandLine().usage(System.err);
+            if (commandSpec != null) {
+                commandSpec.commandLine().usage(System.err);
+            } else {
+                // Direct test invocations are constructed without picocli, so no @Spec is injected.
+                System.err.println("Direct tests require at least one application source before '--'."
+                    + " Usage: pyronaut test [options] <sources>... [-- <test sources>...]");
+            }
             return USAGE_ERROR;
         }
         return runDirectSources(invocation);
@@ -379,10 +397,12 @@ public final class PyronautDevMain implements Callable<Integer> {
                         continue;
                     }
                     case "--report" -> {
+                        // A bare --report keeps the default location, which is resolved
+                        // relative to the direct-source cache directory at execution time.
                         report = i + 1 < args.size()
                                 && !args.get(i + 1).startsWith("-")
                                 && !isSourceSelector(args.get(i + 1))
-                            ? Path.of(args.get(++i)) : Path.of("__pyronaut__", "reports", "tests");
+                            ? Path.of(args.get(++i)) : null;
                         continue;
                     }
                     case "--disable-test-resources" -> {
@@ -474,13 +494,41 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     static List<Path> findImplicitTestSources(Path root, SourceType sourceType) throws IOException {
         Path normalizedRoot = root.toAbsolutePath().normalize();
-        try (var paths = Files.walk(normalizedRoot)) {
-            return paths.filter(Files::isRegularFile)
-                .filter(path -> !isManagedSourcePath(normalizedRoot, path))
-                .filter(path -> isImplicitTestSource(path, sourceType))
-                .sorted()
-                .toList();
+        List<Path> matches = new ArrayList<>();
+        Files.walkFileTree(normalizedRoot, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) {
+                if (!directory.equals(normalizedRoot) && isPrunedTestDiscoveryDirectory(directory)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
+                if (attributes.isRegularFile() && isImplicitTestSource(file, sourceType)) {
+                    matches.add(file);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException e) {
+                // Unreadable entries must not abort implicit test discovery.
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        Collections.sort(matches);
+        return List.copyOf(matches);
+    }
+
+    private static boolean isPrunedTestDiscoveryDirectory(Path directory) {
+        Path fileName = directory.getFileName();
+        if (fileName == null) {
+            return false;
         }
+        String name = fileName.toString();
+        return name.startsWith(".") || PRUNED_TEST_DISCOVERY_DIRECTORIES.contains(name);
     }
 
     private static boolean isImplicitTestSource(Path path, SourceType sourceType) {
@@ -488,8 +536,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (sourceType == SourceType.JAVA) {
             return name.endsWith("Test.java");
         }
-        String lowerCase = name.toLowerCase(Locale.ROOT);
-        return lowerCase.endsWith("test.py") || lowerCase.startsWith("test_") && lowerCase.endsWith(".py");
+        if ("conftest.py".equals(name)) {
+            return false;
+        }
+        return name.endsWith("Test.py") || name.startsWith("test_") && name.endsWith(".py");
     }
 
     private Integer runDirectSources(DirectSourceInvocation invocation) {
@@ -610,7 +660,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         List<String> test = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::test).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         List<String> boms = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::bom).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         Map<String, List<String>> exclusions = new LinkedHashMap<>();
-        declarations.dependencies().forEach(dependency -> exclusions.put(dependency.coordinate().substring(0, dependency.coordinate().lastIndexOf(':')), dependency.exclusions()));
+        declarations.dependencies().forEach(dependency -> exclusions.put(moduleKey(dependency.coordinate()), dependency.exclusions()));
         DirectSourceDependencyResolver.LaunchResult result = new DirectSourceDependencyResolver().resolveForLaunch(
             projectCacheDirectory(invocation, stagingRoot),
             build,
@@ -636,6 +686,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             applyProperty("micronaut.processing." + name, value, previousProperties)
         );
         return result;
+    }
+
+    static String moduleKey(String coordinate) {
+        String[] parts = coordinate.split(":");
+        return parts.length >= 2 ? parts[0] + ":" + parts[1] : coordinate;
     }
 
     private static int runInMemoryApplication(DirectSourceInvocation invocation, Path stagingRoot) throws Exception {
@@ -771,17 +826,21 @@ public final class PyronautDevMain implements Callable<Integer> {
             if (testClassNames.isEmpty()) {
                 throw new IllegalArgumentException("No JUnit test classes were found in the supplied test sources");
             }
+            int selectedTestClasses = 0;
             for (String testClassName : testClassNames) {
-                Class<?> testClass;
-                try {
-                    testClass = Class.forName(testClassName, true, applicationClassLoader);
-                } catch (ClassNotFoundException e) {
-                    if (!testClassName.startsWith("python.")) {
-                        throw e;
+                Class<?> testClass = loadTestClass(testClassName, applicationClassLoader);
+                if (testClass == null) {
+                    // Source scanning is heuristic (comments, nested types); skip what cannot be loaded.
+                    if (invocation.verbose()) {
+                        System.out.println("Skipping test class candidate " + testClassName + ": class not found");
                     }
-                    testClass = Class.forName(testClassName.substring("python.".length()), true, applicationClassLoader);
+                    continue;
                 }
                 requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
+                selectedTestClasses++;
+            }
+            if (selectedTestClasses == 0) {
+                throw new IllegalArgumentException("No JUnit test classes could be loaded from the supplied test sources: " + testClassNames);
             }
             // Direct source execution currently supports compiled JUnit modules only.
             // Do not let the pytest engine bootstrap (and require pytest on disk).
@@ -856,16 +915,39 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
+    private static Class<?> loadTestClass(String className, ClassLoader classLoader) {
+        try {
+            return Class.forName(className, true, classLoader);
+        } catch (ClassNotFoundException e) {
+            if (!className.startsWith("python.")) {
+                return null;
+            }
+        }
+        try {
+            return Class.forName(className.substring("python.".length()), true, classLoader);
+        } catch (ClassNotFoundException e) {
+            return null;
+        }
+    }
+
     private static DirectPythonContextState detachPythonContext() {
-        Context context = PythonContextRuntime.isInitialized() ? PythonContextRuntime.getContext() : null;
-        ClassLoader classLoader = PythonContextRuntime.getContextClassLoader();
+        boolean initialized = PythonContextRuntime.isInitialized();
+        Context context = initialized ? PythonContextRuntime.getContext() : null;
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         boolean reuse = PythonContextRuntime.isReuseContext();
         PythonContextRuntime.setReuseContext(false);
         PythonContextRuntime.resetContext();
-        return new DirectPythonContextState(context, classLoader, reuse);
+        if (context != null) {
+            try {
+                context.close(true);
+            } catch (RuntimeException ignored) {
+                // The context may already have been closed by its owning application.
+            }
+        }
+        return new DirectPythonContextState(initialized, classLoader, reuse);
     }
 
-    private static void restorePythonContext(DirectPythonContextState previous) {
+    private static void restorePythonContext(DirectPythonContextState previous) throws IOException {
         if (PythonContextRuntime.isInitialized()) {
             Context directContext = PythonContextRuntime.getContext();
             PythonContextRuntime.setReuseContext(false);
@@ -877,8 +959,15 @@ public final class PyronautDevMain implements Callable<Integer> {
                 PythonContextRuntime.resetContext();
             }
         }
-        if (previous.context() != null) {
-            PythonContextRuntime.setContext(previous.context(), previous.classLoader());
+        if (previous.initialized()) {
+            ClassLoader classLoader = previous.classLoader() == null
+                ? PyronautDevMain.class.getClassLoader()
+                : previous.classLoader();
+            GraalPyContextFactory.bootstrapReusableContext(
+                classLoader,
+                Map.of(),
+                GraalPyContextFactory.APPLICATION_MAIN
+            );
         }
         PythonContextRuntime.setReuseContext(previous.reuse());
     }
@@ -902,6 +991,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         for (Path file : sourceFiles(selectors)) {
             String source = Files.readString(file);
             if (file.getFileName().toString().endsWith(".java")) {
+                source = stripJavaComments(source);
                 Matcher packageMatcher = JAVA_PACKAGE_PATTERN.matcher(source);
                 String packageName = packageMatcher.find() ? packageMatcher.group(1) : "";
                 Matcher typeMatcher = JAVA_TYPE_PATTERN.matcher(source);
@@ -935,6 +1025,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
         }
         return classNames;
+    }
+
+    static String stripJavaComments(String source) {
+        String withoutBlockComments = JAVA_BLOCK_COMMENT_PATTERN.matcher(source).replaceAll("");
+        return JAVA_LINE_COMMENT_PATTERN.matcher(withoutBlockComments).replaceAll("");
     }
 
     private static List<Path> sourceFiles(List<Path> selectors) throws IOException {
@@ -1592,7 +1687,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         return false;
     }
 
-    private record DirectPythonContextState(Context context, ClassLoader classLoader, boolean reuse) {
+    private record DirectPythonContextState(boolean initialized, ClassLoader classLoader, boolean reuse) {
     }
 
     private static final class ConsoleTestExecutionListener implements TestExecutionListener {

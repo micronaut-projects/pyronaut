@@ -15,6 +15,7 @@
  */
 package io.micronaut.python.logging.impl;
 
+import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.context.python.PythonContextRuntime;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Value;
@@ -39,22 +40,23 @@ class PythonLoggingServiceProviderTest {
     private Context graalContext;
 
     @BeforeEach
-    void setupGraalPyContext() {
-        // Create GraalPy context
-        graalContext = Context.newBuilder("python")
-                .allowAllAccess(true)
-                .build();
-
-        // Set the context in PythonContextRuntime
-        PythonContextRuntime.setContext(graalContext);
+    void setupGraalPyContext() throws Exception {
+        graalContext = GraalPyContextFactory.bootstrapReusableContext(
+            PythonLoggingServiceProviderTest.class.getClassLoader()
+        );
     }
 
     @AfterEach
     void cleanup() {
         if (graalContext != null) {
+            resetPythonContext();
             graalContext.close();
-            PythonContextRuntime.setContext(null);
         }
+    }
+
+    private static void resetPythonContext() {
+        PythonContextRuntime.setReuseContext(false);
+        PythonContextRuntime.resetContext();
     }
 
     @Test
@@ -72,7 +74,7 @@ class PythonLoggingServiceProviderTest {
     @Test
     void testDelayedConsoleLoggerIsUsedWhenContextIsNotAvailable() {
         // Clear the context
-        PythonContextRuntime.setContext(null);
+        resetPythonContext();
 
         // When no GraalPy context is available, DelayedConsoleLogger should be used
         Logger logger = LoggerFactory.getLogger("test.console");
@@ -157,6 +159,32 @@ class PythonLoggingServiceProviderTest {
     }
 
     @Test
+    void testPythonLoggerProbesMatchingPythonLevels() {
+        graalContext.eval("python", "import logging; logging.getLogger('test.probe').setLevel(logging.INFO)");
+        PythonLogger logger = new PythonLogger("test.probe");
+
+        assertFalse(logger.isDebugEnabled(), "DEBUG must be disabled when the Python logger level is INFO");
+        assertTrue(logger.isInfoEnabled(), "INFO must be enabled when the Python logger level is INFO");
+        assertTrue(logger.isWarnEnabled(), "WARN must be enabled when the Python logger level is INFO");
+        assertTrue(logger.isErrorEnabled(), "ERROR must be enabled when the Python logger level is INFO");
+
+        graalContext.eval("python", "logging.getLogger('test.probe').setLevel(logging.ERROR)");
+        assertFalse(logger.isWarnEnabled(), "WARN must be disabled when the Python logger level is ERROR");
+        assertTrue(logger.isErrorEnabled(), "ERROR must still be enabled when the Python logger level is ERROR");
+    }
+
+    @Test
+    void testPythonLoggerNamesWithQuotesAreSupported() {
+        String name = "test.quote'd\"name";
+        PythonLogger logger = new PythonLogger(name);
+
+        assertEquals(name, logger.getName());
+        Value pythonName = graalContext.eval("python", "import logging; logging.getLogger(\"test.quote'd\\\"name\").name");
+        assertEquals(name, pythonName.asString());
+        assertTrue(logger.isErrorEnabled());
+    }
+
+    @Test
     void testLoggerFactoryReturnsSameInstance() {
         Logger logger1 = LoggerFactory.getLogger("test.singleton");
         Logger logger2 = LoggerFactory.getLogger("test.singleton");
@@ -182,9 +210,9 @@ class PythonLoggingServiceProviderTest {
     }
 
     @Test
-    void testDelayedConsoleLoggerFallback() {
+    void testDelayedConsoleLoggerFallback() throws Exception {
         // Clear context to force DelayedConsoleLogger usage
-        PythonContextRuntime.setContext(null);
+        resetPythonContext();
 
         Logger logger = LoggerFactory.getLogger("test.fallback");
 
@@ -226,7 +254,11 @@ class PythonLoggingServiceProviderTest {
         }
 
         // After setting context, it should delegate to PythonLogger
-        PythonContextRuntime.setContext(graalContext);
+        resetPythonContext();
+        graalContext.close();
+        graalContext = GraalPyContextFactory.bootstrapReusableContext(
+            PythonLoggingServiceProviderTest.class.getClassLoader()
+        );
 
         Logger sameLogger = LoggerFactory.getLogger("test.fallback");
         // Note: This might still be the same DelayedConsoleLogger instance,

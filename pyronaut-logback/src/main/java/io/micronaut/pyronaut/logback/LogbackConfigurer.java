@@ -19,23 +19,30 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
+import ch.qos.logback.classic.filter.ThresholdFilter;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.Appender;
 import ch.qos.logback.core.ConsoleAppender;
 import ch.qos.logback.core.FileAppender;
+import ch.qos.logback.core.rolling.FixedWindowRollingPolicy;
 import ch.qos.logback.core.rolling.RollingFileAppender;
-import ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy;
+import ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy;
+import ch.qos.logback.core.util.FileSize;
 import io.micronaut.core.annotation.Internal;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Handler;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Utility class for programmatic configuration of logback.
@@ -47,6 +54,38 @@ import java.util.logging.Handler;
 public final class LogbackConfigurer {
 
     private static final String PYTHON_LOGGING_CONFIGURED = "pyronaut.python.logging.configured";
+    private static final String PID_PROPERTY = "PID";
+    private static final String DEFAULT_PATTERN = "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
+    private static final long DEFAULT_MAX_BYTES = 10L * 1024 * 1024;
+    private static final int DEFAULT_BACKUP_COUNT = 5;
+
+    /**
+     * Matches Python printf-style logging tokens such as {@code %(levelname)-8s}: the attribute
+     * name, an optional width/precision modifier and the conversion character.
+     */
+    private static final Pattern PYTHON_FORMAT_TOKEN = Pattern.compile("%\\((\\w+)\\)([-0-9.]*)([sdf])");
+
+    /**
+     * Python {@code LogRecord} attribute names mapped to logback conversion words.
+     */
+    private static final Map<String, String> PYTHON_FORMAT_TOKENS = Map.ofEntries(
+        Map.entry("asctime", "d{yyyy-MM-dd HH:mm:ss.SSS}"),
+        Map.entry("levelname", "level"),
+        Map.entry("levelno", "level"),
+        Map.entry("name", "logger"),
+        Map.entry("message", "msg"),
+        Map.entry("msg", "msg"),
+        Map.entry("threadName", "thread"),
+        Map.entry("thread", "thread"),
+        Map.entry("lineno", "line"),
+        Map.entry("filename", "file"),
+        Map.entry("pathname", "file"),
+        Map.entry("funcName", "method"),
+        Map.entry("module", "logger{0}"),
+        Map.entry("process", "property{" + PID_PROPERTY + "}"),
+        Map.entry("processName", "property{" + PID_PROPERTY + "}"),
+        Map.entry("relativeCreated", "relative")
+    );
 
     private static final Map<String, Appender<ILoggingEvent>> APPENDERS = new HashMap<>();
     private static final Map<String, String> FORMATTERS = new HashMap<>();
@@ -143,6 +182,7 @@ public final class LogbackConfigurer {
         System.clearProperty(PYTHON_LOGGING_CONFIGURED);
         LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
         lc.reset(); // Reset existing configuration
+        lc.putProperty(PID_PROPERTY, Long.toString(ProcessHandle.current().pid()));
         installJulBridge();
         return lc;
     }
@@ -185,24 +225,96 @@ public final class LogbackConfigurer {
 
     /**
      * Translate Python logging format string to logback pattern.
+     * Every {@code %(attribute)[modifier]conv} token is rewritten to the equivalent logback
+     * conversion word, preserving width and alignment modifiers (for example
+     * {@code %(levelname)-8s} becomes {@code %-8level}). Unknown attributes (typically values
+     * supplied through {@code extra=...}) are rendered from the MDC.
+     *
+     * @param pythonFormat the Python format string
+     * @return the logback pattern
      */
-    private static String translatePythonFormatToLogback(String pythonFormat) {
+    static String translatePythonFormatToLogback(String pythonFormat) {
         if (pythonFormat == null) {
-            return "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
+            return DEFAULT_PATTERN;
         }
-        // Basic translation - this could be extended for more complex formats
-        String logbackPattern = pythonFormat
-            .replace("%(asctime)s", "%d{yyyy-MM-dd HH:mm:ss.SSS}")
-            .replace("%(levelname)s", "%level")
-            .replace("%(name)s", "%logger")
-            .replace("%(message)s", "%msg");
+        Matcher matcher = PYTHON_FORMAT_TOKEN.matcher(pythonFormat.replace("%%", "\0"));
+        StringBuilder logbackPattern = new StringBuilder();
+        while (matcher.find()) {
+            String attribute = matcher.group(1);
+            String modifier = matcher.group(2);
+            String conversion = PYTHON_FORMAT_TOKENS.get(attribute);
+            if (conversion == null) {
+                conversion = "X{" + attribute + "}";
+            }
+            matcher.appendReplacement(logbackPattern, Matcher.quoteReplacement("%" + modifier + conversion));
+        }
+        matcher.appendTail(logbackPattern);
+        String pattern = logbackPattern.toString().replace("\0", "\\%");
 
         // Ensure the pattern ends with %n for proper line separation
-        if (!logbackPattern.endsWith("%n")) {
-            logbackPattern += "%n";
+        if (!pattern.endsWith("%n")) {
+            pattern += "%n";
         }
 
-        return logbackPattern;
+        return pattern;
+    }
+
+    /**
+     * Maps a Python logging level (a name such as {@code WARNING} or a numeric value such as
+     * {@code 20}) to the corresponding logback level.
+     *
+     * @param level the Python level name or number
+     * @return the logback level, or {@code null} for {@code NOTSET} (inherit from the parent logger)
+     * @throws IllegalArgumentException if the level name is not recognised
+     */
+    static @Nullable Level toLogbackLevel(@Nullable Object level) {
+        if (level == null) {
+            return null;
+        }
+        if (level instanceof Number number) {
+            return numericLevel(number.intValue());
+        }
+        String name = level.toString().trim().toUpperCase(Locale.ROOT);
+        if (name.isEmpty()) {
+            return null;
+        }
+        if (name.chars().allMatch(Character::isDigit)) {
+            return numericLevel(Integer.parseInt(name));
+        }
+        switch (name) {
+            case "NOTSET":
+                return null;
+            case "WARNING":
+                return Level.WARN;
+            case "CRITICAL":
+            case "FATAL":
+                return Level.ERROR;
+            default:
+                Level mapped = Level.toLevel(name, null);
+                if (mapped == null) {
+                    throw new IllegalArgumentException("Unknown logging level: " + level);
+                }
+                return mapped;
+        }
+    }
+
+    private static @Nullable Level numericLevel(int value) {
+        if (value <= 0) {
+            return null; // NOTSET
+        }
+        if (value >= 40) {
+            return Level.ERROR;
+        }
+        if (value >= 30) {
+            return Level.WARN;
+        }
+        if (value >= 20) {
+            return Level.INFO;
+        }
+        if (value >= 10) {
+            return Level.DEBUG;
+        }
+        return Level.TRACE;
     }
 
     /**
@@ -219,7 +331,7 @@ public final class LogbackConfigurer {
         if (formatter != null && !FORMATTERS.containsKey(formatter)) {
             throw new IllegalArgumentException("Formatter '" + formatter + "' not found in formatters configuration");
         }
-        String pattern = formatter != null ? FORMATTERS.get(formatter) : "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
+        String pattern = formatter != null ? FORMATTERS.get(formatter) : DEFAULT_PATTERN;
 
         Appender<ILoggingEvent> appender = null;
         if (clazz.contains("StreamHandler")) {
@@ -227,13 +339,8 @@ public final class LogbackConfigurer {
                 ? "System.err"
                 : "System.out";
             appender = createConsoleAppender(lc, pattern, target);
-        } else if (clazz.contains("FileHandler")) {
-            String filename = (String) config.get("filename");
-            if (filename == null) {
-                throw new IllegalArgumentException("FileHandler '" + name + "' missing 'filename' configuration");
-            }
-            appender = createFileAppender(lc, filename, pattern, config.get("delay") instanceof Boolean b ? b : false);
         } else if (clazz.contains("RotatingFileHandler")) {
+            // Must be checked before the plain FileHandler branch, whose name is a suffix of this one
             String filename = (String) config.get("filename");
             if (filename == null) {
                 throw new IllegalArgumentException("RotatingFileHandler '" + name + "' missing 'filename' configuration");
@@ -241,6 +348,12 @@ public final class LogbackConfigurer {
             Number maxBytes = (Number) config.get("maxBytes");
             Number backupCount = (Number) config.get("backupCount");
             appender = createRollingFileAppender(lc, filename, pattern, maxBytes, backupCount);
+        } else if (clazz.contains("FileHandler")) {
+            String filename = (String) config.get("filename");
+            if (filename == null) {
+                throw new IllegalArgumentException("FileHandler '" + name + "' missing 'filename' configuration");
+            }
+            appender = createFileAppender(lc, filename, pattern, config.get("delay") instanceof Boolean b ? b : false);
         } else {
             // Try to instantiate the specified Logback appender class
             appender = createAppenderFromClass(lc, clazz, config);
@@ -248,6 +361,15 @@ public final class LogbackConfigurer {
 
         if (appender != null) {
             appender.setName(name);
+            // Honour the handler level as a threshold filter on the appender
+            Level handlerLevel = toLogbackLevel(config.get("level"));
+            if (handlerLevel != null) {
+                ThresholdFilter filter = new ThresholdFilter();
+                filter.setContext(lc);
+                filter.setLevel(handlerLevel.toString());
+                filter.start();
+                appender.addFilter(filter);
+            }
             APPENDERS.put(name, appender);
         }
     }
@@ -257,10 +379,12 @@ public final class LogbackConfigurer {
      */
     @SuppressWarnings("unchecked")
     private static void configureLogger(Logger logger, Map<String, Object> config) {
-        // Set level
-        String level = (String) config.get("level");
-        if (level != null) {
-            logger.setLevel(Level.toLevel(level));
+        // Set level (NOTSET maps to null which means inherit; the root logger cannot inherit)
+        if (config.containsKey("level")) {
+            Level level = toLogbackLevel(config.get("level"));
+            if (level != null || !Logger.ROOT_LOGGER_NAME.equals(logger.getName())) {
+                logger.setLevel(level);
+            }
         }
 
         // Set handlers
@@ -330,9 +454,18 @@ public final class LogbackConfigurer {
     }
 
     /**
-     * Create a rolling file appender.
+     * Create a rolling file appender mirroring Python's {@code RotatingFileHandler}: size based
+     * rotation with a fixed window of {@code backupCount} backups named {@code file.1 .. file.N}.
+     * As in Python, a {@code maxBytes} or {@code backupCount} of zero disables rotation.
      */
-    private static RollingFileAppender<ILoggingEvent> createRollingFileAppender(LoggerContext lc, String filename, String pattern, Number maxBytes, Number backupCount) {
+    private static FileAppender<ILoggingEvent> createRollingFileAppender(LoggerContext lc, String filename, String pattern, Number maxBytes, Number backupCount) {
+        long maxSize = maxBytes != null ? maxBytes.longValue() : DEFAULT_MAX_BYTES;
+        int backups = backupCount != null ? backupCount.intValue() : DEFAULT_BACKUP_COUNT;
+        if (maxSize <= 0 || backups <= 0) {
+            // Python never rolls over in this case; fall back to a plain file appender
+            return createFileAppender(lc, filename, pattern, false);
+        }
+
         PatternLayoutEncoder ple = new PatternLayoutEncoder();
         ple.setPattern(pattern);
         ple.setContext(lc);
@@ -344,26 +477,23 @@ public final class LogbackConfigurer {
         rollingAppender.setContext(lc);
         rollingAppender.setImmediateFlush(true);
 
-        // Create and configure rolling policy
-        SizeAndTimeBasedRollingPolicy<ILoggingEvent> rollingPolicy = new SizeAndTimeBasedRollingPolicy<>();
+        // Fixed window rolling policy: file.1 is the most recent backup, file.<backupCount> the oldest
+        FixedWindowRollingPolicy rollingPolicy = new FixedWindowRollingPolicy();
         rollingPolicy.setContext(lc);
         rollingPolicy.setParent(rollingAppender);
-        rollingPolicy.setFileNamePattern(filename + ".%d{yyyy-MM-dd}.%i.gz");
-        
-        if (maxBytes != null) {
-            rollingPolicy.setMaxFileSize(ch.qos.logback.core.util.FileSize.valueOf(String.valueOf(maxBytes.longValue())));
-        } else {
-            rollingPolicy.setMaxFileSize(ch.qos.logback.core.util.FileSize.valueOf("10MB"));
-        }
-        
-        if (backupCount != null) {
-            rollingPolicy.setMaxHistory(backupCount.intValue());
-        } else {
-            rollingPolicy.setMaxHistory(5);
-        }
-        
+        rollingPolicy.setFileNamePattern(filename + ".%i");
+        rollingPolicy.setMinIndex(1);
+        rollingPolicy.setMaxIndex(backups);
         rollingPolicy.start();
+
+        // Roll over once the active file exceeds maxBytes
+        SizeBasedTriggeringPolicy<ILoggingEvent> triggeringPolicy = new SizeBasedTriggeringPolicy<>();
+        triggeringPolicy.setContext(lc);
+        triggeringPolicy.setMaxFileSize(FileSize.valueOf(String.valueOf(maxSize)));
+        triggeringPolicy.start();
+
         rollingAppender.setRollingPolicy(rollingPolicy);
+        rollingAppender.setTriggeringPolicy(triggeringPolicy);
         rollingAppender.start();
 
         return rollingAppender;
@@ -373,7 +503,7 @@ public final class LogbackConfigurer {
      * Add a default console appender.
      */
     private static void addDefaultConsoleAppender(LoggerContext lc) {
-        ConsoleAppender<ILoggingEvent> consoleAppender = createConsoleAppender(lc, "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
+        ConsoleAppender<ILoggingEvent> consoleAppender = createConsoleAppender(lc, DEFAULT_PATTERN);
         APPENDERS.put("console", consoleAppender);
     }
 
@@ -424,7 +554,7 @@ public final class LogbackConfigurer {
             try {
                 Method setEncoder = clazz.getMethod("setEncoder", ch.qos.logback.core.encoder.Encoder.class);
                 String formatter = (String) config.get("formatter");
-                String pattern = formatter != null ? FORMATTERS.get(formatter) : "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n";
+                String pattern = formatter != null ? FORMATTERS.get(formatter) : DEFAULT_PATTERN;
 
                 PatternLayoutEncoder ple = new PatternLayoutEncoder();
                 ple.setPattern(pattern);

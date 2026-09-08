@@ -23,3 +23,13 @@ test('leaves selectors outside the configured test source unchanged', () => {
 test('normalizes windows-style selectors for pyronaut', () => {
   assert.equal(toPyronautSelector('tests\\test_app.py::test_index', 'tests'), 'test_app.py::test_index');
 });
+
+test('quotes windows shell arguments containing spaces or quotes', () => {
+  const { quoteWindowsArgument } = require('../src/runner.ts');
+
+  assert.equal(quoteWindowsArgument('test'), 'test');
+  assert.equal(quoteWindowsArgument('C:\\Users\\John Smith\\pyronaut.cmd'), '"C:\\Users\\John Smith\\pyronaut.cmd"');
+  assert.equal(quoteWindowsArgument('C:\\path with space\\'), '"C:\\path with space\\\\"');
+  assert.equal(quoteWindowsArgument('say "hi"'), '"say \\"hi\\""');
+  assert.equal(quoteWindowsArgument(''), '""');
+});

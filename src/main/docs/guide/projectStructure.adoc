@@ -10,7 +10,7 @@ If you don't want to install GraalVM manually then Pyronaut will provision an in
 type = "jvm" # jvm|native
 distribution = "ee"
 java-version = 25
-version = "25i2"
+version = "25i3"
 ----
 
 It is important to note there are two possible toolchains (`native` and `jvm`) that have different trade offs.
@@ -158,3 +158,5 @@ The `__pyronaut__` directory contains generated state such as dependency manifes
 When incremental processing is enabled, compiler state is stored separately for the main and test passes under `__pyronaut__/incremental/main` and `__pyronaut__/incremental/test`.
 When the compiler daemon is enabled, its authenticated local endpoint metadata and detached diagnostics are stored under `__pyronaut__/daemon`.
 It is safe to delete this directory when you want a clean local Pyronaut state; the CLI recreates it as needed.
+
+For Maven and Gradle projects (see <<mavenGradle,Using Maven and Gradle Projects>>) the same generated state is written under the build's output directory instead: `target/pyronaut` for Maven and `build/pyronaut` for Gradle.

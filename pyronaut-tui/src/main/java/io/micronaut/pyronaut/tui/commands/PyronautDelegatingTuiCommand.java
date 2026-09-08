@@ -386,7 +386,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             return;
         }
         var summary = summarizeReports(reports);
-        renderSummary(summary);
+        renderSummary(summary, reports);
         if (testCode == 0 && summary.failed == 0) {
             controller.notify("Tests completed successfully", UiModel.Severity.SUCCESS);
         } else if (summary.failed > 0) {
@@ -470,7 +470,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         }
         controller.stopCompiling();
         var summary = summarizeReports(reports);
-        renderSummary(summary);
+        renderSummary(summary, reports);
         if (testCode == 0 && summary.failed == 0) {
             controller.notify("Direct tests completed successfully", UiModel.Severity.SUCCESS);
         } else if (summary.failed > 0) {
@@ -528,6 +528,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         }
         var stream = new IncrementalEventStream(eventsFile);
         try {
+            clearStaleTestReports(eventsFile);
             long generation = executionGeneration.incrementAndGet();
             var process = startProcess(project, command);
             activeProcess.set(new ManagedProcess(generation, process, null));
@@ -547,6 +548,20 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             Thread.currentThread().interrupt();
             stream.close();
             return -1;
+        }
+    }
+
+    /**
+     * Removes the previous run's event and JUnit reports so that stale events are
+     * not replayed as live progress before pyronaut-test writes the new run.
+     */
+    private void clearStaleTestReports(Path eventsFile) {
+        for (Path report : List.of(eventsFile, eventsFile.resolveSibling("junit.xml"))) {
+            try {
+                Files.deleteIfExists(report);
+            } catch (IOException e) {
+                controller.notify("Could not remove stale test report " + report + ": " + e.getMessage(), UiModel.Severity.WARNING);
+            }
         }
     }
 
@@ -2105,7 +2120,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
         return new TestCaseResult(className, name, UiModel.Status.PASSED, null);
     }
 
-    private void renderSummary(ReportSummary summary) {
+    private void renderSummary(ReportSummary summary, Path reports) {
         controller.startTesting();
         controller.resetTestTree();
 
@@ -2130,7 +2145,7 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
 
         controller.updateTestSummary(summary.passed, summary.failed, summary.skipped, 0, 0);
         if (summary.total == 0) {
-            controller.notify("No test reports found under " + reportDir, UiModel.Severity.WARNING);
+            controller.notify("No test reports found under " + reports, UiModel.Severity.WARNING);
         }
         controller.stopTesting();
     }
@@ -2545,9 +2560,17 @@ public final class PyronautDelegatingTuiCommand implements Callable<Integer> {
             }
             String runId = jsonString(line, "runId");
             long seq = jsonLong(line, "seq");
-            if (activeRunId == null && "session_started".equals(eventType)) {
-                activeRunId = runId;
-                lastSeq = seq;
+            if ("session_started".equals(eventType)) {
+                if (activeRunId != null && runId != null && !activeRunId.equals(runId)) {
+                    // A new pyronaut-test session superseded the tracked one: start over
+                    // instead of ignoring every event of the new run.
+                    reset();
+                }
+                if (activeRunId == null) {
+                    activeRunId = runId;
+                    // The session_started event itself must still pass the seq guard below.
+                    lastSeq = 0;
+                }
             }
             if (activeRunId != null && runId != null && !activeRunId.equals(runId)) {
                 return;

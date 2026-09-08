@@ -2,7 +2,7 @@
 
 Pyronaut resolves Java dependencies through Apache Maven Resolver.
 
-Direct source applications can instead use `MavenRepository`; see <<configuration.directSourceDeclarations,Declaring Direct Source Dependencies>>.
+Direct source applications can instead use `MavenRepository`; see <<directSourceDeclarations,Declaring Direct Source Dependencies>>.
 Configure remote and local repositories in `[tool.pyronaut]`:
 
 [source,toml]
@@ -23,7 +23,9 @@ Supported entries:
 - `https://...`: a remote Maven repository URL
 - relative or absolute file paths: local Maven repository directories
 
-If `repositories` is omitted or empty, Pyronaut uses Maven Central.
+If `repositories` is omitted or empty, Pyronaut uses Maven Central. Relative file paths are resolved against the project directory.
+
+When the configured Micronaut Core version or the installed Pyronaut SDK is a snapshot, Pyronaut additionally consults the Sonatype Central snapshots repository and the local Maven repository so that snapshot artifacts resolve. Set `PYRONAUT_SONATYPE_SNAPSHOTS=false` (or `-Dpyronaut.sonatype.snapshots.enabled=false`) to disable the snapshot repository.
 
 The repositories above are project repositories used by `pyronaut install`.
 The global `pyronaut setup` command has a separate repository list in `~/.pyronaut/settings.toml`:

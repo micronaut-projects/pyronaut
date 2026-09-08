@@ -592,6 +592,13 @@ grep -Fq 'Downloading GraalVM SDK... 100%' /work/logs/sdk-setup.log
 grep -Fq 'Downloading pyronaut-dev... 0%' /work/logs/sdk-setup.log
 grep -Fq 'Downloading pyronaut-run... 0%' /work/logs/sdk-setup.log
 grep -Fq 'Downloading pyronaut-run-python... 0%' /work/logs/sdk-setup.log
+grep -Fq 'Pyronaut setup: locating or provisioning a compatible GraalVM JDK (JDK 25+)...' /work/logs/sdk-setup.log
+grep -Fq 'Pyronaut setup: provisioning native launchers...' /work/logs/sdk-setup.log
+grep -Fq 'Pyronaut setup: resolving SDK dependencies...' /work/logs/sdk-setup.log
+if grep -Fq $'\r' /work/logs/sdk-setup.log; then
+  echo 'Setup log contains carriage-return progress output' >&2
+  exit 1
+fi
 
 # A second setup with identical inputs validates and reuses the published state.
 run_test sdk-setup-cache-hit \

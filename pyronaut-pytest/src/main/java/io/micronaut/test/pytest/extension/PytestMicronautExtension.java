@@ -19,7 +19,6 @@ import io.micronaut.context.ApplicationContext;
 import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.DefaultApplicationContextBuilder;
 import io.micronaut.context.annotation.Property;
-import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.core.annotation.NonNull;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
@@ -266,10 +265,6 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     }
 
     static ClassLoader resolveApplicationClassLoader() {
-        ClassLoader contextClassLoader = PythonContextRuntime.getContextClassLoader();
-        if (contextClassLoader != null) {
-            return contextClassLoader;
-        }
         return Thread.currentThread().getContextClassLoader();
     }
 

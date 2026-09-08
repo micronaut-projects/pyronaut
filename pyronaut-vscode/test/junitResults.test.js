@@ -47,3 +47,25 @@ test('matches class method testcase names to project selectors', () => {
 
   assert.equal(result.status, 'passed');
 });
+
+test('aggregates parametrized junit testcases for a single selector', () => {
+  const results = [
+    { className: '__pyronaut__.test-sources.test_app', name: 'test_values[1]', status: 'passed', message: '' },
+    { className: '__pyronaut__.test-sources.test_app', name: 'test_values[2]', status: 'failed', message: 'assert 2 == 3' },
+    { className: '__pyronaut__.test-sources.test_app', name: 'test_values[3]', status: 'skipped', message: '' },
+    { className: '__pyronaut__.test-sources.test_app', name: 'test_other', status: 'passed', message: '' }
+  ];
+
+  const failed = matchJUnitResult({ selector: 'tests/test_app.py::test_values' }, results);
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.message, 'test_values[2]: assert 2 == 3');
+
+  const passed = matchJUnitResult({ selector: 'tests/test_app.py::test_other' }, results);
+  assert.equal(passed.status, 'passed');
+
+  const allPassed = matchJUnitResult({ selector: 'tests/test_app.py::test_values' }, [
+    { className: '__pyronaut__.test-sources.test_app', name: 'test_values[1]', status: 'passed', message: '' },
+    { className: '__pyronaut__.test-sources.test_app', name: 'test_values[2]', status: 'passed', message: '' }
+  ]);
+  assert.equal(allPassed.status, 'passed');
+});

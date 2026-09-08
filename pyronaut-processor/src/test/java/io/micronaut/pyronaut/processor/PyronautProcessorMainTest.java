@@ -391,6 +391,29 @@ class PyronautProcessorMainTest {
     }
 
     @Test
+    void missingPyprojectReturnsConfigErrorWithoutVerboseHint() throws Exception {
+        Path project = tempDir.resolve("project-missing-pyproject");
+        Files.createDirectories(project);
+
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), new CapturingExecutor());
+        command.projectDir = project;
+
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
+        try {
+            assertEquals(PyronautProcessorExitCode.CONFIG_ERROR.code(), command.call());
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        String output = stderr.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("Missing required file 'pyproject.toml'"));
+        assertFalse(output.contains("Processing failed"));
+        assertFalse(output.contains("Re-run with --verbose"));
+    }
+
+    @Test
     void runtimeFailureIncludesVerboseHintWithoutStacktrace() throws Exception {
         Path project = tempDir.resolve("project-runtime-failure");
         Files.createDirectories(project);

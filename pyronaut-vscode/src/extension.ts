@@ -4,7 +4,7 @@ const path = require('path');
 const vscode = require('vscode');
 const { isPyronautProject, testSourceDir } = require('./pyronautProject');
 const { isPythonTestFile, parsePythonTests } = require('./pythonTests');
-const { buildPyronautTestArgs } = require('./runner');
+const { buildPyronautTestArgs, quoteWindowsArgument } = require('./runner');
 const { relativePath } = require('./pathUtils');
 const { readEvents } = require('./testEvents');
 const { readJUnitResults } = require('./junitResults');
@@ -158,20 +158,34 @@ async function runFolderTests(run, folder, selected, itemData, token, runAll) {
     run.enqueued(candidate.item);
   }
 
-  prepareReportFiles([eventsFile, junitFile]);
-  const result = await spawnPyronaut(executable, args, folder.uri.fsPath, run, token);
-  const events = readEvents(eventsFile);
-  const { seen, started, finished } = applyResultEvents(run, candidates, events, {
-    makeMessage: message => new vscode.TestMessage(message),
-    toOutput: toTerminalText
-  });
+  const started = new Set();
+  const finished = new Set();
+  let result = { code: 1 };
+  let failure = null;
+  try {
+    prepareReportFiles([eventsFile, junitFile]);
+    result = await spawnPyronaut(executable, args, folder.uri.fsPath, run, token);
+    const events = readEvents(eventsFile);
+    const { seen } = applyResultEvents(run, candidates, events, {
+      makeMessage: message => new vscode.TestMessage(message),
+      toOutput: toTerminalText,
+      started,
+      finished
+    });
 
-  const junitResults = readJUnitResults(junitFile);
-  applyJUnitFallback(run, candidates, junitResults, seen, message => new vscode.TestMessage(message), finished, started);
+    const junitResults = readJUnitResults(junitFile);
+    applyJUnitFallback(run, candidates, junitResults, seen, message => new vscode.TestMessage(message), finished, started);
+  } catch (error) {
+    // Never let a report parsing failure leave candidates without a status.
+    failure = error;
+    run.appendOutput(toTerminalText(`${error && error.message ? error.message : String(error)}\n`));
+  }
 
-  const detail = result.code === 0
-    ? 'Check events.ndjson or junit.xml for a missing test identifier.'
-    : `pyronaut test exited with code ${result.code}.`;
+  const detail = failure
+    ? `Failed processing test results: ${failure.message || failure}.`
+    : result.code === 0
+      ? 'Check events.ndjson or junit.xml for a missing test identifier.'
+      : `pyronaut test exited with code ${result.code}.`;
   completeUnreportedCandidates(run, candidates, finished, started, message => new vscode.TestMessage(message), detail);
 }
 
@@ -196,7 +210,11 @@ function selectorsFor(items, itemData) {
 function spawnPyronaut(executable, args, cwd, run, token) {
   return new Promise(resolve => {
     run.appendOutput(`$ ${[executable, ...args].join(' ')}\r\n`);
-    const child = cp.spawn(executable, args, { cwd, shell: process.platform === 'win32' });
+    // Windows needs a shell to resolve .cmd/.bat launchers, but the shell joins
+    // arguments verbatim, so quote each one to keep paths with spaces intact.
+    const child = process.platform === 'win32'
+      ? cp.spawn(quoteWindowsArgument(executable), args.map(quoteWindowsArgument), { cwd, shell: true })
+      : cp.spawn(executable, args, { cwd });
     const cancel = token.onCancellationRequested(() => {
       child.kill();
     });

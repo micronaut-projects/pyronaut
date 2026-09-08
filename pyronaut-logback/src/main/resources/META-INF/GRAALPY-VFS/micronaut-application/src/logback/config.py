@@ -20,6 +20,40 @@ def _level_to_python(level):
     return getattr(logging, level) if isinstance(level, str) else level
 
 
+def _logback_level_name(level):
+    """Map a numeric Python level to the logback level name understood by LogbackConfigurer.log."""
+    if level >= logging.ERROR:
+        return "ERROR"
+    if level >= logging.WARNING:
+        return "WARN"
+    if level >= logging.INFO:
+        return "INFO"
+    if level >= logging.DEBUG:
+        return "DEBUG"
+    return "TRACE"
+
+
+class LogbackHandler(logging.Handler):
+    """
+    Handler installed on the real Python root logger so that records emitted by
+    loggers created *before* dictConfig ran (the usual ``log = logging.getLogger(__name__)``
+    at module import time) are forwarded to logback as well.
+    """
+
+    def __init__(self):
+        super().__init__(logging.NOTSET)
+        # Only the message (plus any exception text) is forwarded; logback applies the pattern.
+        self.setFormatter(logging.Formatter('%(message)s'))
+
+    def emit(self, record):
+        if not LogbackConfigurer:
+            return
+        try:
+            LogbackConfigurer.log(record.name or "", _logback_level_name(record.levelno), self.format(record))
+        except Exception:
+            self.handleError(record)
+
+
 class LogbackLogger(logging.Logger):
     """
     Custom Logger class that delegates to SLF4J/logback loggers.
@@ -44,21 +78,8 @@ class LogbackLogger(logging.Logger):
                 msg = msg % args
 
             # For root logger, use direct logback call to avoid SLF4J issues
-            if self.name in (None, ""):
-                # Map Python levels to logback levels
-                if level >= logging.CRITICAL:
-                    level_str = "ERROR"
-                elif level >= logging.ERROR:
-                    level_str = "ERROR"
-                elif level >= logging.WARNING:
-                    level_str = "WARN"
-                elif level >= logging.INFO:
-                    level_str = "INFO"
-                elif level >= logging.DEBUG:
-                    level_str = "DEBUG"
-                else:
-                    level_str = "TRACE"
-                LogbackConfigurer.log("", level_str, msg)
+            if self.name in (None, "", "root"):
+                LogbackConfigurer.log("", _logback_level_name(level), msg)
             else:
                 # For named loggers, use SLF4J
                 slf4j_logger = self._get_slf4j_logger()
@@ -124,34 +145,27 @@ def dictConfig(config):
     LogbackConfigurer.configure(config)
     
     # Set the logger class to use our custom LogbackLogger
-    # This ensures all loggers created go through SLF4J/logback
+    # This ensures all loggers created from now on go through SLF4J/logback directly
     logging.setLoggerClass(LogbackLogger)
 
+    # Keep the real root logger (do not replace it): loggers created before dictConfig
+    # ran still have it as their parent, so a forwarding handler installed here routes
+    # their records to logback too.  Any handler from a previous dictConfig call is
+    # replaced first so records are never forwarded twice.
+    root_logger = logging.getLogger()
+    for handler in list(root_logger.handlers):
+        if isinstance(handler, LogbackHandler):
+            root_logger.removeHandler(handler)
+    root_logger.addHandler(LogbackHandler())
 
     # Configure Python logger levels and propagation to match logback
     # This ensures Python-level filtering is consistent
-    root_config = config.get('root', {})
-    root_logger = logging.getLogger()
-    if root_config:
-        level = root_config.get('level')
-        if level:
-            root_logger.setLevel(_level_to_python(level))
-
-    # 2️⃣ Replace the root logger instance
+    root_config = config.get('root', {}) or {}
     level = root_config.get('level')
     if level:
-        root = LogbackLogger("root", _level_to_python(level))
-    else:
-        root = LogbackLogger("root", logging.WARNING)
+        root_logger.setLevel(_level_to_python(level))
 
-    logging.root = root
-    logging.Logger.root = root
-
-    # 3️⃣ Update logging manager references
-    logging.Logger.manager.root = root
-
-    
-    loggers = config.get('loggers', {})
+    loggers = config.get('loggers', {}) or {}
     for logger_name, logger_config in loggers.items():
         logger = logging.getLogger(logger_name)
         level = logger_config.get('level')
@@ -160,3 +174,15 @@ def dictConfig(config):
         
         propagate = logger_config.get('propagate', True)
         logger.propagate = propagate
+
+    # Mirror logging.config.dictConfig's ``disable_existing_loggers`` when explicitly
+    # requested.  Unlike the stdlib it defaults to False here, since routing records of
+    # pre-existing loggers to logback is the whole point of this integration.
+    if config.get('disable_existing_loggers', False):
+        configured = set(loggers.keys())
+        for name, existing in list(logging.Logger.manager.loggerDict.items()):
+            if not isinstance(existing, logging.Logger):
+                continue
+            if name in configured or any(name.startswith(prefix + '.') for prefix in configured):
+                continue
+            existing.disabled = True

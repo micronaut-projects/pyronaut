@@ -1,15 +1,16 @@
-= Getting Started
+This section builds a small but complete Pyronaut project: a `pyproject.toml`, one HTTP route, application configuration and a test. If you would rather start from a single file, the <<fastApiTutorial,FastAPI Tutorial>> shows the no-project workflow.
 
-In this section you will learn how to define a minimal Pyronaut project and application.
+Complete the <<prerequisites,Prerequisites>> first. They set up the GraalPy virtual environment that the testing step needs.
 
-Complete the <<prerequisites,Prerequisites>> before creating the project.
-The prerequisites include the GraalPy virtual environment required by the testing section below.
+TIP: `pyronaut create demo` generates an equivalent project for you, optionally with extra Micronaut features such as `--features data-jdbc,mysql`. The steps below build the same project by hand so that every file is explained.
 
 == Create `pyproject.toml`
 
+`pyproject.toml` is the standard Python project file. Pyronaut reads its own settings from the `[tool.pyronaut]` tables and leaves the rest to the Python packaging tools:
+
 [source,toml]
 ----
-[project] # (1)
+[project] # <1>
 name = "hello-pyronaut"
 version = "0.1.0"
 dynamic = ["scripts"]
@@ -19,9 +20,9 @@ requires = ["setuptools", "wheel", "tomli"]
 build-backend = "setuptools.build_meta"
 
 [tool.pyronaut]
-repositories = ["mavenCentral"] # (2)
+repositories = ["mavenCentral"] # <2>
 
-[tool.pyronaut.dependencies] # (3)
+[tool.pyronaut.dependencies] # <3>
 runtime = []
 build = []
 test = [
@@ -30,14 +31,13 @@ test = [
 ]
 ----
 
-<1> The basic project name, version etc. are defined using `pyproject.toml` conventions
-<2> The `tool.pyronaut` namespace contains pyronaut specific configuration. Here we define the repository used to resolve Java modules.
-<3> The `tool.pyronaut.dependencies` entry defines Java dependencies in specific scopes.
+<1> Standard project metadata. The name and version are also used when packaging the application.
+<2> Where Java libraries are downloaded from. Maven Central is the Java equivalent of PyPI.
+<3> Java dependencies, grouped by scope. `runtime` libraries are available to the application, `build` libraries only during processing (annotation processors), and `test` libraries only to tests. Here the runtime is empty because the Pyronaut launcher already bundles the Micronaut HTTP server, serialization and validation; see <<how,How Pyronaut Works>>.
 
-Versionless Micronaut coordinates are resolved from the configured Micronaut platform and core BOMs.
-Add explicit versions for dependencies that are not managed by those BOMs.
+Dependencies use Maven `group:artifact` coordinates. Micronaut modules are versionless because Pyronaut resolves their versions from the Micronaut platform; third-party libraries need an explicit `group:artifact:version`.
 
-== Add a Controller
+== Add a controller
 
 Create `src/controllers.py`:
 
@@ -51,7 +51,9 @@ def index() -> str:
     return "Hello from Pyronaut"
 ----
 
-== Add Application Configuration
+Module-level functions decorated with an HTTP method decorator become routes; this module is mounted at `/`. Group routes into a `@Controller` class when they share a prefix or need injected services, as described in <<httpApis,Building HTTP APIs>>.
+
+== Add application configuration
 
 Create `config/application.toml`:
 
@@ -64,37 +66,40 @@ name = "hello-pyronaut"
 port = 8080
 ----
 
-== Run the Application
+Everything under `config/` is on the classpath at runtime. `application.toml` holds Micronaut configuration such as the server port, data sources and your own settings; <<configurationInjection,Configuration Injection>> explains how to read those settings from Python.
 
-After installing or upgrading the Pyronaut SDK wheel, provision it once:
+== Run the application
+
+If you have just installed or upgraded Pyronaut, provision the SDK once:
 
 [source,bash]
 ----
 pyronaut setup
 ----
 
+Then start the development server:
+
+[source,bash]
+----
+pyronaut dev
+----
+
+`pyronaut dev` runs three steps for you: `pyronaut install` downloads the Java dependencies declared in `pyproject.toml` and generates editor stubs, `pyronaut process` compiles the Python sources into Micronaut metadata, and the application starts with file watching enabled so that edits trigger a reload. You can run the first two steps on their own when you change dependencies or want to see compile errors without starting the server:
+
 [source,bash]
 ----
 pyronaut install
 pyronaut process
-pyronaut dev
 ----
 
-`pyronaut dev` performs install and process preflight automatically, so after the first successful install this shorter form is normally enough:
-
-[source,bash]
-----
-pyronaut dev
-----
-
-The application can then be called with:
+Call the application:
 
 [source,bash]
 ----
 curl http://localhost:8080/
 ----
 
-== Add a Test
+== Add a test
 
 Create `tests/test_controller.py`:
 
@@ -108,14 +113,14 @@ from pyronaut.test import MicronautTest, micronaut_test_fixture
 
 @pytest.fixture
 def my_context(request):
-    fixture = micronaut_test_fixture(request, MicronautTest())
+    fixture = micronaut_test_fixture(request, MicronautTest())  # <1>
     yield fixture
     fixture.stop()
 
 
 @pytest.fixture
 def client(my_context):
-    return requests.with_context(my_context)
+    return requests.with_context(my_context)  # <2>
 
 
 def test_index(client):
@@ -124,9 +129,20 @@ def test_index(client):
     assert response.text == "Hello from Pyronaut"
 ----
 
-Run tests through Pyronaut so the Micronaut classpath and configured test engine are set up consistently:
+<1> `micronaut_test_fixture` starts the application, including an embedded HTTP server on a random port, for the duration of the fixture.
+<2> `requests.with_context` returns a `requests`-compatible client whose relative URLs point at that embedded server, so the test does not need to know the port. The `micronaut-pyronaut-requests` test dependency provides it.
+
+Run the tests through Pyronaut so that the Micronaut classpath, processed sources and the GraalPy runtime are set up consistently:
 
 [source,bash]
 ----
 pyronaut test
 ----
+
+Pyronaut runs pytest inside the application's JVM and writes an HTML report to `__pyronaut__/reports/tests/index.html`. See <<testing,Testing>> for JUnit-style Python tests, test selection and Test Resources.
+
+== Next steps
+
+* Read <<concepts,Micronaut Concepts for Python Developers>> to learn about dependency injection, configuration and the threading model before growing the project.
+* See <<dependencies,Installing Python & Java dependencies>> to add Micronaut modules such as Micronaut Data, or third-party Java libraries.
+* See <<packaging,Packaging & Deployment>> to build a wheel, a runnable JAR, a native executable or a container image.

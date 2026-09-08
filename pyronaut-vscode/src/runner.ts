@@ -26,7 +26,25 @@ function toPyronautSelector(selector, testSource) {
   return normalizedSelector.startsWith(prefix) ? normalizedSelector.substring(prefix.length) : normalizedSelector;
 }
 
+/**
+ * Quotes a single argument for a Windows shell (cmd.exe) command line so that
+ * paths and arguments containing spaces are not split by the shell or by the
+ * launched program's C runtime argument parser.
+ */
+function quoteWindowsArgument(value) {
+  const text = String(value);
+  if (text.length > 0 && !/[\s"]/.test(text)) {
+    return text;
+  }
+  // MSVCRT rules: backslashes are literal unless they precede a double quote.
+  const escaped = text
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\+)$/, '$1$1');
+  return `"${escaped}"`;
+}
+
 module.exports = {
   buildPyronautTestArgs,
+  quoteWindowsArgument,
   toPyronautSelector
 };

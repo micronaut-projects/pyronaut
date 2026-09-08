@@ -117,6 +117,94 @@ class ProxyConfigurationLoaderTest {
         assertTrue(exception.getMessage().contains("~/.pyronaut/settings.toml"));
     }
 
+    @Test
+    void ignoresMavenProxiesExplicitlyMarkedInactive() throws Exception {
+        Path pyronautSettings = tempDir.resolve("settings.toml");
+        Path m2Settings = tempDir.resolve("settings.xml");
+        Files.writeString(
+            m2Settings,
+            """
+                <settings>
+                  <proxies>
+                    <proxy>
+                      <active>false</active>
+                      <protocol>http</protocol>
+                      <host>inactive-proxy</host>
+                      <port>7000</port>
+                    </proxy>
+                  </proxies>
+                </settings>
+                """,
+            StandardCharsets.UTF_8
+        );
+
+        ProxyConfigurationLoader loader = new ProxyConfigurationLoader(Map.of(), pyronautSettings, m2Settings);
+
+        assertTrue(loader.load().isEmpty());
+    }
+
+    @Test
+    void mavenProxyWithoutActiveElementIsUsed() throws Exception {
+        Path pyronautSettings = tempDir.resolve("settings.toml");
+        Path m2Settings = tempDir.resolve("settings.xml");
+        Files.writeString(
+            m2Settings,
+            """
+                <settings>
+                  <proxies>
+                    <proxy>
+                      <active>false</active>
+                      <host>inactive-proxy</host>
+                      <port>7000</port>
+                    </proxy>
+                    <proxy>
+                      <host>implicit-proxy</host>
+                      <port>7001</port>
+                    </proxy>
+                  </proxies>
+                </settings>
+                """,
+            StandardCharsets.UTF_8
+        );
+
+        ProxyConfigurationLoader loader = new ProxyConfigurationLoader(Map.of(), pyronautSettings, m2Settings);
+
+        ProxyConfigurationLoader.ProxyConfiguration proxy = loader.load().orElseThrow();
+        assertEquals("implicit-proxy", proxy.host());
+        assertEquals(7001, proxy.port());
+    }
+
+    @Test
+    void normalizesNoProxySuffixAndPortEntries() {
+        Path pyronautSettings = tempDir.resolve("settings.toml");
+        Path m2Settings = tempDir.resolve("settings.xml");
+
+        ProxyConfigurationLoader loader = new ProxyConfigurationLoader(
+            Map.of("HTTPS_PROXY", "http://env-proxy:3128", "NO_PROXY", ".internal, localhost:8080 ,127.0.0.1,*.corp.example"),
+            pyronautSettings,
+            m2Settings
+        );
+
+        ProxyConfigurationLoader.ProxyConfiguration proxy = loader.load().orElseThrow();
+        assertEquals("*.internal|localhost|127.0.0.1|*.corp.example", proxy.nonProxyHosts());
+    }
+
+    @Test
+    void malformedEnvironmentProxyUrlFailsWithSourceAndValue() {
+        Path pyronautSettings = tempDir.resolve("settings.toml");
+        Path m2Settings = tempDir.resolve("settings.xml");
+
+        ProxyConfigurationLoader loader = new ProxyConfigurationLoader(
+            Map.of("HTTPS_PROXY", "http://bad proxy:3128"),
+            pyronautSettings,
+            m2Settings
+        );
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, loader::load);
+        assertTrue(exception.getMessage().contains("environment"), exception.getMessage());
+        assertTrue(exception.getMessage().contains("http://bad proxy:3128"), exception.getMessage());
+    }
+
     private static String m2SettingsXml(String host, String port) {
         return """
             <settings>

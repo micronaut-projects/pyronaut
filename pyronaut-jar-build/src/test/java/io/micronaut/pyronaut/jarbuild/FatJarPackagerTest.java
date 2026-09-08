@@ -219,6 +219,91 @@ class FatJarPackagerTest {
     }
 
     @Test
+    void resolvesResourcesWithSpecialCharactersInEntryNames() throws Exception {
+        Path application = temporaryDirectory.resolve("odd-application");
+        compile(application, List.of(), source("app/Main.java", """
+            package app;
+            import java.nio.charset.StandardCharsets;
+            public final class Main {
+                public static void main(String[] args) throws Exception {
+                    ClassLoader loader = Thread.currentThread().getContextClassLoader();
+                    String name = "odd dir 100%/data#1 [x].txt";
+                    var url = loader.getResource(name);
+                    System.out.println("url=" + url);
+                    try (var input = url.openStream()) {
+                        System.out.println("odd=" + new String(input.readAllBytes(), StandardCharsets.UTF_8));
+                    }
+                    int count = 0;
+                    var all = loader.getResources(name);
+                    while (all.hasMoreElements()) {
+                        all.nextElement();
+                        count++;
+                    }
+                    System.out.println("count=" + count);
+                    System.out.println("missing=" + loader.getResource("odd dir 100%/absent #2.txt"));
+                }
+            }
+            """));
+        Path resources = temporaryDirectory.resolve("odd-resources");
+        write(resources.resolve("odd dir 100%/data#1 [x].txt"), "odd-value");
+
+        Path output = temporaryDirectory.resolve("odd.jar");
+        new FatJarPackager().packageApplication(
+            FatJarRequest.builder(output, application, "app.Main")
+                .applicationName("odd-app")
+                .applicationVersion("1.0")
+                .resourceDirectory(resources)
+                .build()
+        );
+        Process process = new ProcessBuilder(javaExecutable(), "-jar", output.toString())
+            .redirectErrorStream(true)
+            .start();
+        String processOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+        assertEquals(0, process.waitFor(), processOutput);
+        assertTrue(processOutput.contains("!/PYRONAUT-INF/app/resources/0000/odd%20dir%20100%25/data%231%20%5Bx%5D.txt"), processOutput);
+        assertTrue(processOutput.contains("odd=odd-value"), processOutput);
+        assertTrue(processOutput.contains("count=1"), processOutput);
+        assertTrue(processOutput.contains("missing=null"), processOutput);
+    }
+
+    @Test
+    void keepsArchiveOpenForThreadsThatOutliveMain() throws Exception {
+        Path application = temporaryDirectory.resolve("background-application");
+        compile(application, List.of(),
+            source("app/Lazy.java", "package app; public final class Lazy { public static String value() { return \"lazy-loaded\"; } }"),
+            source("app/Main.java", """
+                package app;
+                public final class Main {
+                    public static void main(String[] args) {
+                        Thread worker = new Thread(() -> {
+                            try {
+                                Thread.sleep(300);
+                            } catch (InterruptedException e) {
+                                return;
+                            }
+                            System.out.println("background=" + app.Lazy.value());
+                        });
+                        worker.start();
+                        System.out.println("main-returned");
+                    }
+                }
+                """));
+
+        Path output = temporaryDirectory.resolve("background.jar");
+        new FatJarPackager().packageApplication(request(output, application));
+        Process process = new ProcessBuilder(javaExecutable(), "-jar", output.toString())
+            .redirectErrorStream(true)
+            .start();
+        String processOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+        assertEquals(0, process.waitFor(), processOutput);
+        assertTrue(processOutput.contains("main-returned"), processOutput);
+        assertTrue(processOutput.contains("background=lazy-loaded"), processOutput);
+        assertFalse(processOutput.contains("zip file closed"), processOutput);
+    }
+
+    @Test
     void launchesTheRealProductionRuntimeMain() throws Exception {
         Path classes = temporaryDirectory.resolve("real-application");
         compile(classes, List.of(), source("real/Application.java", """

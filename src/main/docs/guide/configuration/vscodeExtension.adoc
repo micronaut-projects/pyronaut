@@ -58,3 +58,4 @@ If VS Code Python pytest discovery has already been enabled, disable it in `.vsc
 - Installation is manual through the generated VSIX.
 - Debug and coverage profiles are not implemented yet.
 - The extension expects `pyronaut` to be available on `PATH` unless `pyronaut.executable` is configured.
+- Parametrized tests are shown as one item; the item fails if any parameter set fails.

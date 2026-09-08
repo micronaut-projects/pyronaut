@@ -75,8 +75,9 @@ public final class PytestTestDescriptor extends AbstractTestDescriptor {
         List<UniqueId.Segment> segments = uniqueId.getSegments();
         String source = segments.get(1).getValue();
         String testName = segments.get(2).getValue();
-        // Normalize separators to forward slashes for comparison
-        String normalizedTestId = testId.replace('\\', '/');
+        // Normalize separators to forward slashes for comparison and drop any
+        // parametrization suffix (file.py::test_name[param-id]) reported by pytest
+        String normalizedTestId = stripParameterSuffix(testId.replace('\\', '/'));
         String absPath = filePath.toString().replace('\\', '/');
         String fileName = filePath.getFileName().toString();
 
@@ -88,6 +89,22 @@ public final class PytestTestDescriptor extends AbstractTestDescriptor {
         return normalizedTestId.endsWith(suffixSource)
             || normalizedTestId.endsWith(suffixAbs)
             || normalizedTestId.endsWith(suffixFileOnly);
+    }
+
+    /**
+     * Strips a trailing pytest parametrization suffix such as {@code [2]} or {@code [a-b]}
+     * from a node id so parametrized cases match their discovered test function.
+     *
+     * @param nodeId the pytest node id
+     * @return the node id without the parameter suffix
+     */
+    static String stripParameterSuffix(String nodeId) {
+        if (nodeId == null || !nodeId.endsWith("]")) {
+            return nodeId;
+        }
+        int separator = nodeId.lastIndexOf("::");
+        int bracket = nodeId.indexOf('[', separator < 0 ? 0 : separator);
+        return bracket < 0 ? nodeId : nodeId.substring(0, bracket);
     }
 
     public String getPytestNodeId() {

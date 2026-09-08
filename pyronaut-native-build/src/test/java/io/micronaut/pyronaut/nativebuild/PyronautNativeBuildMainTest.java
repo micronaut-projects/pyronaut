@@ -157,6 +157,43 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void keepsClasspathEntriesBelowDirectoriesNamedAfterPythonArtifacts() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            enabled = false
+            """);
+        // A checkout directory may legitimately be named after a Python
+        // artifact. Its entries are still ordinary Java classpath entries.
+        Path checkout = Files.createDirectories(tempDir.resolve("graalpy-truffle-worktree"));
+        Path applicationJar = Files.createFile(checkout.resolve("application-1.0.jar"));
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+        String classpath = System.getProperty("java.class.path");
+        int exit;
+        try {
+            System.setProperty("java.class.path", classpath + java.io.File.pathSeparator + applicationJar);
+            PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+            exit = new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image");
+        } finally {
+            System.setProperty("java.class.path", classpath);
+        }
+
+        assertEquals(0, exit);
+        assertEquals(1, executed.size());
+        List<String> nativeCommand = executed.getFirst();
+        assertTrue(nativeCommand.get(nativeCommand.indexOf("-cp") + 1).contains(applicationJar.toString()));
+    }
+
+    @Test
     void ignoresNonGradlePathsWhoseParentWalkReachesRoot() throws Exception {
         var method = PyronautNativeBuildMain.class.getDeclaredMethod("isGradleVersionDirectory", Path.class);
         method.setAccessible(true);
@@ -280,6 +317,10 @@ class PyronautNativeBuildMainTest {
         Path source = tempDir.resolve("pyronaut-run");
         Files.writeString(source, "prebuilt-base", java.nio.charset.StandardCharsets.UTF_8);
         source.toFile().setExecutable(true, false);
+        Files.createDirectories(tempDir.resolve("resources/python"));
+        Files.writeString(tempDir.resolve("resources/python/stdlib.txt"), "stdlib");
+        Files.writeString(tempDir.resolve("libpython.dylib"), "library");
+        Files.writeString(tempDir.resolve("ignored.txt"), "ignored");
         Path output = tempDir.resolve("output").resolve("pyronaut-run");
         List<List<String>> executed = new ArrayList<>();
         var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
@@ -303,6 +344,9 @@ class PyronautNativeBuildMainTest {
         assertTrue(executed.isEmpty());
         assertEquals("prebuilt-base", Files.readString(output));
         assertTrue(output.toFile().canExecute());
+        assertEquals("stdlib", Files.readString(output.getParent().resolve("resources/python/stdlib.txt")));
+        assertEquals("library", Files.readString(output.getParent().resolve("libpython.dylib")));
+        assertFalse(Files.exists(output.getParent().resolve("ignored.txt")));
     }
 
     @Test
@@ -645,6 +689,37 @@ class PyronautNativeBuildMainTest {
         assertTrue(nativeCommand.contains("--trace-object-instantiation=ch.qos.logback.classic.Logger"));
         assertTrue(nativeCommand.contains("--initialize-at-run-time"));
         assertTrue(nativeCommand.contains("io.netty.util.ResourceLeakDetector"));
+    }
+
+    @Test
+    void reportsMalformedRepositoryUrlAsPreconditionFailure() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.build.metadata]
+            repository-url = "https://example.com/metadata with space.zip"
+            """);
+
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> 0;
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            throw new IOException("metadata must not be downloaded");
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        int exit = new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image");
+
+        assertEquals(8, exit);
+    }
+
+    @Test
+    void quotesArgumentFileEntriesForWhitespaceAndEscapes() {
+        assertEquals("\"--no-fallback\"", PyronautNativeBuildMain.ProcessNativeImageInvoker.quoteArgumentFileEntry("--no-fallback"));
+        assertEquals(
+            "\"-H:Path=C:\\\\Users\\\\John Smith\\\\app\"",
+            PyronautNativeBuildMain.ProcessNativeImageInvoker.quoteArgumentFileEntry("-H:Path=C:\\Users\\John Smith\\app")
+        );
+        assertEquals("\"say \\\"hi\\\"\"", PyronautNativeBuildMain.ProcessNativeImageInvoker.quoteArgumentFileEntry("say \"hi\""));
     }
 
     private Path prepareProject(String pyprojectContent) throws IOException {

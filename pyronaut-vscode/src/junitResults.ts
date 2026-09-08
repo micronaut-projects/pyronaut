@@ -1,5 +1,7 @@
 const fs = require('fs');
-const { nodeTail } = require('./testEvents');
+const { nodeTail, stripParameters } = require('./testEvents');
+
+const STATUS_PRIORITY = { passed: 0, skipped: 1, failed: 2 };
 
 function readJUnitResults(reportFile) {
   if (!fs.existsSync(reportFile)) {
@@ -35,12 +37,41 @@ function matchJUnitResult(candidate, results) {
   const testName = selectorParts[selectorParts.length - 1];
   const className = selectorParts.length > 2 ? selectorParts[selectorParts.length - 2] : '';
 
-  return results.find(result => {
-    if (result.name === testName || result.name.endsWith(`.${testName}`)) {
-      return className.length === 0 || result.name === `${className}.${testName}` || result.className.endsWith(className);
+  const matched = results.filter(result => {
+    // Parametrized pytest cases report as "test_x[param]"; match on the bare name.
+    const name = stripParameters(String(result.name || ''));
+    if (name === testName || name.endsWith(`.${testName}`)) {
+      return className.length === 0 || name === `${className}.${testName}` || String(result.className || '').endsWith(className);
     }
-    return tail.endsWith(`::${result.name}`) || tail.endsWith(`::${result.name.replace('.', '::')}`);
-  }) || null;
+    return tail.endsWith(`::${name}`) || tail.endsWith(`::${name.replace('.', '::')}`);
+  });
+  return aggregateJUnitResults(matched);
+}
+
+function aggregateJUnitResults(matched) {
+  if (matched.length === 0) {
+    return null;
+  }
+  if (matched.length === 1) {
+    return matched[0];
+  }
+  // Any failed parameter fails the test; otherwise report the most severe status.
+  let aggregate = matched[0];
+  const messages = [];
+  for (const result of matched) {
+    if ((STATUS_PRIORITY[result.status] || 0) > (STATUS_PRIORITY[aggregate.status] || 0)) {
+      aggregate = result;
+    }
+    if (result.status === 'failed') {
+      messages.push(result.message ? `${result.name}: ${result.message}` : `${result.name}: Test failed`);
+    }
+  }
+  return {
+    name: aggregate.name,
+    className: aggregate.className,
+    status: aggregate.status,
+    message: aggregate.status === 'failed' ? messages.join('\n') : aggregate.message
+  };
 }
 
 function parseAttributes(text) {

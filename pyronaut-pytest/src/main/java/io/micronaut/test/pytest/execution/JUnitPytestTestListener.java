@@ -161,29 +161,33 @@ public class JUnitPytestTestListener implements PytestTestListener {
         writeNodeId(testId);
         writeEvent("test_started", testId, null, Map.of());
 
-        allDescriptors
-            .stream()
-            .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
-            .findAny().ifPresent(testDescriptor -> {
-                junitListener.executionStarted(testDescriptor);
-                runBeforeEach(testId, item);
-            });
+        PytestTestDescriptor testDescriptor = findDescriptor(testId);
+        if (testDescriptor != null) {
+            junitListener.executionStarted(testDescriptor);
+            runBeforeEach(testId, item);
+        }
     }
 
     @Override
     public void afterTest(String testId, Value item, TestExecutionResult result) {
         LOG.debug("Pytest finished test: {} with result: {}", testId, result);
         TestExecutionResult finalResult = mergeLifecycleFailure(testId, result);
-        allDescriptors
-            .stream()
-            .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
-            .findAny().ifPresent(td -> runAfterEach(testId, item));
+        PytestTestDescriptor testDescriptor = findDescriptor(testId);
+        if (testDescriptor != null) {
+            runAfterEach(testId, item);
+        }
         finalResult = mergeLifecycleFailure(testId, finalResult);
         writeNodeId(testId);
         outcomes.add(new TestOutcome(testId, finalResult));
         var payload = new LinkedHashMap<String, String>();
         if (finalResult.getStatus() == TestExecutionResult.Status.FAILED) {
-            failedTestReported = true;
+            if (testDescriptor != null) {
+                // Only treat the failure as already reported to JUnit when a descriptor matched;
+                // otherwise the non-zero pytest exit code must surface as an execution failure.
+                failedTestReported = true;
+            } else {
+                LOG.warn("Pytest reported a failure for {} but no discovered test descriptor matched it", testId);
+            }
             finalResult.getThrowable().ifPresent(throwable -> payload.put("failure", FailureDiagnostics.render(throwable)));
         } else if (finalResult.getStatus() == TestExecutionResult.Status.ABORTED) {
             finalResult.getThrowable().ifPresent(throwable -> payload.put("reason", FailureDiagnostics.render(throwable)));
@@ -192,12 +196,19 @@ public class JUnitPytestTestListener implements PytestTestListener {
         if (finalResult.getStatus() == TestExecutionResult.Status.FAILED && renderFailureOutputEnabled()) {
             emitFailureDiagnostics(testId, finalResult);
         }
-        TestExecutionResult finishedResult = finalResult;
-        allDescriptors
-            .stream()
-            .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
-            .findAny().ifPresent(td -> junitListener.executionFinished(td, finishedResult));
+        if (testDescriptor != null) {
+            junitListener.executionFinished(testDescriptor, finalResult);
+        }
         lifecycleFailures.remove(testId);
+    }
+
+    private PytestTestDescriptor findDescriptor(String testId) {
+        for (TestDescriptor child : allDescriptors) {
+            if (child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId)) {
+                return ptd;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -278,7 +289,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     }
 
     private PytestMicronautExtension getExtension(Value item) {
-        if (item == null) {
+        if (item == null || item.isNull() || !item.hasMembers()) {
             return null;
         }
         Value extValue = item.getMember(PytestMicronautExtension.ID);

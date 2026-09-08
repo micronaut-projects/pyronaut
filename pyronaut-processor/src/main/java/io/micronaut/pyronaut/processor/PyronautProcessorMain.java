@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.processor;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
@@ -494,6 +495,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         } catch (PyronautProcessorException e) {
             System.err.println(e.getMessage());
             return PyronautProcessorExitCode.PRECONDITION_FAILED.code();
+        } catch (PyprojectModelException e) {
+            System.err.println(e.getMessage());
+            return PyronautProcessorExitCode.CONFIG_ERROR.code();
         } catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
             return PyronautProcessorExitCode.USAGE_ERROR.code();

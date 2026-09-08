@@ -34,7 +34,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"setup", "install", "process", "dev", "run", "test", "build", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -78,10 +78,16 @@ PACKAGING_FORMATS = {
 }
 DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
-_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i2"
+_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i3"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
 _SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
+# Layout of an unpacked native image bundle in the shared version/platform cache
+# directory. Version 3 isolated per-image classpath manifests; version 4 nests
+# copied language resources under the bundle's own "resources" directory instead
+# of flattening them into the cache root. Bump this whenever the unpacked layout
+# changes so an older cache is rebuilt rather than silently reused.
+_NATIVE_IMAGE_BUNDLE_FORMAT = 4
 _NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
 _SETUP_IMAGE_COMMANDS = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
 _SETUP_SCHEMA_VERSION = 1
@@ -117,6 +123,38 @@ _DEFAULT_RESOURCES_DIR = "config"
 _DEFAULT_TEST_RESOURCES_DIR = "tests-config"
 _ANSI_YELLOW = "\033[33m"
 _ANSI_RESET = "\033[0m"
+_MICRONAUT_STARTER_RELEASES_URL = "https://github.com/micronaut-projects/micronaut-starter/releases/download"
+_MICRONAUT_CREATE_MIN_VERSION = (5, 2, 0)
+_MICRONAUT_CREATE_FIXED_ARGS = ("--lang", "python", "--build", "pyronaut", "--test", "pytest")
+# Keep this list aligned with PythonFeatureValidator in micronaut-starter. It
+# is deliberately a denylist: starter remains the source of truth for feature
+# validation, while this keeps the local catalog from advertising known JVM-
+# only features.
+_PYRONAUT_CREATE_DENYLIST_BY_MINOR: dict[tuple[int, int], frozenset[str]] = {
+    (5, 2): frozenset({
+        "jackson-databind", "sourcegen-generator",
+        "aws-codebuild-workflow-ci", "github-workflow-azure-container-instance",
+        "github-workflow-azure-container-instance-graalvm", "github-workflow-ci",
+        "github-workflow-docker-registry", "github-workflow-google-cloud-run",
+        "github-workflow-google-cloud-run-graalvm", "github-workflow-graal-docker-registry",
+        "github-workflow-oracle-cloud-functions", "github-workflow-oracle-cloud-functions-graalvm",
+        "gitlab-workflow-ci", "google-cloud-workflow-ci", "oracle-cloud-devops-build-ci",
+        "chatbots-basecamp-http", "chatbots-telegram-http", "http-client-jdk", "knative", "kubernetes",
+        "config4k", "properties", "yaml", "data-hibernate-reactive", "hibernate-jpa", "hibernate-reactive-jpa",
+        "jasync-sql", "mybatis", "assertj", "awaitility", "buildless", "hamcrest", "junit-params", "lombok",
+        "mockito", "openrewrite", "aws-parameter-store", "aws-secrets-manager", "azure-key-vault",
+        "coherence-distributed-configuration", "config-consul", "config-kubernetes", "gcp-secrets-manager",
+        "netflix-archaius", "oracle-cloud-vault", "groovy-datetime", "groovy-dateutil", "groovy-ginq",
+        "groovy-json", "groovy-sql", "groovy-toml", "groovy-xml", "groovy-yaml", "aws-alexa", "graalpy",
+        "kapt", "kotlin-extension-functions", "ksp", "amazon-cloudwatch-logging", "azure-logging", "gcp-logging",
+        "jul-to-slf4j", "liquibase-slf4j", "log4j2", "oracle-cloud-logging", "slf4j-simple", "slf4j-simple-logger",
+        "jmx", "crac", "jib", "micronaut-aot", "shade", "opensearch-restclient",
+        "http-poja", "http-server-jdk", "jetty-server", "ktor", "tomcat-server", "undertow-server",
+        "amazon-api-gateway", "amazon-api-gateway-http", "aws-lambda", "aws-lambda-custom-runtime", "azure-function",
+        "oracle-function", "discovery-kubernetes", "json-path", "json-smart", "junit-platform-suite-engine",
+        "test-netty-leak", "hibernate-validator", "views-react",
+    }),
+}
 _allow_draft_release = False
 _validated_setup_manifest: dict[str, object] | None = None
 
@@ -213,7 +251,8 @@ def run(
     global _allow_draft_release, _validated_setup_manifest
     _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
     _validated_setup_manifest = None
-    argv = [value for value in argv if value != "--allow-draft-release"]
+    option_argv, application_argv = _split_application_args(argv)
+    argv = [value for value in option_argv if value != "--allow-draft-release"] + application_argv
 
     if monotonic is None:
         monotonic = time.monotonic
@@ -258,6 +297,9 @@ def run(
             return PLATFORM_UNSUPPORTED
         return _run_setup(setup_args, execute)
 
+    if command == "create":
+        return _run_create(list(argv[1:]), execute, current_platform)
+
     option_args = argv[: argv.index("--")] if "--" in argv else argv
     if "-V" in option_args[1:] or (
         command != "build" and "--version" in option_args[1:]
@@ -270,7 +312,7 @@ def run(
                 and enforce_setup and _setup_is_required()):
             if not _require_setup(argv):
                 return PRECONDITION_FAILED
-        tui_args = [value for value in argv if value != "--tui"]
+        tui_args = _split_tui_mode_token([value for value in argv if value != "--tui"])[1]
         tui_project_dir = (
             Path.cwd()
             if _looks_like_direct_source_invocation(tui_args)
@@ -296,7 +338,10 @@ def run(
     forwarded_args = _remove_no_validate(forwarded_args)
     continuous = _extract_continuous(forwarded_args)
     forwarded_args = _remove_continuous(forwarded_args)
-    debug_vm = _extract_debug_vm(forwarded_args)
+    try:
+        debug_vm = _extract_debug_vm(forwarded_args)
+    except ValueError as exc:
+        return _usage_error(str(exc))
     forwarded_args = _remove_debug_vm(forwarded_args)
 
     if command not in SUPPORTED_COMMANDS:
@@ -339,6 +384,15 @@ def run(
     if enforce_setup and _setup_is_required() and not _require_setup(forwarded_args):
         return PRECONDITION_FAILED
 
+    if debug_vm:
+        port_ok, error = _check_port_available(5005)
+        if not port_ok:
+            print(
+                "Cannot enable --debug-vm because port 5005 is already in use." + (f" ({error})" if error else ""),
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
+
     if command == "dev" and not _looks_like_direct_source_invocation(forwarded_args):
         default_source = _default_dev_source(forwarded_args)
         if default_source is not None:
@@ -359,6 +413,7 @@ def run(
                 process_runner or _spawn_subprocess,
                 locate,
                 java_home_provider=direct_source_java_home_provider,
+                debug_vm=debug_vm,
                 watch_poll_interval=watch_poll_interval,
                 watch_debounce_seconds=watch_debounce_seconds,
                 monotonic=monotonic,
@@ -370,6 +425,7 @@ def run(
             execute,
             locate,
             java_home_provider=direct_source_java_home_provider,
+            debug_vm=debug_vm,
         )
 
     if command == "test" and _looks_like_direct_source_invocation(forwarded_args):
@@ -388,6 +444,7 @@ def run(
                 process_runner or _spawn_subprocess,
                 locate,
                 java_home_provider=direct_source_java_home_provider,
+                debug_vm=debug_vm,
                 watch_poll_interval=watch_poll_interval,
                 watch_debounce_seconds=watch_debounce_seconds,
                 monotonic=monotonic,
@@ -399,6 +456,7 @@ def run(
             execute,
             locate,
             java_home_provider=direct_source_java_home_provider,
+            debug_vm=debug_vm,
         )
 
     if not _is_supported_platform(current_platform):
@@ -409,8 +467,11 @@ def run(
     # Report locations are selected by the native test launcher from the
     # project layout. Do not forward the CLI's internal report path option;
     # pyronaut-test intentionally does not expose --report-dir.
-    no_cache = _extract_no_cache(forwarded_args)
-    local_repository = _extract_local_repository(forwarded_args)
+    try:
+        no_cache = _extract_no_cache(forwarded_args)
+        local_repository = _extract_local_repository(forwarded_args)
+    except ValueError as exc:
+        return _usage_error(str(exc))
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
     delegated_args = _strip_local_repository_args(delegated_args) if command in {"dev", "run", "test"} else delegated_args
     # Keep the dev process under the Python auto-restart loop for both managed
@@ -450,21 +511,12 @@ def run(
         )
 
     if command == "test-resources-server" and _is_test_resources_start(forwarded_args):
-        install_args = ["--project-dir", project_dir, *_local_repository_install_args()]
+        install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
         if no_cache:
             install_args.append("--refresh")
         install_code = _delegate("install", install_args, execute, locate, java_home_provider=effective_java_home_provider)
         if install_code != SUCCESS:
             return install_code
-
-    if debug_vm:
-        port_ok, error = _check_port_available(5005)
-        if not port_ok:
-            print(
-                "Cannot enable --debug-vm because port 5005 is already in use." + (f" ({error})" if error else ""),
-                file=sys.stderr,
-            )
-            return PRECONDITION_FAILED
 
     tr_session: _OwnedTestResourcesSession | None = None
     test_resources_env_overrides: dict[str, str] | None = None
@@ -473,13 +525,15 @@ def run(
         # produced by install. Refresh it before deciding whether to own a
         # server; otherwise a stale layout from an earlier invocation can
         # incorrectly start Test Resources.
+        external_install_done = False
         if command == "test" and _is_external_build_project(Path(project_dir)):
             install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
             if no_cache:
                 install_args.append("--no-cache")
-            install_code = _delegate("install", install_args, execute, locate)
+            install_code = _delegate("install", install_args, execute, locate, java_home_provider=effective_java_home_provider)
             if install_code != SUCCESS:
                 return install_code
+            external_install_done = True
         test_resources_enabled = _test_resources_enabled(Path(project_dir))
         if command in {"dev", "test"} and test_resources_enabled:
             tr_session = _OwnedTestResourcesSession(
@@ -617,6 +671,7 @@ def run(
                     input_reader=input_reader,
                     java_home_provider=effective_java_home_provider,
                     local_repository=local_repository,
+                    external_install_done=external_install_done,
                 )
 
             test_exit_code, _ = _run_test_cycle(
@@ -631,6 +686,7 @@ def run(
                 no_validate=no_validate,
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
+                external_install_done=external_install_done,
             )
             return test_exit_code
 
@@ -889,12 +945,13 @@ def _delegate_direct_source(
     resolver: Callable[[str], str | None],
     *,
     java_home_provider: JavaHomeProvider | None = None,
+    debug_vm: bool = False,
 ) -> int:
     forwarded_args = _strip_orchestrator_only_args(
         [value for value in args if value not in {"--jvm", "--native"}]
     )
     try:
-        executable_path = _resolve_direct_source_dev_executable(forwarded_args, resolver)
+        executable_path = _resolve_direct_source_dev_executable(forwarded_args, resolver, debug_vm=debug_vm)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -906,6 +963,8 @@ def _delegate_direct_source(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+    if debug_vm:
+        env = _apply_debug_vm_env(env)
     jvm_args = _build_direct_source_native_jvm_args(
         executable_path,
         env,
@@ -935,6 +994,7 @@ def _run_direct_source(
     resolver: Callable[[str], str | None],
     *,
     java_home_provider: JavaHomeProvider | None = None,
+    debug_vm: bool = False,
     watch_poll_interval: float,
     watch_debounce_seconds: float,
     monotonic: Callable[[], float],
@@ -947,9 +1007,10 @@ def _run_direct_source(
             runner,
             resolver,
             java_home_provider=java_home_provider,
+            debug_vm=debug_vm,
         )
     try:
-        executable_path = _resolve_direct_source_dev_executable(args, resolver)
+        executable_path = _resolve_direct_source_dev_executable(args, resolver, debug_vm=debug_vm)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -961,6 +1022,8 @@ def _run_direct_source(
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+    if debug_vm:
+        env = _apply_debug_vm_env(env)
     if command == "dev":
         env = _apply_project_virtualenv(env, Path.cwd())
     snapshot = _snapshot_direct_source_inputs(args)
@@ -985,15 +1048,31 @@ def _run_direct_source(
     )
 
 
-def _resolve_direct_source_dev_executable(args: Sequence[str], resolver: Callable[[str], str | None]) -> str | None:
+def _resolve_direct_source_dev_executable(
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool = False,
+) -> str | None:
     """Select the direct-source launcher, honoring the command-line override."""
     mode = _extract_build_mode_flag(args)
     if mode is None and (Path.cwd() / "pyproject.toml").is_file():
         mode = _read_pyproject_toolchain_type(Path.cwd())
+    if debug_vm:
+        # JDWP needs a HotSpot JVM; the native launcher cannot load the agent.
+        mode = TOOLCHAIN_TYPE_JVM
     if mode == TOOLCHAIN_TYPE_JVM:
         bundled = _bundled_executable(DEV_NATIVE_EXECUTABLE)
         return str(bundled) if bundled is not None and bundled.exists() else resolver(DEV_NATIVE_EXECUTABLE)
     return _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
+
+def _apply_debug_vm_env(env: dict[str, str] | None) -> dict[str, str]:
+    """Enable JDWP for launcher-script delegates through JAVA_TOOL_OPTIONS."""
+    updated = dict(env) if env is not None else dict(os.environ)
+    existing = updated.get("JAVA_TOOL_OPTIONS", "").strip()
+    updated["JAVA_TOOL_OPTIONS"] = f"{existing} {_JDWP_FLAGS}".strip()
+    return updated
+
 
 def _stop_direct_source_test_resources_server(
     *,
@@ -3034,6 +3113,7 @@ def _prepare_build_wheel_staging(
         (pyronaut_dir / "native").mkdir(parents=True, exist_ok=True)
         shutil.copy2(binary_path, pyronaut_dir / "native" / binary_name)
         (pyronaut_dir / "native" / binary_name).chmod(0o755)
+        _stage_native_bundle_support(binary_path.parent, pyronaut_dir / "native")
         if native_bundle_dir is not None:
             _stage_native_bundle_support(native_bundle_dir, pyronaut_dir / "native")
         classes_dir = project_dir / "__pyronaut__" / "classes"
@@ -3129,11 +3209,28 @@ def _copytree_if_exists(source: Path, target: Path) -> None:
 
 def _stage_native_bundle_support(bundle_dir: Path, target_dir: Path) -> None:
     """Keep external native-image runtime inputs beside the staged launcher."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if bundle_dir.resolve() == target_dir.resolve():
+        # A native base configured beside its own output already has the
+        # bundle laid out correctly; copying it onto itself fails.
+        return
     _copytree_if_exists(bundle_dir / "resources", target_dir / "resources")
-    for pattern in ("*.so", "*.dylib"):
+    for pattern in ("*.so", "*.dylib", "*.dll"):
         for runtime_library in bundle_dir.glob(pattern):
             if runtime_library.is_file():
-                shutil.copy2(runtime_library, target_dir / runtime_library.name)
+                target = target_dir / runtime_library.name
+                if runtime_library.resolve() != target.resolve():
+                    shutil.copy2(runtime_library, target)
+
+
+def _remove_native_bundle_support(bundle_dir: Path) -> None:
+    resources = bundle_dir / "resources"
+    if resources.is_dir():
+        shutil.rmtree(resources)
+    for pattern in ("*.so", "*.dylib", "*.dll"):
+        for runtime_library in bundle_dir.glob(pattern):
+            if runtime_library.is_file():
+                runtime_library.unlink()
 
 
 def _stage_manifest_artifacts(
@@ -3292,6 +3389,7 @@ def _stage_native_base_executable(
             raise RuntimeError(f"Invalid native base URL: {configured}")
         if offline:
             raise RuntimeError("Cannot download --native-base while offline")
+        _remove_native_bundle_support(target.parent)
         try:
             _download_url_with_progress(configured, target, "Downloading native base")
         except Exception as exc:
@@ -3307,7 +3405,10 @@ def _stage_native_base_executable(
                 f"Configured native base does not exist: {source}. Run pyronaut build --native-base first."
             )
         if source.resolve() != target.resolve():
+            if source.parent.resolve() != target.parent.resolve():
+                _remove_native_bundle_support(target.parent)
             shutil.copy2(source, target)
+            _stage_native_bundle_support(source.parent, target.parent)
     if not target.is_file() or target.stat().st_size == 0:
         target.unlink(missing_ok=True)
         raise RuntimeError(f"Native base is empty or missing: {configured}")
@@ -5024,6 +5125,7 @@ def _run_test_cycle(
     no_validate: bool,
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
+    external_install_done: bool = False,
 ) -> tuple[int, dict[str, str] | None]:
     if _is_external_build_project(project_dir):
         preflight_code = _run_preflight(
@@ -5032,7 +5134,8 @@ def _run_test_cycle(
             local_repository,
             execute,
             resolver,
-            install=not (_pyronaut_output_dir(project_dir) / "project-layout.properties").exists(),
+            install=not external_install_done
+            and not (_pyronaut_output_dir(project_dir) / "project-layout.properties").exists(),
             process_pass="all",
             java_home_provider=java_home_provider,
         )
@@ -5105,6 +5208,7 @@ def _run_test_continuously(
     input_reader: Callable[[float | None], str | None] | None,
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
+    external_install_done: bool = False,
 ) -> int:
     project_root = project_dir.resolve()
     snapshot = snapshotter(project_root)
@@ -5154,7 +5258,10 @@ def _run_test_continuously(
                     no_validate=no_validate,
                     java_home_provider=java_home_provider,
                     local_repository=local_repository,
+                    external_install_done=external_install_done,
                 )
+                # Only the first cycle can reuse the install performed by run().
+                external_install_done = False
                 snapshot = snapshotter(project_root)
                 _print_continuous_test_banner()
                 if not interactive:
@@ -6240,14 +6347,16 @@ def _download_url_with_progress(
     opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
 
     request = urllib.request.Request(url, headers=headers or {}) if headers else url
+    interactive = _progress_output_is_interactive()
     attempts = 3
     for attempt in range(1, attempts + 1):
         try:
+            _print_download_progress(label, 0, interactive=interactive)
             with opener.open(request) as response, destination.open("wb") as output:
                 total = int(response.headers.get("Content-Length", "0") or "0")
                 downloaded = 0
-                last_percent = -1
-                print(f"{label}... 0%", end="", file=sys.stderr, flush=True)
+                last_percent = 0
+                last_reported_percent = 0
                 while chunk := response.read(1024 * 1024):
                     output.write(chunk)
                     downloaded += len(chunk)
@@ -6255,8 +6364,14 @@ def _download_url_with_progress(
                         percent = min(100, downloaded * 100 // total)
                         if percent != last_percent:
                             last_percent = percent
-                            print(f"\r{label}... {percent}%", end="", file=sys.stderr, flush=True)
-                print(f"\r{label}... 100%", file=sys.stderr, flush=True)
+                            if interactive or percent == 100 or percent - last_reported_percent >= 10:
+                                _print_download_progress(label, percent, interactive=interactive)
+                                last_reported_percent = percent
+                if last_reported_percent == 100:
+                    if interactive:
+                        print(file=sys.stderr, flush=True)
+                else:
+                    _print_download_progress(label, 100, interactive=interactive, final=True)
             return
         except OSError:
             if attempt == attempts:
@@ -6267,6 +6382,36 @@ def _download_url_with_progress(
                 flush=True,
             )
             time.sleep(attempt)
+
+
+def _progress_output_is_interactive() -> bool:
+    """Return whether progress can safely use carriage-return rendering."""
+    try:
+        return (
+            sys.stderr.isatty()
+            and os.environ.get("TERM", "").lower() not in {"", "dumb"}
+            and "NO_COLOR" not in os.environ
+        )
+    except (AttributeError, OSError):
+        return False
+
+
+def _print_download_progress(
+    label: str,
+    percent: int,
+    *,
+    interactive: bool,
+    final: bool = False,
+) -> None:
+    if interactive:
+        print(
+            f"\r{label}... {percent}%",
+            end="\n" if final else "",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        print(f"{label}... {percent}%", file=sys.stderr, flush=True)
 
 
 def _download_native_image_archive(
@@ -6344,9 +6489,7 @@ def _ensure_native_image(
         "version": version,
         "release-tag": release_tag,
         "platform": f"{os_segment}-{arch}",
-        # Version 3 isolates per-image manifests/resources in the shared
-        # version/platform cache directory.
-        "bundle-format": 3,
+        "bundle-format": _NATIVE_IMAGE_BUNDLE_FORMAT,
     }
     # A local checkout keeps the same URL while Gradle replaces the archive
     # in place. Record its cheap filesystem fingerprint so a rebuilt bundle is
@@ -6416,10 +6559,13 @@ def _ensure_native_image(
             # though the launcher itself is a single executable.
             for item in extracted.parent.iterdir():
                 # Several native bundles contain identically named manifests
-                # (native-compile-classpath.txt, native-provided-classpath.txt)
-                # and resources. Keep those image-specific files separate;
-                # otherwise provisioning pyronaut-run after pyronaut-dev
-                # silently replaces the compiler manifest used by pyronaut-dev.
+                # (native-compile-classpath.txt, native-provided-classpath.txt).
+                # Keep those image-specific files separate; otherwise
+                # provisioning pyronaut-run after pyronaut-dev silently replaces
+                # the compiler manifest used by pyronaut-dev. Copied language
+                # resources are deliberately not isolated: native-image resolves
+                # them from "resources" beside the executable, and every bundle
+                # of a given version ships the same GraalPy home.
                 if item.name in {"native-compile-classpath.txt", "native-provided-classpath.txt"}:
                     target = executable.parent / "resources" / image_name / item.name
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -6645,7 +6791,7 @@ def _dev_build_asset_name(release_tag: str, os_segment: str, arch: str, ext: str
 
 
 def _extract_debug_vm(args: Sequence[str]) -> bool:
-    for token in args:
+    for token in _orchestrator_args(args):
         if token == "--debug-vm":
             return True
         if token.startswith("--debug-vm="):
@@ -6659,12 +6805,13 @@ def _extract_debug_vm(args: Sequence[str]) -> bool:
 
 
 def _remove_debug_vm(args: list[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
     normalized: list[str] = []
-    for token in args:
+    for token in option_args:
         if token == "--debug-vm" or token.startswith("--debug-vm="):
             continue
         normalized.append(token)
-    return normalized
+    return normalized + application_args
 
 
 def _check_port_available(port: int) -> tuple[bool, str | None]:
@@ -6744,7 +6891,7 @@ def _has_tests_selection(args: Sequence[str]) -> bool:
 
 
 def _extract_no_cache(args: Sequence[str]) -> bool:
-    for token in args:
+    for token in _orchestrator_args(args):
         if token == "--no-cache":
             return True
         if token.startswith("--no-cache="):
@@ -6766,15 +6913,17 @@ def _is_test_resources_start(args: Sequence[str]) -> bool:
 
 
 def _strip_no_cache_flag(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
     filtered: list[str] = []
-    for token in args:
+    for token in option_args:
         if token == "--no-cache" or token.startswith("--no-cache="):
             continue
         filtered.append(token)
-    return filtered
+    return filtered + application_args
 
 
 def _extract_local_repository(args: Sequence[str]) -> str | None:
+    args = _orchestrator_args(args)
     for index, token in enumerate(args):
         if token in {"--local-repository", "--local-repo"}:
             if index + 1 >= len(args):
@@ -6798,9 +6947,10 @@ def _extract_option_value(args: Sequence[str], option: str) -> str | None:
 
 
 def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
     filtered: list[str] = []
     skip_next = False
-    for token in args:
+    for token in option_args:
         if skip_next:
             skip_next = False
             continue
@@ -6810,16 +6960,17 @@ def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
         if token.startswith("--local-repository=") or token.startswith("--local-repo="):
             continue
         filtered.append(token)
-    return filtered
+    return filtered + application_args
 
 
 def _strip_orchestrator_only_args(args: Sequence[str]) -> list[str]:
     """Remove CLI options consumed before invoking a native runner."""
+    option_args, application_args = _split_application_args(args)
     filtered: list[str] = []
     skip_next = False
     value_options = {"--local-repository", "--local-repo", "--color", "--progress"}
     flag_options = {"--offline", "--no-validate", "--no-cache"}
-    for token in args:
+    for token in option_args:
         if skip_next:
             skip_next = False
             continue
@@ -6829,23 +6980,44 @@ def _strip_orchestrator_only_args(args: Sequence[str]) -> list[str]:
         if token in flag_options or any(token.startswith(option + "=") for option in value_options | flag_options):
             continue
         filtered.append(token)
-    return filtered
+    return filtered + application_args
+
+
+def _split_application_args(args: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Split at the first ``--``; orchestrator options only precede it."""
+    values = list(args)
+    if "--" in values:
+        index = values.index("--")
+        return values[:index], values[index:]
+    return values, []
+
+
+def _orchestrator_args(args: Sequence[str]) -> list[str]:
+    return _split_application_args(args)[0]
+
+
+def _usage_error(message: str) -> int:
+    print(message, file=sys.stderr)
+    _print_usage(stream=sys.stderr)
+    return USAGE_ERROR
 
 
 def _extract_no_validate(args: Sequence[str]) -> bool:
-    return any(token == "--no-validate" for token in args)
+    return any(token == "--no-validate" for token in _orchestrator_args(args))
 
 
 def _remove_no_validate(args: Sequence[str]) -> list[str]:
-    return [token for token in args if token != "--no-validate"]
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token != "--no-validate"] + application_args
 
 
 def _extract_continuous(args: Sequence[str]) -> bool:
-    return any(token in {"-t", "--continuous"} for token in args)
+    return any(token in {"-t", "--continuous"} for token in _orchestrator_args(args))
 
 
 def _remove_continuous(args: Sequence[str]) -> list[str]:
-    return [token for token in args if token not in {"-t", "--continuous"}]
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token not in {"-t", "--continuous"}] + application_args
 
 
 def _extract_project_dir(args: Sequence[str]) -> str:
@@ -6876,6 +7048,303 @@ def _process_required(project_dir: Path, command: str) -> bool:
         test_classes_ready = (output_dir / "test-classes").is_dir()
         return not (classes_ready and test_classes_ready)
     return not classes_ready
+
+
+def _run_create(args: Sequence[str], runner: RunnerWithEnv, platform_name: str) -> int:
+    try:
+        create_args, show_help, list_features = _parse_create_args(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        _print_create_usage(stream=sys.stderr)
+        return USAGE_ERROR
+
+    if show_help:
+        _print_create_usage()
+        return SUCCESS
+
+    version = _micronaut_platform_version()
+    if version is None:
+        print(
+            "Unable to determine the Micronaut Platform version from the installed Pyronaut distribution.",
+            file=sys.stderr,
+        )
+        return PRECONDITION_FAILED
+    parsed_version = _parse_micronaut_version(version)
+    if parsed_version is None or parsed_version < _MICRONAUT_CREATE_MIN_VERSION:
+        minimum = ".".join(str(value) for value in _MICRONAUT_CREATE_MIN_VERSION)
+        print(
+            f"pyronaut create requires Micronaut Platform {minimum} or newer (configured: {version}).",
+            file=sys.stderr,
+        )
+        return PRECONDITION_FAILED
+
+    try:
+        mn = _ensure_micronaut_launch(version, platform_name=platform_name)
+    except _CreatePreconditionError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    except Exception as exc:
+        print(f"Project creation tooling failed: {exc}", file=sys.stderr)
+        return INTERNAL_ERROR
+
+    command_line = [str(mn), "create-app", *create_args, *_MICRONAUT_CREATE_FIXED_ARGS]
+    if list_features:
+        exit_code, stdout, stderr = _capture_subprocess(command_line)
+        if stderr:
+            sys.stderr.write(stderr)
+        if exit_code != SUCCESS:
+            return exit_code
+        sys.stdout.write(_filter_create_features(stdout, version))
+        return SUCCESS
+    return runner(command_line, None)
+
+
+class _CreatePreconditionError(RuntimeError):
+    """A create prerequisite is unavailable or does not match the request."""
+
+
+def _parse_create_args(args: Sequence[str]) -> tuple[list[str], bool, bool]:
+    forwarded: list[str] = []
+    name_seen = False
+    show_help = False
+    list_features = False
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"-h", "--help"}:
+            show_help = True
+            index += 1
+            continue
+        if token == "--list-features":
+            list_features = True
+            forwarded.append(token)
+            index += 1
+            continue
+        if token in {"-i", "--inplace", "-v", "--verbose", "-x", "--stacktrace"}:
+            forwarded.append(token)
+            index += 1
+            continue
+        if len(token) > 2 and token.startswith("-") and not token.startswith("--"):
+            short_flags = token[1:]
+            if all(flag in "hivx" for flag in short_flags):
+                show_help = show_help or "h" in short_flags
+                forwarded.extend(f"-{flag}" for flag in short_flags if flag != "h")
+                index += 1
+                continue
+        if token in {"-f", "--features"}:
+            if (
+                index + 1 >= len(args)
+                or not args[index + 1].strip()
+                or args[index + 1].startswith("-")
+            ):
+                raise ValueError(f"{token} requires a feature value")
+            forwarded.extend((token, args[index + 1]))
+            index += 2
+            continue
+        if token.startswith("-f=") or token.startswith("--features="):
+            if not token.split("=", 1)[1].strip():
+                raise ValueError(f"{token.split('=', 1)[0]} requires a feature value")
+            forwarded.append(token)
+            index += 1
+            continue
+        if token.startswith("-"):
+            raise ValueError(f"Unknown pyronaut create option: {token}")
+        if name_seen:
+            raise ValueError("Only one application NAME may be supplied")
+        name_seen = True
+        forwarded.append(token)
+        index += 1
+
+    denied = _denied_create_features(_micronaut_platform_version() or "")
+    for index, token in enumerate(forwarded):
+        if token not in {"-f", "--features"} and not token.startswith("-f=") and not token.startswith("--features="):
+            continue
+        value = token.split("=", 1)[1] if "=" in token else forwarded[index + 1]
+        for feature in (part.strip().lower() for part in value.split(",")):
+            if feature and feature in denied:
+                raise ValueError(
+                    f"Feature {feature} is not supported for Python applications; remove it from --features"
+                )
+    return forwarded, show_help, list_features
+
+
+def _micronaut_platform_version() -> str | None:
+    version_file = Path(__file__).with_name("version.properties")
+    if not version_file.is_file():
+        return None
+    try:
+        for line in version_file.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "micronaut.platform" and value.strip():
+                return value.strip()
+    except OSError:
+        return None
+    return None
+
+
+def _parse_micronaut_version(version: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", version.strip())
+    if match is None:
+        return None
+    return tuple(int(value) for value in match.groups())
+
+
+def _denied_create_features(version: str) -> frozenset[str]:
+    parsed = _parse_micronaut_version(version)
+    if parsed is None:
+        return frozenset()
+    minor = (parsed[0], parsed[1])
+    known = [key for key in _PYRONAUT_CREATE_DENYLIST_BY_MINOR if key <= minor]
+    return _PYRONAUT_CREATE_DENYLIST_BY_MINOR[max(known)] if known else frozenset()
+
+
+def _create_sdk_platform(platform_name: str, machine_name: str | None = None) -> tuple[str, str, str]:
+    current = platform_name.lower()
+    machine = (machine_name or platform.machine()).lower()
+    if current == "darwin":
+        if machine in {"x86_64", "amd64"}:
+            return "darwin", "amd64", "mn"
+        if machine in {"arm64", "aarch64"}:
+            return "darwin", "aarch64", "mn"
+    elif current.startswith("linux") and machine in {"x86_64", "amd64"}:
+        return "linux", "amd64", "mn"
+    elif current in {"win32", "windows", "cygwin", "msys"} and machine in {"x86_64", "amd64"}:
+        return "win", "amd64", "mn.exe"
+    raise _CreatePreconditionError(
+        f"Micronaut Launch SDK is not available for platform '{platform_name}' and architecture '{machine}'. "
+        "Supported combinations are macOS x64/arm64, Linux x64, and Windows x64."
+    )
+
+
+def _ensure_micronaut_launch(version: str, *, platform_name: str) -> Path:
+    os_segment, arch, executable_name = _create_sdk_platform(platform_name)
+    safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version)
+    if safe_version != version or not version:
+        raise _CreatePreconditionError(f"Invalid Micronaut Platform version: {version}")
+
+    sdkman_root = Path(_read_env("SDKMAN_DIR") or (Path.home() / ".sdkman")) / "candidates" / "micronaut"
+    candidates = [sdkman_root / version / "bin" / executable_name]
+    current = sdkman_root / "current"
+    try:
+        if current.is_symlink() and current.resolve().name == version:
+            candidates.append(current / "bin" / executable_name)
+    except OSError:
+        pass
+    cache_root = Path.home() / ".pyronaut" / "sdks" / "micronaut"
+    candidates.append(cache_root / version / "bin" / executable_name)
+    for candidate in candidates:
+        if _valid_micronaut_launch(candidate, version):
+            return candidate
+
+    if "-" in version or "+" in version:
+        raise _CreatePreconditionError(
+            f"Micronaut Launch SDK {version} is not a published release. Stage an exact 'mn' installation in "
+            f"{sdkman_root / version / 'bin'} or {cache_root / version / 'bin'}."
+        )
+
+    cache_root.mkdir(parents=True, exist_ok=True)
+    destination = cache_root / version
+    lock = cache_root / f".{safe_version}.lock"
+    with _native_image_cache_lock(lock):
+        if _valid_micronaut_launch(destination / "bin" / executable_name, version):
+            return destination / "bin" / executable_name
+        print("Project Creation Tooling is being installed", file=sys.stderr, flush=True)
+        archive_name = f"mn-{os_segment}-{arch}-v{version}.zip"
+        url = f"{_MICRONAUT_STARTER_RELEASES_URL}/v{version}/{archive_name}"
+        with tempfile.TemporaryDirectory(prefix=f".{safe_version}-", dir=cache_root) as temp_dir:
+            temp_root = Path(temp_dir)
+            archive = temp_root / archive_name
+            _download_url_with_progress(url, archive, "Downloading Micronaut Launch SDK")
+            staged = temp_root / "sdk"
+            _extract_micronaut_launch_archive(archive, staged, executable_name)
+            executable = staged / "bin" / executable_name
+            if not _valid_micronaut_launch(executable, version):
+                raise RuntimeError(f"Downloaded Micronaut Launch SDK does not report version {version}")
+            if destination.exists():
+                old_destination = temp_root / "old-sdk"
+                os.replace(destination, old_destination)
+                try:
+                    os.replace(staged, destination)
+                except OSError:
+                    if not destination.exists() and old_destination.exists():
+                        os.replace(old_destination, destination)
+                    raise
+                shutil.rmtree(old_destination, ignore_errors=True)
+            else:
+                os.replace(staged, destination)
+    return destination / "bin" / executable_name
+
+
+def _capture_subprocess(command_line: list[str]) -> tuple[int, str, str]:
+    try:
+        completed = subprocess.run(command_line, check=False, capture_output=True, text=True)
+        return int(completed.returncode), completed.stdout or "", completed.stderr or ""
+    except OSError as exc:
+        return INTERNAL_ERROR, "", str(exc)
+
+
+def _valid_micronaut_launch(executable: Path, version: str) -> bool:
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        return False
+    exit_code, stdout, _ = _capture_subprocess([str(executable), "--version"])
+    if exit_code != SUCCESS:
+        return False
+    match = re.search(r"Micronaut Version:\s*([^\s]+)", stdout)
+    return match is not None and match.group(1).strip() == version
+
+
+def _extract_micronaut_launch_archive(archive: Path, destination: Path, executable_name: str) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    try:
+        with zipfile.ZipFile(archive) as source:
+            members = source.infolist()
+            roots: set[str] = set()
+            expected = []
+            for member in members:
+                member_path = Path(member.filename)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise RuntimeError(f"Micronaut Launch archive contains an unsafe path: {member.filename}")
+                mode = (member.external_attr >> 16) & 0o170000
+                if mode == 0o120000:
+                    raise RuntimeError(f"Micronaut Launch archive contains a symlink: {member.filename}")
+                if not member.is_dir():
+                    if len(member_path.parts) < 2:
+                        raise RuntimeError("Micronaut Launch archive contains a file outside its root directory")
+                    roots.add(member_path.parts[0])
+                if member.filename.rstrip("/").endswith(f"/bin/{executable_name}"):
+                    expected.append(member)
+            if len(roots) != 1 or len(expected) != 1:
+                raise RuntimeError(f"Micronaut Launch archive must contain exactly one bin/{executable_name}")
+            archive_root = next(iter(roots))
+            for member in members:
+                if member.is_dir():
+                    continue
+                relative = Path(member.filename)
+                parts = relative.parts
+                if parts[0] != archive_root:
+                    raise RuntimeError("Micronaut Launch archive contains multiple roots")
+                target = destination.joinpath(*parts[1:])
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with source.open(member) as input_file, target.open("wb") as output:
+                    shutil.copyfileobj(input_file, output)
+            executable = destination / "bin" / executable_name
+            executable.chmod(0o755)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise RuntimeError(f"Unable to unpack Micronaut Launch archive: {exc}") from exc
+
+
+def _filter_create_features(output: str, version: str) -> str:
+    denied = _denied_create_features(version)
+    if not denied:
+        return output
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    filtered: list[str] = []
+    for line in output.splitlines(keepends=True):
+        clean = ansi.sub("", line)
+        if any(re.match(rf"^\s*{re.escape(feature)}(?:\s|$|\(|\[)", clean) for feature in denied):
+            continue
+        filtered.append(line)
+    return "".join(filtered)
 
 
 def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> int:
@@ -7529,7 +7998,22 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+
+
+def _print_create_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
+        "Usage: pyronaut create [NAME] [-f=FEATURE[,FEATURE...]] [-ivx] [--list-features]\n"
+    )
+    stream.write("Creates a Python application using the Micronaut Launch CLI.\n")
+    stream.write("  -f, --features=FEATURE[,FEATURE...]  Features to include (repeatable).\n")
+    stream.write("  -i, --inplace                       Create using the current directory.\n")
+    stream.write("      --list-features                  List Python-compatible features.\n")
+    stream.write("  -v, --verbose                       Enable verbose generation output.\n")
+    stream.write("  -x, --stacktrace                    Show full stack traces on failures.\n")
+    stream.write("  -h, --help                          Show this help message and exit.\n")
 
 
 def _print_setup_usage(stream=None) -> None:
@@ -7790,7 +8274,7 @@ def _cached_native_image(
         "version": version,
         "release-tag": release_tag,
         "platform": f"{os_segment}-{arch}",
-        "bundle-format": 3,
+        "bundle-format": _NATIVE_IMAGE_BUNDLE_FORMAT,
     }
     if not isinstance(cached_metadata, dict) or any(
         cached_metadata.get(key) != value for key, value in expected.items()
@@ -7827,6 +8311,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
         _validate_setup_arguments(args)
         refresh = _extract_flag(args, "--refresh")
         offline = _extract_offline(args)
+        _setup_progress("checking the existing setup")
         manifest_path = _setup_manifest_path()
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = manifest_path.with_suffix(".lock")
@@ -7841,12 +8326,14 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     return SUCCESS
 
             expectation = _setup_expectation(args)
+            _setup_progress("locating or provisioning a compatible GraalVM JDK (JDK 25+)")
             java_home = _ensure_graalvm_java_home(None, offline=offline)
             if java_home is None:
                 qualifier = " cached" if offline else ""
                 raise RuntimeError(
                     f"Unable to locate or provision a{qualifier} compatible GraalVM JDK (requires JDK 25+)"
                 )
+            _setup_progress("provisioning native launchers")
             images: dict[str, Path] = {}
             for image_name in _SETUP_IMAGE_COMMANDS:
                 images[image_name] = (
@@ -7891,6 +8378,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 progress = _extract_option_value(args, "--progress")
                 if progress is not None:
                     command_line.extend(["--progress", progress])
+                _setup_progress("resolving SDK dependencies")
                 env = dict(os.environ)
                 env["JAVA_HOME"] = java_home
                 java_bin = str(Path(java_home) / "bin")
@@ -7948,6 +8436,10 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+
+
+def _setup_progress(message: str) -> None:
+    print(f"Pyronaut setup: {message}...", file=sys.stderr, flush=True)
 
 
 def _print_build_usage(stream=None) -> None:
@@ -8103,7 +8595,7 @@ def _run_tui(
     from .tui.app import TuiApp, TuiOptions
     from .tui.reports import render_summary_line
 
-    args = [a for a in argv if a != "--tui"]
+    mode_token, args = _split_tui_mode_token([a for a in argv if a != "--tui"])
 
     if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
         return _delegate_to_tui_binary(["--help"], runner_with_env, resolver)
@@ -8117,9 +8609,9 @@ def _run_tui(
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
-    smoke = _extract_flag(args, "--smoke") or _extract_flag(args, "--non-interactive")
+    smoke = _extract_flag(args, "--smoke")
     non_interactive = _extract_flag(args, "--non-interactive")
-    initial_mode = "test" if _extract_flag(args, "--test") else "run"
+    initial_mode = "test" if mode_token == "test" or _extract_flag(args, "--test") else "run"
     report_dir = (_extract_path_flag(args, "--report-dir") or _extract_tui_report_path(args, project_dir) or (_pyronaut_output_dir(project_dir) / "reports" / "tests")).resolve()
     trace_delegation = _delegation_trace_enabled() or _extract_flag(args, "--trace-delegation")
 
@@ -8272,6 +8764,7 @@ class _OwnedTestResourcesSession:
         if self._shared_server:
             self._emit_status("[test-resources] stop skipped (shared server mode)")
             self._remove_session_file()
+            self._started = False
             return
 
         if not self._session_matches_owner():
@@ -8293,6 +8786,7 @@ class _OwnedTestResourcesSession:
         )
         if exit_code == SUCCESS:
             self._remove_session_file()
+            self._started = False
         else:
             self._emit_status(f"[test-resources] stop failed (exit code {exit_code}); preserving session state for retry")
 
@@ -8535,6 +9029,14 @@ def _should_mirror_test_resources_log_line(line: str) -> bool:
     )
 
 
+def _split_tui_mode_token(args: Sequence[str]) -> tuple[str | None, list[str]]:
+    """Consume a leading ``run``/``test`` command token for the TUI."""
+    values = list(args)
+    if values and values[0] in {"run", "test"}:
+        return values[0], values[1:]
+    return None, values
+
+
 def _direct_tui_arguments(args: Sequence[str]) -> list[str]:
     """Return direct-source arguments for the delegating TUI."""
     result: list[str] = []
@@ -8628,13 +9130,19 @@ def _run_tamboui_tui(
     if direct_dev_executable is not None:
         delegated = {}
     else:
-        delegated = {
-            "validate-config": _resolve_delegate_executable_path("validate-config", ["--project-dir", str(project_dir)], resolver),
-            "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
-            "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
-            "run": _resolve_delegate_executable_path("run", ["--project-dir", str(project_dir)], resolver),
-            "test": _resolve_delegate_executable_path("test", ["--project-dir", str(project_dir)], resolver),
-        }
+        try:
+            delegated = {
+                "validate-config": _resolve_delegate_executable_path("validate-config", ["--project-dir", str(project_dir)], resolver),
+                "install": _resolve_delegate_executable_path("install", ["--project-dir", str(project_dir)], resolver),
+                "process": _resolve_delegate_executable_path("process", ["--project-dir", str(project_dir)], resolver),
+                "run": _resolve_delegate_executable_path("run", ["--project-dir", str(project_dir)], resolver),
+                "test": _resolve_delegate_executable_path("test", ["--project-dir", str(project_dir)], resolver),
+            }
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            if tr_session is not None:
+                tr_session.stop_if_owned(runner=runner, resolver=resolver)
+            return PRECONDITION_FAILED
     missing = [name for (name, path) in delegated.items() if path is None]
     if missing:
         print("Missing delegated executable(s): " + ", ".join(f"pyronaut-{name}" for name in missing), file=sys.stderr)
@@ -8749,7 +9257,7 @@ def _resolve_required_tui_executable(resolver: Callable[[str], str | None]) -> s
 
 
 def _extract_flag(argv: Sequence[str], name: str) -> bool:
-    return any(token == name or token.startswith(name + "=") for token in argv)
+    return any(token == name or token.startswith(name + "=") for token in _orchestrator_args(argv))
 
 
 def _extract_path_flag(argv: Sequence[str], name: str) -> Path | None:
