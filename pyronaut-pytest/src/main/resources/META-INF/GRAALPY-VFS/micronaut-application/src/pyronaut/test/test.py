@@ -226,6 +226,14 @@ class ApplicationContextWrapper:
         """Return the Java class wrapped by Core's _MicronautJavaType helper."""
         if type(key).__name__ != "_MicronautJavaType":
             return key
+        resolved = getattr(key, "_resolved", None)
+        if resolved is not None:
+            try:
+                value = resolved()
+                if value is not None:
+                    return value
+            except BaseException:
+                pass
         return getattr(key, "_target", key)
 
     def _python_type_to_lookup_key(self, key):
