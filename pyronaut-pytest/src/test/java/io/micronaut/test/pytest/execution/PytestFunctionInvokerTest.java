@@ -149,6 +149,7 @@ class PytestFunctionInvokerTest {
             context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
 
             Value properties = context.eval("python", "to_java_map({'micronaut.security.enabled': 'false'})");
+            assertEquals("java.util.LinkedHashMap", properties.getMetaObject().getMetaQualifiedName());
             assertEquals("false", properties.invokeMember("get", "micronaut.security.enabled").asString());
         }
     }
