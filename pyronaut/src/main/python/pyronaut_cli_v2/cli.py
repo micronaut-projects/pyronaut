@@ -1929,20 +1929,28 @@ def _native_launcher_provided_manifest_file_names(launcher_executable: str | Non
     return _native_launcher_provided_artifact_coordinates(launcher_executable)
 
 
-def _native_launcher_compile_classpath_entries(launcher_executable: str | None) -> list[str]:
+def _native_launcher_compile_classpath_entries(
+    launcher_executable: str | None,
+    local_repository: str | None = None,
+) -> list[str]:
     if not launcher_executable:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
     image_name = Path(launcher_executable).name
     if image_name not in _NATIVE_IMAGE_COMMANDS:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
-    if not _setup_is_required():
+    if local_repository or not _setup_is_required():
         if not _native_launcher_manifest_entries(
             launcher_executable, "native-compile-classpath.txt"
         ):
             return []
         entries = _native_compile_descriptor_entries(launcher_executable)
         repositories = []
-        for repository in (_setup_local_repository(()), Path.cwd() / ".pyronaut-m2", Path.home() / ".m2" / "repository"):
+        configured_repository = (
+            _setup_local_repository(("--local-repository", local_repository))
+            if local_repository
+            else _setup_local_repository(())
+        )
+        for repository in (configured_repository, Path.cwd() / ".pyronaut-m2", Path.home() / ".m2" / "repository"):
             repository = repository.resolve()
             if repository not in repositories:
                 repositories.append(repository)
@@ -2206,6 +2214,17 @@ def _run_preflight(
         process_args.extend(["--java-src", layout.java_source_dir])
     if process_pass is not None:
         process_args.extend(["--pass", process_pass])
+    # Native pyronaut-dev resolves its embedded compiler descriptor from the
+    # selected local repository. Keep that repository available while building
+    # the native command; the delegate strips this orchestration-only option
+    # before invoking the Java processor. JVM processor delegates must not see
+    # it because their CLI intentionally does not accept resolver options.
+    if local_repository:
+        try:
+            if _use_pyronaut_dev_native_toolchain("process", Path(project_dir), args=process_args):
+                process_args.extend(_local_repository_install_args(local_repository))
+        except ValueError:
+            pass
     # A prior cached processing run may have been interrupted or its output
     # removed. Force regeneration when the expected classes directory is
     # missing; otherwise `dev` can incorrectly reuse the external-build cache
@@ -3060,7 +3079,10 @@ def _read_pyproject_data(project_dir: Path) -> dict[str, object] | None:
     try:
         import tomllib
     except Exception:
-        return None
+        try:
+            import tomli as tomllib
+        except Exception:
+            return None
     try:
         with pyproject.open("rb") as fp:
             data = tomllib.load(fp)
@@ -7631,7 +7653,10 @@ def _pyronaut_dev_native_command_line(
     # (notably micronaut-context-python and micronaut-inject-python) on the
     # processor classpath.
     compiler_classpath = (
-        os.pathsep.join(_native_launcher_compile_classpath_entries(executable_path))
+        os.pathsep.join(_native_launcher_compile_classpath_entries(
+            executable_path,
+            _extract_local_repository(args),
+        ))
         if direct_source or command == "process"
         else ""
     )
@@ -7686,7 +7711,10 @@ def _pyronaut_dev_native_command_line(
         # they are recorded in native-compile-classpath.txt and are not runtime
         # application dependencies.
         process_compiler_classpath = compiler_classpath or os.pathsep.join(
-            _native_launcher_compile_classpath_entries(executable_path)
+            _native_launcher_compile_classpath_entries(
+                executable_path,
+                _extract_local_repository(args),
+            )
         )
         if not process_compiler_classpath:
             return [executable_path, *jvm_args, command, *command_args]
