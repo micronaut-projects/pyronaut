@@ -137,6 +137,23 @@ class PytestFunctionInvokerTest {
     }
 
     @Test
+    void convertsMicronautTestPropertiesToJavaMap() throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String testSupport = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
+
+            Value properties = context.eval("python", "to_java_map({'micronaut.security.enabled': 'false'})");
+            assertEquals("false", properties.invokeMember("get", "micronaut.security.enabled").asString());
+        }
+    }
+
+    @Test
     void pytestListenerFiltersFrameworkFramesFromFailureText() throws Exception {
         try (Context context = Context.newBuilder("python")
             .allowAllAccess(true)
