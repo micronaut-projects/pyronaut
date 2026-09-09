@@ -94,7 +94,7 @@ def micronaut_test_fixture(request,
 
     PytestMicronautExtension = java.type("io.micronaut.test.pytest.extension.PytestMicronautExtension")
     bootstrap = PytestMicronautExtension.bootstrapFixture(
-        micronaut_test.properties,
+        to_java_map(micronaut_test.properties),
         request.node,
         to_java_array(micronaut_test.environments),
         to_java_array(micronaut_test.packages),
@@ -123,6 +123,14 @@ def to_java_array(list):
         arr[i] = name
 
     return arr
+
+
+def to_java_map(mapping):
+    LinkedHashMap = java.type("java.util.LinkedHashMap")
+    result = LinkedHashMap()
+    for key, value in mapping.items():
+        result.put(key, value)
+    return result
 
 
 def to_sql_configs(sql):
