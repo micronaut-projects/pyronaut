@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -182,6 +183,32 @@ final class ToolClasspathInstallerTest {
         Exception failure = assertThrows(Exception.class,
             () -> installer.install(null, localRepository, true, false));
         assertTrue(failure.getMessage().contains("Conflicting Pyronaut tool artifacts"));
+    }
+
+    @Test
+    void materializesEqualBundledAndMavenArtifactsAsReusableRegularFile(@TempDir Path tempDir) throws Exception {
+        Path packagedTools = packagedTools(tempDir);
+        Path localRepository = tempDir.resolve("repository");
+        writeArtifact(localRepository, "io.micronaut.pyronaut", "micronaut-pyronaut-run", "1.0",
+            new byte[]{9, 8, 7});
+        writeTool(packagedTools, "pyronaut-dev", List.of(
+            "maven\tio.micronaut.pyronaut\tmicronaut-pyronaut-run\t1.0\tjar\t\tmicronaut-pyronaut-run-1.0.jar"
+        ));
+        writeTool(packagedTools, "pyronaut-install", List.of(
+            "bundled\tmicronaut-pyronaut-run-1.0.jar"
+        ));
+        ToolClasspathInstaller installer = new ToolClasspathInstaller(
+            new MavenClasspathResolver(), packagedTools, tempDir.resolve("cache")
+        );
+
+        Path current = installer.install(null, localRepository, true, false);
+        Path firstGeneration = Files.readSymbolicLink(current);
+        installer.install(null, localRepository, true, false);
+
+        Path artifact = current.resolve("tools/shared/lib/micronaut-pyronaut-run-1.0.jar");
+        assertEquals(firstGeneration, Files.readSymbolicLink(current));
+        assertFalse(Files.isSymbolicLink(artifact));
+        assertArrayEquals(new byte[]{9, 8, 7}, Files.readAllBytes(artifact));
     }
 
     private static Path packagedTools(Path tempDir) throws Exception {
