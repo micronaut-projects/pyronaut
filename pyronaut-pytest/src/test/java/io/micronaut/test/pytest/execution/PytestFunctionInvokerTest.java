@@ -126,7 +126,12 @@ class PytestFunctionInvokerTest {
                         self._target = target
                         self._interface = interface
 
-                EmbeddedServer = _MicronautJavaType(java.type("java.lang.String"), True)
+                    def _resolved(self):
+                        if isinstance(self._target, str):
+                            self._target = java.type(self._target)
+                        return self._target
+
+                EmbeddedServer = _MicronautJavaType("java.lang.String", True)
                 wrapper = ApplicationContextWrapper(object())
                 _, lookup_key = wrapper._resolve_bean_key(EmbeddedServer)
                 """);
