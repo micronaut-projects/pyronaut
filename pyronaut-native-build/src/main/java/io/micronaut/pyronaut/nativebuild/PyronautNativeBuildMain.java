@@ -929,7 +929,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         if (parent == null) {
             return List.of();
         }
-        return POM_CACHE.computeIfAbsent(parent, ignored -> findPomCandidates(normalized, parent));
+        return POM_CACHE.computeIfAbsent(normalized, ignored -> findPomCandidates(normalized, parent));
     }
 
     private static List<Path> findPomCandidates(Path artifact, Path parent) {
