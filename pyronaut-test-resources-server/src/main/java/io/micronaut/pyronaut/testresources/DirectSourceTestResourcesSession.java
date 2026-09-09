@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.testresources;
 
 import io.micronaut.core.annotation.Internal;
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.testresources.buildtools.ServerSettings;
 import io.micronaut.testresources.buildtools.ServerUtils;
 
@@ -127,7 +128,7 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
                 null,
                 requestedToken,
                 null,
-                DEFAULT_CLIENT_TIMEOUT_SECONDS,
+                clientTimeout(root),
                 null,
                 Map.of(),
                 Map.of(),
@@ -156,6 +157,19 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
             cleanupFailedStart(serverManager, settingsDirectory, requestedToken);
             throw e;
         }
+    }
+
+    private static int clientTimeout(Path projectRoot) {
+        Path pyproject = projectRoot.resolve("pyproject.toml");
+        if (!Files.isRegularFile(pyproject)) {
+            return DEFAULT_CLIENT_TIMEOUT_SECONDS;
+        }
+        Integer configured = new PyprojectModelReader()
+            .readFile(pyproject)
+            .pyronaut()
+            .testResources()
+            .clientTimeout();
+        return configured == null ? DEFAULT_CLIENT_TIMEOUT_SECONDS : configured;
     }
 
     /**

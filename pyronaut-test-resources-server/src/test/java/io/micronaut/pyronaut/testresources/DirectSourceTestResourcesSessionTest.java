@@ -45,6 +45,23 @@ final class DirectSourceTestResourcesSessionTest {
     }
 
     @Test
+    void usesConfiguredClientTimeoutForOwnedServer(@TempDir Path projectRoot) throws Exception {
+        Files.writeString(projectRoot.resolve("pyproject.toml"), """
+            [tool.pyronaut.test-resources]
+            enabled = true
+            client-timeout = 720
+            """);
+        RecordingServerManager manager = new RecordingServerManager();
+
+        try (DirectSourceTestResourcesSession ignored =
+                 DirectSourceTestResourcesSession.open(projectRoot, manager, line -> { })) {
+            assertEquals("720", ignored.clientProperties().get(
+                "micronaut.test.resources.server.client.read.timeout"
+            ));
+        }
+    }
+
+    @Test
     void mirrorsContainerProgressAndErrorsFromOwnedServer(@TempDir Path projectRoot) throws Exception {
         RecordingServerManager manager = new RecordingServerManager();
         List<String> output = new CopyOnWriteArrayList<>();
