@@ -143,8 +143,8 @@ final class ToolClasspathInstaller {
             Path temporaryTools = temporary.resolve("tools");
             Path sharedLib = temporaryTools.resolve("shared/lib");
             Files.createDirectories(sharedLib);
-            Map<String, Path> sourcesByFileName = new LinkedHashMap<>();
-            Map<String, Path> controlPanelSourcesByFileName = new LinkedHashMap<>();
+            Map<String, ArtifactMaterialization> sourcesByFileName = new LinkedHashMap<>();
+            Map<String, ArtifactMaterialization> controlPanelSourcesByFileName = new LinkedHashMap<>();
             for (ToolDescriptor descriptor : descriptors) {
                 Path sourceTool = descriptor.file().getParent().getParent();
                 copyDirectory(sourceTool.resolve("bin"), temporaryTools.resolve(descriptor.command()).resolve("bin"));
@@ -155,19 +155,23 @@ final class ToolClasspathInstaller {
                     if (source == null || !Files.isRegularFile(source)) {
                         throw new IOException("Missing Pyronaut tool artifact " + entry.fileName());
                     }
-                    Map<String, Path> destinations = entry.controlPanel() ? controlPanelSourcesByFileName : sourcesByFileName;
-                    Path existing = destinations.putIfAbsent(entry.fileName(), source);
-                    if (existing != null && Files.mismatch(existing, source) != -1L) {
-                        throw new IOException("Conflicting Pyronaut tool artifacts share filename " + entry.fileName());
+                    Map<String, ArtifactMaterialization> destinations = entry.controlPanel()
+                        ? controlPanelSourcesByFileName
+                        : sourcesByFileName;
+                    ArtifactMaterialization existing = destinations.get(entry.fileName());
+                    if (existing == null) {
+                        destinations.put(entry.fileName(), new ArtifactMaterialization(source, false));
+                    } else {
+                        destinations.put(entry.fileName(), existing.merge(source, entry.fileName()));
                     }
                 }
             }
-            for (Map.Entry<String, Path> entry : sourcesByFileName.entrySet()) {
-                linkOrCopy(entry.getValue(), sharedLib.resolve(entry.getKey()));
+            for (Map.Entry<String, ArtifactMaterialization> entry : sourcesByFileName.entrySet()) {
+                entry.getValue().writeTo(sharedLib.resolve(entry.getKey()));
             }
             Path controlPanelLib = temporaryTools.resolve("pyronaut-dev/lib/control-panel");
-            for (Map.Entry<String, Path> entry : controlPanelSourcesByFileName.entrySet()) {
-                linkOrCopy(entry.getValue(), controlPanelLib.resolve(entry.getKey()));
+            for (Map.Entry<String, ArtifactMaterialization> entry : controlPanelSourcesByFileName.entrySet()) {
+                entry.getValue().writeTo(controlPanelLib.resolve(entry.getKey()));
             }
             Properties metadata = new Properties();
             metadata.setProperty("descriptor.sha256", descriptorHash);
@@ -446,6 +450,26 @@ final class ToolClasspathInstaller {
     }
 
     private record ToolDescriptor(String command, Path file, List<ToolEntry> entries) {
+    }
+
+    private record ArtifactMaterialization(Path source, boolean copyRequired) {
+        ArtifactMaterialization merge(Path additionalSource, String fileName) throws IOException {
+            if (Files.mismatch(source, additionalSource) != -1L) {
+                throw new IOException("Conflicting Pyronaut tool artifacts share filename " + fileName);
+            }
+            boolean sameOrigin = source.toAbsolutePath().normalize()
+                .equals(additionalSource.toAbsolutePath().normalize());
+            return copyRequired || sameOrigin ? this : new ArtifactMaterialization(source, true);
+        }
+
+        void writeTo(Path target) throws IOException {
+            if (!copyRequired) {
+                linkOrCopy(source, target);
+                return;
+            }
+            Files.createDirectories(target.getParent());
+            Files.copy(source, target, StandardCopyOption.COPY_ATTRIBUTES);
+        }
     }
 
     private record ToolEntry(boolean maven,
