@@ -109,7 +109,6 @@ REPOSITORY_API=https://api.github.com/repos/micronaut-projects/pyronaut
 RELEASE_TAG="${PYRONAUT_RELEASE_TAG:-v0.0.1-SNAPSHOT}"
 RELEASE_DRAFT="${PYRONAUT_RELEASE_DRAFT:-false}"
 WHEEL_NAME=pyronaut-0.0.1.dev0-py3-none-any.whl
-SONATYPE_SNAPSHOTS=https://central.sonatype.com/repository/maven-snapshots/
 LOCAL_REPOSITORY=/work/maven-local
 
 AUTH_HEADERS=(
@@ -197,8 +196,7 @@ fi
 
 # The writable Maven repository is intentionally empty. Pyronaut stages the
 # Pyronaut module JARs and BOM from the installed wheel there during install;
-# every other project dependency must come from the explicitly configured
-# Sonatype snapshot repository or Maven Central.
+# every other project dependency must come from Maven Central.
 mkdir -p "$LOCAL_REPOSITORY"
 
 mkdir -p /work/projects/direct-python /work/projects/direct-java
@@ -241,8 +239,8 @@ package-dir."" = "src"
 packages.find.where = ["src"]
 
 [tool.pyronaut]
-repositories = ["mavenCentral", "https://central.sonatype.com/repository/maven-snapshots/"]
-core.version = "5.2.0-SNAPSHOT"
+repositories = ["mavenCentral"]
+core.version = "5.2.0"
 platform.version = "5.1.0"
 
 [tool.pyronaut.toolchain]
@@ -355,7 +353,6 @@ pluginManagement {
     repositories {
         gradlePluginPortal()
         mavenCentral()
-        maven { url = uri("$SONATYPE_SNAPSHOTS") }
     }
 }
 rootProject.name = "fresh5"
@@ -371,7 +368,6 @@ group = "fresh5"
 version = "0.1"
 
 repositories {
-    maven { url = uri("$SONATYPE_SNAPSHOTS") }
     mavenCentral()
 }
 

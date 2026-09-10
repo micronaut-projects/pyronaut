@@ -30,15 +30,6 @@ micronautBuild {
     }
 }
 
-repositories {
-    maven {
-        url = uri("https://central.sonatype.com/repository/maven-snapshots/")
-        mavenContent {
-            snapshotsOnly()
-        }
-    }
-}
-
 tasks.withType(Checkstyle).configureEach {
     exclude {
         it.toString().contains('generated')

@@ -11,12 +11,6 @@ repositories {
     maven {
         url = uri("https://repo.gradle.org/gradle/libs-releases")
     }
-    maven {
-        url = uri("https://central.sonatype.com/repository/maven-snapshots/")
-        mavenContent {
-            snapshotsOnly()
-        }
-    }
 }
 
 dependencies {
