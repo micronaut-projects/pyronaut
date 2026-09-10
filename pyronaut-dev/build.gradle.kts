@@ -414,6 +414,7 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=java.text.*",
     "-H:Preserve=package=java.time.*",
     "-H:Preserve=package=java.util.*",
+    "-H:Preserve=package=java.util.logging.*",
 
     /* sun.* */
     // "-H:Preserve=package=sun.awt.*",
