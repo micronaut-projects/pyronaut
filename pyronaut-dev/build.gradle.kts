@@ -385,7 +385,7 @@ val nativeImageCLibraryPathArgs = providers.provider {
 val nativeImageRuntimeArgs = listOf(
     "-Os",
     "--enable-native-access=org.graalvm.truffle",
-    "--add-modules=jdk.compiler,java.net.http,java.naming,java.rmi",
+    "--add-modules=jdk.compiler,java.net.http,java.naming,java.rmi,java.logging",
     "-H:+UnlockExperimentalVMOptions",
     "-H:+CopyLanguageResources",
     "-H:EnableURLProtocols=jar",
@@ -397,7 +397,7 @@ val nativeImageRuntimeArgs = listOf(
     "--enable-http",
     "--enable-https",
     // Modules
-    "-H:Preserve=module=java.base,module=java.sql",
+    "-H:Preserve=module=java.base,module=java.sql,module=java.logging",
 
     /* java.* */
     "-H:Preserve=package=java.applet.*",
@@ -414,7 +414,7 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=java.text.*",
     "-H:Preserve=package=java.time.*",
     "-H:Preserve=package=java.util.*",
-    "-H:Preserve=package=java.util.logging.*",
+    "-H:Preserve=package=java.util.logging",
 
     /* sun.* */
     // "-H:Preserve=package=sun.awt.*",
@@ -851,7 +851,6 @@ graalvmNative {
             buildArgs.addAll(nativeImageBuildReportArgs)
             buildArgs.addAll(nativeImagePgoArgs)
             buildArgs.addAll(runtimeMetadataExclusion)
-            buildArgs.add("-H:-PreserveIncludesJNI")
         }
         all {
             resources.autodetect()

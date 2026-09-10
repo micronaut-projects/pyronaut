@@ -39,24 +39,23 @@ public final class PyronautNativeImageBuilder {
     public static final String DEFAULT_MAIN_CLASS = "io.micronaut.pyronaut.run.PyronautRunMain";
 
     private static final List<String> PRESERVED_JDK_MODULES = List.of(
-        "java.base", "java.sql", "java.xml", "java.management", "java.naming", "java.rmi"
+        "java.base", "java.sql", "java.xml", "java.management", "java.naming", "java.rmi", "java.logging"
     );
 
     private static final List<String> COMMON_ARGUMENTS = List.of(
             "-Os",
-            "--add-modules=java.net.http,java.naming,java.rmi",
+            "--add-modules=java.net.http,java.naming,java.rmi,java.logging",
             "-H:+UnlockExperimentalVMOptions",
             "-H:EnableURLProtocols=jar",
             "-H:+RuntimeClassLoading",
             "-H:+AllowJRTFileSystem",
             "-H:+SharedArenaSupport",
             "-H:-SupportCompileInIsolates",
-            "-H:-PreserveIncludesJNI",
             "-Dmicronaut.graalvm.imagesingletons.enabled=false",
             "--enable-http",
             "--enable-https",
             // Modules
-            "-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management,module=java.naming,module=java.rmi",
+            "-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management,module=java.naming,module=java.rmi,module=java.logging",
 
             /* java.* */
             "-H:Preserve=package=java.applet.*",
@@ -73,7 +72,7 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=java.text.*",
             "-H:Preserve=package=java.time.*",
             "-H:Preserve=package=java.util.*",
-            "-H:Preserve=package=java.util.logging.*",
+            "-H:Preserve=package=java.util.logging",
 
             /* sun.* */
             // "-H:Preserve=package=sun.awt.*",
