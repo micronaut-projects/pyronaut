@@ -94,7 +94,7 @@ def micronaut_test_fixture(request,
 
     PytestMicronautExtension = java.type("io.micronaut.test.pytest.extension.PytestMicronautExtension")
     bootstrap = PytestMicronautExtension.bootstrapFixture(
-        micronaut_test.properties,
+        to_java_map(micronaut_test.properties),
         request.node,
         to_java_array(micronaut_test.environments),
         to_java_array(micronaut_test.packages),
@@ -123,6 +123,14 @@ def to_java_array(list):
         arr[i] = name
 
     return arr
+
+
+def to_java_map(mapping):
+    LinkedHashMap = java.type("java.util.LinkedHashMap")
+    result = LinkedHashMap()
+    for key, value in mapping.items():
+        result.put(key, value)
+    return result
 
 
 def to_sql_configs(sql):
@@ -226,6 +234,14 @@ class ApplicationContextWrapper:
         """Return the Java class wrapped by Core's _MicronautJavaType helper."""
         if type(key).__name__ != "_MicronautJavaType":
             return key
+        resolved = getattr(key, "_resolved", None)
+        if resolved is not None:
+            try:
+                value = resolved()
+                if value is not None:
+                    return value
+            except BaseException:
+                pass
         return getattr(key, "_target", key)
 
     def _python_type_to_lookup_key(self, key):

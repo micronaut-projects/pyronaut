@@ -1377,6 +1377,33 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual([str(artifact.resolve())], entries)
 
+    def test_native_compile_classpath_uses_explicit_local_repository(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dir = root / "tools" / "pyronaut-dev" / "native"
+            native_dir.mkdir(parents=True)
+            native_dev = native_dir / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            filename = "micronaut-inject-python-5.2.0.jar"
+            descriptor = "\t".join((
+                "maven", "io.micronaut", "micronaut-inject-python", "5.2.0", "jar", "", filename
+            ))
+            (native_dir / "native-compile-classpath.txt").write_text(descriptor + "\n", encoding="utf-8")
+            repository = root / "explicit-repository"
+            artifact = repository / "io" / "micronaut" / "micronaut-inject-python" / "5.2.0" / filename
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("inject-python", encoding="utf-8")
+
+            with (
+                patch.object(cli, "_setup_is_required", return_value=True),
+                patch.dict(os.environ, {cli.LOCAL_REPOSITORY_ENV: str(root / "missing-repository")}),
+            ):
+                entries = cli._native_launcher_compile_classpath_entries(  # noqa: SLF001
+                    str(native_dev), str(repository)
+                )
+
+        self.assertEqual([str(artifact.resolve())], entries)
+
     def test_native_compile_classpath_falls_back_to_launcher_distribution_lib(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -6193,6 +6220,20 @@ additional-test-resources = ["test-fixtures"]
 
         self.assertEqual(cli.USAGE_ERROR, exit_code)
         self.assertIn("Unsupported configuration 'tool.pyronaut.build.mode'", stderr.getvalue())
+
+    def test_pyproject_configuration_uses_tomli_when_tomllib_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = 'native'\n",
+                encoding="utf-8",
+            )
+            tomli = Mock(load=Mock(return_value={
+                "tool": {"pyronaut": {"toolchain": {"type": "native"}}}
+            }))
+            with patch.dict(__import__("sys").modules, {"tomllib": None, "tomli": tomli}):
+                self.assertEqual("native", cli._read_pyproject_toolchain_type(project_dir))
+            tomli.load.assert_called_once()
 
     def test_build_native_requires_processed_classes(self):
         stderr = io.StringIO()
