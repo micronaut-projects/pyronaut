@@ -74,6 +74,18 @@ class InstallProgressReporterTest {
     }
 
     @Test
+    void interactiveFailureLeavesDiagnosticOnANewLine() {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (InstallProgressReporter reporter = new InstallProgressReporter(new PrintStream(buffer), InstallProgressReporter.ProgressMode.ON, true)) {
+            reporter.startScope(InstallScope.RUNTIME);
+            reporter.failScope(InstallScope.RUNTIME);
+        }
+
+        String output = buffer.toString(StandardCharsets.UTF_8);
+        assertTrue(output.endsWith("\n"));
+    }
+
+    @Test
     void interactiveModeTruncatesLongArtifactNamesToKeepRowsFromWrapping() {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         String coordinate = "io.micronaut.pyronaut:micronaut-pyronaut-config-model:jar:0.0.2-SNAPSHOT";

@@ -238,11 +238,20 @@ final class InstallProgressReporter implements AutoCloseable {
             if (interactive && !states.isEmpty()) {
                 render();
                 output.print("\033[" + states.size() + "B\r");
+                boolean failed = false;
                 for (InstallScope scope : InstallScope.values()) {
                     State state = states.get(scope);
                     if (state != null && state.finished && !state.failed) {
                         output.println("Resolved " + scope.cliValue() + " dependencies (" + state.artifactCount + " artifacts)");
+                    } else if (state != null && state.failed) {
+                        failed = true;
                     }
+                }
+                if (failed) {
+                    // Leave a clean line for the caller's diagnostic. Without this
+                    // newline, a Python wrapper error overwrites the final progress row.
+                    output.print("\033[2K");
+                    output.println();
                 }
                 output.flush();
             }

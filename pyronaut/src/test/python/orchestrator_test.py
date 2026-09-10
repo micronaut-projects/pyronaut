@@ -8625,7 +8625,7 @@ java-version = 25
                 patch("pathlib.Path.home", return_value=home),
                 redirect_stderr(stderr),
             ):
-                exit_code = cli._run_setup(["--refresh", "--progress", "off"], runner)
+                exit_code = cli._run_setup(["--refresh"], runner)
 
             self.assertEqual(cli.SUCCESS, exit_code)
             self.assertIn("Pyronaut setup: locating or provisioning a compatible GraalVM JDK (JDK 25+)...", stderr.getvalue())

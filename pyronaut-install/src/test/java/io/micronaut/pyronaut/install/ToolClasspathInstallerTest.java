@@ -184,6 +184,39 @@ final class ToolClasspathInstallerTest {
         assertTrue(failure.getMessage().contains("Conflicting Pyronaut tool artifacts"));
     }
 
+    @Test
+    void bundledArtifactWinsWhenMavenDescriptorUsesTheSameFilename(@TempDir Path tempDir) throws Exception {
+        Path packagedTools = packagedTools(tempDir);
+        Path packagedArtifact = packagedTools.resolve("shared/lib/duplicate-1.0.jar");
+        byte[] contents = {1, 2, 3};
+        Files.write(packagedArtifact, contents);
+
+        Path localRepository = tempDir.resolve("repository");
+        writeArtifact(localRepository, "com.example", "duplicate", "1.0", contents);
+        writeTool(packagedTools, "pyronaut-run", List.of(
+            "maven\tcom.example\tduplicate\t1.0\tjar\t\tduplicate-1.0.jar"
+        ));
+        writeTool(packagedTools, "pyronaut-test", List.of(
+            "bundled\tduplicate-1.0.jar"
+        ));
+
+        ToolClasspathInstaller installer = new ToolClasspathInstaller(
+            new MavenClasspathResolver(), packagedTools, tempDir.resolve("cache")
+        );
+        Path current = installer.install(null, localRepository, true, false);
+        Path cachedArtifact = current.resolve("tools/shared/lib/duplicate-1.0.jar");
+        Path firstGeneration = Files.readSymbolicLink(current);
+
+        assertTrue(Files.isSymbolicLink(cachedArtifact));
+        assertEquals(
+            packagedArtifact.toAbsolutePath().normalize(),
+            cachedArtifact.getParent().resolve(Files.readSymbolicLink(cachedArtifact)).normalize()
+        );
+
+        installer.install(null, localRepository, true, false);
+        assertEquals(firstGeneration, Files.readSymbolicLink(current));
+    }
+
     private static Path packagedTools(Path tempDir) throws Exception {
         Path tools = tempDir.resolve("packaged-tools");
         Files.createDirectories(tools.resolve("shared/lib"));

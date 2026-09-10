@@ -156,9 +156,16 @@ final class ToolClasspathInstaller {
                         throw new IOException("Missing Pyronaut tool artifact " + entry.fileName());
                     }
                     Map<String, Path> destinations = entry.controlPanel() ? controlPanelSourcesByFileName : sourcesByFileName;
-                    Path existing = destinations.putIfAbsent(entry.fileName(), source);
+                    Path existing = destinations.get(entry.fileName());
                     if (existing != null && Files.mismatch(existing, source) != -1L) {
                         throw new IOException("Conflicting Pyronaut tool artifacts share filename " + entry.fileName());
+                    }
+                    // A filename can be referenced by both a Maven descriptor and a
+                    // bundled descriptor. The bundled wheel artifact must win so the
+                    // resulting cache remains valid for every descriptor, regardless
+                    // of descriptor sort order.
+                    if (existing == null || !entry.maven()) {
+                        destinations.put(entry.fileName(), source);
                     }
                 }
             }
@@ -203,6 +210,7 @@ final class ToolClasspathInstaller {
             || !descriptorHash.equals(metadata.getProperty("descriptor.sha256"))) {
             return false;
         }
+        Map<String, Path> sharedSources = preferredSources(descriptors, localRepository);
         for (ToolDescriptor descriptor : descriptors) {
             Path bin = layout.resolve("tools").resolve(descriptor.command()).resolve("bin").resolve(descriptor.command());
             if (!Files.isRegularFile(bin)) {
@@ -212,12 +220,33 @@ final class ToolClasspathInstaller {
                 Path artifact = entry.controlPanel()
                     ? layout.resolve("tools/pyronaut-dev/lib/control-panel").resolve(entry.fileName())
                     : layout.resolve("tools/shared/lib").resolve(entry.fileName());
-                if (!validArtifactLink(artifact, expectedSource(entry, localRepository))) {
+                Path expected = entry.controlPanel()
+                    ? expectedSource(entry, localRepository)
+                    : sharedSources.get(entry.fileName());
+                if (!validArtifactLink(artifact, expected)) {
                     return false;
                 }
             }
         }
         return true;
+    }
+
+    private Map<String, Path> preferredSources(List<ToolDescriptor> descriptors, Path localRepository) {
+        Map<String, Path> sources = new LinkedHashMap<>();
+        for (ToolDescriptor descriptor : descriptors) {
+            for (ToolEntry entry : descriptor.entries()) {
+                if (entry.controlPanel()) {
+                    continue;
+                }
+                Path source = expectedSource(entry, localRepository);
+                if (!entry.maven()) {
+                    sources.put(entry.fileName(), source);
+                } else {
+                    sources.putIfAbsent(entry.fileName(), source);
+                }
+            }
+        }
+        return sources;
     }
 
     private Path expectedSource(ToolEntry entry, Path localRepository) {

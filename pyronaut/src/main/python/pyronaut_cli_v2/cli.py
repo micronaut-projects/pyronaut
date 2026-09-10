@@ -7468,6 +7468,15 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
         metadata = _read_tool_runtime_properties(metadata_file)
         packaged_metadata = _read_tool_runtime_properties(packaged_tools / "tool-runtime.properties")
         descriptors = sorted(packaged_tools.glob("*/bin/pyronaut-tool-classpath.tsv"))
+        bundled_artifacts = {
+            fields[1]
+            for descriptor in descriptors
+            for fields in (
+                line.split("\t")
+                for line in descriptor.read_text(encoding="utf-8").splitlines()
+            )
+            if len(fields) == 2 and fields[0] == "bundled"
+        }
         for descriptor in descriptors:
             command = descriptor.parent.parent.name
             if not (cache_root / "tools" / command / "bin" / _launcher_file_name(command)).is_file():
@@ -7482,13 +7491,16 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
                     local_repository = metadata.get("local.repository")
                     if not local_repository:
                         return False
-                    expected_source = (
-                        Path(local_repository)
-                        / Path(*fields[1].split("."))
-                        / fields[2]
-                        / fields[3]
-                        / fields[6]
-                    )
+                    if fields[6] in bundled_artifacts:
+                        expected_source = packaged_tools / "shared" / "lib" / fields[6]
+                    else:
+                        expected_source = (
+                            Path(local_repository)
+                            / Path(*fields[1].split("."))
+                            / fields[2]
+                            / fields[3]
+                            / fields[6]
+                        )
                 elif len(fields) == 7 and fields[0] == "control-panel":
                     artifact = cache_root / "tools" / "pyronaut-dev" / "lib" / "control-panel" / fields[6]
                     local_repository = metadata.get("local.repository")
@@ -8404,8 +8416,10 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 if refresh:
                     command_line.append("--refresh")
                 progress = _extract_option_value(args, "--progress")
-                if progress is not None:
-                    command_line.extend(["--progress", progress])
+                # Setup already reports its high-level phases. Keep the nested
+                # installer deterministic by default; callers can opt into its
+                # interactive progress explicitly with --progress auto|on.
+                command_line.extend(["--progress", progress or "off"])
                 _setup_progress("resolving SDK dependencies")
                 env = dict(os.environ)
                 env["JAVA_HOME"] = java_home
