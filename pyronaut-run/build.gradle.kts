@@ -85,15 +85,19 @@ application {
 val nativeBuildProject = project(":micronaut-pyronaut-native-build")
 val pythonRunProject = project(":micronaut-pyronaut-run-python")
 val cremaProjectDirectory = layout.buildDirectory.dir("crema-native-image")
-val cremaOutput = layout.buildDirectory.file("native/nativeCompile/pyronaut-run")
-val pythonCremaOutput = pythonRunProject.layout.buildDirectory.file("native/nativeCompile/pyronaut-run-python")
+val isWindows = System.getProperty("os.name")
+    .lowercase()
+    .contains("windows")
+val nativeExecutableSuffix = if (isWindows) ".exe" else ""
+val cremaOutputArgument = layout.buildDirectory.file("native/nativeCompile/pyronaut-run")
+val cremaOutput = layout.buildDirectory.file("native/nativeCompile/pyronaut-run$nativeExecutableSuffix")
+val pythonCremaOutput = pythonRunProject.layout.buildDirectory.file(
+    "native/nativeCompile/pyronaut-run-python$nativeExecutableSuffix"
+)
 val nativeImageCiArgs = providers.gradleProperty("pyronautNativeImageCiArgs")
     .map { it.trim().split(Regex("\\s+")).filter(String::isNotBlank) }
     .orElse(emptyList())
     .get()
-val isWindows = System.getProperty("os.name")
-    .lowercase()
-    .contains("windows")
 val nativeBuildInstallDirectory = nativeBuildProject.layout.buildDirectory.dir(
     "install/micronaut-pyronaut-native-build"
 )
@@ -205,7 +209,7 @@ tasks {
             }
             nativeBuildArgs.addAll(listOf(
                 "--project-dir", projectDirectory.toString(),
-                "--output", cremaOutput.get().asFile.absolutePath,
+                "--output", cremaOutputArgument.get().asFile.absolutePath,
                 "--native-base"
             ))
             nativeBuildArgs.addAll(nativeImageCiArgs)
