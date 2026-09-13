@@ -5127,9 +5127,15 @@ additional-test-resources = ["test-fixtures"]
             bundle = project_dir / "bundle" / "pyronaut-run"
             bundle.parent.mkdir(parents=True)
             bundle.write_bytes(b"native-runner")
+            (bundle.parent / "pyronaut-dev").write_bytes(b"unused-dev")
+            (bundle.parent / "pyronaut-run-python").write_bytes(b"unused-python")
             (bundle.parent / "resources").mkdir()
             (bundle.parent / "resources" / "runtime.config").write_text("configured", encoding="utf-8")
             (bundle.parent / "libsupport.so").write_bytes(b"library")
+            (bundle.parent / "pyronaut-run.json").write_text(
+                '{"bundle-files": ["libsupport.so", "pyronaut-run", "resources/runtime.config"]}\n',
+                encoding="utf-8",
+            )
 
             with patch.object(cli, "_bundled_default_native_base", return_value=bundle) as default_native_base:
                 exit_code = cli.run(
@@ -5146,6 +5152,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertNotIn("PYRONAUT_BASE_IMAGE=registry.example.com/runtime:1", captured["command"])
         self.assertIn("bundled-base/resources/runtime.config", captured["context_files"])
         self.assertIn("bundled-base/libsupport.so", captured["context_files"])
+        self.assertNotIn("bundled-base/pyronaut-dev", captured["context_files"])
+        self.assertNotIn("bundled-base/pyronaut-run-python", captured["context_files"])
 
     def test_closed_world_native_format_rejects_configured_reusable_base(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -6620,6 +6628,15 @@ java-version = 25
             self.assertEqual(b"native-pyronaut-dev", first.read_bytes())
             self.assertEqual(b"generated-resource", (first.parent / "resources/application.properties").read_bytes())
             self.assertEqual(b"io.micronaut:example\n", (first.parent / "native-provided-classpath.txt").read_bytes())
+            metadata = cli.json.loads(first.with_name("pyronaut-dev.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [
+                    "pyronaut-dev",
+                    "resources/application.properties",
+                    "resources/pyronaut-dev/native-provided-classpath.txt",
+                ],
+                metadata["bundle-files"],
+            )
             self.assertTrue(first.stat().st_mode & 0o111)
             self.assertEqual(1, len(calls))
             self.assertEqual(

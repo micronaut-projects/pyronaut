@@ -83,11 +83,11 @@ _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
 _SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
 # Layout of an unpacked native image bundle in the shared version/platform cache
-# directory. Version 3 isolated per-image classpath manifests; version 4 nests
-# copied language resources under the bundle's own "resources" directory instead
-# of flattening them into the cache root. Bump this whenever the unpacked layout
-# changes so an older cache is rebuilt rather than silently reused.
-_NATIVE_IMAGE_BUNDLE_FORMAT = 4
+# directory. Version 4 nests copied language resources under the bundle's own
+# "resources" directory; version 5 records the files contributed by each bundle.
+# Bump this whenever the unpacked layout changes so an older cache is rebuilt
+# rather than silently reused.
+_NATIVE_IMAGE_BUNDLE_FORMAT = 5
 _NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
 _SETUP_IMAGE_COMMANDS = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
 _SETUP_SCHEMA_VERSION = 1
@@ -3711,6 +3711,28 @@ def _prepare_bundled_docker_context(
     )
 
 
+def _stage_bundled_native_base(source: Path, target: Path) -> None:
+    """Stage only the files belonging to the selected native launcher."""
+    metadata_path = source.with_name(source.name + ".json")
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        bundle_files = metadata.get("bundle-files")
+    except (OSError, TypeError, ValueError):
+        bundle_files = None
+    if not isinstance(bundle_files, list) or not all(isinstance(path, str) for path in bundle_files):
+        raise RuntimeError(f"Native launcher bundle metadata is missing for {source.name}")
+    for relative in bundle_files:
+        relative_path = Path(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise RuntimeError(f"Native launcher bundle contains an unsafe path: {relative}")
+        source_file = source.parent / relative_path
+        if not source_file.is_file():
+            raise RuntimeError(f"Native launcher bundle is missing '{relative}'")
+        target_file = target / relative_path
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_file, target_file)
+
+
 def _stage_python_runner_runtime_dependencies(
     pyronaut_dir: Path,
     resolver: Callable[[str], str | None],
@@ -4120,7 +4142,7 @@ def _run_docker_build(
                     project_dir=project_dir, context_dir=context_dir, launcher_executable=str(bundled),
                 )
                 bundled_dir = context_dir / "bundled-base"
-                shutil.copytree(bundled.parent, bundled_dir, dirs_exist_ok=True)
+                _stage_bundled_native_base(bundled, bundled_dir)
                 (bundled_dir / runner_name).chmod(0o755)
                 dockerfile = context_dir / "DockerfileNativeDefault"
                 _write_bundled_application_dockerfile(
@@ -6574,11 +6596,7 @@ def _ensure_native_image(
                 _extract_native_image_archive(archive, extracted, image_name)
             except Exception as exc:
                 raise RuntimeError(f"Failed downloading {image_name} from {url}: {exc}") from exc
-            metadata_tmp = temp_root / f"{image_name}.json"
-            metadata_tmp.write_text(json.dumps(expected_metadata, sort_keys=True) + "\n", encoding="utf-8")
-            # Keep the complete bundle alongside the executable. Native-image
-            # resource files and classpath manifests are runtime inputs even
-            # though the launcher itself is a single executable.
+            bundle_files: list[str] = []
             for item in extracted.parent.iterdir():
                 # Several native bundles contain identically named manifests
                 # (native-compile-classpath.txt, native-provided-classpath.txt).
@@ -6592,6 +6610,7 @@ def _ensure_native_image(
                     target = executable.parent / "resources" / image_name / item.name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(item, target)
+                    bundle_files.append(str(Path("resources") / image_name / item.name))
                     # Preserve the historical root-level location for
                     # compatibility with older tooling. New lookups always
                     # prefer the image-specific manifest above, so another
@@ -6603,11 +6622,22 @@ def _ensure_native_image(
                 else:
                     target = executable.parent / item.name
                 if item.is_dir():
+                    bundle_files.extend(
+                        str(path.relative_to(extracted.parent))
+                        for path in item.rglob("*")
+                        if path.is_file()
+                    )
+                else:
+                    bundle_files.append(item.name)
+                if item.is_dir():
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(item, target, dirs_exist_ok=True)
                 else:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(item, target)
+            expected_metadata["bundle-files"] = sorted(set(bundle_files))
+            metadata_tmp = temp_root / f"{image_name}.json"
+            metadata_tmp.write_text(json.dumps(expected_metadata, sort_keys=True) + "\n", encoding="utf-8")
             os.replace(metadata_tmp, metadata)
     return executable
 
