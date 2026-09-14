@@ -584,6 +584,12 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.inject.provider",
     "--initialize-at-build-time=io.micronaut.inject.validation",
     "--initialize-at-build-time=io.micronaut.python.compiler",
+    // PyronautJavaCompiler resolves its default error-dump directory from
+    // user.home in a static field. Initialising it at build time bakes the
+    // build host's home directory into the image, so the released launcher
+    // reported "Full error details could not be written: /Users/ci_admin".
+    // PyronautDevNativeSmokeTest asserts the build host path is absent.
+    "--initialize-at-run-time=io.micronaut.python.compiler.PyronautJavaCompiler",
     "--initialize-at-build-time=io.micronaut.python.processing",
     "--initialize-at-build-time=io.micronaut.python.processing.annotation",
     "--initialize-at-build-time=io.micronaut.python.processing.beans",

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,6 +28,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -113,6 +115,56 @@ final class PyronautDevNativeSmokeTest {
             StandardCharsets.UTF_8
         );
         assertTrue(options.contains("micronaut.openapi.enabled"), options);
+    }
+
+    @Test
+    void nativeBinaryDoesNotBakeInBuildHostHomeDirectory() throws Exception {
+        String binary = System.getProperty("pyronaut.dev.native.binary");
+        assumeTrue(binary != null && !binary.isBlank(), "native binary not configured");
+        // The processor error-dump directory (and every other per-user path) must be
+        // resolved from user.home when the launcher runs, not when the image is built.
+        // A user.home-derived value captured by build-time class initialisation ends up
+        // in the image heap as the build host's home directory, which is what produced
+        // "Full error details could not be written: /Users/ci_admin" in the 0.0.1 launchers.
+        Path buildHostPyronautHome = Path.of(System.getProperty("user.home"), ".pyronaut");
+        assertFalse(
+            binaryContains(Path.of(binary), buildHostPyronautHome.toString()),
+            "native image contains build host path " + buildHostPyronautHome
+                + "; a user.home-derived path was initialised at image build time"
+        );
+    }
+
+    private static boolean binaryContains(Path binary, String text) throws Exception {
+        byte[] needle = text.getBytes(StandardCharsets.UTF_8);
+        byte[] buffer = new byte[1 << 20];
+        byte[] window = new byte[buffer.length + needle.length - 1];
+        int carried = 0;
+        try (InputStream input = Files.newInputStream(binary)) {
+            int read;
+            while ((read = input.read(buffer)) > 0) {
+                System.arraycopy(buffer, 0, window, carried, read);
+                int length = carried + read;
+                if (indexOf(window, length, needle) >= 0) {
+                    return true;
+                }
+                carried = Math.min(needle.length - 1, length);
+                System.arraycopy(window, length - carried, window, 0, carried);
+            }
+        }
+        return false;
+    }
+
+    private static int indexOf(byte[] haystack, int length, byte[] needle) {
+        outer:
+        for (int i = 0; i <= length - needle.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
     }
 
     private static void writeResourceJar(Path jar, String resourceName) throws Exception {
