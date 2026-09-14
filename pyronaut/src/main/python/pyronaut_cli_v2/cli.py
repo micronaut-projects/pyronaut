@@ -28,6 +28,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Iterable, NamedTuple, Protocol, Sequence
 
+from .progress import console as _progress_console
+
 SUCCESS = 0
 USAGE_ERROR = 2
 PRECONDITION_FAILED = 8
@@ -5702,7 +5704,7 @@ def _default_java_home_provider(
 def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
     if command not in {"dev", "run", "test", "build", "tui", "validate-config", "install", "process"}:
         return None
-    env = dict(os.environ)
+    env = _terminal_environment(dict(os.environ))
     if java_home_provider is None:
         return env
 
@@ -6369,71 +6371,25 @@ def _download_url_with_progress(
     opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
 
     request = urllib.request.Request(url, headers=headers or {}) if headers else url
-    interactive = _progress_output_is_interactive()
+    progress = _progress_console()
+    done_label = "Downloaded " + label[len("Downloading "):] if label.startswith("Downloading ") else label
     attempts = 3
     for attempt in range(1, attempts + 1):
         try:
-            _print_download_progress(label, 0, interactive=interactive)
             with opener.open(request) as response, destination.open("wb") as output:
                 total = int(response.headers.get("Content-Length", "0") or "0")
-                downloaded = 0
-                last_percent = 0
-                last_reported_percent = 0
-                while chunk := response.read(1024 * 1024):
-                    output.write(chunk)
-                    downloaded += len(chunk)
-                    if total:
-                        percent = min(100, downloaded * 100 // total)
-                        if percent != last_percent:
-                            last_percent = percent
-                            if interactive or percent == 100 or percent - last_reported_percent >= 10:
-                                _print_download_progress(label, percent, interactive=interactive)
-                                last_reported_percent = percent
-                if last_reported_percent == 100:
-                    if interactive:
-                        print(file=sys.stderr, flush=True)
-                else:
-                    _print_download_progress(label, 100, interactive=interactive, final=True)
+                with progress.transfer(label, total, done=done_label) as transfer:
+                    downloaded = 0
+                    while chunk := response.read(256 * 1024):
+                        output.write(chunk)
+                        downloaded += len(chunk)
+                        transfer.update(downloaded)
             return
         except OSError:
             if attempt == attempts:
                 raise
-            print(
-                f"\n{label} download interrupted; retrying ({attempt}/{attempts - 1})...",
-                file=sys.stderr,
-                flush=True,
-            )
+            progress.warn(f"{label} download interrupted; retrying ({attempt}/{attempts - 1})...")
             time.sleep(attempt)
-
-
-def _progress_output_is_interactive() -> bool:
-    """Return whether progress can safely use carriage-return rendering."""
-    try:
-        return (
-            sys.stderr.isatty()
-            and os.environ.get("TERM", "").lower() not in {"", "dumb"}
-            and "NO_COLOR" not in os.environ
-        )
-    except (AttributeError, OSError):
-        return False
-
-
-def _print_download_progress(
-    label: str,
-    percent: int,
-    *,
-    interactive: bool,
-    final: bool = False,
-) -> None:
-    if interactive:
-        print(
-            f"\r{label}... {percent}%",
-            end="\n" if final else "",
-            file=sys.stderr,
-            flush=True,
-        )
-    else:
-        print(f"{label}... {percent}%", file=sys.stderr, flush=True)
 
 
 def _download_native_image_archive(
@@ -6442,7 +6398,7 @@ def _download_native_image_archive(
     image_name: str,
     headers: dict[str, str] | None = None,
 ) -> None:
-    _download_url_with_progress(url, destination, f"Downloading {image_name}", headers=headers)
+    _download_url_with_progress(url, destination, f"Downloading {image_name} launcher", headers=headers)
 
 
 def _extract_native_image_archive(archive: Path, destination: Path, image_name: str) -> None:
@@ -6571,7 +6527,10 @@ def _ensure_native_image(
                     shutil.copy2(local_archive, archive)
                 else:
                     _download_native_image_archive(url, archive, image_name, headers=download_headers)
-                _extract_native_image_archive(archive, extracted, image_name)
+                with _progress_console().step(
+                    f"Unpacking {image_name} launcher", done=f"Unpacked {image_name} launcher"
+                ):
+                    _extract_native_image_archive(archive, extracted, image_name)
             except Exception as exc:
                 raise RuntimeError(f"Failed downloading {image_name} from {url}: {exc}") from exc
             metadata_tmp = temp_root / f"{image_name}.json"
@@ -6634,7 +6593,7 @@ def _proxy_bypasses_host(host: str, bypass: str | None) -> bool:
 
 
 def _download_graalvm_archive(url: str, destination: Path) -> None:
-    _download_url_with_progress(url, destination, "Downloading GraalVM SDK")
+    _download_url_with_progress(url, destination, "Downloading GraalVM JDK")
 
 
 def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
@@ -6655,11 +6614,12 @@ def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | N
         extract_dir = temp_path / "extract"
         extract_dir.mkdir(parents=True, exist_ok=True)
         try:
-            if archive_name.endswith(".zip"):
-                shutil.unpack_archive(str(archive_file), str(extract_dir))
-            else:
-                with tarfile.open(archive_file, "r:*") as tf:
-                    tf.extractall(extract_dir)
+            with _progress_console().step("Unpacking GraalVM JDK", done="Unpacked GraalVM JDK"):
+                if archive_name.endswith(".zip"):
+                    shutil.unpack_archive(str(archive_file), str(extract_dir))
+                else:
+                    with tarfile.open(archive_file, "r:*") as tf:
+                        tf.extractall(extract_dir)
         except Exception:
             return None
 
@@ -6680,7 +6640,10 @@ def _download_and_install_graalvm(jdks_root: Path, toolchain: _ToolchainSpec | N
                 shutil.rmtree(destination, ignore_errors=True)
 
             source_root = home.parent.parent if home.name == "Home" and home.parent.name == "Contents" else home
-            shutil.copytree(source_root, destination, dirs_exist_ok=True)
+            with _progress_console().step(
+                f"Installing GraalVM JDK into {destination}", done=f"Installed GraalVM JDK into {destination}"
+            ):
+                shutil.copytree(source_root, destination, dirs_exist_ok=True)
             normalized_destination = _normalize_extracted_home(destination) or destination
             if _matches_requested_graalvm_home(normalized_destination, spec):
                 _warn_if_quarantined_graalvm(normalized_destination)
@@ -8347,11 +8310,12 @@ def _validate_setup_arguments(args: Sequence[str]) -> None:
 
 
 def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
+    progress = _progress_console()
     try:
         _validate_setup_arguments(args)
         refresh = _extract_flag(args, "--refresh")
         offline = _extract_offline(args)
-        _setup_progress("checking the existing setup")
+        progress.configure(_extract_option_value(args, "--progress"))
         manifest_path = _setup_manifest_path()
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = manifest_path.with_suffix(".lock")
@@ -8366,29 +8330,31 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     return SUCCESS
 
             expectation = _setup_expectation(args)
-            _setup_progress("locating or provisioning a compatible GraalVM JDK (JDK 25+)")
-            java_home = _ensure_graalvm_java_home(None, offline=offline)
-            if java_home is None:
-                qualifier = " cached" if offline else ""
-                raise RuntimeError(
-                    f"Unable to locate or provision a{qualifier} compatible GraalVM JDK (requires JDK 25+)"
-                )
-            _setup_progress("provisioning native launchers")
-            images: dict[str, Path] = {}
-            for image_name in _SETUP_IMAGE_COMMANDS:
-                images[image_name] = (
-                    _cached_native_image(image_name)
-                    if offline
-                    else _ensure_native_image(image_name)
-                )
+            with progress.step("Locating GraalVM JDK (25+)") as jdk_step:
+                java_home = _ensure_graalvm_java_home(None, offline=offline)
+                if java_home is None:
+                    qualifier = " cached" if offline else ""
+                    raise RuntimeError(
+                        f"Unable to locate or provision a{qualifier} compatible GraalVM JDK (requires JDK 25+)"
+                    )
+                jdk_step.done_label = f"GraalVM JDK ready: {java_home}"
+            with progress.step("Provisioning native launchers", done="Native launchers ready"):
+                images: dict[str, Path] = {}
+                for image_name in _SETUP_IMAGE_COMMANDS:
+                    images[image_name] = (
+                        _cached_native_image(image_name)
+                        if offline
+                        else _ensure_native_image(image_name)
+                    )
 
             installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
             if installer is None or not _is_executable_file(installer):
                 raise RuntimeError("Installed Pyronaut wheel is missing executable pyronaut-install")
             local_repository = _setup_local_repository(args)
-            _seed_bundled_pyronaut_maven_repository(
-                Path.cwd(), str(local_repository), str(installer)
-            )
+            with progress.step("Seeding bundled Pyronaut modules into the Maven repository", done="Bundled Pyronaut modules seeded"):
+                _seed_bundled_pyronaut_maven_repository(
+                    Path.cwd(), str(local_repository), str(installer)
+                )
 
             with tempfile.TemporaryDirectory(prefix=".setup-", dir=manifest_path.parent) as temp_dir:
                 request_dir = Path(temp_dir) / "native-classpaths"
@@ -8415,20 +8381,20 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     command_line.append("--offline")
                 if refresh:
                     command_line.append("--refresh")
-                progress = _extract_option_value(args, "--progress")
-                # Setup already reports its high-level phases. Keep the nested
-                # installer deterministic by default; callers can opt into its
-                # interactive progress explicitly with --progress auto|on.
-                command_line.extend(["--progress", progress or "off"])
-                _setup_progress("resolving SDK dependencies")
-                env = dict(os.environ)
+                # The nested installer renders its own per-artifact progress
+                # directly on the terminal, so the setup spinner is suspended
+                # while it runs.
+                command_line.extend(["--progress", _extract_option_value(args, "--progress") or "auto"])
+                env = _terminal_environment(dict(os.environ))
                 env["JAVA_HOME"] = java_home
                 java_bin = str(Path(java_home) / "bin")
                 env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
                 packaged_tools = Path(__file__).resolve().parent / "tools"
                 env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
                 env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
-                if runner(command_line, env) != SUCCESS:
+                with progress.step("Resolving SDK dependencies", done="SDK dependencies resolved"), progress.suspend():
+                    install_code = runner(command_line, env)
+                if install_code != SUCCESS:
                     raise RuntimeError("pyronaut-install failed to resolve SDK classpaths")
 
                 tool_root = _resolved_tool_cache_root()
@@ -8480,8 +8446,20 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
         return PRECONDITION_FAILED
 
 
-def _setup_progress(message: str) -> None:
-    print(f"Pyronaut setup: {message}...", file=sys.stderr, flush=True)
+def _terminal_environment(env: dict[str, str]) -> dict[str, str]:
+    """Tell delegated tools how wide the terminal is.
+
+    Java cannot query the terminal size, so the delegated installer keeps its
+    live progress rows within ``COLUMNS``; without it the rows are clamped to
+    80 columns.
+    """
+    if "COLUMNS" not in env:
+        try:
+            if sys.stderr.isatty():
+                env["COLUMNS"] = str(shutil.get_terminal_size((80, 24)).columns)
+        except (AttributeError, OSError, ValueError):
+            pass
+    return env
 
 
 def _print_build_usage(stream=None) -> None:

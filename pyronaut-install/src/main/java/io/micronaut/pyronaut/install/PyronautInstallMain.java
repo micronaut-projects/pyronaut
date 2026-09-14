@@ -151,7 +151,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 PyprojectModel setupModel = setupRepositories.isEmpty()
                     ? ToolClasspathInstaller.defaultModel()
                     : ToolClasspathInstaller.defaultModel(setupRepositories);
-                try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
+                try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress, color)) {
                     installToolClasspaths(root, setupModel, progressReporter);
                     if (nativeClasspathsDir != null) {
                         Path descriptors = nativeClasspathsDir.isAbsolute()
@@ -187,7 +187,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                     );
                 }
                 Path localRepo = resolveLocalRepository(root);
-                try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
+                try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress, color)) {
                     new DirectSourceInstaller().install(
                         root,
                         sources,
@@ -278,7 +278,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
             }
             editorSupport.ensureWritten(root, cacheDir, model.pyronaut().sources());
             String hash = ResolutionCache.installHash(pyproject, localRepo);
-            try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
+            try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress, color)) {
                 if (dependencies) {
                     return renderDependencyTrees(root, activeScopes, progressReporter);
                 }
@@ -395,7 +395,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
     }
 
     private void installToolClasspaths(Path root, PyprojectModel model) throws IOException {
-        try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress)) {
+        try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress, color)) {
             installToolClasspaths(root, model, progressReporter);
         }
     }
@@ -453,6 +453,9 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
             @Override
             public void artifactStarted(String name) { reporter.artifactStarted(scope, name); }
+
+            @Override
+            public void artifactProgressed(String name, long transferred, long total) { reporter.artifactProgressed(scope, name, transferred, total); }
 
             @Override
             public void artifactTransferFinished(String name) { reporter.artifactTransferFinished(scope, name); }

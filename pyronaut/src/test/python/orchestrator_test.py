@@ -7189,8 +7189,8 @@ java-version = 25
                 cli._download_graalvm_archive("https://example.invalid/graalvm.tar.gz", destination)
 
             self.assertEqual(payload, destination.read_bytes())
-            self.assertIn("Downloading GraalVM SDK... 0%", stderr.getvalue())
-            self.assertIn("Downloading GraalVM SDK... 100%", stderr.getvalue())
+            self.assertIn("Downloading GraalVM JDK... 0%", stderr.getvalue())
+            self.assertIn("Downloading GraalVM JDK... 100%", stderr.getvalue())
             self.assertNotIn("\r", stderr.getvalue())
 
     def test_default_native_base_uses_host_bundle_selection(self):
@@ -8628,9 +8628,11 @@ java-version = 25
                 exit_code = cli._run_setup(["--refresh"], runner)
 
             self.assertEqual(cli.SUCCESS, exit_code)
-            self.assertIn("Pyronaut setup: locating or provisioning a compatible GraalVM JDK (JDK 25+)...", stderr.getvalue())
-            self.assertIn("Pyronaut setup: provisioning native launchers...", stderr.getvalue())
-            self.assertIn("Pyronaut setup: resolving SDK dependencies...", stderr.getvalue())
+            self.assertIn("Locating GraalVM JDK (25+)...", stderr.getvalue())
+            self.assertIn("Provisioning native launchers...", stderr.getvalue())
+            self.assertIn("Resolving SDK dependencies...", stderr.getvalue())
+            self.assertNotIn("\r", stderr.getvalue())
+            self.assertNotIn("\x1b", stderr.getvalue())
             self.assertEqual(["graalvm", *cli._SETUP_IMAGE_COMMANDS], provisioning_order)
             seed_repository.assert_called_once()
             self.assertEqual(1, len(commands))
@@ -8638,7 +8640,7 @@ java-version = 25
             self.assertIn("--resolve-tools-only", command_line)
             self.assertEqual(2, command_line.count("--repository"))
             self.assertIn("--refresh", command_line)
-            self.assertEqual("off", command_line[command_line.index("--progress") + 1])
+            self.assertEqual("auto", command_line[command_line.index("--progress") + 1])
             self.assertEqual(str(java_home), environment["JAVA_HOME"])
 
             state = cli.json.loads(manifest_path.read_text(encoding="utf-8"))

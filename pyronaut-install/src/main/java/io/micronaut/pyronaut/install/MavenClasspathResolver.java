@@ -1171,11 +1171,19 @@ final class MavenClasspathResolver {
 
         @Override
         public void transferStarted(TransferEvent event) {
-            if (event.getResource() != null) listener.artifactStarted(event.getResource().getResourceName());
+            if (event.getResource() != null) {
+                listener.artifactStarted(event.getResource().getResourceName());
+                listener.artifactProgressed(event.getResource().getResourceName(),
+                    event.getTransferredBytes(), event.getResource().getContentLength());
+            }
         }
 
         @Override
         public void transferProgressed(TransferEvent event) {
+            if (event.getResource() != null) {
+                listener.artifactProgressed(event.getResource().getResourceName(),
+                    event.getTransferredBytes(), event.getResource().getContentLength());
+            }
         }
 
         @Override

@@ -24,6 +24,16 @@ interface DependencyProgressListener {
 
     void artifactStarted(String name);
 
+    /**
+     * Reports transfer progress for an artifact download.
+     *
+     * @param name        resource name of the transfer
+     * @param transferred bytes transferred so far
+     * @param total       total bytes, or {@code -1} when unknown
+     */
+    default void artifactProgressed(String name, long transferred, long total) {
+    }
+
     void artifactTransferFinished(String name);
 
     void artifactCompleted(String name);
