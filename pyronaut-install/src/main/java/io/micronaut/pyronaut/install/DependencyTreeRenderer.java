@@ -44,7 +44,7 @@ final class DependencyTreeRenderer {
 
     static DependencyTreeRenderer create(String colorMode) {
         ColorMode mode = ColorMode.fromCliValue(colorMode);
-        boolean interactive = System.console() != null;
+        boolean interactive = InstallProgressReporter.stderrIsTerminal();
         boolean colorEnabled = mode == ColorMode.ALWAYS || (mode == ColorMode.AUTO && interactive);
         return new DependencyTreeRenderer(System.out, colorEnabled);
     }

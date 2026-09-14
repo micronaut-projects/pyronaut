@@ -66,7 +66,7 @@ final class AnnotationProcessorOptionDiscovery {
             options.addAll(NATIVE_IMAGE_OPTIONS);
         } else if (!entries.isEmpty()) {
             URL[] urls = entries.stream().map(AnnotationProcessorOptionDiscovery::url).toArray(URL[]::new);
-            try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
+            try (URLClassLoader loader = new URLClassLoader(urls, new ProcessorClassLoaderParent())) {
                 Class<?> visitorType = Class.forName("io.micronaut.inject.visitor.TypeElementVisitor", true, loader);
                 // Iterate manually so that a single provider that cannot be loaded
                 // (ServiceConfigurationError / LinkageError) is skipped instead of
@@ -183,6 +183,27 @@ final class AnnotationProcessorOptionDiscovery {
             return java.util.HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("SHA-256 algorithm is unavailable", e);
+        }
+    }
+
+    /**
+     * Parent for the processor classpath loader. The project's build classpath
+     * ships its own {@code slf4j-api} but no provider, so a processor that logs
+     * during construction would make SLF4J print its "No SLF4J providers were
+     * found" fallback warnings. Sharing the installer's SLF4J binding routes
+     * those loggers through its configured Logback instead.
+     */
+    private static final class ProcessorClassLoaderParent extends ClassLoader {
+        ProcessorClassLoaderParent() {
+            super(ClassLoader.getPlatformClassLoader());
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (name.startsWith("org.slf4j.")) {
+                return AnnotationProcessorOptionDiscovery.class.getClassLoader().loadClass(name);
+            }
+            return super.loadClass(name, resolve);
         }
     }
 }
