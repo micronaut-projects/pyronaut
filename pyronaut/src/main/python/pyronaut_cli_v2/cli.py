@@ -5820,7 +5820,17 @@ def _default_java_home_provider(
 
 
 def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | None) -> dict[str, str] | None:
-    if command not in {"dev", "run", "test", "build", "tui", "validate-config", "install", "process"}:
+    if command not in {
+        "dev",
+        "run",
+        "test",
+        "build",
+        "tui",
+        "validate-config",
+        "install",
+        "process",
+        "test-resources-server",
+    }:
         return None
     env = dict(os.environ)
     if java_home_provider is None:
@@ -9147,8 +9157,12 @@ class _OwnedTestResourcesSession:
         removed_server_port = os.environ.pop("MICRONAUT_SERVER_PORT", None)
         removed_server_host = os.environ.pop("MICRONAUT_SERVER_HOST", None)
         try:
+            # The server launcher is a JVM script: without JAVA_HOME from the
+            # provider it cannot find a runtime on hosts where only the
+            # provisioned GraalVM under ~/.pyronaut/sdks exists.
+            env = _build_non_test_resources_env("test-resources-server", java_home_provider)
             effective_runner = _run_subprocess_quiet if self._quiet and runner is _run_subprocess else runner
-            return int(effective_runner(command_line, None))
+            return int(effective_runner(command_line, env))
         finally:
             if removed_server_port is not None:
                 os.environ["MICRONAUT_SERVER_PORT"] = removed_server_port
