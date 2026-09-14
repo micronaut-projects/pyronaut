@@ -4660,6 +4660,7 @@ additional-test-resources = ["test-fixtures"]
         usage = stdout.getvalue()
         self.assertIn("Usage: pyronaut build", usage)
         self.assertIn("--native-base[=<default|path|url>]", usage)
+        self.assertIn("--include-native-binary <name|path>]...", usage)
         self.assertIn("--native-base-output <path>", usage)
         self.assertNotIn("--base-image", usage)
 
@@ -4672,6 +4673,8 @@ additional-test-resources = ["test-fixtures"]
                 "App.py",
                 "--docker",
                 "--native-base=runtime/pyronaut-run-python",
+                "--include-native-binary",
+                "bin/helper",
             ]
 
             rewritten = cli._direct_build_arguments(args, staging, root, "python")  # noqa: SLF001
@@ -4683,6 +4686,8 @@ additional-test-resources = ["test-fixtures"]
             )
 
         self.assertIn(f"--native-base={local_base}", rewritten)
+        include_index = rewritten.index("--include-native-binary")
+        self.assertEqual(str(root / "bin" / "helper"), rewritten[include_index + 1])
         self.assertEqual(["--project-dir", str(staging)], rewritten[-2:])
         output_index = output_rewritten.index("--native-base-output")
         self.assertEqual(str(root / "dist" / "reusable-base"), output_rewritten[output_index + 1])
@@ -5127,13 +5132,35 @@ additional-test-resources = ["test-fixtures"]
             bundle = project_dir / "bundle" / "pyronaut-run"
             bundle.parent.mkdir(parents=True)
             bundle.write_bytes(b"native-runner")
+            dev_bundle = bundle.parent / "pyronaut-dev"
+            dev_bundle.write_bytes(b"unused-dev")
+            (bundle.parent / "pyronaut-run-python").write_bytes(b"unused-python")
             (bundle.parent / "resources").mkdir()
             (bundle.parent / "resources" / "runtime.config").write_text("configured", encoding="utf-8")
+            (bundle.parent / "resources" / "dev.config").write_text("dev", encoding="utf-8")
+            extra_binary = project_dir / "extra-launcher"
+            extra_binary.write_bytes(b"extra")
             (bundle.parent / "libsupport.so").write_bytes(b"library")
+            (bundle.parent / "pyronaut-run.json").write_text(
+                '{"bundle-files": ["libsupport.so", "pyronaut-run", "resources/runtime.config"]}\n',
+                encoding="utf-8",
+            )
+            (bundle.parent / "pyronaut-dev.json").write_text(
+                '{"bundle-files": ["pyronaut-dev", "resources/dev.config"]}\n',
+                encoding="utf-8",
+            )
 
-            with patch.object(cli, "_bundled_default_native_base", return_value=bundle) as default_native_base:
+            with (
+                patch.object(cli, "_bundled_default_native_base", return_value=bundle) as default_native_base,
+                patch.object(cli, "_ensure_native_image", return_value=dev_bundle) as ensure_native_image,
+            ):
                 exit_code = cli.run(
-                    ["build", "--docker", "--native-base=default", "--project-dir", str(project_dir)],
+                    [
+                        "build", "--docker", "--native-base=default",
+                        "--include-native-binary=pyronaut-dev",
+                        "--include-native-binary", "extra-launcher",
+                        "--project-dir", str(project_dir),
+                    ],
                     runner_with_env=runner_with_env,
                     resolver=self._resolver(),
                     platform_name="linux",
@@ -5141,11 +5168,16 @@ additional-test-resources = ["test-fixtures"]
 
         self.assertEqual(0, exit_code)
         default_native_base.assert_called_once_with(project_dir.resolve(), platform_name="linux")
+        ensure_native_image.assert_called_once_with("pyronaut-dev", platform_name="linux")
         self.assertEqual("DockerfileNativeDefault", captured["dockerfile"])
         self.assertIn("COPY bundled-base/ /opt/pyronaut/bin/", captured["contents"])
         self.assertNotIn("PYRONAUT_BASE_IMAGE=registry.example.com/runtime:1", captured["command"])
         self.assertIn("bundled-base/resources/runtime.config", captured["context_files"])
         self.assertIn("bundled-base/libsupport.so", captured["context_files"])
+        self.assertIn("bundled-base/pyronaut-dev", captured["context_files"])
+        self.assertIn("bundled-base/resources/dev.config", captured["context_files"])
+        self.assertIn("bundled-base/extra-launcher", captured["context_files"])
+        self.assertNotIn("bundled-base/pyronaut-run-python", captured["context_files"])
 
     def test_closed_world_native_format_rejects_configured_reusable_base(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -6620,6 +6652,15 @@ java-version = 25
             self.assertEqual(b"native-pyronaut-dev", first.read_bytes())
             self.assertEqual(b"generated-resource", (first.parent / "resources/application.properties").read_bytes())
             self.assertEqual(b"io.micronaut:example\n", (first.parent / "native-provided-classpath.txt").read_bytes())
+            metadata = cli.json.loads(first.with_name("pyronaut-dev.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [
+                    "pyronaut-dev",
+                    "resources/application.properties",
+                    "resources/pyronaut-dev/native-provided-classpath.txt",
+                ],
+                metadata["bundle-files"],
+            )
             self.assertTrue(first.stat().st_mode & 0o111)
             self.assertEqual(1, len(calls))
             self.assertEqual(
