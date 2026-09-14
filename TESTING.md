@@ -240,7 +240,7 @@ packages.find.where = ["src"]
 
 [tool.pyronaut]
 repositories = ["mavenCentral"]
-core.version = "5.2.0"
+core.version = "5.2.2"
 platform.version = "5.1.0"
 
 [tool.pyronaut.toolchain]

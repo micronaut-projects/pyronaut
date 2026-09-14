@@ -1346,7 +1346,7 @@ class OrchestratorTest(unittest.TestCase):
             binary = self._write_native_compile_descriptor(
                 native_dev,
                 home,
-                [("io.micronaut", "micronaut-inject-python", "5.2.0", "micronaut-inject-python-5.2.0.jar")],
+                [("io.micronaut", "micronaut-inject-python", "5.2.2", "micronaut-inject-python-5.2.2.jar")],
             )[0]
 
             with patch("pathlib.Path.home", return_value=home):
@@ -1361,13 +1361,13 @@ class OrchestratorTest(unittest.TestCase):
             native_dir.mkdir(parents=True)
             native_dev = native_dir / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
-            filename = "micronaut-inject-python-5.2.0.jar"
+            filename = "micronaut-inject-python-5.2.2.jar"
             descriptor = "\t".join((
-                "maven", "io.micronaut", "micronaut-inject-python", "5.2.0", "jar", "", filename
+                "maven", "io.micronaut", "micronaut-inject-python", "5.2.2", "jar", "", filename
             ))
             (native_dir / "native-compile-classpath.txt").write_text(descriptor + "\n", encoding="utf-8")
             project = root / "project"
-            artifact = project / ".pyronaut-m2" / "io" / "micronaut" / "micronaut-inject-python" / "5.2.0" / filename
+            artifact = project / ".pyronaut-m2" / "io" / "micronaut" / "micronaut-inject-python" / "5.2.2" / filename
             artifact.parent.mkdir(parents=True)
             artifact.write_text("inject-python", encoding="utf-8")
 
@@ -1384,13 +1384,13 @@ class OrchestratorTest(unittest.TestCase):
             native_dir.mkdir(parents=True)
             native_dev = native_dir / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
-            filename = "micronaut-inject-python-5.2.0.jar"
+            filename = "micronaut-inject-python-5.2.2.jar"
             descriptor = "\t".join((
-                "maven", "io.micronaut", "micronaut-inject-python", "5.2.0", "jar", "", filename
+                "maven", "io.micronaut", "micronaut-inject-python", "5.2.2", "jar", "", filename
             ))
             (native_dir / "native-compile-classpath.txt").write_text(descriptor + "\n", encoding="utf-8")
             repository = root / "explicit-repository"
-            artifact = repository / "io" / "micronaut" / "micronaut-inject-python" / "5.2.0" / filename
+            artifact = repository / "io" / "micronaut" / "micronaut-inject-python" / "5.2.2" / filename
             artifact.parent.mkdir(parents=True)
             artifact.write_text("inject-python", encoding="utf-8")
 
@@ -1411,9 +1411,9 @@ class OrchestratorTest(unittest.TestCase):
             native_dir.mkdir(parents=True)
             native_dev = native_dir / "pyronaut-dev"
             native_dev.write_text("", encoding="utf-8")
-            filename = "micronaut-inject-python-5.2.0.jar"
+            filename = "micronaut-inject-python-5.2.2.jar"
             (native_dir / "native-compile-classpath.txt").write_text(
-                "\t".join(("maven", "io.micronaut", "micronaut-inject-python", "5.2.0", "jar", "", filename)) + "\n",
+                "\t".join(("maven", "io.micronaut", "micronaut-inject-python", "5.2.2", "jar", "", filename)) + "\n",
                 encoding="utf-8",
             )
             distribution_lib = root / "build" / "install" / "micronaut-pyronaut-dev" / "lib"
@@ -1577,7 +1577,7 @@ type = "native"
                     [
                         "/tmp/micronaut-context-python-5.1.0.jar",
                         "/tmp/micronaut-runtime-5.1.0.jar",
-                        "/tmp/micronaut-runtime-5.2.0.jar",
+                        "/tmp/micronaut-runtime-5.2.2.jar",
                         "/tmp/micronaut-views-core-6.0.0.jar",
                         "/tmp/org.graalvm.polyglot-coverage-25.1.3.pom",
                     ]
@@ -1591,7 +1591,7 @@ type = "native"
         entries = classpath.split(os.pathsep)
         self.assertNotIn("/tmp/micronaut-context-python-5.1.0.jar", entries)
         self.assertNotIn("/tmp/micronaut-runtime-5.1.0.jar", entries)
-        self.assertNotIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
+        self.assertNotIn("/tmp/micronaut-runtime-5.2.2.jar", entries)
         self.assertNotIn("/tmp/org.graalvm.polyglot-coverage-25.1.3.pom", entries)
         self.assertIn("/tmp/micronaut-views-core-6.0.0.jar", entries)
 
@@ -1825,7 +1825,7 @@ type = "native"
                     [
                         "/tmp/micronaut-control-panel-core-2.0.0.jar",
                         "/tmp/micronaut-control-panel-ui-2.0.0.jar",
-                        "/tmp/micronaut-runtime-5.2.0.jar",
+                        "/tmp/micronaut-runtime-5.2.2.jar",
                     ]
                 )
                 + "\n",
@@ -1837,14 +1837,14 @@ type = "native"
         entries = classpath.split(os.pathsep)
         self.assertNotIn("/tmp/micronaut-control-panel-core-2.0.0.jar", entries)
         self.assertNotIn("/tmp/micronaut-control-panel-ui-2.0.0.jar", entries)
-        self.assertIn("/tmp/micronaut-runtime-5.2.0.jar", entries)
+        self.assertIn("/tmp/micronaut-runtime-5.2.2.jar", entries)
 
     def test_external_dev_auto_restart_uses_run_delegate_command(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
             cache_dir = project_dir / "__pyronaut__"
             (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
-            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/micronaut-runtime-5.2.0.jar\n", encoding="utf-8")
+            (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/micronaut-runtime-5.2.2.jar\n", encoding="utf-8")
             (cache_dir / "resolved-development-runtime-dependencies").write_text("/tmp/micronaut-control-panel-core-2.0.0.jar\n", encoding="utf-8")
 
             with patch.object(cli, "_delegate_lib_entries", return_value=["/tmp/pyronaut-dev.jar"]):
@@ -5808,7 +5808,7 @@ additional-test-resources = ["test-fixtures"]
             (project_dir / "src-java" / "App.java").write_text("class App {}", encoding="utf-8")
             (project_dir / "__pyronaut__").mkdir()
             (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
-                "micronaut-context-python-5.2.0.jar\n", encoding="utf-8"
+                "micronaut-context-python-5.2.2.jar\n", encoding="utf-8"
             )
             (project_dir / "__pyronaut__" / "classes").mkdir()
             (project_dir / "pyproject.toml").write_text(
@@ -5817,7 +5817,7 @@ additional-test-resources = ["test-fixtures"]
 
             self.assertFalse(cli._is_python_runtime_project(project_dir))  # noqa: SLF001
             self.assertNotIn(
-                "micronaut-context-python-5.2.0.jar",
+                "micronaut-context-python-5.2.2.jar",
                 cli._build_native_application_classpath_entries("run", project_dir),  # noqa: SLF001
             )
 

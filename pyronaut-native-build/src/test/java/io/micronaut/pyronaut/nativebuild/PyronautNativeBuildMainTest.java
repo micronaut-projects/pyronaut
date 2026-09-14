@@ -109,8 +109,8 @@ class PyronautNativeBuildMainTest {
             [tool.pyronaut.build.metadata]
             enabled = false
             """);
-        Path pythonRuntime = createJar(project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-context-python-5.2.0.jar"));
-        Path javaRuntime = createJar(project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-context-5.2.0.jar"));
+        Path pythonRuntime = createJar(project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-context-python-5.2.2.jar"));
+        Path javaRuntime = createJar(project.resolve("__pyronaut__/m2-repository/io/micronaut/micronaut-context-5.2.2.jar"));
         overwriteRuntimeManifest(project, List.of(pythonRuntime.toString(), javaRuntime.toString()));
         List<List<String>> executed = new ArrayList<>();
         var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
