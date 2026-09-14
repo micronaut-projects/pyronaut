@@ -2371,6 +2371,7 @@ def _direct_build_source_selectors(args: Sequence[str]) -> list[str]:
     value_options = {
         "--project-dir", "--project", "--mode", "--main-class", "--native-base-output",
         "--name", "--version", "--setup", "--local-repository", "--local-repo",
+        "--include-native-binary",
     }
     selectors: list[str] = []
     index = 0
@@ -2436,6 +2437,17 @@ def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Pa
     index = 0
     while index < len(args):
         token = args[index]
+        if token == "--include-native-binary" and index + 1 < len(args):
+            result.extend([token, _resolve_native_binary_include(args[index + 1], root)])
+            index += 2
+            continue
+        if token.startswith("--include-native-binary="):
+            result.append(
+                "--include-native-binary="
+                + _resolve_native_binary_include(token.split("=", 1)[1], root)
+            )
+            index += 1
+            continue
         if token == "--native-base-output" and index + 1 < len(args):
             output = Path(args[index + 1])
             result.extend([token, str(output if output.is_absolute() else (root / output).resolve())])
@@ -2525,6 +2537,7 @@ def _run_direct_source_build(
     root = Path(_extract_project_dir(args)).resolve()
     selectors = _direct_build_source_selectors(args)
     try:
+        _extract_build_native_binary_includes(args)
         language, source_files = _direct_build_source_files(root, selectors)
         configured_name = _extract_build_value(args, "--name")
         configured_version = _extract_build_value(args, "--version")
@@ -2697,6 +2710,11 @@ def _run_build(
     native_base_build = _extract_build_native_base(args)
     native_base_output = _extract_build_native_base_output(args)
     cli_native_base = _extract_build_native_base_value(args)
+    try:
+        additional_native_binaries = _extract_build_native_binary_includes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
     configured_native_base = _read_pyproject_build_native_base(project_dir)
     configured_docker_base_image = None
     explicit_docker_base_image = None
@@ -2722,6 +2740,16 @@ def _run_build(
     else:
         default_native_base = False
         selected_native_base = None
+    if additional_native_binaries and (
+        not docker_build
+        or mode != "native"
+        or not (default_native_base or selected_native_base is not None)
+    ):
+        print(
+            "--include-native-binary requires a native Docker build with a bundled native base",
+            file=sys.stderr,
+        )
+        return USAGE_ERROR
     if (
         native_base_build
         and native_base_output is None
@@ -2818,6 +2846,7 @@ def _run_build(
             native_base_build=native_base_build,
             default_native_base=default_native_base,
             selected_native_base=selected_native_base,
+            additional_native_binaries=additional_native_binaries,
         )
 
     dist_dir = project_dir / "dist"
@@ -3326,6 +3355,39 @@ def _extract_build_native_base(args: Sequence[str]) -> bool:
     return any(token == "--native-base" for token in args)
 
 
+def _extract_build_native_binary_includes(args: Sequence[str]) -> list[str]:
+    includes: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            break
+        if token == "--include-native-binary":
+            if index + 1 >= len(args):
+                raise ValueError("Missing value for --include-native-binary")
+            value = args[index + 1].strip()
+            if not value:
+                raise ValueError("Invalid empty value for --include-native-binary")
+            includes.append(value)
+            index += 2
+            continue
+        if token.startswith("--include-native-binary="):
+            value = token.split("=", 1)[1].strip()
+            if not value:
+                raise ValueError("Invalid empty value for --include-native-binary")
+            includes.append(value)
+        index += 1
+    return includes
+
+
+def _resolve_native_binary_include(value: str, root: Path) -> str:
+    value = value.strip()
+    if value in _NATIVE_IMAGE_COMMANDS:
+        return value
+    path = Path(value).expanduser()
+    return str(path if path.is_absolute() else (root / path).resolve())
+
+
 def _extract_build_native_base_value(args: Sequence[str]) -> str | None:
     for token in args:
         if token.startswith("--native-base="):
@@ -3733,6 +3795,24 @@ def _stage_bundled_native_base(source: Path, target: Path) -> None:
         shutil.copy2(source_file, target_file)
 
 
+def _stage_additional_native_binaries(
+    includes: Sequence[str], *, project_dir: Path, target: Path,
+) -> None:
+    for include in includes:
+        if include in _NATIVE_IMAGE_COMMANDS:
+            _stage_bundled_native_base(
+                _ensure_native_image(include, platform_name="linux"), target
+            )
+            continue
+        source = Path(include).expanduser()
+        source = source if source.is_absolute() else project_dir / source
+        if not source.is_file():
+            raise RuntimeError(f"Additional native binary does not exist: {include}")
+        target_file = target / source.name
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target_file)
+
+
 def _stage_python_runner_runtime_dependencies(
     pyronaut_dir: Path,
     resolver: Callable[[str], str | None],
@@ -4064,6 +4144,7 @@ def _run_docker_build(
     native_base_build: bool = False,
     default_native_base: bool = False,
     selected_native_base: str | None = None,
+    additional_native_binaries: Sequence[str] = (),
 ) -> int:
     docker_config = _read_pyproject_build_docker_config(project_dir)
     image_name = docker_config.get("image_name") or _default_docker_image_name(project_name)
@@ -4142,7 +4223,14 @@ def _run_docker_build(
                     project_dir=project_dir, context_dir=context_dir, launcher_executable=str(bundled),
                 )
                 bundled_dir = context_dir / "bundled-base"
-                _stage_bundled_native_base(bundled, bundled_dir)
+                try:
+                    _stage_bundled_native_base(bundled, bundled_dir)
+                    _stage_additional_native_binaries(
+                        additional_native_binaries, project_dir=project_dir, target=bundled_dir
+                    )
+                except RuntimeError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return PRECONDITION_FAILED
                 (bundled_dir / runner_name).chmod(0o755)
                 dockerfile = context_dir / "DockerfileNativeDefault"
                 _write_bundled_application_dockerfile(
@@ -4169,6 +4257,15 @@ def _run_docker_build(
                     context_dir=context_dir,
                     launcher_executable=str(bundled),
                 )
+                try:
+                    _stage_additional_native_binaries(
+                        additional_native_binaries,
+                        project_dir=project_dir,
+                        target=context_dir / "bundled-base",
+                    )
+                except RuntimeError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return PRECONDITION_FAILED
                 dockerfile = context_dir / "DockerfileNativeBase"
                 _write_bundled_application_dockerfile(
                     target=dockerfile,
@@ -4951,7 +5048,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token in {"--native", "--jvm", "--jar", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--native-base"} or token.startswith("--native-base="):
             index += 1
             continue
-        if token in {"--mode", "--main-class", "--project-dir", "--native-base-output", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src"}:
+        if token in {"--mode", "--main-class", "--project-dir", "--native-base-output", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src", "--include-native-binary"}:
             index += 1
             if index < len(args):
                 index += 1
@@ -4971,6 +5068,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
             or token.startswith("--version=")
             or token.startswith("--python-src=")
             or token.startswith("--java-src=")
+            or token.startswith("--include-native-binary=")
         ):
             index += 1
             continue
@@ -8518,7 +8616,7 @@ def _print_build_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--native-base[=<default|path|url>]] [--native-base-output <path>] [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
+        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--native-base[=<default|path|url>]] [--include-native-binary <name|path>]... [--native-base-output <path>] [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
     )
 
 
