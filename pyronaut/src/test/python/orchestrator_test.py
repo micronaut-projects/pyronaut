@@ -3774,6 +3774,55 @@ additional-test-resources = ["test-fixtures"]
             self.assertIs(kwargs.get("stdout"), cli.subprocess.DEVNULL)
             self.assertIs(kwargs.get("stderr"), cli.subprocess.DEVNULL)
 
+    def test_owned_test_resources_delegate_receives_java_home_from_provider(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut test")
+
+            def runner_with_env(command_line, env):
+                executed.append((command_line, env))
+                return 0
+
+            with patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+                exit_code = session._delegate_test_resources_server(  # noqa: SLF001 - internal helper coverage
+                    ["start", "--project-dir", str(project_dir)],
+                    runner=runner_with_env,
+                    resolver=self._resolver(),
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, len(executed))
+        command_line, env = executed[0]
+        self.assertEqual(["/tmp/pyronaut-test-resources-server", "start", "--project-dir", str(project_dir)], command_line)
+        self.assertIsInstance(env, dict)
+        self.assertEqual("/tmp/graalvm-jdk-25", env["JAVA_HOME"])
+        self.assertTrue(env["PATH"].startswith("/tmp/graalvm-jdk-25/bin" + os.pathsep))
+
+    def test_owned_test_resources_delegate_fails_when_java_home_provider_cannot_provision(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut test")
+
+            def runner_with_env(command_line, env):
+                executed.append((command_line, env))
+                return 0
+
+            with self.assertRaises(RuntimeError) as raised:
+                session._delegate_test_resources_server(  # noqa: SLF001 - internal helper coverage
+                    ["start", "--project-dir", str(project_dir)],
+                    runner=runner_with_env,
+                    resolver=self._resolver(),
+                    java_home_provider=lambda: None,
+                )
+
+        self.assertIn("compatible GraalVM JDK", str(raised.exception))
+        self.assertEqual([], executed)
+
     def test_owned_test_resources_session_preserves_session_file_when_stop_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
@@ -8275,6 +8324,35 @@ java-version = 25
             ],
             executed,
         )
+
+    def test_test_resources_server_start_receives_java_home_from_provider(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append((command_line, env))
+            return 0
+
+        with patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+            exit_code = cli.run(
+                ["test-resources-server", "start", "--project-dir", "/tmp/demo"],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [
+                ["/tmp/pyronaut-install", "--project-dir", "/tmp/demo"],
+                ["/tmp/pyronaut-test-resources-server", "start", "--project-dir", "/tmp/demo"],
+            ],
+            [command_line for command_line, _ in executed],
+        )
+        server_env = executed[1][1]
+        self.assertIsInstance(server_env, dict)
+        self.assertEqual("/tmp/graalvm-jdk-25", server_env["JAVA_HOME"])
+        self.assertTrue(server_env["PATH"].startswith("/tmp/graalvm-jdk-25/bin" + os.pathsep))
 
     def test_create_command_delegates_to_micronaut_launch_with_fixed_python_options(self):
         executed = []
