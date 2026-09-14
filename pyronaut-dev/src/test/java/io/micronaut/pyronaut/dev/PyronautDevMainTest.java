@@ -77,6 +77,25 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void keepsSelectedProjectTestsWithTheTestDelegate() {
+        List<String> calls = new ArrayList<>();
+        PyronautDevMain.DelegateInvoker invoker = (command, args) -> {
+            calls.add(command.name() + " " + String.join(" ", args));
+            return 0;
+        };
+
+        assertEquals(0, PyronautDevMain.execute(new String[]{"test", "--tests", "tests/test_app.py"}, invoker));
+        assertEquals(0, PyronautDevMain.execute(new String[]{"test", "--tests=tests/test_app.py::test_index"}, invoker));
+        assertEquals(0, PyronautDevMain.execute(new String[]{"test", "--tests", "test_*"}, invoker));
+
+        assertEquals(List.of(
+            "TEST --tests tests/test_app.py",
+            "TEST --tests=tests/test_app.py::test_index",
+            "TEST --tests test_*"
+        ), calls);
+    }
+
+    @Test
     void routesRunSourceToDirectExecution(@TempDir Path tempDir) throws IOException {
         Path source = tempDir.resolve("Foo.java");
         Files.writeString(source, "class Foo {}\n");

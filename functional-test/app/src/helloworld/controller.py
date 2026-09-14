@@ -1,5 +1,5 @@
 from micronaut.http.annotation import Get, Post, Body
-from micronaut.http import HttpResponse
+from micronaut.http import HttpResponse, MediaType
 from jakarta.inject import Inject
 from micronaut.validation.validator import Validator
 from typing import Annotated
@@ -40,3 +40,14 @@ def validated_greeting(request : Annotated[GreetingRequest, Body]) -> HttpRespon
             "errors": [violation.getMessage() for violation in violations]
         })
     return HttpResponse.ok({ "message": message_service.say_hello(request.name) })
+
+@Post(value="/validated-form", consumes=MediaType.APPLICATION_FORM_URLENCODED)
+def validated_form(form : Annotated[GreetingRequest, Body]) -> HttpResponse:
+    # The form is bound to a Python dataclass and handed straight to the injected
+    # Validator: the launcher must convert it back to its generated Java type.
+    violations = validator.validate(form)
+    if not violations.isEmpty():
+        return HttpResponse.badRequest({
+            "errors": [violation.getMessage() for violation in violations]
+        })
+    return HttpResponse.ok({ "message": message_service.say_hello(form.name) })

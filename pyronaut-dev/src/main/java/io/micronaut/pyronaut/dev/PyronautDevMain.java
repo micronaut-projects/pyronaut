@@ -453,7 +453,9 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
         for (int i = 1; i < args.length; i++) {
             String argument = args[i];
-            if ("--project-dir".equals(argument)) {
+            if ("--project-dir".equals(argument) || isProjectTestSelector(argument)) {
+                // Direct source tests have no test selection option: a Gradle-like
+                // selector such as `--tests tests/test_app.py` names a project test.
                 return false;
             }
             if ("--".equals(argument) || isSourceSelector(argument) || isDirectory(argument)) {
@@ -461,6 +463,10 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
         }
         return false;
+    }
+
+    private static boolean isProjectTestSelector(String argument) {
+        return "--tests".equals(argument) || argument.startsWith("--tests=");
     }
 
     private static boolean isDirectory(String value) {

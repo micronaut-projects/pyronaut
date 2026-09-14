@@ -781,20 +781,6 @@ def _delegate(
             print(shlex.join(dev_command_line), file=sys.stderr)
         return runner(dev_command_line, env)
 
-    # pyronaut-dev's native direct-source command treats unknown options as
-    # source paths. Test selectors belong to pyronaut-test, whose launcher
-    # understands repeatable --tests options (including pytest node IDs).
-    if command == "test" and _has_tests_selection(args) and _bundled_native_executable("pyronaut-dev") is not None:
-        return _delegate_via_java(
-            command,
-            args,
-            runner,
-            resolver,
-            debug_vm=debug_vm,
-            env_overrides=env_overrides,
-            java_home_provider=java_home_provider,
-        )
-
     dev_command_line = None
     if command != "run":
         try:
@@ -6906,10 +6892,6 @@ def _normalize_tests_selection_flag(args: list[str]) -> list[str]:
         normalized.append(token)
         index += 1
     return normalized
-
-
-def _has_tests_selection(args: Sequence[str]) -> bool:
-    return any(token == "--tests" or token.startswith("--tests=") for token in args)
 
 
 def _extract_no_cache(args: Sequence[str]) -> bool:
