@@ -19,10 +19,14 @@ import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.terminal.LiveRegion;
+import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import picocli.CommandLine;
 
 import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -175,13 +179,17 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
                         System.err.println("Configuration validation failed (cached). Report directory: " + settings.outputDir());
                         return VALIDATION_ERROR;
                     }
-                    System.out.println("Configuration validation passed.");
+                    passed(null, "(cached)");
                     return SUCCESS;
                 }
             }
 
             cleanupStaleReports(settings.outputDir(), settings.format());
-            ValidationExecutionResult result = validatorExecutor.validate(settings);
+            long started = System.nanoTime();
+            ValidationExecutionResult result;
+            try (ValidationProgress progress = ValidationProgress.start()) {
+                result = validatorExecutor.validate(settings);
+            }
             if (!noCache) {
                 ConfigurationValidationCache.write(
                     cacheFile,
@@ -192,10 +200,10 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             }
 
             if (result.hasErrors()) {
-                System.err.println("Configuration validation failed. See reports in " + settings.outputDir());
+                failed("Configuration validation failed. See reports in " + settings.outputDir(), System.nanoTime() - started);
                 return VALIDATION_ERROR;
             }
-            System.out.println("Configuration validation passed.");
+            passed(System.nanoTime() - started, null);
             return SUCCESS;
         } catch (PyprojectModelException e) {
             System.err.println(e.getMessage());
@@ -210,6 +218,31 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             System.err.println("validate-config failed: " + e.getMessage());
             return INTERNAL_ERROR;
         }
+    }
+
+    /**
+     * Report success: a stamped line on the terminal, or the plain message on
+     * standard output for scripts and logs.
+     */
+    private static void passed(Long tookNanos, String suffix) {
+        if (Terminal.isInteractive()) {
+            LiveRegion region = ValidationProgress.region(null);
+            region.output().println(region.stamp(LiveRegion.GREEN, region.glyphs().check(), "Configuration validation passed",
+                suffix != null ? suffix : tookNanos == null ? null : "(" + Terminal.formatDuration(tookNanos) + ")"));
+            region.close();
+            return;
+        }
+        System.out.println("Configuration validation passed.");
+    }
+
+    private static void failed(String message, long tookNanos) {
+        if (Terminal.isInteractive()) {
+            LiveRegion region = ValidationProgress.region(null);
+            region.output().println(region.stamp(LiveRegion.RED, region.glyphs().cross(), message, tookNanos));
+            region.close();
+            return;
+        }
+        System.err.println(message);
     }
 
     private ValidationSettings resolveExternalSettings(Path root, String normalizedScenario, PyprojectModel model) throws IOException {
@@ -598,5 +631,44 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     }
 
     record ValidationExecutionResult(boolean hasErrors) {
+    }
+
+    /**
+     * Spinner shown while the Micronaut configuration validator runs.
+     */
+    private static final class ValidationProgress implements AutoCloseable {
+        private final LiveRegion region;
+        private final long startedNanos = System.nanoTime();
+
+        private ValidationProgress(LiveRegion region) {
+            this.region = region;
+        }
+
+        static ValidationProgress start() {
+            if (!Terminal.isInteractive()) {
+                return new ValidationProgress(null);
+            }
+            ValidationProgress[] holder = new ValidationProgress[1];
+            LiveRegion region = region((liveRegion, frame, width) -> List.of(
+                liveRegion.headerRow(frame, "Validating configuration", null, System.nanoTime() - holder[0].startedNanos, width)));
+            holder[0] = new ValidationProgress(region);
+            region.refresh();
+            return holder[0];
+        }
+
+        static LiveRegion region(LiveRegion.Frame frame) {
+            boolean tty = Terminal.isInteractive();
+            boolean unicode = tty && Terminal.unicodeSupported();
+            PrintStream output = unicode ? new PrintStream(System.err, true, StandardCharsets.UTF_8) : System.err;
+            return new LiveRegion(output, tty && frame != null, Terminal.colorEnabled("auto", tty), unicode,
+                frame == null ? (liveRegion, spinnerFrame, width) -> List.of() : frame);
+        }
+
+        @Override
+        public void close() {
+            if (region != null) {
+                region.close();
+            }
+        }
     }
 }

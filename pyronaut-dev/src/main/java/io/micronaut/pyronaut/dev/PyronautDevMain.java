@@ -37,6 +37,7 @@ import io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceL
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import io.micronaut.pyronaut.test.PyronautTestMain;
+import io.micronaut.pyronaut.test.TestProgressReporter;
 import io.micronaut.python.processing.model.ScriptDef;
 import io.micronaut.pyronaut.testresources.DirectSourceTestResourcesSession;
 import io.micronaut.pyronaut.testresources.PyronautTestResourcesServerMain;
@@ -900,21 +901,23 @@ public final class PyronautDevMain implements Callable<Integer> {
                     }
                 }
             });
-            launcher.registerTestExecutionListeners(new ConsoleTestExecutionListener(originalOut));
-            launcher.execute(request);
-            TestExecutionSummary summary = listener.getSummary();
-            summary.printTo(new PrintWriter(System.out, true, StandardCharsets.UTF_8));
-            Path report = invocation.report() == null
-                ? pyronautDir.resolve("reports").resolve("tests")
-                : invocation.report();
-            Path reportDirectory = writeReports(report, summary, reportResults);
-            if (reportDirectory != null) {
-                System.out.println("Test report: " + terminalLink(reportDirectory.resolve("index.html")));
+            try (TestProgressReporter reporter = TestProgressReporter.create(originalErr, invocation.verbose())) {
+                launcher.registerTestExecutionListeners(reporter);
+                launcher.execute(request);
+                TestExecutionSummary summary = listener.getSummary();
+                if (invocation.verbose()) {
+                    summary.printTo(new PrintWriter(System.out, true, StandardCharsets.UTF_8));
+                }
+                Path report = invocation.report() == null
+                    ? pyronautDir.resolve("reports").resolve("tests")
+                    : invocation.report();
+                Path reportDirectory = writeReports(report, summary, reportResults);
+                reporter.summary(reportDirectory);
+                if (invocation.verbose()) {
+                    System.out.println("Test Execution Time: " + (System.currentTimeMillis() - now) + "ms");
+                }
+                return summary.getFailures().isEmpty() ? SUCCESS : TESTS_FAILED;
             }
-            if (invocation.verbose()) {
-                System.out.println("Test Execution Time: " + (System.currentTimeMillis() - now) + "ms");
-            }
-            return summary.getFailures().isEmpty() ? SUCCESS : TESTS_FAILED;
         } finally {
             if (pythonSource) {
                 restorePythonContext(previousPythonContext);
@@ -993,11 +996,6 @@ public final class PyronautDevMain implements Callable<Integer> {
         Path directory = report.toAbsolutePath().normalize();
         JUnitReportWriter.write(directory, summary, results);
         return directory;
-    }
-
-    private static String terminalLink(Path path) {
-        String uri = path.toUri().toString();
-        return "\033]8;;" + uri + "\033\\Open test report\033]8;;\033\\ (" + path + ")";
     }
 
     private static List<String> testClassNames(List<Path> selectors) throws IOException {
@@ -1702,42 +1700,6 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private record DirectPythonContextState(boolean initialized, ClassLoader classLoader, boolean reuse) {
-    }
-
-    private static final class ConsoleTestExecutionListener implements TestExecutionListener {
-        private final PrintStream output;
-
-        private ConsoleTestExecutionListener(PrintStream output) {
-            this.output = output;
-        }
-
-        @Override
-        public void executionSkipped(TestIdentifier testIdentifier, String reason) {
-            if (testIdentifier.isTest()) {
-                output.println("  skipped: " + (reason == null ? "no reason supplied" : reason));
-            }
-        }
-
-        @Override
-        public void executionStarted(TestIdentifier testIdentifier) {
-            if (testIdentifier.isTest()) {
-                output.println("> " + testIdentifier.getDisplayName());
-            }
-        }
-
-        @Override
-        public void executionFinished(TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
-            if (testIdentifier.isTest()) {
-                String status = testExecutionResult.getStatus().name();
-                String highlightedStatus = switch (status) {
-                    case "SUCCESSFUL" -> "\u001B[32mSUCCESSFUL\u001B[0m";
-                    case "FAILED" -> "\u001B[31mFAILED\u001B[0m";
-                    default -> status;
-                };
-                output.println("  " + highlightedStatus);
-                testExecutionResult.getThrowable().ifPresent(throwable -> throwable.printStackTrace(output));
-            }
-        }
     }
 
     private static final class DeferredGeneratedClassLoader extends ClassLoader {

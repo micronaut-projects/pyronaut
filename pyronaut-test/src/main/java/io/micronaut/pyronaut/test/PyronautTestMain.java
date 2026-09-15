@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.test;
 
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.test.pytest.execution.ConsoleCapture;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
@@ -30,6 +31,7 @@ import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.engine.reporting.ReportEntry;
 import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
@@ -41,12 +43,15 @@ import picocli.CommandLine;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Callable;
@@ -78,6 +83,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     private static final String DEFAULT_HTML_REPORT = "index.html";
     private static final String DEFAULT_NODEID_REPORT = ".pyronaut-last-nodeid.txt";
     private static final String DEFAULT_EVENTS_REPORT = "events.ndjson";
+    private static final String DEFAULT_CONSOLE_LOG = "console.log";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String MICRONAUT_SERVER_PORT = "micronaut.server.port";
     private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
@@ -211,6 +217,11 @@ public final class PyronautTestMain implements Callable<Integer> {
         boolean junitEnabled = testEngine != PyprojectModel.TestEngine.PYTEST;
         boolean pytestEnabled = testEngine != PyprojectModel.TestEngine.JUNIT;
 
+        // Application logs, GraalPy diagnostics and pytest's own terminal output
+        // are captured into the test reports unless the user asked to stream
+        // them; the reporter always writes to the real console.
+        boolean streamOutput = verboseLogger != null || (model != null && model.pyronaut().test().verboseEnabled());
+        PrintStream console = System.err;
         ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         String previousPythonEnabledProperty = System.getProperty(MICRONAUT_PYTHON_ENABLED);
@@ -220,7 +231,8 @@ public final class PyronautTestMain implements Callable<Integer> {
         String previousConfigurationSuppressionsProperty = System.getProperty(CONFIGURATION_VALIDATOR_SUPPRESSIONS);
         String previousLoggerConfigProperty = System.getProperty(LOGGER_CONFIG_PROPERTY);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
-        try (layout) {
+        ConsoleCapture capture = streamOutput ? null : ConsoleCapture.install();
+        try (layout; TestProgressReporter reporter = TestProgressReporter.create(console, streamOutput)) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
             if (ExternalProjectLayout.isExternal(root)) {
                 applyExternalPythonDefault(applicationClassLoader, System.getenv());
@@ -306,7 +318,7 @@ public final class PyronautTestMain implements Callable<Integer> {
                             Class<?> testClass = Class.forName(className, false, applicationClassLoader);
                             requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
                         } catch (ClassNotFoundException e) {
-                            System.err.println("Unable to load selected test class: " + className);
+                            console.println("Unable to load selected test class: " + className);
                             return 7;
                         }
                     }
@@ -316,20 +328,18 @@ public final class PyronautTestMain implements Callable<Integer> {
                 SummaryGeneratingListener listener = new SummaryGeneratingListener();
                 launcher.registerTestExecutionListeners(listener);
                 List<JUnitReportWriter.TestResult> testResults = new CopyOnWriteArrayList<>();
+                launcher.registerTestExecutionListeners(reporter);
                 if (ExternalProjectLayout.isExternal(root) || junitEnabled) {
                     launcher.registerTestExecutionListeners(new TestExecutionListener() {
-                        @Override
-                        public void executionStarted(TestIdentifier identifier) {
-                            if (identifier.isTest()) {
-                                System.out.println("> " + identifier.getDisplayName());
-                            }
-                        }
+                        // The pytest engine publishes each test's captured
+                        // stdout/stderr/log as report entries keyed by stream.
+                        private final Map<TestIdentifier, Map<String, StringBuilder>> published = new ConcurrentHashMap<>();
 
                         @Override
-                        public void executionSkipped(TestIdentifier identifier, String reason) {
-                            if (identifier.isTest()) {
-                                System.out.println("  skipped: " + (reason == null ? "no reason supplied" : reason));
-                            }
+                        public void reportingEntryPublished(TestIdentifier identifier, ReportEntry entry) {
+                            Map<String, StringBuilder> streams = published.computeIfAbsent(identifier, ignored -> new ConcurrentHashMap<>());
+                            entry.getKeyValuePairs().forEach((stream, text) ->
+                                streams.computeIfAbsent(stream, ignored -> new StringBuilder()).append(text));
                         }
 
                         @Override
@@ -338,22 +348,27 @@ public final class PyronautTestMain implements Callable<Integer> {
                             if (!identifier.isTest()) {
                                 return;
                             }
-                            String outputStatus = result.getStatus().name();
-                            String highlightedStatus = switch (outputStatus) {
-                                case "SUCCESSFUL" -> "\u001B[32mSUCCESSFUL\u001B[0m";
-                                case "FAILED" -> "\u001B[31mFAILED\u001B[0m";
-                                default -> outputStatus;
-                            };
-                            System.out.println("  " + highlightedStatus);
-                            result.getThrowable().ifPresent(Throwable::printStackTrace);
+                            if (streamOutput) {
+                                result.getThrowable().ifPresent(Throwable::printStackTrace);
+                            }
                             JUnitReportWriter.Status reportStatus = switch (result.getStatus()) {
                                 case SUCCESSFUL -> JUnitReportWriter.Status.PASSED;
                                 case FAILED -> JUnitReportWriter.Status.FAILED;
                                 case ABORTED -> JUnitReportWriter.Status.SKIPPED;
                             };
+                            Map<String, StringBuilder> streams = published.getOrDefault(identifier, Map.of());
+                            StringBuilder stdout = new StringBuilder(streams.getOrDefault("log", new StringBuilder()));
+                            stdout.append(streams.getOrDefault("stdout", new StringBuilder()));
+                            StringBuilder stderr = new StringBuilder(streams.getOrDefault("stderr", new StringBuilder()));
+                            // Java tests take whatever reached the console meanwhile;
+                            // pytest tests already attached theirs through the plugin.
+                            if (capture != null && TestProgressReporter.isJavaTest(identifier)) {
+                                stdout.append(capture.drain("stdout"));
+                                stderr.append(capture.drain("stderr"));
+                            }
                             testResults.add(new JUnitReportWriter.TestResult(
-                                identifier.getDisplayName(), reportStatus,
-                                result.getThrowable().map(Throwable::toString).orElse(""), "", ""));
+                                TestProgressReporter.name(identifier), reportStatus,
+                                result.getThrowable().map(Throwable::toString).orElse(""), stdout.toString(), stderr.toString()));
                         }
                     });
                 }
@@ -368,44 +383,46 @@ public final class PyronautTestMain implements Callable<Integer> {
                 try {
                     launcher.execute(request);
                 } finally {
+                    releaseConsole(capture, reportsDir);
                     if (junitEnabled) {
                         try {
                             JUnitReportWriter.write(reportsDir, listener.getSummary(), testResults);
                         } catch (IOException e) {
-                            System.err.println("Unable to write test report: " + e.getMessage());
+                            console.println("Unable to write test report: " + e.getMessage());
                         }
-                    }
-                    if (publishReports) {
-                        publishReportLocations(reportsDir);
                     }
                 }
                 TestExecutionSummary summary = listener.getSummary();
-                if (ExternalProjectLayout.isExternal(root) || verboseLogger != null) {
-                    summary.printTo(new java.io.PrintWriter(System.err, true));
+                if (verboseLogger != null) {
+                    summary.printTo(new java.io.PrintWriter(console, true));
                 }
                 Optional<Throwable> pytestPreconditionFailure = findPytestPreconditionFailure(summary);
                 if (pytestPreconditionFailure.isPresent()) {
-                    System.err.println(pytestPreconditionMessage(pytestPreconditionFailure.get()));
+                    reporter.error(pytestPreconditionMessage(pytestPreconditionFailure.get()));
                     return 8;
                 }
+                reporter.summary(publishReports ? reportsDir : null);
                 long failures = summary.getTotalFailureCount();
                 return failures == 0 ? 0 : 7;
             } catch (Exception e) {
+                releaseConsole(capture, null);
                 if (isPytestPreconditionFailure(e)) {
-                    System.err.println(pytestPreconditionMessage(e));
+                    console.println(pytestPreconditionMessage(e));
                     return 8;
                 }
                 if (e instanceof IllegalStateException) {
-                    System.err.println(e.getMessage());
+                    console.println(e.getMessage());
                     return 8;
                 }
-                System.err.println("Test execution failed: " + e.getMessage());
+                console.println("Test execution failed: " + e.getMessage());
                 return 7;
             }
         } catch (IOException e) {
-            System.err.println("Test execution failed: " + e.getMessage());
+            releaseConsole(capture, null);
+            console.println("Test execution failed: " + e.getMessage());
             return 7;
         } finally {
+            releaseConsole(capture, null);
             Thread.currentThread().setContextClassLoader(previousContextClassLoader);
             if (previousBeanIntrospectionsProvider != null) {
                 BeanIntrospectionProviders.set(previousBeanIntrospectionsProvider);
@@ -909,16 +926,37 @@ public final class PyronautTestMain implements Callable<Integer> {
             .orElseGet(() -> throwable.getMessage());
     }
 
-    static void publishReportLocations(Path reportsDir) {
-        reportsDir = reportsDir.normalize();
-        Path html = reportsDir.resolve(DEFAULT_HTML_REPORT);
-
-        System.out.println("Test reports directory: " + reportsDir);
-        System.out.println("HTML report: " + osc8Link(html, html.toUri().toString()));
+    /**
+     * Stop capturing the standard streams. Output that no test claimed (test
+     * session banners, application bootstrap logging) is kept beside the
+     * other reports as {@code console.log}.
+     */
+    private static void releaseConsole(ConsoleCapture capture, Path reportsDir) {
+        if (capture == null || ConsoleCapture.active() != capture) {
+            return;
+        }
+        String stdout = capture.drainSession("stdout");
+        String stderr = capture.drainSession("stderr");
+        capture.close();
+        if (reportsDir == null) {
+            if (!stdout.isBlank()) {
+                System.out.print(stdout);
+            }
+            if (!stderr.isBlank()) {
+                System.err.print(stderr);
+            }
+            return;
+        }
+        try {
+            Files.createDirectories(reportsDir);
+            Files.writeString(reportsDir.resolve(DEFAULT_CONSOLE_LOG), stdout + (stderr.isEmpty() ? "" : "\n--- stderr ---\n" + stderr), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            System.err.println("Unable to write console log: " + e.getMessage());
+        }
     }
 
-    private static String osc8Link(Path displayPath, String targetUri) {
-        return "\u001b]8;;" + targetUri + "\u001b\\" + displayPath + "\u001b]8;;\u001b\\";
+    static void publishReportLocations(Path reportsDir) {
+        TestProgressReporter.printReportLocations(System.out, reportsDir, true);
     }
 
     private static Optional<Throwable> findPytestPreconditionFailure(Throwable throwable) {

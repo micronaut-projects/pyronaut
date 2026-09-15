@@ -44,7 +44,7 @@ final class DependencyTreeRenderer {
 
     static DependencyTreeRenderer create(String colorMode) {
         ColorMode mode = ColorMode.fromCliValue(colorMode);
-        boolean interactive = InstallProgressReporter.stderrIsTerminal();
+        boolean interactive = io.micronaut.pyronaut.config.terminal.Terminal.isInteractive();
         boolean colorEnabled = mode == ColorMode.ALWAYS || (mode == ColorMode.AUTO && interactive);
         return new DependencyTreeRenderer(System.out, colorEnabled);
     }

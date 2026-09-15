@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.processor;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.terminal.TerminalInfo;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.python.compiler.PythonIncrementalMode;
@@ -97,6 +98,9 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
     @CommandLine.Option(names = "--progress", defaultValue = "auto", description = "Progress output mode: auto|on|off")
     String progress = "auto";
+
+    @CommandLine.Option(names = "--terminal", hidden = true, description = "Terminal capabilities of the client when processing through the compiler daemon")
+    String terminal;
 
     @CommandLine.Option(names = "--no-cache", description = "Bypass processor source cache reads/writes")
     boolean noCache;
@@ -179,9 +183,17 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                 : commandSpec.commandLine().getParseResult();
             if (daemonEnabled && !daemonRequest && parseResult != null) {
                 try {
+                    // The daemon has no terminal of its own; tell it about ours so
+                    // its progress region renders here through the forwarded streams.
+                    List<String> daemonArguments = new java.util.ArrayList<>(parseResult.originalArgs());
+                    TerminalInfo clientTerminal = TerminalInfo.detect("auto");
+                    if (terminal == null && clientTerminal.interactive()) {
+                        daemonArguments.add("--terminal");
+                        daemonArguments.add(clientTerminal.describe());
+                    }
                     return CompilerDaemon.execute(
                         root,
-                        parseResult.originalArgs()
+                        daemonArguments
                     );
                 } catch (CompilerDaemon.UnavailableException e) {
                     System.err.println("Compiler daemon unavailable; processing in the current process: " + e.getMessage());
@@ -271,7 +283,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
             String mainStatus;
             String testStatus;
-            try (ProcessorProgressReporter progressReporter = ProcessorProgressReporter.create(progress)) {
+            try (ProcessorProgressReporter progressReporter = ProcessorProgressReporter.create(progress, terminal)) {
                 if (selectedPass.includesMain()) {
                     List<Path> effectiveClasspath = classpath == null || classpath.isEmpty()
                         ? externalLayout != null ? externalLayout.runtimeClasspath() : ClasspathManifestReader.read(

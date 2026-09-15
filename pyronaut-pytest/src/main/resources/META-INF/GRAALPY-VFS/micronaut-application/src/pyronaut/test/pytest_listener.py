@@ -258,9 +258,41 @@ class MicronautPytestPlugin:
         # If user ran with -s (capture=no), logreport capstdout/capstderr will be empty → forward here.
         self._pending_wrap = (test_id, out, err)
 
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_runtestloop(self, session):
+        """Console output produced while pytest started up is session output,
+        not part of the first test's setup phase."""
+        try:
+            self.listener.stashSessionConsoleOutput()
+        except Exception:
+            pass
+        yield
+
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_runtest_makereport(self, item, call):
-        """Called when test report is created."""
+        """Called when test report is created.
+
+        Console output written through the Java standard streams (application
+        logging, framework diagnostics) during this phase is attached as a
+        report section first, so the default report picks it up exactly like
+        pytest's own captured output: it lands in the JUnit XML system-out and
+        system-err elements, the HTML report and the event log.
+        """
         test_id = self._get_test_id(item)
+        self._attach_console_output(item, call.when, test_id)
+        yield
+        self._record_call_result(test_id, call)
+
+    def _attach_console_output(self, item, when, test_id):
+        for stream, key in (("stdout", "stdout"), ("stderr", "stderr")):
+            try:
+                text = self.listener.drainConsoleOutput(test_id, stream)
+            except Exception:
+                text = None
+            if text:
+                item.add_report_section(when, key, str(text))
+
+    def _record_call_result(self, test_id, call):
 
         # Store the test result for later use in teardown
         if call.excinfo is not None:

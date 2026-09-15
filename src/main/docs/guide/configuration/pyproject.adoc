@@ -76,6 +76,7 @@ daemon = false
 [tool.pyronaut.test]
 mode = "jvm" # jvm|native
 engine = "both" # junit|pytest|both
+verbose = false # stream application and test framework output to the console
 ----
 
 `format` accepts exactly `fat-jar`, `wheel-jvm`, `wheel-native`,
@@ -89,6 +90,10 @@ The former `tool.pyronaut.build.mode` setting is no longer accepted. Migrate
 for a reusable native runtime.
 
 The test engine defaults to `both`. Use `junit` for JUnit Jupiter tests, `pytest` for pytest tests, or `both` to execute both types.
+
+`verbose` defaults to `false`: console output written while a test runs is
+captured into the test reports rather than shown. Set it to `true`, or pass
+`--verbose` to `pyronaut test`, to stream it to the terminal instead.
 
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
 For a Crema format, set `native-base = "default"` to use the configured

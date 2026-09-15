@@ -235,6 +235,21 @@ class ProgressTest(unittest.TestCase):
         self.assertIn("+ Plain", output)
         self.assertNotIn("✓", output)
 
+    def test_epoch_is_inherited_from_an_outer_invocation(self):
+        import importlib
+        import time
+
+        started = int(time.time() * 1000) - 5_000
+        with patch.dict(os.environ, {progress.PROGRESS_EPOCH_ENV: str(started)}, clear=False):
+            module = importlib.reload(progress)
+            try:
+                self.assertEqual(started, module.progress_epoch_ms())
+                console = module.Console()
+                self.assertGreaterEqual(time.monotonic() - console._started, 4.9)
+            finally:
+                os.environ.pop(progress.PROGRESS_EPOCH_ENV, None)
+                importlib.reload(progress)
+
     def test_formatting_helpers(self):
         self.assertEqual("0.0s", progress.format_duration(0))
         self.assertEqual("3.2s", progress.format_duration(3.21))
