@@ -119,7 +119,9 @@ public final class JUnitReportWriter {
     }
 
     private static String escapeXml(String value) {
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        // Control characters other than tab/newline are not legal XML 1.0 text.
+        String legal = value.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", "");
+        return legal.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace("\"", "&quot;").replace("'", "&apos;");
     }
 

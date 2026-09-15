@@ -15,37 +15,70 @@
  */
 package io.micronaut.pyronaut.processor;
 
+import io.micronaut.pyronaut.config.terminal.LiveRegion;
+import io.micronaut.pyronaut.config.terminal.Terminal;
+import io.micronaut.pyronaut.config.terminal.TerminalInfo;
 import io.micronaut.python.compiler.PyronautCompiler;
 
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
+/**
+ * Reports processing progress per source pass. On a terminal each active pass
+ * is a spinner row with its elapsed time and finished passes collapse into
+ * permanent {@code [elapsed] ✓ ...} lines; elsewhere plain lines are printed.
+ */
 final class ProcessorProgressReporter implements AutoCloseable {
-
-    private static final char[] SPINNER_FRAMES = {'|', '/', '-', '\\'};
-
     private final PrintStream output;
     private final boolean enabled;
     private final boolean interactive;
-
-    private volatile boolean spinning;
-    private volatile String spinnerMessage;
-    private volatile int frameIndex;
-    private Thread spinnerThread;
+    private final LiveRegion region;
+    private final Object lock = new Object();
+    private final Map<String, Pass> passes = new LinkedHashMap<>();
     private IncrementalPlan incrementalPlan;
 
     ProcessorProgressReporter(PrintStream output, ProgressMode mode, boolean tty) {
+        this(output, mode, tty, false, false);
+    }
+
+    ProcessorProgressReporter(PrintStream output, ProgressMode mode, boolean tty, boolean color, boolean unicode) {
+        this(output, mode, new TerminalInfo(tty, color, unicode, Terminal.width(), Terminal.epochMillis()));
+    }
+
+    ProcessorProgressReporter(PrintStream output, ProgressMode mode, TerminalInfo terminal) {
         this.output = output;
         this.enabled = mode != ProgressMode.OFF;
-        this.interactive = mode == ProgressMode.ON || (mode == ProgressMode.AUTO && tty);
+        this.interactive = enabled && (mode == ProgressMode.ON || terminal.interactive());
+        this.region = new LiveRegion(output, new TerminalInfo(interactive, terminal.color(), terminal.unicode(),
+            terminal.width(), terminal.epochMillis()), this::frameLines);
+    }
+
+    static ProcessorProgressReporter create(String mode) {
+        return create(mode, null);
+    }
+
+    /**
+     * @param mode the {@code --progress} mode
+     * @param terminalSpec the client's terminal capabilities when rendering
+     *                     through the compiler daemon, or {@code null} to detect
+     * @return the reporter
+     */
+    static ProcessorProgressReporter create(String mode, String terminalSpec) {
+        ProgressMode progressMode = ProgressMode.fromCliValue(mode);
+        TerminalInfo terminal = terminalSpec == null ? TerminalInfo.detect("auto") : TerminalInfo.parse(terminalSpec);
+        PrintStream output = terminal.unicode() ? new PrintStream(System.err, true, StandardCharsets.UTF_8) : System.err;
+        ProcessorProgressReporter reporter = new ProcessorProgressReporter(output, progressMode, terminal);
+        reporter.region.captureStandardStreams();
+        return reporter;
     }
 
     void startPass(String passName, boolean incremental) {
         startPass(passName, -1L, incremental);
-    }
-
-    static ProcessorProgressReporter create(String mode) {
-        return new ProcessorProgressReporter(System.err, ProgressMode.fromCliValue(mode), System.console() != null);
     }
 
     void startPass(String passName, long sourceCount, boolean incremental) {
@@ -57,49 +90,37 @@ final class ProcessorProgressReporter implements AutoCloseable {
         String message = sourceCount < 0
             ? action + " " + passName + " sources"
             : action + " " + passName + " sources (" + sourceCount + " files)";
+        synchronized (lock) {
+            passes.put(passName, new Pass(message));
+        }
         if (!interactive) {
             output.println(message + "...");
-            return;
+        } else {
+            region.refresh();
         }
-        stopSpinner();
-        spinnerMessage = message;
-        spinning = true;
-        spinnerThread = Thread.ofVirtual().name("pyronaut-processor-spinner").start(() -> {
-            while (spinning) {
-                output.print("\r" + spinnerMessage + " " + SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]);
-                output.flush();
-                frameIndex++;
-                try {
-                    Thread.sleep(80L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        });
     }
 
     void finishPass(String passName, long sourceCount) {
         if (!enabled) {
             return;
         }
-        clearInteractiveLine();
+        String message;
         if (incrementalPlan != null && incrementalPlan.passName().equals(passName)) {
             PyronautCompiler.IncrementalCompilationPlan plan = incrementalPlan.plan();
             if (plan.upToDate()) {
-                output.println("Skipped " + passName + " sources (" + sourceCount
-                    + " files checked, incremental state up to date)");
+                message = "Skipped " + passName + " sources (" + sourceCount
+                    + " files checked, incremental state up to date)";
             } else if (plan.fullRebuild()) {
-                output.println("Processed " + passName + " sources (" + sourceCount
-                    + " files, full rebuild)");
+                message = "Processed " + passName + " sources (" + sourceCount + " files, full rebuild)";
             } else {
-                output.println("Processed " + passName + " sources (" + plan.sources().size()
-                    + " of " + sourceCount + " files recompiled incrementally)");
+                message = "Processed " + passName + " sources (" + plan.sources().size()
+                    + " of " + sourceCount + " files recompiled incrementally)";
             }
             incrementalPlan = null;
-            return;
+        } else {
+            message = "Processed " + passName + " sources (" + sourceCount + " files)";
         }
-        output.println("Processed " + passName + " sources (" + sourceCount + " files)");
+        done(passName, message);
     }
 
     void incrementalPlan(String passName,
@@ -109,84 +130,105 @@ final class ProcessorProgressReporter implements AutoCloseable {
         if (!enabled) {
             return;
         }
-        clearInteractiveLine();
         incrementalPlan = new IncrementalPlan(passName, plan);
         if (plan.upToDate()) {
             return;
         }
         if (plan.fullRebuild()) {
-            output.println("Full rebuild selected for " + passName + " sources ("
-                + sourceCount + " files)");
+            note("Full rebuild selected for " + passName + " sources (" + sourceCount + " files)");
             return;
         }
-        output.println("Incrementally compiling " + passName + " sources ("
-            + plan.sources().size() + " of " + sourceCount + " files):");
+        note("Incrementally compiling " + passName + " sources (" + plan.sources().size() + " of " + sourceCount + " files):");
         Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
         for (Path source : plan.sources()) {
             Path normalizedSource = source.toAbsolutePath().normalize();
             Path display = normalizedSource.startsWith(normalizedRoot)
                 ? normalizedRoot.relativize(normalizedSource)
                 : normalizedSource;
-            output.println("  - " + display);
+            if (interactive) {
+                region.printAbove(region.paint(LiveRegion.DIM, "    " + region.glyphs().branch() + " " + display));
+            } else {
+                output.println("  - " + display);
+            }
         }
     }
 
     void cacheHit(String passName, long sourceCount) {
-        if (!enabled) {
-            return;
-        }
-        clearInteractiveLine();
-        output.println("Skipped " + passName + " sources (" + sourceCount + " files, cache hit)");
+        done(passName, "Skipped " + passName + " sources (" + sourceCount + " files, cache hit)");
     }
 
     void cacheBypass(String passName, long sourceCount) {
-        if (!enabled) {
-            return;
-        }
-        clearInteractiveLine();
-        output.println("Processing " + passName + " sources (" + sourceCount + " files, cache bypass)");
+        note("Processing " + passName + " sources (" + sourceCount + " files, cache bypass)");
     }
 
     void noSources(String passName) {
-        if (!enabled) {
-            return;
-        }
-        clearInteractiveLine();
-        output.println("Skipped " + passName + " sources (0 files, no processable sources)");
+        done(passName, "Skipped " + passName + " sources (0 files, no processable sources)");
     }
 
     void complete(String mainStatus, String testStatus) {
         if (!enabled) {
             return;
         }
-        output.println("Processing completed (main: " + mainStatus + ", test: " + testStatus + ")");
+        String message = "Processing completed (main: " + mainStatus + ", test: " + testStatus + ")";
+        if (interactive) {
+            region.printAbove(region.stamp(LiveRegion.GREEN, region.glyphs().check(), message, -1));
+        } else {
+            output.println(message);
+        }
     }
 
     @Override
     public void close() {
-        stopSpinner();
+        synchronized (lock) {
+            passes.clear();
+        }
+        region.close();
     }
 
-    private void clearInteractiveLine() {
-        if (!interactive) {
+    private void done(String passName, String message) {
+        if (!enabled) {
             return;
         }
-        stopSpinner();
-        output.print("\r");
-        output.flush();
+        Pass pass;
+        synchronized (lock) {
+            pass = passes.remove(passName);
+        }
+        if (interactive) {
+            region.printAbove(region.stamp(LiveRegion.GREEN, region.glyphs().check(), message,
+                pass == null ? -1 : System.nanoTime() - pass.startedNanos));
+        } else {
+            output.println(message);
+        }
     }
 
-    private void stopSpinner() {
-        spinning = false;
-        if (spinnerThread == null) {
+    private void note(String message) {
+        if (!enabled) {
             return;
         }
-        try {
-            spinnerThread.join(200L);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (interactive) {
+            region.printAbove(region.stamp(null, region.glyphs().bullet(), message, -1));
+        } else {
+            output.println(message);
         }
-        spinnerThread = null;
+    }
+
+    private List<String> frameLines(LiveRegion region, int spinnerFrame, int width) {
+        List<String> lines = new ArrayList<>();
+        synchronized (lock) {
+            for (Pass pass : passes.values()) {
+                lines.add(region.headerRow(spinnerFrame, pass.message, null, System.nanoTime() - pass.startedNanos, width));
+            }
+        }
+        return lines;
+    }
+
+    private static final class Pass {
+        private final String message;
+        private final long startedNanos = System.nanoTime();
+
+        private Pass(String message) {
+            this.message = message;
+        }
     }
 
     enum ProgressMode {

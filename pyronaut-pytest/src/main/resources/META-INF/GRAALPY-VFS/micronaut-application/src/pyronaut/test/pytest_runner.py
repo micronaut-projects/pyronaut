@@ -67,6 +67,9 @@ def run_pytest(test_files: List[str], listener: Any, junit_xml: Optional[str] = 
             junit_path = Path(junit_xml)
             junit_path.parent.mkdir(parents=True, exist_ok=True)
             pytest_args.append(f"--junitxml={junit_path}")
+            # Console output is captured rather than streamed, so keep the
+            # per-test system-out/system-err/log sections in the JUnit XML.
+            pytest_args.extend(["-o", "junit_logging=all"])
 
         # Set sys.argv to avoid argument parsing issues in pytest
         # pytest tries to access sys.argv[0] for the program name

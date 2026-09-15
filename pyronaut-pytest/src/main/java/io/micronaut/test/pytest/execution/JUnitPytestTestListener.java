@@ -249,6 +249,16 @@ public class JUnitPytestTestListener implements PytestTestListener {
     }
 
     @Override
+    public String drainConsoleOutput(String testId, String stream) {
+        return ConsoleCapture.drainActive(stream);
+    }
+
+    @Override
+    public void stashSessionConsoleOutput() {
+        ConsoleCapture.stashSessionIfActive();
+    }
+
+    @Override
     public void onOutput(String testId, String stream, String text) {
         if (testId != null && text != null && !text.isBlank()) {
             outputByTest.computeIfAbsent(testId, ignored -> new TestStreamOutput())

@@ -135,7 +135,7 @@ class InstallProgressReporterTest {
 
         String output = buffer.toString(StandardCharsets.UTF_8);
         assertFalse(output.contains("with-classifier.jar"));
-        int width = InstallProgressReporter.terminalWidth();
+        int width = io.micronaut.pyronaut.config.terminal.Terminal.width();
         for (String line : visible(output).split("\n")) {
             assertTrue(line.length() < width, () -> "Progress row wrapped: '" + line + "'");
         }
@@ -197,12 +197,12 @@ class InstallProgressReporterTest {
 
     @Test
     void formatsDurationsAndSizes() {
-        assertEquals("0.0s", InstallProgressReporter.formatDuration(0L));
-        assertEquals("3.2s", InstallProgressReporter.formatDuration(3_200_000_000L));
-        assertEquals("1m 05s", InstallProgressReporter.formatDuration(65_000_000_000L));
-        assertEquals("999B", InstallProgressReporter.formatBytes(999L));
-        assertEquals("1.0KB", InstallProgressReporter.formatBytes(1000L));
-        assertEquals("2.7MB", InstallProgressReporter.formatBytes(2_700_000L));
-        assertEquals("1.5GB", InstallProgressReporter.formatBytes(1_500_000_000L));
+        assertEquals("0.0s", io.micronaut.pyronaut.config.terminal.Terminal.formatDuration(0L));
+        assertEquals("3.2s", io.micronaut.pyronaut.config.terminal.Terminal.formatDuration(3_200_000_000L));
+        assertEquals("1m 05s", io.micronaut.pyronaut.config.terminal.Terminal.formatDuration(65_000_000_000L));
+        assertEquals("999B", io.micronaut.pyronaut.config.terminal.Terminal.formatBytes(999L));
+        assertEquals("1.0KB", io.micronaut.pyronaut.config.terminal.Terminal.formatBytes(1000L));
+        assertEquals("2.7MB", io.micronaut.pyronaut.config.terminal.Terminal.formatBytes(2_700_000L));
+        assertEquals("1.5GB", io.micronaut.pyronaut.config.terminal.Terminal.formatBytes(1_500_000_000L));
     }
 }

@@ -23,6 +23,9 @@ from dataclasses import dataclass, field
 from typing import Iterator
 
 _FRAME_INTERVAL = 0.08
+# Delegated tools stamp their progress lines relative to this epoch so the
+# whole command reads as one timeline. An outer CLI invocation wins.
+PROGRESS_EPOCH_ENV = "PYRONAUT_PROGRESS_EPOCH_MS"
 _MAX_TRANSFER_ROWS = 6
 _MIN_TRANSFER_NAME_WIDTH = 12
 _BAR_WIDTH = 14
@@ -124,6 +127,30 @@ class Task:
         self.update(self.current + amount)
 
 
+def progress_epoch_ms() -> int:
+    """Return the epoch (wall clock, milliseconds) shared with delegated tools."""
+    return _EPOCH_MS
+
+
+def _seconds_since_epoch() -> float:
+    return max(0.0, time.time() - _EPOCH_MS / 1000.0)
+
+
+def _resolve_epoch_ms() -> int:
+    configured = os.environ.get(PROGRESS_EPOCH_ENV)
+    if configured:
+        try:
+            value = int(configured)
+            if 0 <= time.time() * 1000 - value < 24 * 60 * 60 * 1000:
+                return value
+        except ValueError:
+            pass
+    return int(time.time() * 1000)
+
+
+_EPOCH_MS = _resolve_epoch_ms()
+
+
 def _plain(line: str) -> None:
     print(line, file=sys.stderr, flush=True)
 
@@ -139,7 +166,7 @@ class Console:
         self._suspended = 0
         self._ticker: threading.Thread | None = None
         self._stop = threading.Event()
-        self._started = time.monotonic()
+        self._started = time.monotonic() - _seconds_since_epoch()
         self._mode = "auto"
 
     # -- configuration -----------------------------------------------------
