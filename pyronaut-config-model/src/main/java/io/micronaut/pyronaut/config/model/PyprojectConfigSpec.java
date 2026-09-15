@@ -220,6 +220,11 @@ public final class PyprojectConfigSpec {
         "both",
         List.of("junit", "pytest", "both")
     );
+    public static final FieldSpec PYRONAUT_TEST_VERBOSE = bool(
+        "tool.pyronaut.test.verbose",
+        "Whether test execution streams application logs and test framework output to the console instead of capturing them in the test report.",
+        false
+    );
     public static final FieldSpec PYRONAUT_RUN_BANNER_ENABLED = bool(
         "tool.pyronaut.run.banner-enabled",
         "Whether the Micronaut banner is printed when running the application.",
@@ -817,6 +822,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_PROCESSOR_DAEMON,
         PYRONAUT_TEST_MODE,
         PYRONAUT_TEST_ENGINE,
+        PYRONAUT_TEST_VERBOSE,
         PYRONAUT_RUN_BANNER_ENABLED,
         PYRONAUT_CONTROL_PANEL_ENABLED,
         PYRONAUT_CONTROL_PANEL_PATH,

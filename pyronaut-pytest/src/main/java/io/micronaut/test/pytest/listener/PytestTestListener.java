@@ -36,6 +36,27 @@ public interface PytestTestListener {
     void onOutput(String testId, String stream, String text);
 
     /**
+     * Take console output written through the Java standard streams (for
+     * example application logging) since the previous call, so the pytest
+     * plugin can attach it to the current test phase as a report section.
+     *
+     * @param testId pytest nodeid of the running test
+     * @param stream one of "stdout" or "stderr"
+     * @return the captured text, or {@code null} when console output is not being captured
+     */
+    default String drainConsoleOutput(String testId, String stream) {
+        return null;
+    }
+
+    /**
+     * Mark the end of the session bootstrap: console output written so far
+     * (test session banner, application startup logging) belongs to the
+     * session rather than to the first test that runs.
+     */
+    default void stashSessionConsoleOutput() {
+    }
+
+    /**
      * Called before pytest starts processing a test file.
      *
      * @param file the path to the Python test file

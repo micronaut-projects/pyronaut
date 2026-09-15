@@ -28,7 +28,9 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Iterable, NamedTuple, Protocol, Sequence
 
+from .progress import PROGRESS_EPOCH_ENV as _PROGRESS_EPOCH_ENV
 from .progress import console as _progress_console
+from .progress import progress_epoch_ms as _progress_epoch_ms
 
 SUCCESS = 0
 USAGE_ERROR = 2
@@ -8392,10 +8394,11 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 packaged_tools = Path(__file__).resolve().parent / "tools"
                 env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
                 env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
-                with progress.step("Resolving SDK dependencies", done="SDK dependencies resolved"), progress.suspend():
-                    install_code = runner(command_line, env)
-                if install_code != SUCCESS:
-                    raise RuntimeError("pyronaut-install failed to resolve SDK classpaths")
+                with progress.step("Resolving SDK dependencies", done="SDK dependencies resolved"):
+                    with progress.suspend():
+                        install_code = runner(command_line, env)
+                    if install_code != SUCCESS:
+                        raise RuntimeError("pyronaut-install failed to resolve SDK classpaths")
 
                 tool_root = _resolved_tool_cache_root()
                 if tool_root is None:
@@ -8447,12 +8450,14 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
 
 
 def _terminal_environment(env: dict[str, str]) -> dict[str, str]:
-    """Tell delegated tools how wide the terminal is.
+    """Tell delegated tools how wide the terminal is and when the command began.
 
-    Java cannot query the terminal size, so the delegated installer keeps its
+    Java cannot query the terminal size, so the delegated tools keep their
     live progress rows within ``COLUMNS``; without it the rows are clamped to
-    80 columns.
+    80 columns. The shared epoch keeps every tool's ``[elapsed]`` stamps on the
+    same timeline as the CLI's own steps.
     """
+    env.setdefault(_PROGRESS_EPOCH_ENV, str(_progress_epoch_ms()))
     if "COLUMNS" not in env:
         try:
             if sys.stderr.isatty():

@@ -681,16 +681,19 @@ final class PyronautDevMainTest {
         Files.writeString(source, "package demo;\nimport io.micronaut.http.annotation.Controller;\nimport io.micronaut.http.annotation.Get;\n@Controller class Routes { @Get(\"/hello\") String hello() { return \"Hello World\"; } }\n");
         Files.writeString(test, "package demo;\nimport io.micronaut.http.client.HttpClient;\nimport io.micronaut.http.client.annotation.Client;\nimport io.micronaut.test.extensions.junit5.annotation.MicronautTest;\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.assertEquals;\n@MicronautTest class AppTest { @Test void passes(@Client(\"/\") HttpClient client) { assertEquals(\"Hello World\", client.toBlocking().retrieve(\"/hello\")); } }\n");
         PrintStream previousOut = System.out;
+        PrintStream previousErr = System.err;
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         try {
             System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+            System.setErr(new PrintStream(output, true, StandardCharsets.UTF_8));
             int exit = PyronautDevMain.execute(
                 new String[]{"test", source.toString(), "--", test.toString()}
             );
             assertEquals(0, exit);
-            assertTrue(output.toString(StandardCharsets.UTF_8).contains("Test run finished"), output.toString(StandardCharsets.UTF_8));
+            assertTrue(output.toString(StandardCharsets.UTF_8).contains("1 test passed"), output.toString(StandardCharsets.UTF_8));
         } finally {
             System.setOut(previousOut);
+            System.setErr(previousErr);
         }
     }
 
@@ -714,9 +717,11 @@ final class PyronautDevMainTest {
             }
             """);
         PrintStream previousOut = System.out;
+        PrintStream previousErr = System.err;
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         try {
             System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+            System.setErr(new PrintStream(output, true, StandardCharsets.UTF_8));
             int exit = PyronautDevMain.execute(
                 new String[]{"test", source.toString(), "--", test.toString()}
             );
@@ -726,7 +731,7 @@ final class PyronautDevMainTest {
             Path xmlReport = reportDirectory.resolve("junit.xml");
             String testOutput = output.toString(StandardCharsets.UTF_8);
             assertEquals(1, exit, testOutput);
-            assertTrue(testOutput.contains("0 tests started"), testOutput);
+            assertTrue(testOutput.contains("No tests ran, 1 error"), testOutput);
             assertTrue(testOutput.contains("Test report:"), testOutput);
             assertTrue(testOutput.contains(htmlReport.toString()), testOutput);
             assertTrue(Files.isRegularFile(htmlReport));
@@ -737,6 +742,7 @@ final class PyronautDevMainTest {
             assertTrue(Files.readString(xmlReport).contains("java.lang.IllegalStateException: container startup exploded"));
         } finally {
             System.setOut(previousOut);
+            System.setErr(previousErr);
         }
     }
 
@@ -797,18 +803,21 @@ final class PyronautDevMainTest {
         Files.writeString(source, "class App:\n    pass\n");
         Files.writeString(test, "from micronaut.test.extensions.junit5.annotation import MicronautTest\nfrom org.junit.jupiter.api import Test\n@MicronautTest\nclass AppTest:\n    @Test\n    def passes(self):\n        assert True\n");
         PrintStream previousOut = System.out;
+        PrintStream previousErr = System.err;
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         try {
             System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+            System.setErr(new PrintStream(output, true, StandardCharsets.UTF_8));
             int exit = PyronautDevMain.execute(
                 new String[]{"test", source.toString(), "--", test.toString()}
             );
             String testOutput = output.toString(StandardCharsets.UTF_8);
             assertEquals(0, exit, testOutput);
-            assertTrue(testOutput.contains("1 tests successful"), testOutput);
-            assertTrue(testOutput.contains("0 tests skipped"), testOutput);
+            assertTrue(testOutput.contains("PASSED AppTest.passes()"), testOutput);
+            assertTrue(testOutput.contains("1 test passed in"), testOutput);
         } finally {
             System.setOut(previousOut);
+            System.setErr(previousErr);
         }
     }
 

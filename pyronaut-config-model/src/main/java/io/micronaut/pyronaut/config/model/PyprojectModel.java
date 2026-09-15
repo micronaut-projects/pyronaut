@@ -249,8 +249,9 @@ public record PyprojectModel(Project project,
      *
      * @param mode test execution mode (for example jvm or native)
      * @param engine test engine selection
+     * @param verbose whether application logs and test framework output stream to the console instead of the report
      */
-    public record Test(String mode, TestEngine engine) {
+    public record Test(String mode, TestEngine engine, Boolean verbose) {
         /**
          * Compatibility constructor using the default test engine.
          *
@@ -258,6 +259,24 @@ public record PyprojectModel(Project project,
          */
         public Test(String mode) {
             this(mode, TestEngine.BOTH);
+        }
+
+        /**
+         * Compatibility constructor with captured (non-verbose) test output.
+         *
+         * @param mode test execution mode
+         * @param engine test engine selection
+         */
+        public Test(String mode, TestEngine engine) {
+            this(mode, engine, null);
+        }
+
+        /**
+         * @return whether test execution streams application logs and test
+         * framework output to the console instead of the report
+         */
+        public boolean verboseEnabled() {
+            return Boolean.TRUE.equals(verbose);
         }
     }
 

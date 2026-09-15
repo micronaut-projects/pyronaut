@@ -370,7 +370,8 @@ Behavior:
 - Uses test classpath manifest and processed test classes when available.
 - Uses the configured Python test directory for pytest discovery unless `--tests-dir` overrides it; JUnit Python modules are discovered from processed test classes.
 - Includes the configured resources directory, any `additional-resources` directories, the configured test resources directory, and any `additional-test-resources` directories on the classpath when present.
-- Writes reports under `__pyronaut__/reports/tests`.
+- Writes reports under `__pyronaut__/reports/tests`, including each test's captured console output; `console.log` keeps output produced outside any test.
+- Shows a live progress display on a terminal; `--verbose` or `tool.pyronaut.test.verbose = true` streams application and test framework output to the console instead.
 
 Direct source tests:
 
