@@ -121,6 +121,24 @@ class ProgressTest(unittest.TestCase):
             self.console.warn("still shown")
         self.assertEqual(["WARNING: still shown"], stderr.getvalue().splitlines())
 
+    def test_non_interactive_fail_and_hint_lines_are_plain(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            self.console.fail("GraalVM JDK: not found")
+            self.console.hint("fix: Run pyronaut setup")
+        self.assertEqual(["ERROR: GraalVM JDK: not found", "  fix: Run pyronaut setup"], stderr.getvalue().splitlines())
+
+    def test_interactive_fail_and_hint_lines_use_cross_and_branch_glyphs(self):
+        stderr = FakeTty()
+        env = {"TERM": "xterm", "COLUMNS": "80", "NO_COLOR": "1"}
+        with patch.dict(os.environ, env, clear=False), redirect_stderr(stderr):
+            self.console.fail("GraalVM JDK: not found")
+            self.console.hint("fix: Run pyronaut setup")
+        self.assertEqual(
+            ["✗ GraalVM JDK: not found", "  └ fix: Run pyronaut setup"],
+            [re.sub(r"^\[\d+\.\ds\] ", "", line) for line in render(stderr.getvalue()).lines if line],
+        )
+
     def test_interactive_live_region_collapses_into_summary_lines(self):
         stderr = FakeTty()
         env = {"TERM": "xterm", "COLUMNS": "80", "NO_COLOR": "1"}

@@ -77,6 +77,17 @@ and downloaded tools are cached under `~/.pyronaut`; run `pyronaut setup`
 again after changing the wheel or use `pyronaut setup --refresh` to re-resolve
 the setup.
 
+If setup or any later command fails, `pyronaut doctor` checks the local
+environment (Python, setup state, GraalVM, GraalPy, native launchers, proxy,
+Docker) and the current project (stale generated state, threading
+configuration, declared packages imported on GraalPy under the configured
+context pool, and GraalPy's published package compatibility) and prints a fix
+for every failing check:
+
+```bash
+pyronaut doctor
+```
+
 Create a Python application directly with Micronaut Launch:
 
 ```bash
@@ -262,7 +273,7 @@ installed in a separate CPython environment.
 
 ```bash
 pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] \
-  <install|process|dev|run|test|build|validate-config|test-resources-server> [args...]
+  <setup|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ```
 
 Current platform support is macOS and Linux. Commands that delegate to the JVM
