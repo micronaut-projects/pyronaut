@@ -65,25 +65,26 @@ The Python wheel intentionally does not contain the large native launchers.
 When iterating on those launchers locally, build the bundles with:
 
 ```bash
-./gradlew :micronaut-pyronaut-dev:assemble \
+./gradlew -PprojectVersion=0.0.3 :micronaut-pyronaut-dev:assemble \
   :micronaut-pyronaut-run:assemble \
   :micronaut-pyronaut-run-python:assemble
 ```
 
 Point the CLI at the checkout in `~/.pyronaut/settings.toml` and select the
-archive version produced by Gradle:
+archive version produced by Gradle (the `projectVersion` from
+`gradle.properties` when `-PprojectVersion` is omitted):
 
 ```toml
 [native-images]
 base-url = "/absolute/path/to/pyronaut"
-version = "0.0.1-SNAPSHOT"
+version = "0.0.3"
 ```
 
 The same setting accepts a `file:///absolute/path/to/pyronaut` URL. Relative
 paths are resolved from the directory where the CLI is run. For each launcher,
 Pyronaut searches the corresponding module's
 `build/distributions/<launcher>-<os>-<architecture>-<version>.tar.gz`, for
-example `pyronaut-dev/build/distributions/pyronaut-dev-macos-aarch64-0.0.1-SNAPSHOT.tar.gz`.
+example `pyronaut-dev/build/distributions/pyronaut-dev-macos-aarch64-0.0.3.tar.gz`.
 The archive is unpacked into `~/.pyronaut/bin` just like a downloaded bundle.
 
 ## Testing a release

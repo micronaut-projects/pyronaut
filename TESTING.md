@@ -6,17 +6,19 @@ Use this runbook to validate the complete release-installation flow without
 using a developer's Python, Java, GraalVM, Pyronaut cache, Maven repository, or
 source fixtures. It creates both managed fixtures from scratch inside a fresh
 x86_64 Linux container and resolves their non-Pyronaut dependencies from
-Sonatype's Maven snapshots repository.
+Maven Central.
 
 The runbook uses the host Docker socket for Docker-backed test resources. The
 only host state passed to the container is the Docker socket and the
 read-capable `PYRONAUT_RELEASE_TOKEN`; no host filesystem mount is required.
 
-Build the SDK wheel and the three Linux native bundles from the same revision.
+The current release is `v0.0.3`. Build the SDK wheel and the three Linux
+native bundles from the same revision, passing the release version so that the
+wheel's embedded defaults and the bundle file names match the published assets.
 The bundle manifests and wheel setup contract must stay in sync:
 
 ```bash
-./gradlew :micronaut-pyronaut:buildSdkWheel \
+./gradlew -PprojectVersion=0.0.3 :micronaut-pyronaut:buildSdkWheel \
   :micronaut-pyronaut-dev:assemble \
   :micronaut-pyronaut-run:assemble \
   :micronaut-pyronaut-run-python:assemble
@@ -25,9 +27,10 @@ The bundle manifests and wheel setup contract must stay in sync:
 When updating a release, replace the wheel and all three matching native assets:
 
 ```text
-pyronaut-dev-linux-amd64-0.0.1-SNAPSHOT.tar.gz
-pyronaut-run-linux-amd64-0.0.1-SNAPSHOT.tar.gz
-pyronaut-run-python-linux-amd64-0.0.1-SNAPSHOT.tar.gz
+pyronaut-0.0.3-py3-none-any.whl
+pyronaut-dev-linux-amd64-0.0.3.tar.gz
+pyronaut-run-linux-amd64-0.0.3.tar.gz
+pyronaut-run-python-linux-amd64-0.0.3.tar.gz
 ```
 
 Use release-owner credentials with asset-write access when replacing the
@@ -66,7 +69,7 @@ to the same command (from the repository root):
 
 ```bash
 --env PYRONAUT_LOCAL_WHEEL=/input/pyronaut-wheel.whl \
---volume "$(pwd)/pyronaut/build/wheel/dist/pyronaut-0.0.1.dev0-py3-none-any.whl:/input/pyronaut-wheel.whl:ro"
+--volume "$(pwd)/pyronaut/build/wheel/dist/pyronaut-0.0.3-py3-none-any.whl:/input/pyronaut-wheel.whl:ro"
 ```
 
 Use the local-wheel options while validating an updated CLI before uploading
@@ -106,9 +109,9 @@ source /work/cpython-venv/bin/activate
 python -c 'import sys; assert sys.implementation.name == "cpython"; print(sys.version)'
 
 REPOSITORY_API=https://api.github.com/repos/micronaut-projects/pyronaut
-RELEASE_TAG="${PYRONAUT_RELEASE_TAG:-v0.0.1-SNAPSHOT}"
+RELEASE_TAG="${PYRONAUT_RELEASE_TAG:-v0.0.3}"
 RELEASE_DRAFT="${PYRONAUT_RELEASE_DRAFT:-false}"
-WHEEL_NAME=pyronaut-0.0.1.dev0-py3-none-any.whl
+WHEEL_NAME=pyronaut-0.0.3-py3-none-any.whl
 LOCAL_REPOSITORY=/work/maven-local
 
 AUTH_HEADERS=(
@@ -166,12 +169,12 @@ pyronaut --version | tee /work/logs/pyronaut-version.txt
 
 # No settings file is created for the published-release validation. Resolve
 # the default native-image source and bundle version through the installed
-# wheel itself; these must produce GitHub Releases and 0.0.1-SNAPSHOT from the
-# wheel's 0.0.1.dev0 version.
+# wheel itself; these must produce GitHub Releases and the release version
+# 0.0.3 (a snapshot wheel would instead map 0.0.3.dev0 to 0.0.3-SNAPSHOT).
 NATIVE_BASE_URL=$(python -c 'from pyronaut_cli_v2 import cli; print(cli._native_image_configuration()[0])')
 test "$NATIVE_BASE_URL" = "https://github.com/micronaut-projects/pyronaut/releases/"
 NATIVE_VERSION=$(python -c 'from pyronaut_cli_v2 import cli; print(cli._native_image_configuration()[1])')
-test "$NATIVE_VERSION" = "0.0.1-SNAPSHOT"
+test "$NATIVE_VERSION" = "0.0.3"
 test ! -e "$HOME/.pyronaut/settings.toml"
 printf 'Native bundle version resolved from wheel: %s\n' "$NATIVE_VERSION" \
   | tee /work/logs/native-version.txt
@@ -629,8 +632,8 @@ gradle --version | tee /work/logs/gradle-version.txt
 run_test simple-python-install \
   pyronaut --allow-draft-release install --progress on \
   --local-repository "$LOCAL_REPOSITORY" --project-dir /work/projects/simple-python
-test -f "$LOCAL_REPOSITORY/io/micronaut/pyronaut/micronaut-pyronaut-logback/0.0.1-SNAPSHOT/micronaut-pyronaut-logback-0.0.1-SNAPSHOT.jar"
-test -f "$LOCAL_REPOSITORY/io/micronaut/pyronaut/micronaut-pyronaut-bom/0.0.1-SNAPSHOT/micronaut-pyronaut-bom-0.0.1-SNAPSHOT.pom"
+test -f "$LOCAL_REPOSITORY/io/micronaut/pyronaut/micronaut-pyronaut-logback/${NATIVE_VERSION}/micronaut-pyronaut-logback-${NATIVE_VERSION}.jar"
+test -f "$LOCAL_REPOSITORY/io/micronaut/pyronaut/micronaut-pyronaut-bom/${NATIVE_VERSION}/micronaut-pyronaut-bom-${NATIVE_VERSION}.pom"
 run_http --default-port simple-python-native 8080 / \
   pyronaut --allow-draft-release run --progress on \
   --local-repository "$LOCAL_REPOSITORY" --native --project-dir /work/projects/simple-python

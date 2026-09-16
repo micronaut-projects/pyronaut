@@ -68,15 +68,14 @@ Native images are cached under `~/.pyronaut/bin`. The default bundle base URL is
 ```toml
 [native-images]
 base-url = "https://github.com/micronaut-projects/pyronaut/releases"
-version = "0.0.1"
+version = "0.0.3"
 # Optional: select an exact GitHub release tag.
-release-tag = "v0.0.1"
+release-tag = "v0.0.3"
 ```
 
 When `release-tag` is omitted, the GitHub release tag defaults to
-`v<version>`; for example, `version = "0.0.1-SNAPSHOT"` resolves
-`v0.0.1-SNAPSHOT` while retaining the version in the asset filename and
-cache path.
+`v<version>`; for example, `version = "0.0.3"` resolves `v0.0.3` while
+retaining the version in the asset filename and cache path.
 
 For a private repository or draft release, set a read-only
 `PYRONAUT_RELEASE_TOKEN` (or `GH_TOKEN`, `GITHUB_TOKEN`, or
@@ -87,7 +86,7 @@ source remains available as an explicit override:
 ```toml
 [native-images]
 base-url = "https://gds.oracle.com/download/pyronaut/bundles/"
-version = "0.0.1"
+version = "0.0.3"
 ```
 
 The CLI currently supports

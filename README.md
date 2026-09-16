@@ -190,18 +190,19 @@ pyronaut --version
 pyronaut setup
 ```
 
-The help command should print the CLI usage. A snapshot wheel currently reports:
+The help command should print the CLI usage. The released 0.0.3 wheel reports:
 
 ```text
-Pyronaut: 0.0.1.dev0
+Pyronaut: 0.0.3
 Micronaut Core: 5.2.2
 Micronaut Platform: 5.1.0
 GraalPy: 25.3.4.1
 Native Image JDK: 25
 ```
 
-The Pyronaut, Micronaut Core, and platform versions may change as the
-repository evolves.
+A wheel built from a snapshot checkout reports the `projectVersion` from
+`gradle.properties` with `-SNAPSHOT` mapped to `.dev0` instead. The Pyronaut,
+Micronaut Core, and platform versions may change as the repository evolves.
 
 #### Option 2: Install into a project-local virtual environment
 
@@ -602,14 +603,15 @@ version:
 ```toml
 [native-images]
 base-url = "/path/to/pyronaut"
-version = "0.0.1-SNAPSHOT"
+version = "0.0.3"
 ```
 
-For example, `./gradlew :micronaut-pyronaut-dev:assemble` writes the bundle
-under `pyronaut-dev/build/distributions/`. The CLI looks below each native
-module for a platform-specific archive such as
-`pyronaut-dev-macos-aarch64-0.0.1-SNAPSHOT.tar.gz` and unpacks it into the
-normal local cache.
+For example, `./gradlew -PprojectVersion=0.0.3 :micronaut-pyronaut-dev:assemble`
+writes the bundle under `pyronaut-dev/build/distributions/`. The CLI looks
+below each native module for a platform-specific archive such as
+`pyronaut-dev-macos-aarch64-0.0.3.tar.gz` and unpacks it into the normal local
+cache. Omit `-PprojectVersion` to build the snapshot version from
+`gradle.properties` and select that `<version>-SNAPSHOT` string instead.
 
 ## Functional testing
 

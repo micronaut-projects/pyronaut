@@ -56,7 +56,7 @@ draft releases:
 ----
 [native-images]
 base-url = "https://github.com/micronaut-projects/pyronaut/releases"
-version = "0.0.1-SNAPSHOT"
+version = "0.0.3"
 release-tag = "untagged-335b1cec0d28f835a836"
 ----
 
@@ -72,7 +72,7 @@ is Oracle GraalVM Enterprise Edition (EE). Select `ce` or `dev` explicitly in
 ----
 [native-images]
 base-url = "https://gds.oracle.com/download/pyronaut/bundles/"
-version = "0.0.1.dev18704471"
+version = "0.0.3"
 ----
 
 For local development, `base-url` may be an absolute checkout directory (or a
@@ -83,12 +83,13 @@ version, for example:
 ----
 [native-images]
 base-url = "/path/to/pyronaut"
-version = "0.0.1-SNAPSHOT"
+version = "0.0.3"
 ----
 
 The CLI then finds archives under the matching module's
 `build/distributions` directory, such as
-`pyronaut-dev/build/distributions/pyronaut-dev-macos-aarch64-0.0.1-SNAPSHOT.tar.gz`.
+`pyronaut-dev/build/distributions/pyronaut-dev-macos-aarch64-0.0.3.tar.gz`
+(built with `./gradlew -PprojectVersion=0.0.3 :micronaut-pyronaut-dev:assemble`).
 
 == Pyronaut Project Layout
 

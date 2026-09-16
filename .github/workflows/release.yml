@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: GitHub release tag to package, for example v0.0.1-SNAPSHOT
+        description: GitHub release tag to package, for example v0.0.3
         required: true
         type: string
 jobs:
