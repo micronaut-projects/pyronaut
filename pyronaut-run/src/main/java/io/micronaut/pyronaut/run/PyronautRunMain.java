@@ -345,7 +345,7 @@ public class PyronautRunMain implements Callable<Integer> {
         }
 
         LinkedHashSet<URL> urls = new LinkedHashSet<>();
-        addManifestEntries(urls, resolveRunManifest(pyronautDir));
+        addManifestEntries(urls, root, resolveRunManifest(pyronautDir));
         addPathIfDirectory(urls, resolvedClassesDir);
         addPathIfDirectory(urls, root.resolve(configDir).normalize());
         addResourceDirectories(urls, additionalResourceDirs);
@@ -388,7 +388,7 @@ public class PyronautRunMain implements Callable<Integer> {
         return contextClassLoader != null ? contextClassLoader : PyronautRunMain.class.getClassLoader();
     }
 
-    protected void addManifestEntries(LinkedHashSet<URL> urls, Path manifest) throws IOException {
+    protected void addManifestEntries(LinkedHashSet<URL> urls, Path root, Path manifest) throws IOException {
         if (!Files.exists(manifest)) {
             return;
         }
@@ -400,7 +400,11 @@ public class PyronautRunMain implements Callable<Integer> {
             if (includeClasspathEntry(trimmed)) {
                 continue;
             }
-            urls.add(Path.of(trimmed).toAbsolutePath().normalize().toUri().toURL());
+            Path entry = Path.of(trimmed);
+            if (!entry.isAbsolute()) {
+                entry = root.resolve(entry);
+            }
+            urls.add(entry.toAbsolutePath().normalize().toUri().toURL());
         }
     }
 
