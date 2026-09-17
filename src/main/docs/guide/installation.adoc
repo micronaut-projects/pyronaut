@@ -24,6 +24,17 @@ The setup command is idempotent. Use `pyronaut setup --refresh` to re-resolve de
 If a recorded artifact is removed or the SDK, platform, repository, or native bundle configuration changes, execution commands exit with code `8` and instruct you to run `pyronaut setup` again.
 Help and version commands remain available before setup.
 
+If `pyronaut setup` or any later command fails, run `pyronaut doctor` first:
+
+[source,bash]
+----
+pyronaut doctor
+----
+
+It checks the Python version, the installed wheel and its setup state, the GraalVM JDK, GraalPy and interpreter mismatches, the native launchers, proxy settings, and Docker. Inside a project it also checks `pyproject.toml`, stale `pyronaut install` state, the threading configuration, that every declared Python package imports on the project's GraalPy under the configured context pool, GraalPy's published compatibility results for those packages, and `pytest`.
+Every failing row comes with the command that fixes it, and `pyronaut doctor --json` produces the same report for tooling.
+See <<pyronautCliV2,Pyronaut CLI Reference>> for the full list of checks.
+
 By default setup resolves SDK dependencies from Maven Central. Snapshot SDK versions also use the Sonatype Central snapshots repository.
 Override the setup repositories globally in `~/.pyronaut/settings.toml`; an explicit list replaces these defaults:
 

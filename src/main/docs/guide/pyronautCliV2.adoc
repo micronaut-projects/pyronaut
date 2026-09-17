@@ -104,6 +104,72 @@ repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]
 `--offline` performs no JDK, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
 When setup is missing, corrupt, or stale, execution commands exit with code `8` and print `Pyronaut setup is missing or stale. Run pyronaut setup.`
 
+=== `pyronaut doctor`
+
+Checks the local environment without changing it and prints one pass/warn/fail row per check, each non-passing row followed by a concrete fix:
+
+[source,bash]
+----
+pyronaut doctor [--project-dir <dir>] [--json] [--offline] [--progress <auto|on|off>]
+----
+
+Run it first when `pyronaut setup` or a project command fails.
+Unlike the execution commands it never requires valid setup state, so it can diagnose a missing or stale setup.
+
+The checks, in order:
+
+- Python: the interpreter running the CLI is 3.10 or newer.
+- Pyronaut SDK: the installed wheel version and whether the cached setup state below `~/.pyronaut/setup` is valid for it (suggests `pyronaut setup`, or `pyronaut setup --refresh` when stale state exists).
+- GraalVM JDK: the discovery used by `pyronaut setup --offline` (`JAVA_HOME`, `~/.pyronaut/sdks`, SDKMAN, jenv, Gradle JDKs) finds a GraalVM JDK 25+. A `JAVA_HOME` that is silently ignored because it is not a compatible GraalVM is reported as a warning.
+- GraalPy: inside a project, `.venv` was created with GraalPy; otherwise a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
+- Interpreter: no interpreter mismatch between the pieces that must agree. `PYRONAUT_PYTHON_EXECUTABLE` must point at an existing GraalPy, an activated `VIRTUAL_ENV` must be the project `.venv`, and the `.venv` must have been created from the GraalPy that is currently selected (a `.venv` left behind after `pyenv global` moved to another version, or whose base interpreter was removed, is reported).
+- Native launchers: `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` are cached below `~/.pyronaut/bin` for the configured version and platform.
+
+Inside a project the following checks are added:
+
+- pyproject.toml: the file parses and its `[tool.pyronaut]` settings are valid.
+- Classpath manifests: the manifests written by `pyronaut install` exist.
+- Generated state: the manifests are not stale. Classpath entries that no longer exist (the Maven repository changed) fail the check; a `pyproject.toml` edited after the last `pyronaut install` is a warning, because the preflight of `dev`, `run` and `test` only checks that the manifests exist. Sources newer than the processed classes are reported for information since processing is incremental and automatic.
+- Threading: the application configuration in `config/application.toml` (or `application.properties`) is read the way the runtime reads it. An executor with `virtual = true` fails the check because GraalPy cannot run Python code on virtual threads, and invalid `micronaut.python.pool` values fail it. The row reports the effective context pool size, executor overrides, and the deployment mode from `[tool.pyronaut.packaging]` and `[tool.pyronaut.toolchain]`. Configuration kept in `application.yml` is not inspected and produces a warning.
+- Python packages: a smoke test of every package declared in `[project].dependencies`. A probe runs inside the project `.venv` (that is, on the GraalPy that the application uses), resolves each distribution, derives its importable modules, and imports them concurrently from as many threads as the configured context pool would use (`micronaut.python.pool.size`, or twice the CPU count by default, one thread when the pool is disabled). Missing packages fail the check with the exact `pip install` command; import errors fail it with the first error; packages that ship native extensions are a warning, phrased for the configured deployment mode (native extensions are experimental on GraalPy and in native images).
+- GraalPy compatibility: each declared package is looked up in the package test results that GraalPy publishes per release at https://graalpy.org/python-developers/compatibility/. Packages that fail to install on the project's GraalPy release, or pass fewer than 90% of their tests there, are a warning; unknown packages are listed as untested. The release is taken from the `.venv` interpreter, falling back to the GraalPy bundled with the SDK. The CSV is cached below `~/.pyronaut/graalpy-compatibility` for a week; `--offline` uses only the cache and never downloads.
+- pytest: `pytest` is importable from the project `.venv`.
+
+The remaining checks run everywhere:
+
+- Proxy: the proxy in effect (environment variables, `~/.pyronaut/settings.toml`, or `~/.m2/settings.xml`) is a well-formed `http(s)://host:port` URL. Conflicting `HTTPS_PROXY`/`https_proxy` values or an incomplete `[proxy]` table are warnings. Credentials are never printed.
+- Docker: the daemon answers `docker version`. Docker is needed only for test resources and `pyronaut build --docker`, so a missing CLI or unreachable daemon is a warning.
+
+Project checks run for the current directory when it contains a `pyproject.toml`, and always for an explicit `--project-dir`.
+
+The human-readable rows use the same live progress display as `pyronaut setup` and are written to stderr; the summary line is written to stdout.
+`--json` instead writes a single JSON document to stdout for tooling:
+
+[source,json]
+----
+{
+  "pyronaut": "0.0.3",
+  "platform": "macos-aarch64",
+  "project": "/path/to/app",
+  "status": "fail",
+  "summary": {"pass": 8, "warn": 1, "fail": 1},
+  "checks": [
+    {
+      "id": "install",
+      "title": "Classpath manifests",
+      "status": "fail",
+      "detail": "3 of 3 missing in /path/to/app/__pyronaut__: resolved-build-dependencies, resolved-runtime-dependencies, resolved-test-dependencies",
+      "fix": "Run pyronaut install",
+      "data": {"directory": "/path/to/app/__pyronaut__"}
+    }
+  ]
+}
+----
+
+Each check carries a stable `id` (`python`, `pyronaut`, `graalvm`, `graalpy`, `interpreter`, `launchers`, `pyproject`, `install`, `state`, `threading`, `packages`, `compat`, `pytest`, `proxy`, `docker`) and check-specific `data`, for example the selected `javaHome`, the per-package probe results with their import errors, or the compatibility verdict per package.
+
+Exit codes follow the conventions listed under Exit code conventions below: `0` when no check fails (warnings do not fail the command), `8` when at least one check fails, and `2` for an unknown option.
+
 === `pyronaut create`
 
 Creates a Python application by delegating to the Micronaut Launch native CLI:

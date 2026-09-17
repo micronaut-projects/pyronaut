@@ -302,6 +302,22 @@ class Console:
             else:
                 _plain(f"WARNING: {message}")
 
+    def fail(self, message: str) -> None:
+        with self._lock:
+            if self._message_interactive():
+                self._print_above(self._stamp(_RED, self._glyphs().cross, message))
+            else:
+                _plain(f"ERROR: {message}")
+
+    def hint(self, message: str) -> None:
+        """Print a dimmed continuation line below the previous permanent line."""
+        with self._lock:
+            glyphs = self._glyphs()
+            if self._message_interactive():
+                self._print_above(self._stamp(None, None, self._paint(_DIM, f"  {glyphs.branch} {message}")))
+            else:
+                _plain(f"  {message}")
+
     # -- internals ---------------------------------------------------------
 
     def _begin(self, task: Task) -> None:

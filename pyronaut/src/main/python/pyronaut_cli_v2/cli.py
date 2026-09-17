@@ -31,6 +31,7 @@ from typing import Callable, Iterable, NamedTuple, Protocol, Sequence
 from .progress import PROGRESS_EPOCH_ENV as _PROGRESS_EPOCH_ENV
 from .progress import console as _progress_console
 from .progress import progress_epoch_ms as _progress_epoch_ms
+from . import doctor as _doctor
 
 SUCCESS = 0
 USAGE_ERROR = 2
@@ -38,7 +39,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"setup", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "doctor", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -163,14 +164,20 @@ _allow_draft_release = False
 _validated_setup_manifest: dict[str, object] | None = None
 
 
-def _print_version() -> None:
+def _read_version_properties() -> dict[str, str]:
+    """Return the wheel's ``version.properties`` (empty for a source checkout)."""
     values: dict[str, str] = {}
     version_file = Path(__file__).with_name("version.properties")
     if version_file.is_file():
         for line in version_file.read_text(encoding="utf-8").splitlines():
             if "=" in line:
                 key, value = line.split("=", 1)
-                values[key] = value
+                values[key.strip()] = value.strip()
+    return values
+
+
+def _print_version() -> None:
+    values = _read_version_properties()
     print(f"Pyronaut: {values.get('pyronaut', 'unknown')}")
     print(f"Micronaut Core: {values.get('micronaut.core', 'unknown')}")
     print(f"Micronaut Platform: {values.get('micronaut.platform', 'unknown')}")
@@ -303,6 +310,13 @@ def run(
 
     if command == "create":
         return _run_create(list(argv[1:]), execute, current_platform)
+
+    if command == "doctor":
+        doctor_args = list(argv[1:])
+        if _extract_flag(doctor_args, "--help") or _extract_flag(doctor_args, "-h"):
+            _print_doctor_usage()
+            return SUCCESS
+        return _run_doctor(doctor_args)
 
     option_args = argv[: argv.index("--")] if "--" in argv else argv
     if "-V" in option_args[1:] or (
@@ -7136,16 +7150,20 @@ def _extract_project_dir(args: Sequence[str]) -> str:
     return "."
 
 
-def _install_required(project_dir: Path) -> bool:
+def _required_install_manifests(project_dir: Path) -> tuple[Path, ...]:
+    """Files written by ``pyronaut install`` that every later command needs."""
     cache_dir = _pyronaut_output_dir(project_dir)
     if _is_external_build_project(project_dir):
-        return not (cache_dir / "project-layout.properties").exists()
-    required_manifests = (
+        return (cache_dir / "project-layout.properties",)
+    return (
         cache_dir / "resolved-build-dependencies",
         cache_dir / "resolved-runtime-dependencies",
         cache_dir / "resolved-test-dependencies",
     )
-    return not all(path.exists() for path in required_manifests)
+
+
+def _install_required(project_dir: Path) -> bool:
+    return not all(path.exists() for path in _required_install_manifests(project_dir))
 
 
 def _process_required(project_dir: Path, command: str) -> bool:
@@ -8123,7 +8141,7 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_create_usage(stream=None) -> None:
@@ -8567,6 +8585,1329 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+
+
+# -- pyronaut doctor ---------------------------------------------------------
+#
+# Read-only environment checks. Every check reuses the discovery and
+# validation helpers that the real commands run, so a passing doctor row means
+# the corresponding command would get past that precondition.
+
+_DOCTOR_MIN_PYTHON = (3, 10)
+_DOCTOR_SUBPROCESS_TIMEOUT = 30.0
+_DOCTOR_PROXY_ENV = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+_DOCTOR_NO_PROXY_ENV = ("NO_PROXY", "no_proxy")
+_GRAALVM_DISTRIBUTION_LABELS = {"ee": "Oracle GraalVM", "ce": "GraalVM Community", "dev": "GraalVM dev build"}
+
+
+def _print_doctor_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write("Usage: pyronaut doctor [--project-dir <dir>] [--json] [--offline] [--progress <auto|on|off>]\n")
+    stream.write("Check the local Pyronaut environment and suggest a fix for anything that is not ready.\n")
+    stream.write("  --project-dir <dir>       Project to inspect (default: the current directory).\n")
+    stream.write("      --json                Print the report as JSON on stdout.\n")
+    stream.write("      --offline             Use only cached GraalPy compatibility data; never download.\n")
+    stream.write("      --progress <mode>     Live progress rendering: auto, on, or off.\n")
+    stream.write("  -h, --help                Show this help message and exit.\n")
+
+
+def _validate_doctor_arguments(args: Sequence[str]) -> None:
+    value_options = {"--project-dir", "--progress"}
+    flag_options = {"--json", "--offline"}
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in value_options:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {token}")
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in value_options):
+            index += 1
+            continue
+        if token in flag_options:
+            index += 1
+            continue
+        raise ValueError(f"Unknown pyronaut doctor option: {token}")
+    progress = _extract_option_value(args, "--progress")
+    if progress is not None and progress not in {"auto", "on", "off"}:
+        raise ValueError("Invalid value for --progress. Use auto, on, or off")
+
+
+def _run_doctor(args: Sequence[str]) -> int:
+    args = _normalize_project_flag(list(args))
+    try:
+        _validate_doctor_arguments(args)
+    except ValueError as exc:
+        return _usage_error(str(exc))
+    json_output = _extract_flag(args, "--json")
+    offline = _extract_offline(args)
+    progress = _progress_console()
+    progress.configure("off" if json_output else _extract_option_value(args, "--progress"))
+
+    requested_dir = _extract_project_dir(args)
+    project_dir = Path(requested_dir).resolve()
+    # An explicit --project-dir is always inspected as a project so a missing
+    # pyproject.toml is reported instead of silently skipping those checks.
+    in_project = requested_dir != "." or (project_dir / "pyproject.toml").is_file()
+    checks = _doctor_checks(args, project_dir if in_project else None, offline=offline)
+
+    if json_output:
+        results = _doctor.run_checks(checks)
+        sys.stdout.write(
+            _doctor.to_json(
+                results,
+                version=_installed_pyronaut_version(),
+                platform=_doctor_platform(),
+                project_dir=str(project_dir) if in_project else None,
+            )
+        )
+        sys.stdout.flush()
+    else:
+        with progress.step("Pyronaut doctor", persist=False) as task:
+            def on_start(title: str) -> None:
+                task.label = f"Checking {title}"
+
+            results = _doctor.run_checks(
+                checks,
+                on_start=on_start,
+                on_result=lambda result: _doctor.render_row(progress, result),
+            )
+        if not in_project:
+            progress.hint(f"No pyproject.toml in {project_dir}: project checks skipped (use --project-dir)")
+        print(_doctor.summary_line(results))
+    return PRECONDITION_FAILED if _doctor.overall_status(results) == _doctor.FAIL else SUCCESS
+
+
+def _doctor_platform() -> str:
+    try:
+        return _setup_platform()
+    except RuntimeError:
+        return f"{sys.platform}-{platform.machine().lower()}"
+
+
+def _doctor_checks(args: Sequence[str], project_dir: Path | None, *, offline: bool = False) -> list[tuple[str, str, _doctor.Check]]:
+    checks: list[tuple[str, str, _doctor.Check]] = [
+        ("python", "Python", _doctor_check_python),
+        ("pyronaut", "Pyronaut SDK", lambda: _doctor_check_setup_state(args)),
+        ("graalvm", "GraalVM JDK", lambda: _doctor_check_graalvm(project_dir)),
+        ("graalpy", "GraalPy", lambda: _doctor_check_graalpy(project_dir)),
+        ("interpreter", "Interpreter", lambda: _doctor_check_interpreter(project_dir)),
+        ("launchers", "Native launchers", _doctor_check_native_launchers),
+    ]
+    if project_dir is not None:
+        # The runtime configuration is read once and shared by the checks
+        # that must mirror how the application actually runs.
+        runtime = _lazy(lambda: _doctor_runtime_config(project_dir))
+        checks.extend(
+            [
+                ("pyproject", "pyproject.toml", lambda: _doctor_check_pyproject(project_dir)),
+                ("install", "Classpath manifests", lambda: _doctor_check_install_manifests(project_dir)),
+                ("state", "Generated state", lambda: _doctor_check_generated_state(project_dir)),
+                ("threading", "Threading", lambda: _doctor_check_threading(project_dir, runtime())),
+                ("packages", "Python packages", lambda: _doctor_check_packages(project_dir, runtime())),
+                ("compat", "GraalPy compatibility", lambda: _doctor_check_graalpy_compatibility(project_dir, offline=offline)),
+                ("pytest", "pytest", lambda: _doctor_check_pytest(project_dir)),
+            ]
+        )
+    checks.extend(
+        [
+            ("proxy", "Proxy", _doctor_check_proxy),
+            ("docker", "Docker", _doctor_check_docker),
+        ]
+    )
+    return checks
+
+
+def _lazy(factory: Callable[[], object]) -> Callable[[], object]:
+    """Memoize ``factory`` so sibling checks share one computed value."""
+    cache: list[object] = []
+
+    def value() -> object:
+        if not cache:
+            cache.append(factory())
+        return cache[0]
+
+    return value
+
+
+def _doctor_capture(command_line: list[str], timeout: float = _DOCTOR_SUBPROCESS_TIMEOUT) -> tuple[int, str, str]:
+    """Run a probe command; never raises so a hung tool becomes a failed row."""
+    try:
+        completed = subprocess.run(command_line, check=False, capture_output=True, text=True, timeout=timeout)
+        return int(completed.returncode), completed.stdout or "", completed.stderr or ""
+    except subprocess.TimeoutExpired:
+        return INTERNAL_ERROR, "", f"timed out after {timeout:.0f}s"
+    except OSError as exc:
+        return INTERNAL_ERROR, "", str(exc)
+
+
+def _last_line(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
+def _doctor_check_python() -> _doctor.CheckResult:
+    info = sys.version_info
+    version = f"{info.major}.{info.minor}.{info.micro}"
+    implementation = getattr(sys.implementation, "name", "unknown")
+    data: dict[str, object] = {"version": version, "implementation": implementation, "executable": sys.executable}
+    minimum = ".".join(str(part) for part in _DOCTOR_MIN_PYTHON)
+    if (info.major, info.minor) < _DOCTOR_MIN_PYTHON:
+        return _doctor.CheckResult(
+            "python",
+            "Python",
+            _doctor.FAIL,
+            f"{version} at {sys.executable} is older than the required {minimum}",
+            f"Install Python {minimum} or newer and install the CLI there: python3 -m pip install pyronaut",
+            data,
+        )
+    return _doctor.CheckResult("python", "Python", _doctor.PASS, f"{version} ({implementation}) at {sys.executable}", data=data)
+
+
+def _doctor_check_setup_state(args: Sequence[str]) -> _doctor.CheckResult:
+    version = _installed_pyronaut_version()
+    data: dict[str, object] = {"version": version}
+    if not _setup_is_required():
+        return _doctor.CheckResult(
+            "pyronaut", "Pyronaut SDK", _doctor.PASS, f"{version} (source checkout, no setup state required)", data=data
+        )
+    manifest_path = _setup_manifest_path()
+    data["manifest"] = str(manifest_path)
+    try:
+        manifest = _read_valid_setup_manifest(args)
+    except (OSError, RuntimeError, ValueError) as exc:
+        if str(exc) != _SETUP_REQUIRED_MESSAGE:
+            return _doctor.CheckResult(
+                "pyronaut", "Pyronaut SDK", _doctor.FAIL, f"{version}: {exc}",
+                "Fix the reported setting in ~/.pyronaut/settings.toml and run pyronaut setup", data,
+            )
+        if manifest_path.is_file():
+            recorded = None
+            try:
+                recorded = json.loads(manifest_path.read_text(encoding="utf-8")).get("sdkVersion")
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            data["recordedVersion"] = recorded
+            qualifier = f" (recorded for {recorded})" if recorded and recorded != version else ""
+            return _doctor.CheckResult(
+                "pyronaut", "Pyronaut SDK", _doctor.FAIL,
+                f"{version}: cached setup state at {manifest_path} is stale{qualifier}",
+                "Run pyronaut setup --refresh", data,
+            )
+        return _doctor.CheckResult(
+            "pyronaut", "Pyronaut SDK", _doctor.FAIL, f"{version}: no setup state at {manifest_path}",
+            "Run pyronaut setup", data,
+        )
+    data["javaHome"] = manifest.get("javaHome")
+    data["toolRuntime"] = manifest.get("toolRuntime")
+    return _doctor.CheckResult(
+        "pyronaut", "Pyronaut SDK", _doctor.PASS, f"{version}: setup state valid at {manifest_path}", data=data
+    )
+
+
+def _describe_graalvm_home_source(java_home: Path) -> str:
+    sdkman_dir = _read_env("SDKMAN_DIR") or str(Path.home() / ".sdkman")
+    candidates: list[tuple[str, Path]] = []
+    env_java_home = _read_env("JAVA_HOME")
+    if env_java_home:
+        candidates.append(("JAVA_HOME", Path(env_java_home)))
+    candidates.extend(
+        [
+            ("~/.pyronaut/sdks", _graalvm_jdks_root()),
+            ("~/.pyronaut/jdks", _legacy_graalvm_jdks_root()),
+            ("SDKMAN", Path(sdkman_dir) / "candidates" / "java"),
+            ("jenv", Path.home() / ".jenv" / "versions"),
+            ("Gradle JDKs", Path.home() / ".gradle" / "jdks"),
+        ]
+    )
+    for label, root in candidates:
+        try:
+            if java_home.resolve().is_relative_to(root.resolve()):
+                return label
+        except OSError:
+            continue
+    return "discovered"
+
+
+def _doctor_check_graalvm(project_dir: Path | None) -> _doctor.CheckResult:
+    try:
+        toolchain = _read_pyproject_toolchain_spec(project_dir)
+    except (ValueError, RuntimeError) as exc:
+        return _doctor.CheckResult(
+            "graalvm", "GraalVM JDK", _doctor.FAIL, str(exc), "Fix [tool.pyronaut.toolchain] in pyproject.toml"
+        )
+    required = toolchain.java_version
+    data: dict[str, object] = {"requiredJavaVersion": required}
+    env_java_home = _read_env("JAVA_HOME")
+    ignored_java_home = bool(env_java_home) and not _matches_requested_graalvm_home(Path(env_java_home), toolchain)
+    data["ignoredJavaHome"] = env_java_home if ignored_java_home else None
+
+    java_home = _ensure_graalvm_java_home(project_dir, offline=True)
+    if java_home is None:
+        detail = f"no GraalVM JDK {required}+ found (checked JAVA_HOME, ~/.pyronaut/sdks, SDKMAN, jenv, Gradle JDKs)"
+        if ignored_java_home:
+            detail += f"; JAVA_HOME={env_java_home} is not a compatible GraalVM"
+        return _doctor.CheckResult(
+            "graalvm", "GraalVM JDK", _doctor.FAIL, detail,
+            f"Run pyronaut setup to download GraalVM JDK {required}, or point JAVA_HOME at a GraalVM JDK {required}+ installation",
+            data,
+        )
+    home = Path(java_home)
+    metadata = _read_graalvm_metadata(home)
+    source = _describe_graalvm_home_source(home)
+    label = _GRAALVM_DISTRIBUTION_LABELS.get(metadata.distribution if metadata else None, "GraalVM")
+    version = metadata.version if metadata and metadata.version else "unknown version"
+    data.update(
+        {
+            "javaHome": str(home),
+            "source": source,
+            "distribution": metadata.distribution if metadata else None,
+            "version": metadata.version if metadata else None,
+            "javaVersion": metadata.java_version if metadata else None,
+        }
+    )
+    detail = f"{label} {version} from {source} at {home}"
+    if ignored_java_home:
+        return _doctor.CheckResult(
+            "graalvm", "GraalVM JDK", _doctor.WARN,
+            f"{detail}; JAVA_HOME={env_java_home} is ignored because it is not a compatible GraalVM",
+            f"Unset JAVA_HOME or point it at {home}", data,
+        )
+    return _doctor.CheckResult("graalvm", "GraalVM JDK", _doctor.PASS, detail, data=data)
+
+
+def _pyenv_root() -> Path:
+    configured = _read_env("PYENV_ROOT")
+    return Path(configured) if configured else Path.home() / ".pyenv"
+
+
+def _pyenv_selected_versions() -> tuple[list[str], str | None]:
+    """Return the pyenv versions in effect and where they were selected.
+
+    Mirrors pyenv's own precedence for the global selection: ``PYENV_VERSION``
+    wins, otherwise the ``version`` file below the pyenv root (see issue #62).
+    """
+    configured = _read_env("PYENV_VERSION")
+    if configured:
+        return [name.strip() for name in configured.split(":") if name.strip()], "PYENV_VERSION"
+    version_file = _pyenv_root() / "version"
+    try:
+        names = [line.strip() for line in version_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        return [], None
+    return names, str(version_file)
+
+
+def _find_global_graalpy() -> tuple[Path, str] | None:
+    """Locate a GraalPy interpreter outside any project virtualenv."""
+    names, source = _pyenv_selected_versions()
+    for name in names:
+        if not name.lower().startswith("graalpy"):
+            continue
+        version_dir = _pyenv_root() / "versions" / name
+        for executable in ("graalpy", "python"):
+            candidate = version_dir / "bin" / executable
+            if _is_executable_file(candidate):
+                return candidate, f"pyenv version {name} selected by {source}"
+        return version_dir / "bin" / "graalpy", f"pyenv version {name} selected by {source} (not installed)"
+    discovered = shutil.which("graalpy")
+    if discovered:
+        return Path(discovered), "PATH"
+    return None
+
+
+def _virtualenv_is_graalpy(venv_python: Path) -> bool:
+    """Whether a project ``.venv`` was created by GraalPy (see prerequisites)."""
+    try:
+        if "graalpy" in str(venv_python.resolve(strict=True)).lower():
+            return True
+    except OSError:
+        return False
+    config = venv_python.parent.parent / "pyvenv.cfg"
+    try:
+        return "graalpy" in config.read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+
+
+def _probe_python_version(python: Path) -> str | None:
+    code, out, err = _doctor_capture([str(python), "--version"])
+    if code != 0:
+        return None
+    return _last_line(out) or _last_line(err) or None
+
+
+def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
+    expected = _read_version_properties().get("graalpy")
+    data: dict[str, object] = {"expectedVersion": expected}
+    suggested = f"graalpy3.13-{expected}" if expected else "graalpy3.13-<version>"
+    install_fix = f"Install GraalPy with pyenv: pyenv install {suggested} && pyenv global {suggested}"
+    venv_fix = "Create the project environment with GraalPy: graalpy -m venv .venv && .venv/bin/python -m pip install pytest"
+
+    if project_dir is not None:
+        venv_dir = project_dir / ".venv"
+        if venv_dir.is_dir():
+            venv_python = _resolve_virtualenv_python(venv_dir / "bin")
+            data["virtualenv"] = str(venv_dir)
+            if venv_python is None:
+                return _doctor.CheckResult(
+                    "graalpy", "GraalPy", _doctor.FAIL, f"{venv_dir} has no bin/python (broken virtualenv)",
+                    f"Recreate it: rm -rf {venv_dir} && graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
+                )
+            if not _virtualenv_is_graalpy(venv_python):
+                return _doctor.CheckResult(
+                    "graalpy", "GraalPy", _doctor.FAIL,
+                    f"{venv_dir} was not created with GraalPy, so its packages cannot be used by the embedded runtime",
+                    f"Recreate it: rm -rf {venv_dir} && graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
+                )
+            version_line = _probe_python_version(venv_python)
+            data["executable"] = str(venv_python)
+            data["version"] = version_line
+            if version_line is None:
+                return _doctor.CheckResult(
+                    "graalpy", "GraalPy", _doctor.FAIL, f"{venv_python} does not start",
+                    f"Recreate it: rm -rf {venv_dir} && graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
+                )
+            if expected and expected not in version_line:
+                return _doctor.CheckResult(
+                    "graalpy", "GraalPy", _doctor.WARN,
+                    f"project .venv uses {version_line} but this Pyronaut bundles GraalPy {expected}",
+                    f"Recreate .venv with GraalPy {expected} ({install_fix})", data,
+                )
+            return _doctor.CheckResult(
+                "graalpy", "GraalPy", _doctor.PASS, f"project .venv uses {version_line} ({venv_python})", data=data
+            )
+
+    found = _find_global_graalpy()
+    if found is None:
+        detail = "no GraalPy found on PATH, PYENV_VERSION or ~/.pyenv/version"
+        if project_dir is not None:
+            return _doctor.CheckResult(
+                "graalpy", "GraalPy", _doctor.FAIL, f"no project .venv and {detail}", f"{install_fix}; then {venv_fix}", data
+            )
+        return _doctor.CheckResult(
+            "graalpy", "GraalPy", _doctor.WARN,
+            f"{detail} (needed to create project virtualenvs and run pytest)", install_fix, data,
+        )
+    executable, source = found
+    data["executable"] = str(executable)
+    data["source"] = source
+    if not _is_executable_file(executable):
+        return _doctor.CheckResult(
+            "graalpy", "GraalPy", _doctor.FAIL, f"{source}: {executable} is missing", install_fix, data
+        )
+    version_line = _probe_python_version(executable)
+    data["version"] = version_line
+    if version_line is None:
+        return _doctor.CheckResult(
+            "graalpy", "GraalPy", _doctor.FAIL, f"{executable} ({source}) does not start", install_fix, data
+        )
+    detail = f"{version_line} via {source} ({executable})"
+    if project_dir is not None:
+        return _doctor.CheckResult(
+            "graalpy", "GraalPy", _doctor.WARN, f"no project .venv; {detail}", venv_fix, data
+        )
+    if expected and expected not in version_line:
+        return _doctor.CheckResult(
+            "graalpy", "GraalPy", _doctor.WARN, f"{detail}; this Pyronaut bundles GraalPy {expected}", install_fix, data
+        )
+    return _doctor.CheckResult("graalpy", "GraalPy", _doctor.PASS, detail, data=data)
+
+
+def _doctor_check_native_launchers() -> _doctor.CheckResult:
+    try:
+        base_url, version, release_tag = _native_image_configuration()
+        os_segment, arch = _native_image_platform()
+    except RuntimeError as exc:
+        message = str(exc)
+        fix = (
+            "Use macOS or Linux on x86_64 or arm64"
+            if "not available for" in message
+            else "Fix [native-images] in ~/.pyronaut/settings.toml"
+        )
+        return _doctor.CheckResult("launchers", "Native launchers", _doctor.FAIL, message, fix)
+    cache_dir = _native_image_cache_path("x", version=version, os_segment=os_segment, arch=arch).parent
+    images: dict[str, str | None] = {}
+    missing: dict[str, str] = {}
+    for image_name in _SETUP_IMAGE_COMMANDS:
+        try:
+            images[image_name] = str(_cached_native_image(image_name))
+        except RuntimeError as exc:
+            missing[image_name] = str(exc)
+            images[image_name] = None
+    data: dict[str, object] = {
+        "source": base_url,
+        "version": version,
+        "releaseTag": release_tag,
+        "platform": f"{os_segment}-{arch}",
+        "directory": str(cache_dir),
+        "images": images,
+    }
+    if not missing:
+        return _doctor.CheckResult(
+            "launchers", "Native launchers", _doctor.PASS,
+            f"{', '.join(_SETUP_IMAGE_COMMANDS)} cached in {cache_dir}", data=data,
+        )
+    stale = any("not cached" not in reason for reason in missing.values())
+    status = _doctor.FAIL if _setup_is_required() else _doctor.WARN
+    return _doctor.CheckResult(
+        "launchers", "Native launchers", status,
+        f"{len(missing)} of {len(_SETUP_IMAGE_COMMANDS)} launchers {'stale' if stale else 'missing'} in {cache_dir}: "
+        + ", ".join(sorted(missing)),
+        "Run pyronaut setup --refresh" if stale else "Run pyronaut setup",
+        data,
+    )
+
+
+def _doctor_check_pyproject(project_dir: Path) -> _doctor.CheckResult:
+    path = project_dir / "pyproject.toml"
+    data: dict[str, object] = {"path": str(path)}
+    if not path.is_file():
+        return _doctor.CheckResult(
+            "pyproject", "pyproject.toml", _doctor.FAIL, f"no pyproject.toml in {project_dir}",
+            "Run from a Pyronaut project directory, pass --project-dir, or create one with pyronaut create <name>", data,
+        )
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover - Python 3.10 without tomli
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ImportError:
+            return _doctor.CheckResult(
+                "pyproject", "pyproject.toml", _doctor.FAIL, "no TOML parser available on this Python",
+                "Use Python 3.11+ or install tomli", data,
+            )
+    try:
+        with path.open("rb") as handle:
+            parsed = tomllib.load(handle)
+    except (OSError, ValueError) as exc:
+        return _doctor.CheckResult(
+            "pyproject", "pyproject.toml", _doctor.FAIL, f"{path} does not parse: {exc}",
+            "Fix the TOML syntax error reported above", data,
+        )
+    if not isinstance(parsed, dict):
+        return _doctor.CheckResult("pyproject", "pyproject.toml", _doctor.FAIL, f"{path} is not a TOML table", None, data)
+    try:
+        _read_pyproject_toolchain_spec(project_dir)
+        _read_pyproject_sources(project_dir)
+        _read_pyproject_packaging_format(project_dir)
+    except (RuntimeError, ValueError, TypeError) as exc:
+        return _doctor.CheckResult(
+            "pyproject", "pyproject.toml", _doctor.FAIL, f"{path}: {exc}", "Fix the [tool.pyronaut] setting reported above", data
+        )
+    name, version = _read_pyproject_project_metadata(project_dir)
+    tool = parsed.get("tool")
+    has_table = isinstance(tool, dict) and isinstance(tool.get("pyronaut"), dict)
+    data.update({"name": name, "version": version, "pyronautTable": has_table})
+    detail = f"{name} {version} parses ({path})"
+    if not has_table:
+        detail += "; no [tool.pyronaut] table, defaults apply"
+    return _doctor.CheckResult("pyproject", "pyproject.toml", _doctor.PASS, detail, data=data)
+
+
+def _doctor_check_install_manifests(project_dir: Path) -> _doctor.CheckResult:
+    required = _required_install_manifests(project_dir)
+    cache_dir = _pyronaut_output_dir(project_dir)
+    data: dict[str, object] = {"directory": str(cache_dir), "manifests": [str(path) for path in required]}
+    if _install_required(project_dir):
+        missing = [path.name for path in required if not path.exists()]
+        data["missing"] = missing
+        return _doctor.CheckResult(
+            "install", "Classpath manifests", _doctor.FAIL,
+            f"{len(missing)} of {len(required)} missing in {cache_dir}: {', '.join(missing)}",
+            "Run pyronaut install", data,
+        )
+    return _doctor.CheckResult(
+        "install", "Classpath manifests", _doctor.PASS,
+        f"{', '.join(path.name for path in required)} present in {cache_dir}", data=data,
+    )
+
+
+def _doctor_check_pytest(project_dir: Path) -> _doctor.CheckResult:
+    venv_dir = project_dir / ".venv"
+    venv_python = _resolve_virtualenv_python(venv_dir / "bin") if (venv_dir / "bin").is_dir() else None
+    data: dict[str, object] = {"virtualenv": str(venv_dir) if venv_dir.is_dir() else None}
+    if venv_python is None:
+        return _doctor.CheckResult(
+            "pytest", "pytest", _doctor.FAIL, f"no project virtualenv at {venv_dir} to import pytest from",
+            "graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
+        )
+    data["executable"] = str(venv_python)
+    code, out, err = _doctor_capture([str(venv_python), "-c", "import pytest; print(pytest.__version__)"])
+    if code != 0 or not out.strip():
+        reason = _last_line(err)
+        return _doctor.CheckResult(
+            "pytest", "pytest", _doctor.FAIL,
+            f"not importable from {venv_python}" + (f": {reason}" if reason else ""),
+            f"{venv_python} -m pip install pytest", data,
+        )
+    version = out.strip()
+    data["version"] = version
+    return _doctor.CheckResult("pytest", "pytest", _doctor.PASS, f"{version} importable from {venv_python}", data=data)
+
+
+def _redact_proxy_url(value: str) -> str:
+    try:
+        parts = urllib.parse.urlsplit(value)
+    except ValueError:
+        return value
+    if parts.username is None and parts.password is None:
+        return value
+    host = parts.hostname or ""
+    if parts.port is not None:
+        host += f":{parts.port}"
+    return urllib.parse.urlunsplit((parts.scheme, f"***@{host}", parts.path, parts.query, parts.fragment))
+
+
+def _doctor_check_proxy() -> _doctor.CheckResult:
+    environment = os.environ
+    env_proxy = {name: environment[name] for name in (*_DOCTOR_PROXY_ENV, *_DOCTOR_NO_PROXY_ENV) if environment.get(name)}
+    data: dict[str, object] = {"environment": sorted(env_proxy)}
+    try:
+        settings = _read_pyronaut_user_settings()
+    except RuntimeError as exc:
+        return _doctor.CheckResult(
+            "proxy", "Proxy", _doctor.FAIL, str(exc), "Fix the TOML syntax in ~/.pyronaut/settings.toml", data
+        )
+    configured = settings.get("proxy")
+    if configured is not None and not isinstance(configured, dict):
+        return _doctor.CheckResult(
+            "proxy", "Proxy", _doctor.FAIL, "[proxy] in ~/.pyronaut/settings.toml must be a table",
+            "Declare the proxy as [proxy] with url, or host and port", data,
+        )
+    settings_proxy = False
+    warnings: list[str] = []
+    if isinstance(configured, dict):
+        url = configured.get("url")
+        host = configured.get("host")
+        settings_proxy = (isinstance(url, str) and bool(url.strip())) or (
+            isinstance(host, str) and bool(host.strip()) and configured.get("port") is not None
+        )
+        if not settings_proxy:
+            warnings.append("[proxy] in ~/.pyronaut/settings.toml is ignored because it sets neither url nor host and port")
+    for upper, lower in (("HTTPS_PROXY", "https_proxy"), ("HTTP_PROXY", "http_proxy"), ("NO_PROXY", "no_proxy")):
+        if env_proxy.get(upper) and env_proxy.get(lower) and env_proxy[upper] != env_proxy[lower]:
+            warnings.append(f"{upper} and {lower} differ ({upper} wins)")
+
+    proxy, bypass = _download_proxy(_NATIVE_IMAGE_BASE_URL)
+    data["bypass"] = bypass
+    if proxy is None:
+        data["proxy"] = None
+        data["source"] = None
+        if warnings:
+            return _doctor.CheckResult(
+                "proxy", "Proxy", _doctor.WARN, "no proxy in effect; " + "; ".join(warnings),
+                "Set [proxy].url (or host and port) in ~/.pyronaut/settings.toml, or remove the table", data,
+            )
+        return _doctor.CheckResult("proxy", "Proxy", _doctor.PASS, "no proxy configured", data=data)
+
+    if any(env_proxy.get(name) for name in _DOCTOR_PROXY_ENV):
+        winner = next(name for name in _DOCTOR_PROXY_ENV if env_proxy.get(name))
+        source = f"environment ({winner})"
+    elif settings_proxy:
+        source = "~/.pyronaut/settings.toml"
+    else:
+        source = "~/.m2/settings.xml"
+    redacted = _redact_proxy_url(proxy)
+    data["proxy"] = redacted
+    data["source"] = source
+    try:
+        parts = urllib.parse.urlsplit(proxy)
+        port = parts.port
+    except ValueError as exc:
+        return _doctor.CheckResult(
+            "proxy", "Proxy", _doctor.FAIL, f"{redacted} from {source} is malformed: {exc}",
+            "Use the form http://[user:password@]host:port", data,
+        )
+    if parts.scheme not in {"http", "https"} or not parts.hostname or port is None:
+        return _doctor.CheckResult(
+            "proxy", "Proxy", _doctor.FAIL, f"{redacted} from {source} is not an http(s)://host:port URL",
+            "Use the form http://[user:password@]host:port", data,
+        )
+    detail = f"{redacted} from {source}"
+    if bypass:
+        detail += f", bypass {bypass}"
+    if source.startswith("environment") and settings_proxy:
+        detail += "; overrides [proxy] in ~/.pyronaut/settings.toml"
+    if warnings:
+        return _doctor.CheckResult(
+            "proxy", "Proxy", _doctor.WARN, detail + "; " + "; ".join(warnings),
+            "Make the proxy environment variables agree, or unset the unused variant", data,
+        )
+    return _doctor.CheckResult("proxy", "Proxy", _doctor.PASS, detail, data=data)
+
+
+def _doctor_check_docker() -> _doctor.CheckResult:
+    docker = shutil.which("docker")
+    data: dict[str, object] = {"executable": docker, "dockerHost": _read_env("DOCKER_HOST")}
+    only_needed = "needed only for test resources and pyronaut build --docker"
+    if docker is None:
+        return _doctor.CheckResult(
+            "docker", "Docker", _doctor.WARN, f"docker CLI not found on PATH ({only_needed})",
+            "Install Docker Desktop or Docker Engine, or set PYRONAUT_TEST_RESOURCES_DISABLED=true if no test resources are used",
+            data,
+        )
+    code, out, err = _doctor_capture([docker, "version", "--format", "{{.Server.Version}}"])
+    server = out.strip()
+    if code != 0 or not server:
+        reason = _last_line(err)
+        return _doctor.CheckResult(
+            "docker", "Docker", _doctor.WARN,
+            f"daemon not reachable via {docker} ({only_needed})" + (f": {reason}" if reason else ""),
+            "Start Docker Desktop (macOS) or the docker service (Linux); set DOCKER_HOST if the runtime uses a custom socket",
+            data,
+        )
+    data["serverVersion"] = server
+    return _doctor.CheckResult("docker", "Docker", _doctor.PASS, f"daemon reachable, server {server} ({docker})", data=data)
+
+
+# -- pyronaut doctor: project runtime diagnostics ---------------------------
+#
+# These checks look at the project the way the run/test commands do: the
+# Python packages come from the project ``.venv`` (never from ``pyronaut
+# install``), threading comes from ``micronaut.python.pool`` and
+# ``micronaut.executors`` in the application configuration, and the
+# deployment mode from ``[tool.pyronaut.packaging]``/``[tool.pyronaut.toolchain]``.
+
+_DOCTOR_PROBE_TIMEOUT = 180.0
+_DOCTOR_MAX_PROBE_THREADS = 16
+_GRAALPY_COMPATIBILITY_URL = "https://graalpy.org/module_results/python-module-testing-{release}.csv"
+_GRAALPY_COMPATIBILITY_PAGE = "https://graalpy.org/python-developers/compatibility/"
+_GRAALPY_COMPATIBILITY_MAX_AGE = 7 * 24 * 60 * 60
+_GRAALPY_COMPATIBLE_PERCENT = 90.0
+_NATIVE_PACKAGING_FORMATS = {"wheel-native", "wheel-crema", "docker-native", "docker-crema"}
+_PYTHON_EXECUTORS = ("io", "blocking")
+_NATIVE_EXTENSION_SUFFIXES = (".so", ".pyd", ".dylib")
+
+# Runs inside the project's GraalPy virtualenv. It resolves every declared
+# distribution, derives its importable modules, imports them concurrently
+# with as many threads as the context pool would use, and prints one JSON
+# document so the CLI never has to parse tracebacks.
+_DOCTOR_PACKAGE_PROBE = r'''
+import importlib, json, re, sys, threading, traceback
+import importlib.metadata as metadata
+
+spec = json.loads(sys.argv[1])
+threads = max(1, int(spec.get("threads", 1)))
+NATIVE = (".so", ".pyd", ".dylib")
+
+
+def canonical(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+distributions = {}
+for distribution in metadata.distributions():
+    name = distribution.metadata["Name"] if distribution.metadata else None
+    if name:
+        distributions.setdefault(canonical(name), distribution)
+
+
+def modules_of(distribution):
+    files = [str(path) for path in (distribution.files or [])]
+    top_level = distribution.read_text("top_level.txt") or ""
+    modules = [line.strip() for line in top_level.splitlines() if line.strip()]
+    if not modules:
+        found = set()
+        for path in files:
+            head = path.split("/", 1)[0]
+            if head.startswith(("..", "__pycache__")) or head.endswith((".dist-info", ".data", ".pth")):
+                continue
+            if "/" in path:
+                found.add(head)
+            elif path.endswith(".py"):
+                found.add(path[:-3])
+            elif path.endswith(NATIVE):
+                found.add(path.split(".", 1)[0])
+        modules = sorted(found)
+    public = [module for module in modules if module.isidentifier() and not module.startswith("_")]
+    return (public or [module for module in modules if module.isidentifier()]), files
+
+
+results = {}
+for requested in spec["packages"]:
+    distribution = distributions.get(canonical(requested))
+    if distribution is None:
+        results[requested] = {"installed": False}
+        continue
+    modules, files = modules_of(distribution)
+    results[requested] = {
+        "installed": True,
+        "version": distribution.version,
+        "modules": modules,
+        "native": any(path.endswith(NATIVE) for path in files),
+        "errors": {},
+    }
+
+
+def import_all(requested, errors, lock):
+    for module in results[requested]["modules"]:
+        try:
+            importlib.import_module(module)
+        except BaseException as exc:  # noqa: BLE001 - report, never crash the probe
+            with lock:
+                errors.setdefault(module, "".join(traceback.format_exception_only(type(exc), exc)).strip().splitlines()[-1])
+
+
+for requested, result in results.items():
+    if not result["installed"]:
+        continue
+    lock = threading.Lock()
+    workers = [threading.Thread(target=import_all, args=(requested, result["errors"], lock), daemon=True) for _ in range(threads)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    import_all(requested, result["errors"], lock)
+
+print(json.dumps({"python": sys.version.splitlines()[0], "threads": threads, "packages": results}))
+'''
+
+
+class _DoctorRuntimeConfig(NamedTuple):
+    packaging_format: str
+    toolchain_type: str
+    native: bool
+    config_file: Path | None
+    pool_enabled: bool
+    pool_size: int | None
+    probe_threads: int
+    executors: dict[str, dict[str, object]]
+    problems: tuple[str, ...]
+    unparsed: tuple[str, ...]
+
+
+def _canonical_package_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _read_pyproject_python_dependencies(project_dir: Path) -> list[str]:
+    """Return the distribution names declared in ``[project].dependencies``.
+
+    Requirements guarded by an ``extra`` marker are optional and skipped.
+    """
+    data = _read_pyproject_data(project_dir)
+    project = data.get("project") if isinstance(data, dict) else None
+    declared = project.get("dependencies") if isinstance(project, dict) else None
+    if not isinstance(declared, list):
+        return []
+    names: list[str] = []
+    for requirement in declared:
+        if not isinstance(requirement, str):
+            continue
+        match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)
+        if match is None:
+            continue
+        marker = requirement.split(";", 1)[1] if ";" in requirement else ""
+        if re.search(r"\bextra\b", marker):
+            continue
+        name = match.group(1)
+        if _canonical_package_name(name) not in {_canonical_package_name(seen) for seen in names}:
+            names.append(name)
+    return names
+
+
+def _config_value(data: dict[str, object], *keys: str) -> object:
+    """Walk nested tables; TOML gives nested dicts, properties give dotted keys."""
+    current: object = data
+    for index, key in enumerate(keys):
+        if not isinstance(current, dict):
+            return None
+        if key in current:
+            current = current[key]
+            continue
+        dotted = ".".join(keys[index:])
+        if dotted in current:
+            return current[dotted]
+        return None
+    return current
+
+
+def _properties_to_nested(values: dict[str, str]) -> dict[str, object]:
+    nested: dict[str, object] = {}
+    for key, raw in values.items():
+        value: object = raw
+        lowered = raw.strip().lower()
+        if lowered in {"true", "false"}:
+            value = lowered == "true"
+        elif re.fullmatch(r"-?\d+", raw.strip()):
+            value = int(raw.strip())
+        target = nested
+        parts = key.split(".")
+        for part in parts[:-1]:
+            child = target.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                target[part] = child
+            target = child
+        target[parts[-1]] = value
+    return nested
+
+
+def _read_application_config(project_dir: Path) -> tuple[dict[str, object], Path | None, list[str]]:
+    """Return the parsed ``application.toml``/``.properties`` plus unparsed files."""
+    try:
+        layout = _read_pyproject_sources(project_dir)
+        resources_dir = _resolve_layout_dir(project_dir, layout.resources_dir)
+    except (RuntimeError, ValueError, TypeError):
+        resources_dir = project_dir / _DEFAULT_RESOURCES_DIR
+    unparsed: list[str] = []
+    toml_file = resources_dir / "application.toml"
+    if toml_file.is_file():
+        try:
+            import tomllib
+        except ImportError:  # pragma: no cover - Python 3.10 without tomli
+            import tomli as tomllib  # type: ignore[no-redef]
+        with toml_file.open("rb") as handle:
+            data = tomllib.load(handle)
+        return (data if isinstance(data, dict) else {}), toml_file, unparsed
+    properties_file = resources_dir / "application.properties"
+    if properties_file.is_file():
+        return _properties_to_nested(_parse_properties_file(properties_file)), properties_file, unparsed
+    for name in ("application.yml", "application.yaml", "application.json"):
+        if (resources_dir / name).is_file():
+            unparsed.append(str(resources_dir / name))
+    return {}, None, unparsed
+
+
+def _doctor_runtime_config(project_dir: Path) -> _DoctorRuntimeConfig:
+    problems: list[str] = []
+    packaging_format = DEFAULT_PACKAGING_FORMAT
+    toolchain_type = TOOLCHAIN_TYPE_JVM
+    try:
+        packaging_format = _read_pyproject_packaging_format(project_dir)
+    except (ValueError, RuntimeError, TypeError) as exc:
+        problems.append(str(exc))
+    try:
+        toolchain_type = _read_pyproject_toolchain_type(project_dir)
+    except (ValueError, RuntimeError, TypeError) as exc:
+        problems.append(str(exc))
+    native = packaging_format in _NATIVE_PACKAGING_FORMATS or toolchain_type == TOOLCHAIN_TYPE_NATIVE
+
+    config: dict[str, object] = {}
+    config_file: Path | None = None
+    unparsed: list[str] = []
+    try:
+        config, config_file, unparsed = _read_application_config(project_dir)
+    except (OSError, ValueError, TypeError) as exc:
+        problems.append(f"application configuration does not parse: {exc}")
+
+    pool_enabled = True
+    enabled_raw = _config_value(config, "micronaut", "python", "pool", "enabled")
+    if enabled_raw is not None:
+        if isinstance(enabled_raw, bool):
+            pool_enabled = enabled_raw
+        else:
+            problems.append("micronaut.python.pool.enabled must be true or false")
+    pool_size: int | None = None
+    size_raw = _config_value(config, "micronaut", "python", "pool", "size")
+    if size_raw is not None:
+        if isinstance(size_raw, bool) or not isinstance(size_raw, int) or size_raw < 0:
+            problems.append("micronaut.python.pool.size must be a non-negative integer (0 selects the default)")
+        else:
+            pool_size = size_raw
+
+    executors: dict[str, dict[str, object]] = {}
+    executors_raw = _config_value(config, "micronaut", "executors")
+    if isinstance(executors_raw, dict):
+        for name, settings in executors_raw.items():
+            if isinstance(settings, dict):
+                executors[str(name)] = dict(settings)
+
+    if not pool_enabled:
+        probe_threads = 1
+    elif pool_size:
+        probe_threads = pool_size
+    else:
+        probe_threads = 2 * (os.cpu_count() or 1)
+    probe_threads = max(1, min(_DOCTOR_MAX_PROBE_THREADS, probe_threads))
+    return _DoctorRuntimeConfig(
+        packaging_format,
+        toolchain_type,
+        native,
+        config_file,
+        pool_enabled,
+        pool_size,
+        probe_threads,
+        executors,
+        tuple(problems),
+        tuple(unparsed),
+    )
+
+
+def _deployment_label(config: _DoctorRuntimeConfig) -> str:
+    mode = "native" if config.native else "JVM"
+    return f"{config.packaging_format} packaging, {mode} toolchain"
+
+
+def _doctor_check_threading(project_dir: Path, config: _DoctorRuntimeConfig) -> _doctor.CheckResult:
+    data: dict[str, object] = {
+        "configFile": str(config.config_file) if config.config_file else None,
+        "poolEnabled": config.pool_enabled,
+        "poolSize": config.pool_size,
+        "probeThreads": config.probe_threads,
+        "executors": config.executors,
+        "packagingFormat": config.packaging_format,
+        "toolchainType": config.toolchain_type,
+    }
+    config_problems = [problem for problem in config.problems if "pyproject" not in problem.lower()]
+    if config_problems:
+        return _doctor.CheckResult(
+            "threading", "Threading", _doctor.FAIL, "; ".join(config_problems),
+            f"Fix the setting in {config.config_file or 'the application configuration'}", data,
+        )
+    virtual = sorted(
+        name for name, settings in config.executors.items()
+        if settings.get("virtual") is True and (name in _PYTHON_EXECUTORS or settings.get("type") is not None)
+    )
+    if virtual:
+        return _doctor.CheckResult(
+            "threading", "Threading", _doctor.FAIL,
+            f"executor{'s' if len(virtual) != 1 else ''} {', '.join(virtual)} set virtual = true; GraalPy cannot run Python code on virtual threads",
+            f"Set virtual = false under [micronaut.executors.<name>] in {config.config_file}", data,
+        )
+    if config.pool_enabled:
+        size = f"size {config.pool_size}" if config.pool_size else "default size (2 x CPUs)"
+        detail = f"context pool enabled, {size}"
+    else:
+        detail = "context pool disabled (single GraalPy context)"
+    overrides = [
+        f"{name}: {settings.get('type', 'cached')}" + (f", {settings['n-threads']} threads" if "n-threads" in settings else "")
+        for name, settings in sorted(config.executors.items())
+    ]
+    detail += "; executors " + ("Pyronaut defaults (cached platform threads)" if not overrides else ", ".join(overrides))
+    detail += f"; {_deployment_label(config)}"
+    if config.config_file is None:
+        detail += "; no application.toml/properties found"
+    if config.unparsed:
+        return _doctor.CheckResult(
+            "threading", "Threading", _doctor.WARN,
+            detail + f"; {', '.join(Path(path).name for path in config.unparsed)} not inspected (only TOML and properties are parsed)",
+            "Move threading settings to config/application.toml so pyronaut doctor and pyronaut validate-config can verify them", data,
+        )
+    return _doctor.CheckResult("threading", "Threading", _doctor.PASS, detail, data=data)
+
+
+def _virtualenv_base_home(venv_dir: Path) -> Path | None:
+    config = venv_dir / "pyvenv.cfg"
+    try:
+        for line in config.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "home" and value.strip():
+                return Path(value.strip())
+    except OSError:
+        return None
+    return None
+
+
+def _doctor_check_interpreter(project_dir: Path | None) -> _doctor.CheckResult:
+    data: dict[str, object] = {}
+    problems: list[tuple[str, str, str]] = []  # (status, detail, fix)
+
+    override = _read_env("PYRONAUT_PYTHON_EXECUTABLE")
+    data["pythonExecutableOverride"] = override
+    if override:
+        override_path = Path(override)
+        if not _is_executable_file(override_path):
+            problems.append((_doctor.FAIL, f"PYRONAUT_PYTHON_EXECUTABLE={override} is not an executable file", "Unset PYRONAUT_PYTHON_EXECUTABLE or point it at a GraalPy interpreter"))
+        elif "graalpy" not in str(override_path.resolve()).lower():
+            problems.append((_doctor.WARN, f"PYRONAUT_PYTHON_EXECUTABLE={override} is not a GraalPy interpreter; its packages cannot be used by the embedded runtime", "Unset PYRONAUT_PYTHON_EXECUTABLE or point it at a GraalPy interpreter"))
+
+    venv_dir = project_dir / ".venv" if project_dir is not None else None
+    active = _read_env("VIRTUAL_ENV")
+    data["activeVirtualenv"] = active
+    if active and venv_dir is not None and venv_dir.is_dir():
+        try:
+            same = Path(active).resolve() == venv_dir.resolve()
+        except OSError:
+            same = False
+        if not same:
+            problems.append((_doctor.WARN, f"activated virtualenv {active} is not the project .venv; Pyronaut commands use {venv_dir}", f"Run: source {venv_dir / 'bin' / 'activate'}"))
+
+    base_home: Path | None = None
+    if venv_dir is not None and venv_dir.is_dir():
+        base_home = _virtualenv_base_home(venv_dir)
+        data["virtualenvBase"] = str(base_home) if base_home else None
+        if base_home is None:
+            problems.append((_doctor.WARN, f"{venv_dir}/pyvenv.cfg has no home entry", "Recreate the environment: rm -rf .venv && graalpy -m venv .venv"))
+        elif not base_home.is_dir():
+            problems.append((_doctor.FAIL, f"{venv_dir} was created from {base_home}, which no longer exists (the base interpreter was removed)", "Recreate the environment: rm -rf .venv && graalpy -m venv .venv && .venv/bin/python -m pip install -e ."))
+        else:
+            selected = _find_global_graalpy()
+            if selected is not None and _is_executable_file(selected[0]):
+                selected_home = selected[0].resolve().parent
+                data["selectedGraalPy"] = str(selected[0])
+                try:
+                    matches = base_home.resolve() == selected_home
+                except OSError:
+                    matches = False
+                if not matches:
+                    problems.append((_doctor.WARN, f"{venv_dir} was created from {base_home} but the selected GraalPy is {selected[0]} ({selected[1]})", "Recreate .venv with the selected GraalPy, or select the version that created it (pyenv global <version>)"))
+
+    if problems:
+        status = _doctor.FAIL if any(status == _doctor.FAIL for status, _, _ in problems) else _doctor.WARN
+        return _doctor.CheckResult("interpreter", "Interpreter", status, "; ".join(detail for _, detail, _ in problems), problems[0][2], data)
+    if base_home is not None:
+        return _doctor.CheckResult("interpreter", "Interpreter", _doctor.PASS, f"project .venv is based on {base_home} and matches the selected GraalPy; no overrides", data=data)
+    return _doctor.CheckResult("interpreter", "Interpreter", _doctor.PASS, "no PYRONAUT_PYTHON_EXECUTABLE or VIRTUAL_ENV overrides", data=data)
+
+
+def _newest_mtime(root: Path) -> float | None:
+    newest: float | None = None
+    if root.is_file():
+        return root.stat().st_mtime
+    for current, dirs, files in os.walk(root):
+        for file_name in files:
+            try:
+                mtime = (Path(current) / file_name).stat().st_mtime
+            except OSError:
+                continue
+            if newest is None or mtime > newest:
+                newest = mtime
+    return newest
+
+
+def _doctor_check_generated_state(project_dir: Path) -> _doctor.CheckResult:
+    output_dir = _pyronaut_output_dir(project_dir)
+    manifests = [path for path in _required_install_manifests(project_dir) if path.is_file()]
+    data: dict[str, object] = {"directory": str(output_dir), "staleManifests": {}, "pyprojectNewerThanInstall": False, "sourcesNewerThanClasses": False}
+    if not manifests:
+        return _doctor.CheckResult("state", "Generated state", _doctor.PASS, f"nothing generated in {output_dir} yet", data=data)
+
+    stale: dict[str, int] = {}
+    for manifest in manifests:
+        if manifest.name.startswith("resolved-"):
+            try:
+                entries = _read_manifest_entries(manifest)
+            except (OSError, RuntimeError):
+                continue
+            missing = sum(1 for entry in entries if not Path(entry).exists())
+            if missing:
+                stale[manifest.name] = missing
+    data["staleManifests"] = stale
+    if stale:
+        summary = ", ".join(f"{name} ({count} missing)" for name, count in sorted(stale.items()))
+        return _doctor.CheckResult(
+            "state", "Generated state", _doctor.FAIL,
+            f"classpath manifests reference files that no longer exist: {summary} (Maven repository changed since the last install)",
+            "Run pyronaut install", data,
+        )
+
+    pyproject = project_dir / "pyproject.toml"
+    try:
+        oldest_manifest = min(path.stat().st_mtime for path in manifests)
+        pyproject_newer = pyproject.is_file() and pyproject.stat().st_mtime > oldest_manifest
+    except OSError:
+        pyproject_newer = False
+    data["pyprojectNewerThanInstall"] = pyproject_newer
+    if pyproject_newer:
+        return _doctor.CheckResult(
+            "state", "Generated state", _doctor.WARN,
+            "pyproject.toml changed after the last pyronaut install; the resolved classpath may not match its dependencies",
+            "Run pyronaut install", data,
+        )
+
+    classes_dir = output_dir / "classes"
+    detail = f"install manifests in {output_dir} are current"
+    if classes_dir.is_dir():
+        try:
+            newest_source = max((mtime for _, mtime, _ in _snapshot_watched_files(project_dir)), default=None)
+        except (RuntimeError, ValueError, TypeError, OSError):
+            newest_source = None
+        newest_class = _newest_mtime(classes_dir)
+        if newest_source is not None and newest_class is not None and newest_source / 1e9 > newest_class:
+            data["sourcesNewerThanClasses"] = True
+            detail += "; sources changed after the last pyronaut process (dev, run and test reprocess automatically)"
+        else:
+            detail += "; processed classes are current"
+    else:
+        detail += "; not processed yet (dev, run and test process automatically)"
+    return _doctor.CheckResult("state", "Generated state", _doctor.PASS, detail, data=data)
+
+
+def _doctor_probe_packages(venv_python: Path, packages: Sequence[str], threads: int) -> tuple[dict[str, object] | None, str]:
+    request = json.dumps({"packages": list(packages), "threads": threads})
+    code, out, err = _doctor_capture([str(venv_python), "-c", _DOCTOR_PACKAGE_PROBE, request], timeout=_DOCTOR_PROBE_TIMEOUT)
+    if code != 0:
+        return None, _last_line(err) or f"exit code {code}"
+    for line in reversed(out.splitlines()):
+        if line.startswith("{"):
+            try:
+                parsed = json.loads(line)
+            except ValueError:
+                break
+            if isinstance(parsed, dict):
+                return parsed, ""
+    return None, "probe produced no JSON report"
+
+
+def _doctor_check_packages(project_dir: Path, config: _DoctorRuntimeConfig) -> _doctor.CheckResult:
+    packages = _read_pyproject_python_dependencies(project_dir)
+    data: dict[str, object] = {"declared": packages, "threads": config.probe_threads, "deployment": _deployment_label(config), "packages": {}}
+    if not packages:
+        return _doctor.CheckResult("packages", "Python packages", _doctor.PASS, "no [project].dependencies declared in pyproject.toml", data=data)
+    venv_dir = project_dir / ".venv"
+    venv_python = _resolve_virtualenv_python(venv_dir / "bin") if (venv_dir / "bin").is_dir() else None
+    if venv_python is None:
+        return _doctor.CheckResult(
+            "packages", "Python packages", _doctor.FAIL,
+            f"{len(packages)} declared package{'s' if len(packages) != 1 else ''} but no project virtualenv at {venv_dir}",
+            "graalpy -m venv .venv && .venv/bin/python -m pip install -e .", data,
+        )
+    data["executable"] = str(venv_python)
+    report, error = _doctor_probe_packages(venv_python, packages, config.probe_threads)
+    if report is None:
+        return _doctor.CheckResult(
+            "packages", "Python packages", _doctor.FAIL, f"package probe failed in {venv_python}: {error}",
+            "Recreate the environment: rm -rf .venv && graalpy -m venv .venv && .venv/bin/python -m pip install -e .", data,
+        )
+    results = report.get("packages") if isinstance(report.get("packages"), dict) else {}
+    data["packages"] = results
+    missing = [name for name in packages if not (isinstance(results.get(name), dict) and results[name].get("installed"))]
+    broken: dict[str, str] = {}
+    native: list[str] = []
+    for name in packages:
+        result = results.get(name)
+        if not isinstance(result, dict) or not result.get("installed"):
+            continue
+        errors = result.get("errors") if isinstance(result.get("errors"), dict) else {}
+        if errors:
+            module, message = next(iter(errors.items()))
+            broken[name] = f"{module}: {message}"
+        if result.get("native"):
+            native.append(name)
+    threads_note = f"{config.probe_threads} concurrent thread{'s' if config.probe_threads != 1 else ''}"
+    if missing:
+        return _doctor.CheckResult(
+            "packages", "Python packages", _doctor.FAIL,
+            f"{len(missing)} of {len(packages)} declared packages not installed in {venv_dir}: {', '.join(missing)}",
+            f"{venv_python} -m pip install {' '.join(shlex.quote(name) for name in missing)}", data,
+        )
+    if broken:
+        summary = "; ".join(f"{name} ({message})" for name, message in broken.items())
+        return _doctor.CheckResult(
+            "packages", "Python packages", _doctor.FAIL,
+            f"{len(broken)} of {len(packages)} packages fail to import under {threads_note}: {summary}",
+            f"Reinstall the package with GraalPy ({venv_python} -m pip install --force-reinstall <name>) and check {_GRAALPY_COMPATIBILITY_PAGE}", data,
+        )
+    detail = f"{len(packages)} declared package{'s' if len(packages) != 1 else ''} import cleanly under {threads_note} ({_deployment_label(config)})"
+    if native:
+        mode = "the native image" if config.native else "GraalPy"
+        return _doctor.CheckResult(
+            "packages", "Python packages", _doctor.WARN,
+            detail + f"; {', '.join(native)} contain native extensions, which are experimental on {mode}",
+            "Verify these packages under load and at build time; prefer pure-Python alternatives or GraalPy-specific wheels", data,
+        )
+    return _doctor.CheckResult("packages", "Python packages", _doctor.PASS, detail, data=data)
+
+
+def _graalpy_release_tag(version_line: str | None, expected: str | None) -> str | None:
+    for candidate in (version_line or "", expected or ""):
+        match = re.search(r"(\d+)\.(\d+)", candidate.rsplit("GraalVM", 1)[-1] if "GraalVM" in candidate else candidate)
+        if match and int(match.group(1)) >= 23:
+            return f"v{match.group(1)}{match.group(2)}"
+    return None
+
+
+def _graalpy_compatibility_cache(release: str) -> Path:
+    return Path.home() / ".pyronaut" / "graalpy-compatibility" / f"python-module-testing-{release}.csv"
+
+
+def _load_graalpy_compatibility(release: str, *, offline: bool) -> tuple[dict[str, tuple[str, int, float]] | None, str]:
+    """Return ``{package: (version, status, percent)}`` from graalpy.org, cached for a week."""
+    cache = _graalpy_compatibility_cache(release)
+    url = _GRAALPY_COMPATIBILITY_URL.format(release=release)
+    fresh = cache.is_file() and time.time() - cache.stat().st_mtime < _GRAALPY_COMPATIBILITY_MAX_AGE
+    note = ""
+    if not fresh and not offline:
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            temporary = cache.with_suffix(".csv.part")
+            _download_url_with_progress(url, temporary, f"Downloading GraalPy {release} compatibility data")
+            os.replace(temporary, cache)
+        except (OSError, ValueError) as exc:
+            note = f"could not refresh {url}: {_last_line(str(exc)) or exc.__class__.__name__}"
+    if not cache.is_file():
+        return None, note or f"{url} not cached (offline)"
+    table: dict[str, tuple[str, int, float]] = {}
+    try:
+        for line in cache.read_text(encoding="utf-8").splitlines():
+            fields = line.strip().split(",")
+            if len(fields) < 3 or not fields[0]:
+                continue
+            try:
+                status = int(fields[2])
+                percent = float(fields[3]) if len(fields) > 3 and re.fullmatch(r"\d+(\.\d+)?", fields[3]) else 0.0
+            except ValueError:
+                continue
+            table[_canonical_package_name(fields[0])] = (fields[1], status, percent)
+    except OSError as exc:
+        return None, str(exc)
+    if not table:
+        return None, note or f"{cache} is empty"
+    return table, note
+
+
+def _doctor_check_graalpy_compatibility(project_dir: Path, *, offline: bool) -> _doctor.CheckResult:
+    packages = _read_pyproject_python_dependencies(project_dir)
+    data: dict[str, object] = {"declared": packages, "source": _GRAALPY_COMPATIBILITY_PAGE, "packages": {}}
+    if not packages:
+        return _doctor.CheckResult("compat", "GraalPy compatibility", _doctor.PASS, "no [project].dependencies to look up", data=data)
+    venv_dir = project_dir / ".venv"
+    venv_python = _resolve_virtualenv_python(venv_dir / "bin") if (venv_dir / "bin").is_dir() else None
+    version_line = _probe_python_version(venv_python) if venv_python is not None else None
+    release = _graalpy_release_tag(version_line, _read_version_properties().get("graalpy"))
+    data["release"] = release
+    if release is None:
+        return _doctor.CheckResult(
+            "compat", "GraalPy compatibility", _doctor.WARN, "cannot determine the GraalPy release to look up (no .venv and no bundled version)",
+            "Create the project .venv with GraalPy: graalpy -m venv .venv", data,
+        )
+    table, note = _load_graalpy_compatibility(release, offline=offline)
+    data["dataFile"] = str(_graalpy_compatibility_cache(release))
+    if table is None:
+        return _doctor.CheckResult(
+            "compat", "GraalPy compatibility", _doctor.WARN, f"GraalPy {release[1:3]}.{release[3:]} package data unavailable: {note}",
+            f"Check {_GRAALPY_COMPATIBILITY_PAGE} manually, or re-run without --offline", data,
+        )
+    fails: list[str] = []
+    partial: list[str] = []
+    untested: list[str] = []
+    for name in packages:
+        entry = table.get(_canonical_package_name(name))
+        if entry is None:
+            untested.append(name)
+            data["packages"][name] = {"status": "untested"}  # type: ignore[index]
+            continue
+        version, status, percent = entry
+        if status >= 2:
+            fails.append(f"{name} {version}")
+            verdict = "fails-to-install"
+        elif percent < _GRAALPY_COMPATIBLE_PERCENT:
+            partial.append(f"{name} {version} ({percent:.0f}% tests pass)")
+            verdict = "partial"
+        else:
+            verdict = "compatible"
+        data["packages"][name] = {"status": verdict, "version": version, "testsPassed": percent}  # type: ignore[index]
+    label = f"GraalPy {release[1:3]}.{release[3:]}"
+    compatible = len(packages) - len(fails) - len(partial) - len(untested)
+    detail = f"{label}: {compatible} of {len(packages)} declared packages compatible per graalpy.org"
+    if untested:
+        detail += f"; untested: {', '.join(untested)}"
+    if note:
+        detail += f"; {note}"
+    if fails or partial:
+        if fails:
+            detail += f"; fail to install: {', '.join(fails)}"
+        if partial:
+            detail += f"; partially compatible: {', '.join(partial)}"
+        return _doctor.CheckResult(
+            "compat", "GraalPy compatibility", _doctor.WARN, detail,
+            f"Test these packages under pyronaut test and review {_GRAALPY_COMPATIBILITY_PAGE}; consider pure-Python alternatives", data,
+        )
+    return _doctor.CheckResult("compat", "GraalPy compatibility", _doctor.PASS, detail, data=data)
 
 
 def _terminal_environment(env: dict[str, str]) -> dict[str, str]:
