@@ -258,12 +258,16 @@ class PyronautRunMainTest {
         Path pyronautDir = project.resolve("__pyronaut__");
         Path classesDir = pyronautDir.resolve("classes");
         Path configDir = project.resolve("config");
-        Path runtimeJar = tempDir.resolve("runtime.jar");
+        Path runtimeJar = project.resolve("runtime.jar");
         Files.createDirectories(classesDir);
         Files.createDirectories(configDir);
         Files.writeString(runtimeJar, "", StandardCharsets.UTF_8);
         Files.createDirectories(pyronautDir);
-        Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), runtimeJar + "\n", StandardCharsets.UTF_8);
+        Files.writeString(
+            pyronautDir.resolve("resolved-runtime-dependencies"),
+            project.relativize(runtimeJar) + "\n",
+            StandardCharsets.UTF_8
+        );
 
         PyronautRunMain.ResolvedProjectLayout layout = new PyronautRunMain().resolveProjectLayout(project, Path.of("__pyronaut__/classes"), Path.of("config"));
         List<String> urls = layout.classpathUrls().stream().map(URL::toString).toList();
