@@ -516,6 +516,7 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.netty.resolver.*",
     "-H:Preserve=package=io.netty.util.concurrent",
     "-H:Preserve=package=io.netty.util",
+    "-H:Preserve=package=io.netty.handler.logging.*",
     "-H:Preserve=package=io.netty.util.internal.logging.*",
 
     /* reactor.* */
