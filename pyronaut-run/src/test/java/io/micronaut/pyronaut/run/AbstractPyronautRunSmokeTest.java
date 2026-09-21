@@ -2,6 +2,7 @@ package io.micronaut.pyronaut.run;
 
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import example.JavaHelloController;
+import example.TestWritable;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
@@ -52,6 +53,22 @@ abstract class AbstractPyronautRunSmokeTest {
 
         RunResult result = runPyronautRun(project);
         assertTrue(result.responseBody().contains("Hello World"), result.output());
+    }
+
+    protected void assertPythonCanInvokeWritableMethod() throws Exception {
+        Path project = tempDir.resolve("writable-app");
+        int port = reservePort();
+        prepareWritableProject(project, port);
+
+        int processExit = new picocli.CommandLine(new PyronautProcessorMain()).execute(
+            "--project-dir", project.toString(),
+            "--no-cache"
+        );
+        assertEquals(0, processExit);
+        copyWritableFixture(project);
+
+        RunResult result = runPyronautRun(project);
+        assertTrue(result.responseBody().contains("Hello Writable"), result.output());
     }
 
     protected void assertPrecompiledJavaApplicationServesHttpResponse() throws Exception {
@@ -282,6 +299,63 @@ abstract class AbstractPyronautRunSmokeTest {
 
         Path testClasses = Path.of(JavaHelloController.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         copyTree(testClasses.resolve("example"), classesDir.resolve("example"));
+        copyTree(
+            testClasses.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference"),
+            classesDir.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference")
+        );
+    }
+
+    private static void prepareWritableProject(Path project, int port) throws Exception {
+        Path pyronautDir = project.resolve("__pyronaut__");
+        Path configDir = project.resolve("config");
+        Files.createDirectories(pyronautDir);
+        Files.createDirectories(configDir);
+        writeProjectFile(project, "pyproject.toml", minimalPyproject());
+        writeProjectFile(
+            project,
+            "src/main.py",
+            "from app import WritableController\n"
+        );
+        writeProjectFile(
+            project,
+            "src/app.py",
+            """
+                from java.io import StringWriter
+                from micronaut.core.io import Writable
+                from micronaut.http.annotation import Controller, Get
+
+                @Controller
+                class WritableController:
+                    def __init__(self, writable: Writable):
+                        self.writable = writable
+
+                    @Get(value="/", produces="text/plain")
+                    def index(self) -> str:
+                        writer = StringWriter()
+                        self.writable.writeTo(writer)
+                        return writer.toString()
+                """
+        );
+        writeProjectFile(
+            project,
+            "config/application.properties",
+            "micronaut.server.port=" + port + System.lineSeparator()
+        );
+        String manifest = currentRuntimeClasspathManifest(false);
+        Files.writeString(pyronautDir.resolve("resolved-build-dependencies"), manifest, StandardCharsets.UTF_8);
+        Files.writeString(pyronautDir.resolve("resolved-runtime-dependencies"), manifest, StandardCharsets.UTF_8);
+        Files.writeString(pyronautDir.resolve("resolved-test-dependencies"), manifest, StandardCharsets.UTF_8);
+    }
+
+    private static void copyWritableFixture(Path project) throws Exception {
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        Path testClasses = Path.of(TestWritable.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        for (String className : List.of(
+            "TestWritable.class",
+            "$TestWritable$Definition.class"
+        )) {
+            copyTree(testClasses.resolve("example/" + className), classesDir.resolve("example/" + className));
+        }
         copyTree(
             testClasses.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference"),
             classesDir.resolve("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference")

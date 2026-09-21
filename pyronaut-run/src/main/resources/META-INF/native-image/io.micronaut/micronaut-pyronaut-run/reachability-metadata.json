@@ -43,6 +43,17 @@
       ]
     },
     {
+      "type": "io.micronaut.core.io.Writable",
+      "methods": [
+        {
+          "name": "writeTo",
+          "parameterTypes": [
+            "java.io.Writer"
+          ]
+        }
+      ]
+    },
+    {
       "type": "io.micronaut.pyronaut.run.PyronautRunMain",
       "fields": [
         {

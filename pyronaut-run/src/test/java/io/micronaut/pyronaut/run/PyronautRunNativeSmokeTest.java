@@ -13,6 +13,11 @@ class PyronautRunNativeSmokeTest extends AbstractPyronautRunSmokeTest {
         assertHelloWorldApplicationServesHttpResponse();
     }
 
+    @Test
+    void nativeLauncherInvokesWritableMethodFromPython() throws Exception {
+        assertPythonCanInvokeWritableMethod();
+    }
+
     @Override
     protected RunResult runPyronautRun(Path project) throws Exception {
         return runNative(Path.of(System.getProperty("pyronaut.run.native.binary")), project);

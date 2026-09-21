@@ -11,6 +11,11 @@ class PyronautRunJvmSmokeTest extends AbstractPyronautRunSmokeTest {
         assertHelloWorldApplicationServesHttpResponse();
     }
 
+    @Test
+    void jvmLauncherInvokesWritableMethodFromPython() throws Exception {
+        assertPythonCanInvokeWritableMethod();
+    }
+
     @Override
     protected RunResult runPyronautRun(Path project) throws Exception {
         return runJvm(project);
