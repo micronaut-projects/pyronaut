@@ -57,7 +57,7 @@ To also build the Javadocs, run `./gradlew docs`.
 
 If you use IntelliJ IDEA, you can import the project using the Intellij Gradle Tooling ("File / Import Project" and selecting the "settings.gradle" file).
 
-Micronaut Core `5.2.2` and stable GraalPy artifacts are resolved from Maven Central.
+Micronaut Core `5.2.3` and stable GraalPy artifacts are resolved from Maven Central.
 
 ## Testing native bundles from a checkout
 

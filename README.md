@@ -205,7 +205,7 @@ The help command should print the CLI usage. The released 0.0.3 wheel reports:
 
 ```text
 Pyronaut: 0.0.3
-Micronaut Core: 5.2.2
+Micronaut Core: 5.2.3
 Micronaut Platform: 5.1.0
 GraalPy: 25.3.4.1
 Native Image JDK: 25
@@ -363,7 +363,7 @@ from the `hello-world` directory.
 
 Create `pyproject.toml` in the `hello-world` directory using the minimal
 example shown in [Typical project layout](#typical-project-layout) above.
-The source checkout uses Micronaut Core `5.2.2`, which is published to Maven
+The source checkout uses Micronaut Core `5.2.3`, which is published to Maven
 Central.
 
 ### 3. Add a controller
