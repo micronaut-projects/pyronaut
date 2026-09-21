@@ -32,7 +32,7 @@ Pyronaut can resolve versionless Micronaut coordinates from configured BOM versi
 [source,toml]
 ----
 [tool.pyronaut.core]
-version = "5.2.2"
+version = "5.2.3"
 
 [tool.pyronaut.platform]
 version = "5.1.0"
