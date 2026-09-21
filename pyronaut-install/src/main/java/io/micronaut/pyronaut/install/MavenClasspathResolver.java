@@ -243,13 +243,21 @@ final class MavenClasspathResolver {
                                                              Path localRepositoryPath,
                                                              boolean offline,
                                                              boolean forceUpdates) {
+        return resolveTestResourcesProviderDetails(model, localRepositoryPath, offline, forceUpdates, null);
+    }
+
+    ResolvedScopeDetails resolveTestResourcesProviderDetails(PyprojectModel model,
+                                                             Path localRepositoryPath,
+                                                             boolean offline,
+                                                             boolean forceUpdates,
+                                                             DependencyProgressListener progressListener) {
         return resolveScopeDetails(
             model,
             InstallScope.TEST_RESOURCES_SERVER,
             localRepositoryPath,
             offline,
             forceUpdates,
-            null,
+            progressListener,
             null,
             false
         );

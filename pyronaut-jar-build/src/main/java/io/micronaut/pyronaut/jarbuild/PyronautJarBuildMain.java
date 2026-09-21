@@ -15,6 +15,8 @@
  */
 package io.micronaut.pyronaut.jarbuild;
 
+import io.micronaut.pyronaut.config.terminal.PhaseReporter;
+import io.micronaut.pyronaut.config.terminal.Terminal;
 import picocli.CommandLine;
 
 import java.nio.file.Files;
@@ -60,24 +62,29 @@ public final class PyronautJarBuildMain implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        try {
-            List<Path> classpath = Files.readAllLines(classpathFile).stream()
-                .map(String::trim)
-                .filter(value -> !value.isEmpty())
-                .map(Path::of)
-                .toList();
-            FatJarRequest request = FatJarRequest.builder(output, classesDirectory, mainClass)
-                .applicationName(applicationName)
-                .applicationVersion(applicationVersion)
-                .resourceDirectories(resourceDirectories)
-                .classpath(classpath)
-                .build();
-            FatJarResult result = new FatJarPackager().packageApplication(request);
-            System.out.println("FAT JAR build complete: " + result.output());
-            return 0;
-        } catch (Exception e) {
-            System.err.println("FAT JAR build failed: " + e.getMessage());
-            return 8;
+        try (PhaseReporter progress = PhaseReporter.create()) {
+            PhaseReporter.Phase packaging = progress.start("Packaging FAT JAR");
+            try {
+                List<Path> classpath = Files.readAllLines(classpathFile).stream()
+                    .map(String::trim)
+                    .filter(value -> !value.isEmpty())
+                    .map(Path::of)
+                    .toList();
+                FatJarRequest request = FatJarRequest.builder(output, classesDirectory, mainClass)
+                    .applicationName(applicationName)
+                    .applicationVersion(applicationVersion)
+                    .resourceDirectories(resourceDirectories)
+                    .classpath(classpath)
+                    .build();
+                FatJarResult result = new FatJarPackager().packageApplication(request, (index, total, entry) ->
+                    packaging.detail(index + "/" + total + " dependencies"));
+                packaging.done("Packaged " + result.output().getFileName() + " (" + result.archiveEntries() + " entries, "
+                    + Terminal.formatBytes(Files.size(result.output())) + ")");
+                return 0;
+            } catch (Exception e) {
+                packaging.fail("FAT JAR build failed: " + e.getMessage());
+                return 8;
+            }
         }
     }
 
@@ -87,6 +94,7 @@ public final class PyronautJarBuildMain implements Callable<Integer> {
      * @param args command arguments
      */
     public static void main(String[] args) {
+        Terminal.notifyLaunched();
         System.exit(new CommandLine(new PyronautJarBuildMain()).execute(args));
     }
 }

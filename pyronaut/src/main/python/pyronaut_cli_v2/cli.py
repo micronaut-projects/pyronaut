@@ -26,10 +26,12 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Callable, Iterable, NamedTuple, Protocol, Sequence
+from typing import Callable, Iterable, Iterator, NamedTuple, Protocol, Sequence
 
 from .progress import PROGRESS_EPOCH_ENV as _PROGRESS_EPOCH_ENV
+from .progress import LaunchIndicator as _LaunchIndicator
 from .progress import console as _progress_console
+from .progress import format_bytes as _format_bytes
 from .progress import progress_epoch_ms as _progress_epoch_ms
 from . import doctor as _doctor
 
@@ -561,7 +563,7 @@ def run(
 
         if auto_restart_mode:
             if no_validate:
-                sys.stderr.write("[validation] skipped (--no-validate)\n")
+                _progress_console().note("Configuration validation skipped (--no-validate)")
             else:
                 validation_code = _run_lifecycle_validation(
                     project_dir=project_dir,
@@ -627,7 +629,7 @@ def run(
                 if preflight_code != SUCCESS:
                     return preflight_code
             if no_validate:
-                sys.stderr.write("[validation] skipped (--no-validate)\n")
+                _progress_console().note("Configuration validation skipped (--no-validate)")
             else:
                 validation_code = _run_lifecycle_validation(
                     project_dir=project_dir,
@@ -2790,7 +2792,7 @@ def _run_build(
         return USAGE_ERROR
 
     if no_validate:
-        sys.stderr.write("[validation] skipped (--no-validate)\n")
+        _progress_console().note("Configuration validation skipped (--no-validate)")
     else:
         validation_code = _run_lifecycle_validation(
             project_dir=str(project_dir),
@@ -2952,67 +2954,119 @@ def _run_build(
             return PRECONDITION_FAILED
         with tempfile.TemporaryDirectory(prefix="pyronaut-build-native-") as staging_root:
             staging_dir = Path(staging_root) / "stage"
-            _prepare_build_wheel_staging(
-                project_dir=project_dir,
-                staging_dir=staging_dir,
-                project_name=project_name,
-                project_version=project_version,
-                mode="native",
-                main_class=main_class,
-                runner_executable=None,
-                native_bundle_dir=Path(configured_base).parent if default_native_base else None,
-                native_launcher_executable=str(configured_base) if default_native_base else None,
-            )
-            wheel_command = [
+            wheel_exit = _build_wheel(
+                runner,
                 python_exec,
-                "-m",
-                "pip",
-                "wheel",
-                "--no-deps",
-                *(["--no-build-isolation"] if _extract_offline(args) else []),
-                "--wheel-dir",
-                str(dist_dir),
-                str(staging_dir),
-            ]
-            if _delegation_trace_enabled():
-                print(shlex.join(wheel_command), file=sys.stderr)
-            wheel_exit = runner(wheel_command, None)
+                staging_dir=staging_dir,
+                dist_dir=dist_dir,
+                project_name=project_name,
+                offline=_extract_offline(args),
+                stage=lambda: _prepare_build_wheel_staging(
+                    project_dir=project_dir,
+                    staging_dir=staging_dir,
+                    project_name=project_name,
+                    project_version=project_version,
+                    mode="native",
+                    main_class=main_class,
+                    runner_executable=None,
+                    native_bundle_dir=Path(configured_base).parent if default_native_base else None,
+                    native_launcher_executable=str(configured_base) if default_native_base else None,
+                ),
+            )
         if wheel_exit == SUCCESS:
-            print(f"Native wheel build complete. Artifacts are in: {dist_dir}")
-            print(f"Install with: {python_exec} -m pip install {dist_dir}/*.whl")
-            print(f"Native binary staged from: {output_binary}")
+            console = _progress_console()
+            console.success(f"Native wheel build complete. Artifacts are in: {_display_path(dist_dir)}")
+            console.hint(f"Install with: {python_exec} -m pip install {_display_path(dist_dir)}/*.whl")
+            console.hint(f"Native binary staged from: {_display_path(output_binary)}")
         return wheel_exit
 
     with tempfile.TemporaryDirectory(prefix="pyronaut-build-jvm-") as staging_root:
         staging_dir = Path(staging_root) / "stage"
-        _prepare_build_wheel_staging(
-            project_dir=project_dir,
+        exit_code = _build_wheel(
+            runner,
+            python_exec,
             staging_dir=staging_dir,
+            dist_dir=dist_dir,
             project_name=project_name,
-            project_version=project_version,
-            mode="jvm",
-            main_class=main_class,
-            runner_executable=resolver(PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]),
+            offline=_extract_offline(args),
+            stage=lambda: _prepare_build_wheel_staging(
+                project_dir=project_dir,
+                staging_dir=staging_dir,
+                project_name=project_name,
+                project_version=project_version,
+                mode="jvm",
+                main_class=main_class,
+                runner_executable=resolver(PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]),
+            ),
         )
+    if exit_code == SUCCESS:
+        console = _progress_console()
+        console.success(f"Wheel build complete. Artifacts are in: {_display_path(dist_dir)}")
+        console.hint(f"Install with: {python_exec} -m pip install {_display_path(dist_dir)}/*.whl")
+        console.hint(f"Run the project with: {project_name}")
+    return exit_code
+
+
+def _build_wheel(
+    runner: RunnerWithEnv,
+    python_exec: str,
+    *,
+    staging_dir: Path,
+    dist_dir: Path,
+    project_name: str,
+    offline: bool,
+    stage: Callable[[], None],
+) -> int:
+    """Stage the launcher package and run ``pip wheel`` as one step.
+
+    pip's own output only matters when it fails, so it is shown then.
+    """
+    console = _progress_console()
+    with console.step("Building wheel", done="Built wheel") as step:
+        stage()
         wheel_command = [
             python_exec,
             "-m",
             "pip",
             "wheel",
             "--no-deps",
-            *(["--no-build-isolation"] if _extract_offline(args) else []),
+            *(["--no-build-isolation"] if offline else []),
             "--wheel-dir",
             str(dist_dir),
             str(staging_dir),
         ]
         if _delegation_trace_enabled():
             print(shlex.join(wheel_command), file=sys.stderr)
-        exit_code = runner(wheel_command, None)
-    if exit_code == SUCCESS:
-        print(f"Wheel build complete. Artifacts are in: {dist_dir}")
-        print(f"Install with: {python_exec} -m pip install {dist_dir}/*.whl")
-        print(f"Run the project with: {project_name}")
+        exit_code = _run_showing_output_on_failure(runner, wheel_command, None)
+        step.failed = exit_code != SUCCESS
+        if exit_code == SUCCESS:
+            prefix = _built_wheel_prefix(project_name)
+            built = sorted(dist_dir.glob(f"{prefix}-*.whl"), key=lambda wheel: wheel.stat().st_mtime) if prefix else []
+            if built:
+                step.done_label = f"Built {built[-1].name}"
     return exit_code
+
+
+def _run_showing_output_on_failure(runner: RunnerWithEnv, command_line: list[str], env: dict[str, str] | None) -> int:
+    """Run a chatty command whose output only matters when it fails.
+
+    Injected runners (tests) are used as they are; the real runner captures
+    the output and prints it above the live region on a non-zero exit.
+    """
+    if runner is not _run_subprocess:
+        return runner(command_line, env)
+    try:
+        completed = subprocess.run(command_line, check=False, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except KeyboardInterrupt:
+        return 130
+    except OSError as exception:
+        print(f"Failed executing delegated command: {exception}", file=sys.stderr)
+        return INTERNAL_ERROR
+    if completed.returncode != 0:
+        console = _progress_console()
+        for line in completed.stdout.splitlines():
+            console.print(line)
+    return int(completed.returncode)
 
 
 def _run_fat_jar_build(
@@ -3081,7 +3135,9 @@ def _run_fat_jar_build(
     if not output.is_file():
         print(f"FAT JAR build reported success but no artifact was produced at: {output}", file=sys.stderr)
         return PRECONDITION_FAILED
-    print(f"FAT JAR build complete: {output}")
+    console = _progress_console()
+    console.success(f"FAT JAR build complete: {_display_path(output)}")
+    console.hint(f"Run it with: java -jar {_display_path(output)}")
     return SUCCESS
 
 
@@ -3470,6 +3526,20 @@ def _stage_native_base_executable(
     target: Path,
     offline: bool,
 ) -> None:
+    """Copy or download the configured native base to ``target`` as one step."""
+    console = _progress_console()
+    with console.step(f"Staging native base {configured}", done=f"Staged native base {configured}") as step:
+        _stage_native_base_executable_into(configured, project_dir=project_dir, target=target, offline=offline)
+        step.done_label = f"Staged native base {configured} ({_format_bytes(target.stat().st_size)})"
+
+
+def _stage_native_base_executable_into(
+    configured: str,
+    *,
+    project_dir: Path,
+    target: Path,
+    offline: bool,
+) -> None:
     parsed = urllib.parse.urlparse(configured)
     target.parent.mkdir(parents=True, exist_ok=True)
     if parsed.scheme in {"http", "https"}:
@@ -3586,7 +3656,7 @@ def _run_native_base_build(
         print(f"Native base build reported success but no binary was produced at: {output}", file=sys.stderr)
         return PRECONDITION_FAILED
     if exit_code == SUCCESS:
-        print(f"Native base build complete: {output}")
+        _progress_console().success(f"Native base build complete: {_display_path(output)}")
     return exit_code
 
 
@@ -4185,7 +4255,8 @@ def _run_docker_build(
                 base_image = docker_config.get("base_image") or f"{image_name}:{project_version}-native-base"
                 build_args["PYRONAUT_BASE_IMAGE"] = base_image
                 dockerfile = context_dir / "DockerfileNativeBase"
-                _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+                with _preparing_docker_context():
+                    _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
                 _write_crema_base_dockerfile(
                     target=dockerfile,
                     builder_image=builder_image,
@@ -4208,7 +4279,7 @@ def _run_docker_build(
                 )
                 if _delegation_trace_enabled():
                     print(shlex.join(base_command), file=sys.stderr)
-                base_exit = runner(base_command, None)
+                base_exit = _run_docker_command(runner, base_command, image_tag=base_image)
                 if base_exit != SUCCESS:
                     return base_exit
                 _record_docker_base_image(project_dir, base_image)
@@ -4223,15 +4294,16 @@ def _run_docker_build(
                 if bundled is None or not bundled.is_file():
                     print("The default native base is not available for this platform.", file=sys.stderr)
                     return PRECONDITION_FAILED
-                _prepare_bundled_docker_context(
-                    project_dir=project_dir, context_dir=context_dir, launcher_executable=str(bundled),
-                )
                 bundled_dir = context_dir / "bundled-base"
                 try:
-                    _stage_bundled_native_base(bundled, bundled_dir)
-                    _stage_additional_native_binaries(
-                        additional_native_binaries, project_dir=project_dir, target=bundled_dir
-                    )
+                    with _preparing_docker_context():
+                        _prepare_bundled_docker_context(
+                            project_dir=project_dir, context_dir=context_dir, launcher_executable=str(bundled),
+                        )
+                        _stage_bundled_native_base(bundled, bundled_dir)
+                        _stage_additional_native_binaries(
+                            additional_native_binaries, project_dir=project_dir, target=bundled_dir
+                        )
                 except RuntimeError as exc:
                     print(str(exc), file=sys.stderr)
                     return PRECONDITION_FAILED
@@ -4256,17 +4328,18 @@ def _run_docker_build(
                 except RuntimeError as exc:
                     print(str(exc), file=sys.stderr)
                     return PRECONDITION_FAILED
-                _prepare_bundled_docker_context(
-                    project_dir=project_dir,
-                    context_dir=context_dir,
-                    launcher_executable=str(bundled),
-                )
                 try:
-                    _stage_additional_native_binaries(
-                        additional_native_binaries,
-                        project_dir=project_dir,
-                        target=context_dir / "bundled-base",
-                    )
+                    with _preparing_docker_context():
+                        _prepare_bundled_docker_context(
+                            project_dir=project_dir,
+                            context_dir=context_dir,
+                            launcher_executable=str(bundled),
+                        )
+                        _stage_additional_native_binaries(
+                            additional_native_binaries,
+                            project_dir=project_dir,
+                            target=context_dir / "bundled-base",
+                        )
                 except RuntimeError as exc:
                     print(str(exc), file=sys.stderr)
                     return PRECONDITION_FAILED
@@ -4279,9 +4352,10 @@ def _run_docker_build(
                     resource_copies=_additional_resource_docker_copy_lines(context_dir),
                 )
             elif (base_image := _configured_docker_base_image(project_dir, docker_config)) is not None:
-                _prepare_crema_native_docker_context(
-                    project_dir=project_dir, context_dir=context_dir, resolver=resolver
-                )
+                with _preparing_docker_context():
+                    _prepare_crema_native_docker_context(
+                        project_dir=project_dir, context_dir=context_dir, resolver=resolver
+                    )
                 build_args["PYRONAUT_BASE_IMAGE"] = base_image
                 custom = _resolve_build_dockerfile(
                     project_dir=project_dir,
@@ -4299,7 +4373,8 @@ def _run_docker_build(
                         resource_copies=_additional_resource_docker_copy_lines(context_dir),
                     )
             else:
-                _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+                with _preparing_docker_context():
+                    _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
                 custom = _resolve_build_dockerfile(
                     project_dir=project_dir,
                     configured_path=docker_config.get("dockerfile_native"),
@@ -4323,7 +4398,8 @@ def _run_docker_build(
                         resource_copies=_additional_resource_docker_copy_lines(context_dir),
                     )
         else:
-            runner_name = _prepare_jvm_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+            with _preparing_docker_context():
+                runner_name = _prepare_jvm_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
             build_args["PYRONAUT_JVM_BASE_IMAGE"] = docker_config.get("jvm_base_image") or _DEFAULT_DOCKER_JVM_BASE_IMAGE
             custom = _resolve_build_dockerfile(
                 project_dir=project_dir,
@@ -4350,9 +4426,38 @@ def _run_docker_build(
         )
         if _delegation_trace_enabled():
             print(shlex.join(command), file=sys.stderr)
-        exit_code = runner(command, None)
+        exit_code = _run_docker_command(runner, command, image_tag=image_tag)
     if exit_code == SUCCESS:
-        print(f"Docker image build complete: {image_tag}")
+        console = _progress_console()
+        console.success(f"Docker image build complete: {image_tag}")
+        console.hint(f"Run it with: docker run --rm -p 8080:8080 {image_tag}")
+    return exit_code
+
+
+@contextlib.contextmanager
+def _preparing_docker_context() -> Iterator[None]:
+    """Show the staging of launchers, dependencies and resources as one step."""
+    with _progress_console().step("Preparing Docker build context", done="Prepared Docker build context"):
+        yield
+
+
+def _display_path(path: Path) -> str:
+    """Show ``path`` relative to the working directory when it lies beneath it."""
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except (OSError, ValueError):
+        return str(path)
+
+
+def _run_docker_command(runner: RunnerWithEnv, command: list[str], *, image_tag: str) -> int:
+    """Run ``docker build`` as a step, letting Docker own the terminal meanwhile."""
+    console = _progress_console()
+    # Suspend first so the row is never drawn beside Docker's own output and
+    # the summary line prints without a redraw in between.
+    with console.suspend():
+        with console.step(f"Building Docker image {image_tag}", done=f"Built Docker image {image_tag}") as step:
+            exit_code = runner(command, None)
+            step.failed = exit_code != SUCCESS
     return exit_code
 
 
@@ -4366,8 +4471,13 @@ def _launcher_package_name(project_name: str) -> str:
     return f"{normalized}_launcher"
 
 
+def _built_wheel_prefix(project_name: str) -> str:
+    """The file name prefix pip gives wheels built for ``project_name``."""
+    return re.sub(r"[-_.]+", "_", project_name.strip()).strip("_")
+
+
 def _remove_existing_built_wheels(dist_dir: Path, project_name: str) -> None:
-    prefix = re.sub(r"[-_.]+", "_", project_name.strip()).strip("_")
+    prefix = _built_wheel_prefix(project_name)
     if not prefix:
         return
     for wheel in dist_dir.glob(f"{prefix}-*.whl"):
@@ -5293,7 +5403,7 @@ def _run_test_cycle(
         tr_session.ensure_started(runner=execute, resolver=resolver, java_home_provider=java_home_provider)
         test_resources_env_overrides = tr_session.client_env_overrides()
     if no_validate:
-        sys.stderr.write("[validation] skipped (--no-validate)\n")
+        _progress_console().note("Configuration validation skipped (--no-validate)")
     else:
         validation_code = _run_lifecycle_validation(
             project_dir=str(project_dir),
@@ -5808,7 +5918,70 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
 
 
 def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> ManagedProcess:
-    return subprocess.Popen(command_line, env=env)
+    launch = _launch_indicator(command_line)
+    try:
+        process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds)
+    except OSError:
+        launch.abandon()
+        raise
+    launch.spawned()
+    return process
+
+
+# Launch indicator labels by tool. Tools missing here (pip, docker, a nested
+# CLI) never take part in the handshake and get no indicator.
+_LAUNCH_LABELS = {
+    "pyronaut-install": "Starting dependency installer",
+    "pyronaut-processor": "Starting processor",
+    "pyronaut-validate-config": "Starting configuration validator",
+    "pyronaut-test": "Starting test runner",
+    "pyronaut-run": "Starting application launcher",
+    "pyronaut-run-python": "Starting application launcher",
+    "pyronaut-native-build": "Starting native image builder",
+    "pyronaut-jar-build": "Starting JAR packager",
+    "pyronaut-test-resources-server": "Starting test resources server",
+}
+_LAUNCH_LABELS_BY_COMMAND = {
+    "install": _LAUNCH_LABELS["pyronaut-install"],
+    "process": _LAUNCH_LABELS["pyronaut-processor"],
+    "validate-config": _LAUNCH_LABELS["pyronaut-validate-config"],
+    "test": _LAUNCH_LABELS["pyronaut-test"],
+    "run": _LAUNCH_LABELS["pyronaut-run"],
+    "dev": _LAUNCH_LABELS["pyronaut-run"],
+    "test-resources-server": _LAUNCH_LABELS["pyronaut-test-resources-server"],
+}
+
+
+def _launch_indicator(command_line: Sequence[str]) -> _LaunchIndicator:
+    return _LaunchIndicator(_progress_console(), _launch_label(command_line))
+
+
+def _launch_label(command_line: Sequence[str]) -> str | None:
+    """Describe what a delegated command line starts, or ``None`` for unknown tools."""
+    if not command_line:
+        return None
+    executable = Path(command_line[0]).name
+    for suffix in (".bat", ".exe"):
+        if executable.lower().endswith(suffix):
+            executable = executable[: -len(suffix)]
+    arguments = list(command_line[1:])
+    if executable in {"java", "javaw"}:
+        # A JVM delegate: the tool is the main class after the JVM options.
+        main_index = next(
+            (index for index, value in enumerate(arguments) if value in JAVA_MAIN_BY_COMMAND.values()),
+            None,
+        )
+        if main_index is None:
+            return None
+        command = next(name for name, main in JAVA_MAIN_BY_COMMAND.items() if main == arguments[main_index])
+        executable = COMMAND_TO_EXECUTABLE[command]
+        arguments = arguments[main_index + 1:]
+    if executable == DEV_NATIVE_EXECUTABLE:
+        # The multi-tool launcher: the first non-option argument names the tool.
+        command = next((value for value in arguments if not value.startswith("-")), None)
+        # A bare source selector means a direct-source run of the application.
+        return _LAUNCH_LABELS_BY_COMMAND.get(command, _LAUNCH_LABELS["pyronaut-run"])
+    return _LAUNCH_LABELS.get(executable)
 
 
 def _default_java_home_provider(
@@ -7473,14 +7646,21 @@ def _filter_create_features(output: str, version: str) -> str:
 
 
 def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> int:
+    launch = _launch_indicator(command_line)
     try:
-        completed = subprocess.run(command_line, check=False, env=env)
-        return int(completed.returncode)
-    except KeyboardInterrupt:
-        return 130
+        process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds)
     except OSError as exception:
+        launch.abandon()
         print(f"Failed executing delegated command: {exception}", file=sys.stderr)
         return INTERNAL_ERROR
+    launch.spawned()
+    with process:
+        try:
+            return int(process.wait())
+        except KeyboardInterrupt:
+            # wait() already gave the child a moment to act on its own SIGINT.
+            process.kill()
+            return 130
 
 
 def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:

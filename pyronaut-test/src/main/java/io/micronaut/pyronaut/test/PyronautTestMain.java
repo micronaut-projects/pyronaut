@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.test;
 
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.test.pytest.execution.ConsoleCapture;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
@@ -999,6 +1000,7 @@ public final class PyronautTestMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        Terminal.notifyLaunched();
         PyronautRuntimeProperties.disableGraalVmImageSingletons();
         PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautTestMain()).execute(args);

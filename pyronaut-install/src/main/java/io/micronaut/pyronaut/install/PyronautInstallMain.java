@@ -19,6 +19,7 @@ import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import picocli.CommandLine;
 
@@ -355,10 +356,13 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 AnnotationProcessorOptionDiscovery.refresh(cacheDir,
                     resolved.getOrDefault(InstallScope.BUILD, List.of()).stream().map(Path::of).toList());
                 if (resolved.containsKey(InstallScope.RUNTIME)) {
+                    progressReporter.generatingApplicationSchema();
                     var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(),
                         resolved.get(InstallScope.RUNTIME), AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
                     if (schemaResult.status() == MicronautApplicationJsonSchemaBundler.Status.GENERATED) {
                         progressReporter.generatedApplicationSchema(schemaResult.mergedSchemas());
+                    } else {
+                        progressReporter.endTask("Generating application schema");
                     }
                 }
                 emitEditorSupportBestEffort(
@@ -441,31 +445,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
     }
 
     private static DependencyProgressListener progressListener(InstallProgressReporter reporter, InstallScope scope) {
-        return new DependencyProgressListener() {
-            @Override
-            public void artifactPlanned(String name) { reporter.artifactPlanned(scope, name); }
-
-            @Override
-            public void reset() { reporter.resetScope(scope); }
-
-            @Override
-            public void begin() { reporter.beginScope(scope); }
-
-            @Override
-            public void artifactStarted(String name) { reporter.artifactStarted(scope, name); }
-
-            @Override
-            public void artifactProgressed(String name, long transferred, long total) { reporter.artifactProgressed(scope, name, transferred, total); }
-
-            @Override
-            public void artifactTransferFinished(String name) { reporter.artifactTransferFinished(scope, name); }
-
-            @Override
-            public void artifactCompleted(String name) { reporter.artifactCompleted(scope, name); }
-
-            @Override
-            public void artifactFailed(String name) { reporter.artifactFailed(scope, name); }
-        };
+        return reporter.listener(scope);
     }
 
     private static List<String> manifestClasspath(InstallScope installScope, List<Path> resolvedClasspath) {
@@ -580,6 +560,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        Terminal.notifyLaunched();
         PyronautLauncherLogging.initialize();
         int exitCode = new CommandLine(new PyronautInstallMain()).execute(args);
         System.exit(exitCode);
@@ -599,13 +580,13 @@ public final class PyronautInstallMain implements Callable<Integer> {
     private static void emitEditorSupport(InstallProgressReporter progressReporter,
                                           PythonEditorSupport.EditorSupportResult result) {
         if (result == null) {
+            progressReporter.endTask("Generating Python editor stubs");
             return;
         }
         switch (result.status()) {
             case GENERATED -> progressReporter.generatedEditorStubs(result.packageCount(), result.symbolCount());
             case CACHED -> progressReporter.cachedEditorStubs();
-            case NONE -> {
-            }
+            case NONE -> progressReporter.endTask("Generating Python editor stubs");
         }
         if (result.warningCount() > 0) {
             progressReporter.editorStubsWarnings(result.warningCount(), result.warningReport());
@@ -614,6 +595,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
     private static void emitEditorSupportBestEffort(InstallProgressReporter progressReporter,
                                                     EditorSupportAction action) {
+        progressReporter.generatingEditorStubs();
         try {
             emitEditorSupport(progressReporter, action.execute());
         } catch (Exception e) {

@@ -26,6 +26,9 @@ _FRAME_INTERVAL = 0.08
 # Delegated tools stamp their progress lines relative to this epoch so the
 # whole command reads as one timeline. An outer CLI invocation wins.
 PROGRESS_EPOCH_ENV = "PYRONAUT_PROGRESS_EPOCH_MS"
+# Names this process and the pipe descriptors ("pid:write,read") a delegated
+# tool uses to report that it has started; see :class:`LaunchIndicator`.
+LAUNCH_HANDSHAKE_ENV = "PYRONAUT_LAUNCH_HANDSHAKE"
 _MAX_TRANSFER_ROWS = 6
 _MIN_TRANSFER_NAME_WIDTH = 12
 _BAR_WIDTH = 14
@@ -200,6 +203,11 @@ class Console:
         """Whether the live region is currently active on a terminal."""
         return any(task.interactive for task in self._tasks)
 
+    @property
+    def animated(self) -> bool:
+        """Whether steps started now would render in a live region."""
+        return self._message_interactive()
+
     def _message_interactive(self) -> bool:
         return self._tasks[0].interactive if self._tasks else self._detect_interactive()
 
@@ -288,6 +296,14 @@ class Console:
             else:
                 _plain(message)
 
+    def note(self, message: str) -> None:
+        """Print a neutral permanent line (a bullet on a terminal)."""
+        with self._lock:
+            if self._message_interactive():
+                self._print_above(self._stamp(None, self._glyphs().bullet, message))
+            else:
+                _plain(message)
+
     def success(self, message: str) -> None:
         with self._lock:
             if self._message_interactive():
@@ -314,7 +330,8 @@ class Console:
         with self._lock:
             glyphs = self._glyphs()
             if self._message_interactive():
-                self._print_above(self._stamp(None, None, self._paint(_DIM, f"  {glyphs.branch} {message}")))
+                # No timeline stamp: the hint belongs to the line above it.
+                self._print_above(self._paint(_DIM, f"  {glyphs.branch} {message}"))
             else:
                 _plain(f"  {message}")
 
@@ -550,6 +567,116 @@ def _enable_windows_vt() -> bool:
         return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
     except Exception:
         return False
+
+
+class LaunchIndicator:
+    """A spinner shown while a delegated tool starts.
+
+    Executing a large native launcher can take several seconds before its
+    first instruction runs (macOS verifies a freshly downloaded image on first
+    launch) and nothing reaches the terminal in the meantime. The indicator
+    keeps a live row until the child reports that it is running, or exits.
+
+    The child reports through a pair of pipes named in
+    :data:`LAUNCH_HANDSHAKE_ENV`: it writes one byte, then waits for a byte
+    from the console so the live row is gone before the child prints. Tools
+    that do not know the protocol keep the descriptors unused; their exit
+    closes the pipe and ends the indicator just the same. The variable also
+    carries this process id so a grandchild inheriting the environment does
+    not mistake one of its own descriptors for the pipe.
+
+    Without a terminal, or on Windows, nothing is shown and the environment
+    is left untouched.
+    """
+
+    def __init__(self, owner: Console, label: str | None) -> None:
+        """``label`` is the row's text; ``None`` disables the indicator."""
+        self._console = owner
+        self._label = label or ""
+        self._child_fds: tuple[int, ...] = ()
+        self._signal_fd: int | None = None
+        self._ack_fd: int | None = None
+        self._step = None
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._active = label is not None and os.name != "nt" and owner.animated
+
+    @property
+    def pass_fds(self) -> tuple[int, ...]:
+        """Descriptors the child must inherit."""
+        return self._child_fds
+
+    def environment(self, env: dict[str, str] | None) -> dict[str, str] | None:
+        """Return ``env`` extended with the handshake descriptors, starting the spinner."""
+        if not self._active:
+            return env
+        signal_read, signal_write = os.pipe()
+        ack_read, ack_write = os.pipe()
+        self._signal_fd = signal_read
+        self._ack_fd = ack_write
+        self._child_fds = (signal_write, ack_read)
+        launched = dict(os.environ if env is None else env)
+        launched[LAUNCH_HANDSHAKE_ENV] = f"{os.getpid()}:{signal_write},{ack_read}"
+        self._step = self._console.step(self._label, persist=False)
+        self._step.__enter__()
+        self._thread = threading.Thread(target=self._await_child, name="pyronaut-launch", daemon=True)
+        self._thread.start()
+        return launched
+
+    def spawned(self) -> None:
+        """Release the child's descriptors once the process holds its own copies."""
+        self._close_child_fds()
+
+    def abandon(self) -> None:
+        """Take the indicator down when the process could not be started."""
+        self._close_child_fds()
+        self._finish()
+        self._release_ack()
+
+    def _close_child_fds(self) -> None:
+        fds, self._child_fds = self._child_fds, ()
+        for fd in fds:
+            _close_quietly(fd)
+
+    def _await_child(self) -> None:
+        assert self._signal_fd is not None
+        try:
+            os.read(self._signal_fd, 1)
+        except OSError:
+            pass
+        self._finish()
+        # Answer only after the region is cleared so the child's first line
+        # lands on a clean terminal; closing the pipe tells it the same.
+        self._release_ack(b"A")
+
+    def _finish(self) -> None:
+        """End the live row and close the signal pipe."""
+        with self._lock:
+            step, self._step = self._step, None
+            signal_fd, self._signal_fd = self._signal_fd, None
+        if step is not None:
+            step.__exit__(None, None, None)
+        if signal_fd is not None:
+            _close_quietly(signal_fd)
+
+    def _release_ack(self, answer: bytes = b"") -> None:
+        with self._lock:
+            ack_fd, self._ack_fd = self._ack_fd, None
+        if ack_fd is None:
+            return
+        if answer:
+            try:
+                os.write(ack_fd, answer)
+            except OSError:
+                pass
+        _close_quietly(ack_fd)
+
+
+def _close_quietly(fd: int) -> None:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
 
 
 _console = Console()

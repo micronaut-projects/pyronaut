@@ -15,7 +15,10 @@
  */
 package io.micronaut.pyronaut.install;
 
-interface DependencyProgressListener {
+/**
+ * Receives dependency resolution events for one scope.
+ */
+public interface DependencyProgressListener {
     void reset();
 
     void begin();

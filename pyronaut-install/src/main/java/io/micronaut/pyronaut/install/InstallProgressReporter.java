@@ -41,7 +41,7 @@ import java.util.Set;
  * lines and never emits control sequences.
  */
 @SuppressWarnings({"checkstyle:NeedBraces", "checkstyle:LeftCurly"})
-final class InstallProgressReporter implements AutoCloseable {
+public final class InstallProgressReporter implements AutoCloseable {
     static final int MAX_TRANSFER_ROWS = 6;
     private static final int MIN_TRANSFER_NAME_WIDTH = 12;
     private static final int BAR_WIDTH = 14;
@@ -55,6 +55,8 @@ final class InstallProgressReporter implements AutoCloseable {
     // Insertion order matters: rows are rendered in the order scopes started.
     private final Map<InstallScope, ScopeState> scopes = new LinkedHashMap<>();
     private final Map<String, Transfer> transfers = new LinkedHashMap<>();
+    // Post-resolution work (schema bundling, stub generation) shown as rows too.
+    private final Map<String, Long> tasks = new LinkedHashMap<>();
 
     InstallProgressReporter(PrintStream output, ProgressMode mode, boolean tty) {
         this(output, mode, tty, false, false);
@@ -68,11 +70,20 @@ final class InstallProgressReporter implements AutoCloseable {
         this.debug = Boolean.getBoolean("pyronaut.progress.debug");
     }
 
-    static InstallProgressReporter create(String mode) {
+    /**
+     * @param mode the {@code --progress} mode: {@code auto}, {@code on} or {@code off}
+     * @return a reporter drawing on the process's own terminal
+     */
+    public static InstallProgressReporter create(String mode) {
         return create(mode, "auto");
     }
 
-    static InstallProgressReporter create(String mode, String colorMode) {
+    /**
+     * @param mode the {@code --progress} mode
+     * @param colorMode {@code auto}, {@code always} or {@code never}
+     * @return a reporter drawing on the process's own terminal
+     */
+    public static InstallProgressReporter create(String mode, String colorMode) {
         ProgressMode progressMode = ProgressMode.fromCliValue(mode);
         DependencyTreeRenderer.ColorMode.fromCliValue(colorMode);
         boolean tty = Terminal.isInteractive();
@@ -85,9 +96,44 @@ final class InstallProgressReporter implements AutoCloseable {
 
     void cacheHit() { done("Dependency manifests are up to date (cache hit)"); }
 
+    /**
+     * @param scope a scope about to be resolved
+     * @return a listener that reports the resolver's events for that scope here
+     */
+    public DependencyProgressListener listener(InstallScope scope) {
+        return new DependencyProgressListener() {
+            @Override
+            public void artifactPlanned(String name) { InstallProgressReporter.this.artifactPlanned(scope, name); }
+
+            @Override
+            public void reset() { resetScope(scope); }
+
+            @Override
+            public void begin() { beginScope(scope); }
+
+            @Override
+            public void artifactStarted(String name) { InstallProgressReporter.this.artifactStarted(scope, name); }
+
+            @Override
+            public void artifactProgressed(String name, long transferred, long total) { InstallProgressReporter.this.artifactProgressed(scope, name, transferred, total); }
+
+            @Override
+            public void artifactTransferFinished(String name) { InstallProgressReporter.this.artifactTransferFinished(scope, name); }
+
+            @Override
+            public void artifactCompleted(String name) { InstallProgressReporter.this.artifactCompleted(scope, name); }
+
+            @Override
+            public void artifactFailed(String name) { InstallProgressReporter.this.artifactFailed(scope, name); }
+        };
+    }
+
     void cacheBypass() { note("Bypassing dependency cache (--refresh/--no-cache)"); }
 
-    void startScope(InstallScope scope) {
+    /**
+     * @param scope a scope whose resolution starts now
+     */
+    public void startScope(InstallScope scope) {
         if (!enabled) return;
         synchronized (lock) {
             // Everything before begin() (BOM imports, graph collection) is
@@ -180,7 +226,11 @@ final class InstallProgressReporter implements AutoCloseable {
         }
     }
 
-    void finishScope(InstallScope scope, int artifactCount) {
+    /**
+     * @param scope a resolved scope
+     * @param artifactCount the number of artifacts it resolved to
+     */
+    public void finishScope(InstallScope scope, int artifactCount) {
         if (!enabled) return;
         ScopeState state;
         synchronized (lock) {
@@ -211,7 +261,10 @@ final class InstallProgressReporter implements AutoCloseable {
         finishScope(scope, completed);
     }
 
-    void failScope(InstallScope scope) {
+    /**
+     * @param scope a scope whose resolution failed
+     */
+    public void failScope(InstallScope scope) {
         if (!enabled) return;
         ScopeState state;
         synchronized (lock) {
@@ -227,15 +280,52 @@ final class InstallProgressReporter implements AutoCloseable {
         else output.println(message);
     }
 
-    void generatedApplicationSchema(int fragmentCount) {
-        done("Generated application schema from runtime classpath (" + fragmentCount + " fragments)");
+    /**
+     * Show a spinner row for work that follows dependency resolution until it
+     * is reported finished.
+     *
+     * @param label the row's label
+     */
+    void startTask(String label) {
+        if (!enabled) return;
+        synchronized (lock) {
+            tasks.put(label, System.nanoTime());
+        }
+        if (!interactive) output.println(label + "...");
+        else region.refresh();
     }
+
+    /**
+     * Take down a task's row without printing anything.
+     *
+     * @param label the row's label
+     * @return how long the task ran, or {@code -1} when it was never started
+     */
+    long endTask(String label) {
+        Long started;
+        synchronized (lock) {
+            started = tasks.remove(label);
+        }
+        if (interactive) region.refresh();
+        return started == null ? -1 : System.nanoTime() - started;
+    }
+
+    void generatingApplicationSchema() { startTask("Generating application schema"); }
+
+    void generatedApplicationSchema(int fragmentCount) {
+        done("Generated application schema from runtime classpath (" + fragmentCount + " fragments)", endTask("Generating application schema"));
+    }
+
+    void generatingEditorStubs() { startTask("Generating Python editor stubs"); }
 
     void generatedEditorStubs(int packageCount, int symbolCount) {
-        done("Generated Python editor stubs (" + packageCount + " packages, " + symbolCount + " symbols)");
+        done("Generated Python editor stubs (" + packageCount + " packages, " + symbolCount + " symbols)", endTask("Generating Python editor stubs"));
     }
 
-    void cachedEditorStubs() { done("Python editor stubs are up to date"); }
+    void cachedEditorStubs() {
+        endTask("Generating Python editor stubs");
+        done("Python editor stubs are up to date");
+    }
 
     void directSourceSelection(String language, int sourceCount) {
         note("Installing IDE support for " + sourceCount + " direct " + language + " source" + (sourceCount == 1 ? "" : "s") + "...");
@@ -247,6 +337,15 @@ final class InstallProgressReporter implements AutoCloseable {
 
     void directSourceDependencies(int artifactCount) { done("Resolved direct-source dependencies (" + artifactCount + " artifacts)"); }
 
+    /**
+     * Report that a direct source launch found its declared dependencies already resolved.
+     *
+     * @param declarationCount the number of declared dependencies
+     */
+    public void directSourceLaunchCacheHit(int declarationCount) {
+        done("Declared dependencies are up to date (" + declarationCount + " declared)");
+    }
+
     void directSourceEditorSupport(String language) { done("Generated " + language + " IDE support in .vscode, .idea, and __pyronaut__"); }
 
     void toolRuntimeReady(Path path) { done("Pyronaut tool runtime ready: " + path); }
@@ -257,10 +356,24 @@ final class InstallProgressReporter implements AutoCloseable {
         warn(message);
     }
 
-    void warn(String message) {
+    /**
+     * @param message a warning printed above the live rows
+     */
+    public void warn(String message) {
         if (!enabled) return;
+        synchronized (lock) {
+            // A warning about a task ends it: nothing further will be reported.
+            tasks.clear();
+        }
         if (interactive) region.printAbove(region.stamp(LiveRegion.YELLOW, glyphs().warning(), message, -1));
         else output.println("WARNING: " + message);
+    }
+
+    /**
+     * @return whether the reporter draws a live region
+     */
+    public boolean interactive() {
+        return interactive;
     }
 
     @Override
@@ -270,6 +383,7 @@ final class InstallProgressReporter implements AutoCloseable {
             // an exception unwound the resolver) must not linger on screen.
             scopes.clear();
             transfers.clear();
+            tasks.clear();
         }
         region.close();
     }
@@ -277,8 +391,12 @@ final class InstallProgressReporter implements AutoCloseable {
     private Glyphs glyphs() { return region.glyphs(); }
 
     private void done(String message) {
+        done(message, -1);
+    }
+
+    private void done(String message, long tookNanos) {
         if (!enabled) return;
-        if (interactive) region.printAbove(region.stamp(LiveRegion.GREEN, glyphs().check(), message, -1));
+        if (interactive) region.printAbove(region.stamp(LiveRegion.GREEN, glyphs().check(), message, tookNanos));
         else output.println(message);
     }
 
@@ -295,6 +413,9 @@ final class InstallProgressReporter implements AutoCloseable {
                 ScopeState state = entry.getValue();
                 String label = (state.collecting ? "Collecting " : "Resolving ") + entry.getKey().cliValue() + " dependencies";
                 lines.add(region.headerRow(spinnerFrame, label, artifactCount(state), state.elapsed(), width));
+            }
+            for (Map.Entry<String, Long> task : tasks.entrySet()) {
+                lines.add(region.headerRow(spinnerFrame, task.getKey(), null, System.nanoTime() - task.getValue(), width));
             }
             int shown = 0;
             for (Transfer transfer : transfers.values()) {

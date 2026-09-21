@@ -210,6 +210,36 @@ public final class DirectSourceDependencyResolver {
                                          List<String> repositories,
                                          Map<String, String> runtimeProperties,
                                          boolean testResourcesEligible) throws IOException {
+        return resolveForLaunch(cacheDirectory, build, runtime, test, boms, exclusions, repositories, runtimeProperties, testResourcesEligible, null);
+    }
+
+    /**
+     * Resolves the declared dependencies of a direct source launch, reporting
+     * each scope's progress.
+     *
+     * @param cacheDirectory persistent direct-source cache directory
+     * @param build build-scoped Maven coordinates
+     * @param runtime runtime-scoped Maven coordinates
+     * @param test test-scoped Maven coordinates
+     * @param boms imported BOM coordinates
+     * @param exclusions transitive exclusions per module
+     * @param repositories Maven repository URLs
+     * @param runtimeProperties runtime properties declared by the sources
+     * @param testResourcesEligible whether the launch may start Test Resources
+     * @param progress the reporter to draw on, or {@code null} for none
+     * @return the launch classpaths and cache status
+     * @throws IOException if the cache cannot be read or written
+     */
+    public LaunchResult resolveForLaunch(Path cacheDirectory,
+                                         List<String> build,
+                                         List<String> runtime,
+                                         List<String> test,
+                                         List<String> boms,
+                                         Map<String, List<String>> exclusions,
+                                         List<String> repositories,
+                                         Map<String, String> runtimeProperties,
+                                         boolean testResourcesEligible,
+                                         InstallProgressReporter progress) throws IOException {
         Path localRepository = MavenClasspathResolver.resolveLocalMavenRepository();
         boolean effectiveTestResourcesEligibility =
             testResourcesEligible && !resolver.isTestResourcesDisabledViaEnvironment();
@@ -234,6 +264,9 @@ public final class DirectSourceDependencyResolver {
                 if (!required) {
                     Files.deleteIfExists(serverManifest);
                 }
+                if (progress != null) {
+                    progress.directSourceLaunchCacheHit(build.size() + runtime.size() + test.size());
+                }
                 return new LaunchResult(
                     read(buildManifest),
                     read(runtimeManifest),
@@ -249,31 +282,23 @@ public final class DirectSourceDependencyResolver {
         MavenClasspathResolver.ResolvedScopeDetails serverDetails = null;
         if (effectiveTestResourcesEligibility && runtimeProperties != null && !runtimeProperties.isEmpty()) {
             PyprojectModel enabledModel = model(build, runtime, test, boms, exclusions, repositories, enabledTestResources());
-            serverDetails = resolver.resolveTestResourcesProviderDetails(
-                enabledModel,
-                localRepository,
-                false,
-                false
-            );
+            serverDetails = resolveScope(progress, InstallScope.TEST_RESOURCES_SERVER, listener ->
+                resolver.resolveTestResourcesProviderDetails(enabledModel, localRepository, false, false, listener));
             required = requiresTestResources(serverDetails.classpath(), runtimeProperties);
             if (required) {
                 baseModel = enabledModel;
-                serverDetails = resolver.resolveScopeDetails(
-                    enabledModel,
-                    InstallScope.TEST_RESOURCES_SERVER,
-                    localRepository,
-                    false,
-                    false
-                );
+                serverDetails = resolveScope(progress, InstallScope.TEST_RESOURCES_SERVER, listener ->
+                    resolver.resolveScopeDetails(enabledModel, InstallScope.TEST_RESOURCES_SERVER, localRepository, false, false, listener));
             }
         }
 
-        MavenClasspathResolver.ResolvedScopeDetails buildDetails =
-            resolver.resolveScopeDetails(baseModel, InstallScope.BUILD, localRepository, false, false);
-        MavenClasspathResolver.ResolvedScopeDetails runtimeDetails =
-            resolver.resolveScopeDetails(baseModel, InstallScope.RUNTIME, localRepository, false, false);
-        MavenClasspathResolver.ResolvedScopeDetails testDetails =
-            resolver.resolveScopeDetails(baseModel, InstallScope.TEST, localRepository, false, false);
+        PyprojectModel launchModel = baseModel;
+        MavenClasspathResolver.ResolvedScopeDetails buildDetails = resolveScope(progress, InstallScope.BUILD, listener ->
+            resolver.resolveScopeDetails(launchModel, InstallScope.BUILD, localRepository, false, false, listener));
+        MavenClasspathResolver.ResolvedScopeDetails runtimeDetails = resolveScope(progress, InstallScope.RUNTIME, listener ->
+            resolver.resolveScopeDetails(launchModel, InstallScope.RUNTIME, localRepository, false, false, listener));
+        MavenClasspathResolver.ResolvedScopeDetails testDetails = resolveScope(progress, InstallScope.TEST, listener ->
+            resolver.resolveScopeDetails(launchModel, InstallScope.TEST, localRepository, false, false, listener));
         List<String> buildResult = classpathStrings(buildDetails);
         List<String> runtimeResult = classpathStrings(runtimeDetails);
         List<String> testResult = classpathStrings(testDetails);
@@ -290,6 +315,26 @@ public final class DirectSourceDependencyResolver {
         Files.writeString(metadata, "testResourcesRequired=" + required + System.lineSeparator());
         Files.writeString(cacheDirectory.resolve(HASH_FILE), hash);
         return new LaunchResult(buildResult, runtimeResult, serverResult, required, false);
+    }
+
+    /**
+     * Resolve one scope, drawing it as a live row when a reporter is present.
+     */
+    private static MavenClasspathResolver.ResolvedScopeDetails resolveScope(InstallProgressReporter progress,
+                                                                            InstallScope scope,
+                                                                            ScopeResolution resolution) {
+        if (progress == null) {
+            return resolution.resolve(null);
+        }
+        progress.startScope(scope);
+        try {
+            MavenClasspathResolver.ResolvedScopeDetails details = resolution.resolve(progress.listener(scope));
+            progress.finishScope(scope, details.classpath().size());
+            return details;
+        } catch (RuntimeException e) {
+            progress.failScope(scope);
+            throw e;
+        }
     }
 
     private static PyprojectModel model(List<String> build,
@@ -571,6 +616,11 @@ public final class DirectSourceDependencyResolver {
             ));
         }
         return List.copyOf(artifacts);
+    }
+
+    @FunctionalInterface
+    private interface ScopeResolution {
+        MavenClasspathResolver.ResolvedScopeDetails resolve(DependencyProgressListener listener);
     }
 
     /**

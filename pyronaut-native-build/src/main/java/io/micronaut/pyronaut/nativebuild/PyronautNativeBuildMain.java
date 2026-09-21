@@ -18,14 +18,18 @@ package io.micronaut.pyronaut.nativebuild;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.terminal.PhaseReporter;
+import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.run.PyronautRunMain;
 import org.graalvm.reachability.GraalVMReachabilityMetadataRepository;
 import org.graalvm.reachability.internal.FileSystemRepository;
 import picocli.CommandLine;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -50,6 +54,9 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -93,6 +100,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private static final String DEFAULT_METADATA_VERSION = loadDefaultMetadataVersion();
     private static final String DEFAULT_METADATA_URL = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/" + DEFAULT_METADATA_VERSION + "/graalvm-reachability-metadata-" + DEFAULT_METADATA_VERSION + "-repository.zip";
     private static final String VERSIONED_METADATA_URL_TEMPLATE = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/%s/graalvm-reachability-metadata-%s-repository.zip";
+    private static final Pattern NATIVE_IMAGE_STAGE = Pattern.compile("^\\[(\\d+)/(\\d+)\\]\\s+(.+?)\\.{3}.*$");
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -133,6 +141,8 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private final PyprojectModelReader modelReader;
     private final NativeImageInvoker nativeImageInvoker;
     private final MetadataRepositoryDownloader metadataRepositoryDownloader;
+    private PhaseReporter progress;
+    private PhaseReporter.Phase nativeImagePhase;
 
     public PyronautNativeBuildMain() {
         this(new PyprojectModelReader(), new ProcessNativeImageInvoker(), new HttpMetadataRepositoryDownloader());
@@ -161,6 +171,15 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        try (PhaseReporter reporter = PhaseReporter.create()) {
+            progress = reporter;
+            return build();
+        } finally {
+            progress = null;
+        }
+    }
+
+    private Integer build() {
         Path root = projectDir.toAbsolutePath().normalize();
         try {
             rejectMainClassOverride();
@@ -251,23 +270,51 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             if (!configurationDirs.isEmpty()) {
                 builder.addNativeImageArgument("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
             }
-            if (verbose) {
-                builder.addNativeImageArgument("--verbose");
-            }
+            builder.verbose(verbose);
             builder.addNativeImageArguments(passthroughNativeImageArgs);
-            int exitCode = builder.build().exitCode();
-            if (exitCode == SUCCESS) {
-                System.out.println("Native build complete: " + outputPath);
-                System.out.println("Run it with: " + outputPath);
-            }
-            return exitCode;
+            return buildNativeImage(builder, root, outputPath);
         } catch (PyprojectModelException | IllegalStateException e) {
-            System.err.println(e.getMessage());
+            progress.error(e.getMessage());
             return PRECONDITION_FAILED;
         } catch (Exception e) {
-            System.err.println("Native build failed: " + e.getMessage());
+            progress.error("Native build failed: " + e.getMessage());
             return INTERNAL_ERROR;
         }
+    }
+
+    /**
+     * Run native-image as a phase. Its output is shown above the phase row and
+     * the {@code [n/m] Stage...} markers it prints become the row's detail.
+     */
+    private int buildNativeImage(PyronautNativeImageBuilder builder, Path root, Path outputPath) throws IOException, InterruptedException {
+        nativeImagePhase = progress.start("Building native image");
+        try {
+            PyronautNativeImageBuilder.BuildResult result = builder.build();
+            if (result.exitCode() == SUCCESS) {
+                Path shown = outputPath.startsWith(root) ? root.relativize(outputPath) : outputPath;
+                nativeImagePhase.done("Built native image " + shown
+                    + (Files.isRegularFile(result.executable()) ? " (" + Terminal.formatBytes(Files.size(result.executable())) + ")" : ""));
+            } else {
+                nativeImagePhase.fail("native-image exited with status " + result.exitCode());
+            }
+            return result.exitCode();
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            nativeImagePhase.fail("Native image build failed");
+            throw e;
+        } finally {
+            nativeImagePhase = null;
+        }
+    }
+
+    private void nativeImageOutput(String line) {
+        PhaseReporter.Phase phase = nativeImagePhase;
+        if (phase != null) {
+            Matcher stage = NATIVE_IMAGE_STAGE.matcher(line.strip());
+            if (stage.matches()) {
+                phase.detail("[" + stage.group(1) + "/" + stage.group(2) + "] " + stage.group(3));
+            }
+        }
+        progress.print(line);
     }
 
     private Integer copyPrebuiltNativeBase(Path root) throws IOException {
@@ -287,7 +334,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         if (!outputPath.toFile().setExecutable(true, false)) {
             throw new IOException("Unable to mark prebuilt default native base executable: " + outputPath);
         }
-        System.out.println("Prebuilt default native base copied: " + outputPath);
+        progress.done("Prebuilt default native base copied: " + outputPath);
         return SUCCESS;
     }
 
@@ -362,20 +409,16 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         if (!configurationDirs.isEmpty()) {
             builder.addNativeImageArgument("-H:ConfigurationFileDirectories=" + joinMetadataDirs(configurationDirs));
         }
-        if (verbose) {
-            builder.addNativeImageArgument("--verbose");
-        }
+        builder.verbose(verbose);
         passthroughNativeImageArgs.forEach(builder::addNativeImageArgument);
-        PyronautNativeImageBuilder.BuildResult result = builder.build();
-        if (result.exitCode() == SUCCESS) {
-            System.out.println("Native base build complete: " + result.executable());
-        }
-        return result.exitCode();
+        return buildNativeImage(builder, root, root.resolve(output).normalize());
     }
 
     private int runNativeImage(List<String> command, Path workingDirectory) throws IOException, InterruptedException {
         try {
-            return nativeImageInvoker.run(command, workingDirectory);
+            // On a terminal the reporter owns the screen: forward native-image's
+            // lines above the live row instead of letting it write directly.
+            return nativeImageInvoker.run(command, workingDirectory, progress != null && progress.interactive() ? this::nativeImageOutput : null);
         } catch (IOException | InterruptedException e) {
             throw e;
         } catch (Exception e) {
@@ -511,7 +554,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                                                          List<Path> runtimeClasspath,
                                                          MetadataOptions metadataOptions) throws IOException {
         if (!metadataOptions.enabled) {
-            System.err.println("Reachability metadata repository: disabled");
+            progress.note("Reachability metadata repository: disabled");
             return new MetadataSelection(List.of(), Set.of());
         }
 
@@ -524,18 +567,40 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
         if (!Files.isDirectory(extractedRoot) && offline) {
             throw new IllegalStateException("Reachability metadata is not cached for " + sourceUri + " and --offline was specified");
         }
-        if (!Files.isDirectory(extractedRoot)) {
-            Files.createDirectories(cacheKeyRoot);
-            try {
-                metadataRepositoryDownloader.download(sourceUri, extractedRoot);
-                downloaded = true;
-            } catch (IOException e) {
-                if (!Files.isDirectory(extractedRoot)) {
-                    throw new IllegalStateException("Failed resolving reachability metadata repository from " + sourceUri + ": " + e.getMessage(), e);
+        PhaseReporter.Phase metadata = progress.start(Files.isDirectory(extractedRoot)
+            ? "Selecting reachability metadata"
+            : "Downloading reachability metadata");
+        try {
+            if (!Files.isDirectory(extractedRoot)) {
+                Files.createDirectories(cacheKeyRoot);
+                try {
+                    metadataRepositoryDownloader.download(sourceUri, extractedRoot);
+                    downloaded = true;
+                } catch (IOException e) {
+                    if (!Files.isDirectory(extractedRoot)) {
+                        throw new IllegalStateException("Failed resolving reachability metadata repository from " + sourceUri + ": " + e.getMessage(), e);
+                    }
                 }
             }
+            MetadataSelection selection = selectMetadata(model, runtimeClasspath, metadataOptions, extractedRoot);
+            String source = downloaded ? "downloaded" : "cached";
+            metadata.done("Applied " + selection.directories().size() + " reachability metadata "
+                + (selection.directories().size() == 1 ? "directory" : "directories") + " (" + source + ")");
+            if (verbose) {
+                String versionText = metadataOptions.version == null || metadataOptions.version.isBlank() ? "default" : metadataOptions.version;
+                progress.hint(sourceUri + " (version " + versionText + ")");
+            }
+            return selection;
+        } catch (IOException | RuntimeException e) {
+            metadata.fail("Reachability metadata could not be resolved");
+            throw e;
         }
+    }
 
+    private static MetadataSelection selectMetadata(PyprojectModel model,
+                                                    List<Path> runtimeClasspath,
+                                                    MetadataOptions metadataOptions,
+                                                    Path extractedRoot) throws IOException {
         Path repositoryRoot = locateRepositoryRoot(extractedRoot);
         Set<String> excluded = Set.copyOf(metadataOptions.excludedModules);
         Set<String> gavs = runtimeArtifacts(model, runtimeClasspath, excluded);
@@ -549,11 +614,6 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .map(path -> moduleFromMetadataDirectory(repositoryRoot, path))
             .filter(module -> module != null && !module.isBlank())
             .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-
-        String source = downloaded ? "download" : "cache";
-        String versionText = metadataOptions.version == null || metadataOptions.version.isBlank() ? "default" : metadataOptions.version;
-        System.err.println("Reachability metadata repository: source=" + source + ", uri=" + sourceUri + ", version=" + versionText);
-        System.err.println("Reachability metadata directories applied: " + selected.size());
         return new MetadataSelection(List.copyOf(selected), Set.copyOf(selectedModules));
     }
 
@@ -1012,17 +1072,31 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     }
 
     static void main(String[] args) {
+        Terminal.notifyLaunched();
         int exitCode = new CommandLine(new PyronautNativeBuildMain()).execute(args);
         System.exit(exitCode);
     }
 
     interface NativeImageInvoker {
         int run(List<String> command, Path workingDirectory) throws Exception;
+
+        /**
+         * Run native-image, handing each output line to {@code output} when
+         * given rather than inheriting the standard streams.
+         */
+        default int run(List<String> command, Path workingDirectory, Consumer<String> output) throws Exception {
+            return run(command, workingDirectory);
+        }
     }
 
     static final class ProcessNativeImageInvoker implements NativeImageInvoker {
         @Override
         public int run(List<String> command, Path workingDirectory) throws Exception {
+            return run(command, workingDirectory, null);
+        }
+
+        @Override
+        public int run(List<String> command, Path workingDirectory, Consumer<String> output) throws Exception {
             Path argumentFile = null;
             try {
                 List<String> processCommand = command;
@@ -1035,13 +1109,25 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                     processCommand = List.of(command.getFirst(), "@" + argumentFile.toAbsolutePath());
                 }
                 ProcessBuilder processBuilder = new ProcessBuilder(processCommand)
-                    .directory(workingDirectory.toFile())
-                    .inheritIO();
+                    .directory(workingDirectory.toFile());
+                if (output == null) {
+                    processBuilder.inheritIO();
+                } else {
+                    processBuilder.redirectInput(ProcessBuilder.Redirect.INHERIT).redirectErrorStream(true);
+                }
                 // The distribution launcher exports a broad CLASSPATH containing
                 // both production runners. Native images must use only the
                 // explicit language-specific -cp assembled above.
                 processBuilder.environment().remove("CLASSPATH");
                 Process process = processBuilder.start();
+                if (output != null) {
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            output.accept(line);
+                        }
+                    }
+                }
                 return process.waitFor();
             } finally {
                 if (argumentFile != null) {
