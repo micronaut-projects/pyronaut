@@ -225,11 +225,11 @@ Common options:
 - `--offline`: resolve using offline repository mode
 
 When several scopes are selected, their Maven resolutions run in parallel. On an interactive terminal,
-`pyronaut install` renders one progress row per scope. Each row advances from 0% to 100% based on the
-number of artifacts resolved and shows the current artifact file name. ASCII `[###........]` bars are used
-by default for terminal and log compatibility; Unicode bars can be explicitly enabled on a known UTF-8
-terminal (`-Dpyronaut.progress.unicode=true`). Redirected and CI output remains deterministic and uses the existing summary lines without
-cursor-control sequences.
+`pyronaut install` renders one live row per scope (`Collecting …` while the dependency graph is read,
+then `Resolving … resolved/total artifacts`), a byte-level bar for every in-flight download, and a row
+for the schema bundling and editor-stub generation that follow. Finished work collapses into permanent
+`[elapsed] ✓ …` lines; see <<progressOutput,Progress output>>. Redirected and CI output remains
+deterministic and uses plain summary lines without cursor-control sequences.
 
 Proxy configuration:
 
@@ -473,7 +473,11 @@ Use `-t` or `--continuous` to rerun direct tests after source changes:
 pyronaut test -t Foo.java -- FooTest.java
 ----
 
-Direct test output includes per-test progress and a final execution summary on the console. Direct mode writes JUnit XML and HTML reports to
+Direct source runs show each stage on the console: `Compiling main.py, test_main.py`, the dependency
+declarations found in the sources (`Found 1 dependency declaration …` with each coordinate beneath it),
+one row per resolved scope while declared dependencies are fetched, the final compilation and, for
+`run`/`dev`, `Starting application` until the context is up. Direct test output then includes per-test
+progress and a final execution summary. Direct mode writes JUnit XML and HTML reports to
 `__pyronaut__/reports/tests` and prints a terminal link to the HTML report. The
 report includes container startup failures that prevent tests from starting.
 Pass a directory after `--report` to choose another location. Project-based
@@ -526,8 +530,16 @@ Common options:
 - `--native-base=<path-or-HTTP(S)-URL>`: package against a custom native launcher
 - `--native-base-output <path>`: choose the local output for bare `--native-base`
 - `--name <name>` / `--version <version>`: package metadata for direct Java or Python sources
-- `--verbose`: print the native-image exclusion summary (native mode)
+- `--verbose`: run `native-image --verbose` and print the exclusion summary (native mode)
 - `--no-validate`: explicitly bypasses lifecycle config validation
+
+On a terminal every stage of a build is shown as a live row that collapses into a stamped summary line:
+configuration validation and the install/process preflight, `Packaging FAT JAR · n/m dependencies`,
+`Downloading reachability metadata`, `Building native image · [3/8] Performing analysis` (native-image's
+own output flows above the row), `Building wheel` (pip's output is shown only when it fails) and
+`Building Docker image <tag>` (Docker keeps the terminal while it builds). The final
+`✓ … build complete` line names the artifact and is followed by an `Install with:` or `Run it with:` hint.
+Without a terminal the same information is printed as plain lines. See <<progressOutput,Progress output>>.
 
 JVM mode:
 
@@ -976,6 +988,28 @@ Common options:
 
 In smoke/non-interactive paths, the TUI delegates through the same orchestrator flow (`install`, `process`, `run`/`test`).
 
+[[progressOutput]]
+== Progress output
+
+Every Pyronaut command renders its work the same way. On an interactive terminal (stderr is a TTY and
+`TERM` is not `dumb`) running work is shown as spinner rows at the bottom of the output with the elapsed
+time on the right; a finished row collapses into a permanent `[elapsed] ✓ message (took)` line, failures
+into `✗` lines and warnings into `!` lines. The `[elapsed]` stamp counts from the start of the `pyronaut`
+command for every tool it delegates to, so one invocation reads as a single timeline. Output written by
+libraries, the application or a child process while rows are visible lands above the rows rather than
+tearing them.
+
+While a delegated launcher starts, the CLI shows a `Starting …` row (for example `Starting test runner`)
+until the launcher reports that it is running. This covers the pause before a large native launcher
+executes its first instruction: on macOS the operating system verifies a freshly downloaded launcher on its
+first run, which can take several seconds. The row disappears as soon as the tool takes over.
+
+Without a terminal (CI, pipes, `pyronaut … 2>log`) the same steps are printed as deterministic plain
+lines and no cursor-control sequences are emitted. `NO_COLOR` disables colours, `--color never` does the
+same for the commands that accept it, and `--progress off` silences the live rows of `setup`, `install`
+and `doctor`. Unicode glyphs are used on a UTF-8 terminal; `-Dpyronaut.progress.unicode=false` forces the
+ASCII set for the Java tools.
+
 == Preflight behavior summary
 
 - `run`, `test`: orchestrator runs install+process preflight.
@@ -991,6 +1025,7 @@ In smoke/non-interactive paths, the TUI delegates through the same orchestrator 
 - `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.
 - `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_VALIDATE_CONFIG_EXECUTABLE`, `PYRONAUT_TEST_RESOURCES_SERVER_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.
+- `PYRONAUT_PROGRESS_EPOCH_MS` and `PYRONAUT_LAUNCH_HANDSHAKE` are set by the CLI for the tools it delegates to (the shared timeline epoch and the launch-indicator pipes described under <<progressOutput,Progress output>>); they are not meant to be set by hand.
 
 == Exit code conventions
 

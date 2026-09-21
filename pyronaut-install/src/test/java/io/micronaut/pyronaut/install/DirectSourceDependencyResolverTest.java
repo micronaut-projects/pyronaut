@@ -29,6 +29,27 @@ final class DirectSourceDependencyResolverTest {
         assertFalse(resolve(resolver, cacheDirectory, localRepository, true).cacheHit());
     }
 
+    @Test
+    void reportsLaunchResolutionScopesAndCacheHits(@TempDir Path cacheDirectory) throws Exception {
+        DirectSourceDependencyResolver resolver = new DirectSourceDependencyResolver();
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        try (InstallProgressReporter progress = new InstallProgressReporter(
+            new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8),
+            InstallProgressReporter.ProgressMode.AUTO,
+            false
+        )) {
+            assertFalse(resolver.resolveForLaunch(cacheDirectory, List.of(), List.of(), List.of(), List.of(), Map.of(), List.of(), Map.of(), false, progress).cacheHit());
+            assertTrue(resolver.resolveForLaunch(cacheDirectory, List.of(), List.of(), List.of(), List.of(), Map.of(), List.of(), Map.of(), false, progress).cacheHit());
+        }
+
+        String output = buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(output.contains("Resolving build dependencies..."), output);
+        assertTrue(output.contains("Resolved build dependencies ("), output);
+        assertTrue(output.contains("Resolving runtime dependencies..."), output);
+        assertTrue(output.contains("Resolving test dependencies..."), output);
+        assertTrue(output.contains("Declared dependencies are up to date (0 declared)"), output);
+    }
+
     private static DirectSourceDependencyResolver.DetailedResult resolve(
         DirectSourceDependencyResolver resolver,
         Path cacheDirectory,

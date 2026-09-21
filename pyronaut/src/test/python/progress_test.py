@@ -1,7 +1,9 @@
 import io
 import os
 import re
+import subprocess
 import sys
+import time
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -267,6 +269,66 @@ class ProgressTest(unittest.TestCase):
             finally:
                 os.environ.pop(progress.PROGRESS_EPOCH_ENV, None)
                 importlib.reload(progress)
+
+    def test_launch_indicator_is_inert_without_a_terminal(self):
+        indicator = progress.LaunchIndicator(self.console, "Starting test runner")
+        env = {"PATH": "/bin"}
+        self.assertIs(env, indicator.environment(env))
+        self.assertEqual((), indicator.pass_fds)
+        indicator.spawned()
+        indicator.abandon()
+
+    def test_launch_indicator_is_inert_without_a_label(self):
+        stderr = FakeTty()
+        with patch.dict(os.environ, {"TERM": "xterm"}, clear=False), redirect_stderr(stderr):
+            indicator = progress.LaunchIndicator(self.console, None)
+            self.assertIsNone(indicator.environment(None))
+        self.assertEqual("", stderr.getvalue())
+
+    @unittest.skipIf(os.name == "nt", "the handshake uses inherited POSIX descriptors")
+    def test_launch_indicator_shows_a_row_until_the_child_reports_started(self):
+        stderr = FakeTty()
+        env = {"TERM": "xterm", "COLUMNS": "80", "NO_COLOR": "1"}
+        with patch.dict(os.environ, env, clear=False), redirect_stderr(stderr):
+            indicator = progress.LaunchIndicator(self.console, "Starting test runner")
+            launched = indicator.environment({"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+            pid, descriptors = launched[progress.LAUNCH_HANDSHAKE_ENV].split(":")
+            self.assertEqual(os.getpid(), int(pid))
+            write_fd, read_fd = (int(value) for value in descriptors.split(","))
+            self.assertEqual((write_fd, read_fd), indicator.pass_fds)
+            self.assertTrue(self.console.interactive)
+            # The child reports, then waits for the acknowledgement before printing.
+            child = subprocess.Popen(
+                ["sh", "-c", f"printf S >&{write_fd}; ack=$(head -c1 <&{read_fd}); echo \"child output $ack\""],
+                env=launched,
+                pass_fds=indicator.pass_fds,
+                stdout=subprocess.PIPE,
+            )
+            indicator.spawned()
+            output, _ = child.communicate(timeout=10)
+            deadline = time.monotonic() + 5
+            while self.console.interactive and time.monotonic() < deadline:
+                time.sleep(0.01)
+        self.assertEqual(b"child output A\n", output)
+        self.assertFalse(self.console.interactive)
+        self.assertIn("Starting test runner", stderr.getvalue())
+        # The row never persists: once the child runs the terminal is clean.
+        self.assertEqual("", render(stderr.getvalue()).text().strip())
+
+    @unittest.skipIf(os.name == "nt", "the handshake uses inherited POSIX descriptors")
+    def test_launch_indicator_ends_when_a_silent_child_exits(self):
+        stderr = FakeTty()
+        env = {"TERM": "xterm", "COLUMNS": "80", "NO_COLOR": "1"}
+        with patch.dict(os.environ, env, clear=False), redirect_stderr(stderr):
+            indicator = progress.LaunchIndicator(self.console, "Starting processor")
+            launched = indicator.environment(None)
+            child = subprocess.Popen(["sh", "-c", "exit 3"], env=launched, pass_fds=indicator.pass_fds)
+            indicator.spawned()
+            self.assertEqual(3, child.wait(timeout=10))
+            deadline = time.monotonic() + 5
+            while self.console.interactive and time.monotonic() < deadline:
+                time.sleep(0.01)
+        self.assertFalse(self.console.interactive)
 
     def test_formatting_helpers(self):
         self.assertEqual("0.0s", progress.format_duration(0))

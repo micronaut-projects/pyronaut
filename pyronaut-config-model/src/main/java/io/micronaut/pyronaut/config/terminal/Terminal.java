@@ -16,6 +16,11 @@
 package io.micronaut.pyronaut.config.terminal;
 
 import java.io.Console;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.util.Locale;
 
@@ -29,9 +34,62 @@ public final class Terminal {
      * timeline.
      */
     public static final String PROGRESS_EPOCH_ENV = "PYRONAUT_PROGRESS_EPOCH_MS";
+    /**
+     * Environment variable ({@code pid:write,read}) naming the orchestrating
+     * CLI's process id and the two pipe descriptors through which it learns
+     * that this tool has started. The CLI shows a launch indicator until then:
+     * exec of a large native image can take several seconds while the
+     * operating system verifies it. The pid guards against the variable being
+     * inherited by a grandchild, whose descriptor table is different.
+     */
+    public static final String LAUNCH_HANDSHAKE_ENV = "PYRONAUT_LAUNCH_HANDSHAKE";
     static final int DEFAULT_WIDTH = 80;
+    private static boolean launchReported;
 
     private Terminal() {
+    }
+
+    /**
+     * Tell the orchestrating CLI that this process is running so it can take
+     * down its launch indicator, and wait until it has done so before anything
+     * is written to the terminal. A no-op unless the CLI asked for the
+     * handshake; safe to call more than once.
+     */
+    public static synchronized void notifyLaunched() {
+        if (launchReported) {
+            return;
+        }
+        launchReported = true;
+        String spec = System.getenv(LAUNCH_HANDSHAKE_ENV);
+        if (spec == null || spec.isBlank()) {
+            return;
+        }
+        String[] parts = spec.trim().split(":");
+        String[] descriptors = parts.length == 2 ? parts[1].split(",") : new String[0];
+        if (descriptors.length != 2) {
+            return;
+        }
+        try {
+            long parentPid = Long.parseLong(parts[0].trim());
+            if (ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L) != parentPid) {
+                return;
+            }
+            int writeDescriptor = Integer.parseInt(descriptors[0].trim());
+            int readDescriptor = Integer.parseInt(descriptors[1].trim());
+            // Inherited descriptors are reachable as files on POSIX systems; the
+            // CLI never requests the handshake on Windows.
+            try (OutputStream out = new FileOutputStream("/dev/fd/" + writeDescriptor)) {
+                out.write('S');
+                out.flush();
+            }
+            try (InputStream in = new FileInputStream("/dev/fd/" + readDescriptor)) {
+                // The CLI answers once its live region is cleared; end of stream
+                // means it is gone and there is nothing to wait for.
+                in.read();
+            }
+        } catch (IOException | NumberFormatException | SecurityException ignored) {
+            // Progress decoration must never break the tool.
+        }
     }
 
     /**

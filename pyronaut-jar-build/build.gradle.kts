@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mnPicocli.picocli)
 
     testImplementation(mnTest.junit.jupiter.api)

@@ -4532,6 +4532,22 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("compatible GraalVM JDK", stderr.getvalue())
         self.assertEqual(0, len(executed))
 
+    def test_launch_labels_describe_delegated_tools(self):
+        self.assertEqual("Starting dependency installer", cli._launch_label(["/tmp/pyronaut-install", "--project-dir", "."]))  # noqa: SLF001
+        self.assertEqual("Starting processor", cli._launch_label(["/opt/tools/pyronaut-processor.bat", "--project-dir", "."]))  # noqa: SLF001
+        self.assertEqual("Starting test runner", cli._launch_label(["/tmp/pyronaut-dev", "-Djava.home=/jdk", "test", "--project-dir", "."]))  # noqa: SLF001
+        self.assertEqual("Starting test runner", cli._launch_label(["/tmp/pyronaut-dev", "-Dpyronaut.dev.project.dir=/p", "test", "main.py"]))  # noqa: SLF001
+        self.assertEqual("Starting application launcher", cli._launch_label(["/tmp/pyronaut-dev", "-Dx=y", "main.py"]))  # noqa: SLF001
+        self.assertEqual("Starting configuration validator", cli._launch_label(["/tmp/pyronaut-dev", "validate-config", "--project-dir", "."]))  # noqa: SLF001
+        self.assertEqual(
+            "Starting test runner",
+            cli._launch_label(["/jdk/bin/java", "-Xmx1g", "-cp", "a.jar", "io.micronaut.pyronaut.test.PyronautTestMain", "--project-dir", "."]),  # noqa: SLF001
+        )
+        self.assertIsNone(cli._launch_label(["/usr/bin/docker", "build", "."]))  # noqa: SLF001
+        self.assertIsNone(cli._launch_label(["python3", "-m", "pip", "wheel"]))  # noqa: SLF001
+        self.assertIsNone(cli._launch_label(["/jdk/bin/java", "-cp", "a.jar", "com.example.Other"]))  # noqa: SLF001
+        self.assertIsNone(cli._launch_label([]))  # noqa: SLF001
+
     def test_build_defaults_to_jvm_wheel_command(self):
         executed = []
         staged_files: list[str] = []
@@ -4547,13 +4563,14 @@ additional-test-resources = ["test-fixtures"]
             return 0
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "build-demo"
             project_dir.mkdir(parents=True, exist_ok=True)
             (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
             self._write_manifests(project_dir)
 
-            with redirect_stdout(stdout):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = cli.run(
                     ["build", "--project-dir", str(project_dir)],
                     runner_with_env=runner_with_env,
@@ -4575,8 +4592,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("MANIFEST.in", staged_files)
         self.assertTrue(any(path.endswith("launcher.py") for path in staged_files))
         self.assertIn("setuptools.build_meta", staged_manifest)
-        self.assertIn("Wheel build complete", stdout.getvalue())
-        self.assertIn("Install with:", stdout.getvalue())
+        self.assertIn("Wheel build complete", stderr.getvalue())
+        self.assertIn("Install with:", stderr.getvalue())
 
     def test_build_jar_delegates_with_ordered_classpath_and_normalized_output(self):
         executed = []
@@ -4833,6 +4850,7 @@ additional-test-resources = ["test-fixtures"]
             return 0
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
             root_dir = Path(temp_dir)
             project_dir = root_dir / "docker-demo"
@@ -4860,7 +4878,7 @@ additional-test-resources = ["test-fixtures"]
                     return run_executable
                 return f"/tmp/{command_name}"
 
-            with redirect_stdout(stdout):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = cli.run(
                     ["build", "--project-dir", str(project_dir), "--docker"],
                     runner_with_env=runner_with_env,
@@ -4892,7 +4910,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", captured["context_files"])
         self.assertIn("app/config/application.toml", captured["context_files"])
         self.assertIn("app/pyproject.toml", captured["context_files"])
-        self.assertIn("Docker image build complete: demo-app:1.2.3", stdout.getvalue())
+        self.assertIn("Docker image build complete: demo-app:1.2.3", stderr.getvalue())
 
     def test_build_docker_native_uses_container_build_and_static_args(self):
         executed = []
@@ -4910,6 +4928,7 @@ additional-test-resources = ["test-fixtures"]
             return 0
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
             root_dir = Path(temp_dir)
             project_dir = root_dir / "native-docker-demo"
@@ -4955,7 +4974,7 @@ additional-test-resources = ["test-fixtures"]
                     return native_executable
                 return f"/tmp/{command_name}"
 
-            with redirect_stdout(stdout), patch.dict(os.environ, {"HTTP_PROXY": "http://proxy.example"}, clear=False):
+            with redirect_stdout(stdout), redirect_stderr(stderr), patch.dict(os.environ, {"HTTP_PROXY": "http://proxy.example"}, clear=False):
                 exit_code = cli.run(
                     [
                         "build",
@@ -5006,7 +5025,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertNotIn("COPY app/__pyronaut__/m2-repository/example/runtime.jar", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/tools/pyronaut-native-build/bin/pyronaut-native-build", captured["context_files"])
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
-        self.assertIn("Docker image build complete: example/demo:1.2.3-native", stdout.getvalue())
+        self.assertIn("Docker image build complete: example/demo:1.2.3-native", stderr.getvalue())
 
     def test_build_docker_native_base_creates_reusable_base_then_application_layer(self):
         executed = []
@@ -5553,6 +5572,7 @@ additional-test-resources = ["test-fixtures"]
             return 0
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "native-demo"
             cache_dir = project_dir / "__pyronaut__"
@@ -5562,7 +5582,7 @@ additional-test-resources = ["test-fixtures"]
             (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
             (cache_dir / "native" / "native-demo").parent.mkdir(parents=True, exist_ok=True)
 
-            with redirect_stdout(stdout):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = cli.run(
                     ["build", "--native", "--project-dir", str(project_dir)],
                     runner_with_env=runner_with_env,
@@ -5587,7 +5607,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual("-m", executed[4][0][1])
         self.assertEqual("pip", executed[4][0][2])
         self.assertEqual("wheel", executed[4][0][3])
-        self.assertIn("Native wheel build complete", stdout.getvalue())
+        self.assertIn("Native wheel build complete", stderr.getvalue())
 
     def test_build_native_rejects_main_class_override(self):
         stderr = io.StringIO()
@@ -8209,7 +8229,7 @@ java-version = 25
 
         self.assertEqual(0, exit_code)
         self.assertFalse(any("pyronaut-validate-config" in cmd[0] for cmd in executed))
-        self.assertIn("[validation] skipped (--no-validate)", stderr.getvalue())
+        self.assertIn("Configuration validation skipped (--no-validate)", stderr.getvalue())
 
     def test_test_resources_disabled_env_skips_server_orchestration_quietly(self):
         executed = []

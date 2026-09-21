@@ -22,8 +22,11 @@ import io.micronaut.context.python.GraalPyContextFactory;
 import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
+import io.micronaut.pyronaut.config.terminal.PhaseReporter;
+import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.install.PyronautInstallMain;
 import io.micronaut.pyronaut.install.DirectSourceDependencyResolver;
+import io.micronaut.pyronaut.install.InstallProgressReporter;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
@@ -199,6 +202,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     static void main(String[] args) {
+        Terminal.notifyLaunched();
         PyronautRuntimeProperties.disableGraalVmImageSingletons();
         configureNativeRuntimeDefaults();
         initializeLauncherLogging();
@@ -676,19 +680,25 @@ public final class PyronautDevMain implements Callable<Integer> {
         List<String> boms = declarations.dependencies().stream().filter(DirectSourceDeclarations.Dependency::bom).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         Map<String, List<String>> exclusions = new LinkedHashMap<>();
         declarations.dependencies().forEach(dependency -> exclusions.put(moduleKey(dependency.coordinate()), dependency.exclusions()));
-        DirectSourceDependencyResolver.LaunchResult result = new DirectSourceDependencyResolver().resolveForLaunch(
-            projectCacheDirectory(invocation, stagingRoot),
-            build,
-            runtime,
-            test,
-            boms,
-            exclusions,
-            declarations.repositories(),
-            declarations.runtimeProperties(),
-            testResourcesEligible
-        );
-        System.out.println("Direct source dependency resolution " + (result.cacheHit() ? "cache hit" : "completed")
-            + ": " + declarations.dependencies() + (declarations.repositories().isEmpty() ? "" : ", repositories=" + declarations.repositories()));
+        DirectSourceDependencyResolver.LaunchResult result;
+        try (InstallProgressReporter progress = InstallProgressReporter.create("auto")) {
+            result = new DirectSourceDependencyResolver().resolveForLaunch(
+                projectCacheDirectory(invocation, stagingRoot),
+                build,
+                runtime,
+                test,
+                boms,
+                exclusions,
+                declarations.repositories(),
+                declarations.runtimeProperties(),
+                testResourcesEligible,
+                progress
+            );
+        }
+        if (invocation.verbose()) {
+            System.out.println("Direct source dependency resolution " + (result.cacheHit() ? "cache hit" : "completed")
+                + ": " + declarations.dependencies() + (declarations.repositories().isEmpty() ? "" : ", repositories=" + declarations.repositories()));
+        }
         io.micronaut.pyronaut.dev.DirectSourceDeclarationState.setRuntimeProperties(declarations.runtimeProperties());
         io.micronaut.pyronaut.dev.DirectSourceDeclarationState.setTestResourcesRequired(result.testResourcesRequired());
         String resolvedProperty = io.micronaut.pyronaut.directsource.DirectSourceDeclarationState.RESOLVED_PROPERTY;
@@ -701,6 +711,49 @@ public final class PyronautDevMain implements Callable<Integer> {
             applyProperty("micronaut.processing." + name, value, previousProperties)
         );
         return result;
+    }
+
+    /**
+     * Compile the staged sources, showing the compilation as a phase. A
+     * {@link DirectSourceDeclarationRequest} ends the phase as a discovery of
+     * declarations and propagates so the caller can resolve them.
+     */
+    private static ClassLoader compileDirectSources(PyronautCompiler.Builder builder, DirectSourceInvocation invocation) {
+        int sourceCount = invocation.sources().size() + invocation.testSources().size();
+        String sources = sourceCount + (sourceCount == 1 ? " source" : " sources");
+        try (PhaseReporter progress = PhaseReporter.create(invocation.verbose())) {
+            PhaseReporter.Phase phase = progress.start("Compiling " + describeSources(invocation));
+            try {
+                ClassLoader loader = builder.build().buildClassLoader();
+                phase.done("Compiled " + sources);
+                return loader;
+            } catch (DirectSourceDeclarationRequest request) {
+                List<DirectSourceDeclarations.Dependency> dependencies = request.declarations().dependencies();
+                phase.done("Found " + dependencies.size() + (dependencies.size() == 1 ? " dependency declaration" : " dependency declarations")
+                    + " in " + sources);
+                for (DirectSourceDeclarations.Dependency dependency : dependencies) {
+                    progress.hint(dependency.coordinate() + " (" + dependency.scope().name().toLowerCase(Locale.ROOT) + ")");
+                }
+                throw request;
+            } catch (RuntimeException e) {
+                phase.fail("Compilation of " + sources + " failed");
+                throw e;
+            }
+        }
+    }
+
+    private static String describeSources(DirectSourceInvocation invocation) {
+        List<String> names = new ArrayList<>();
+        for (Path source : invocation.sources()) {
+            names.add(source.getFileName().toString());
+        }
+        for (Path source : invocation.testSources()) {
+            names.add(source.getFileName().toString());
+        }
+        if (names.size() > 3) {
+            return names.get(0) + ", " + names.get(1) + " and " + (names.size() - 2) + " more";
+        }
+        return String.join(", ", names);
     }
 
     static String moduleKey(String coordinate) {
@@ -740,7 +793,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
             configureDirectSource(builder, invocation, stagingRoot);
             builder.compilePythonBytecode("true".equals(invocation.properties().get(DIRECT_COMPILE_PYTHON_BYTECODE)));
-            ClassLoader applicationClassLoader = builder.build().buildClassLoader();
+            ClassLoader applicationClassLoader = compileDirectSources(builder, invocation);
             if (invocation.verbose()) {
                 System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");
             }
@@ -749,6 +802,8 @@ public final class PyronautDevMain implements Callable<Integer> {
             Thread.currentThread().setContextClassLoader(applicationClassLoader);
             PyronautDevLogging.initializeApplicationLogging(invocation.verboseLogger());
             now = System.currentTimeMillis();
+            PhaseReporter startup = PhaseReporter.create(invocation.verbose());
+            PhaseReporter.Phase startingApplication = startup.start("Starting application");
             ApplicationContextBuilder micronaut = Micronaut.build(new String[0])
                 .classLoader(applicationClassLoader)
                 .properties(directSourceApplicationProperties(invocation))
@@ -766,7 +821,15 @@ public final class PyronautDevMain implements Callable<Integer> {
             if (!configLocations.isEmpty()) {
                 micronaut.overrideConfigLocations(configLocations.toArray(String[]::new));
             }
-            micronaut.start();
+            try {
+                micronaut.start();
+                startingApplication.done("Application started");
+            } catch (RuntimeException e) {
+                startingApplication.fail("Application failed to start");
+                throw e;
+            } finally {
+                startup.close();
+            }
             if (invocation.verbose()) {
                 System.out.println("Context Startup Time: " + (System.currentTimeMillis() - now) + "ms");
             }
@@ -823,7 +886,7 @@ public final class PyronautDevMain implements Callable<Integer> {
 
             configureDirectSource(builder, invocation, stagingRoot);
             builder.compilePythonBytecode("true".equals(invocation.properties().get(DIRECT_COMPILE_PYTHON_BYTECODE)));
-            ClassLoader applicationClassLoader = builder.build().buildClassLoader();
+            ClassLoader applicationClassLoader = compileDirectSources(builder, invocation);
             testContextClassLoader.generatedClassLoader(applicationClassLoader);
             if (invocation.verbose()) {
                 System.out.println("Processing Time: " + (System.currentTimeMillis() - now) + "ms");
@@ -831,77 +894,79 @@ public final class PyronautDevMain implements Callable<Integer> {
             enableContextClassLoaderIntrospections();
             previousBeanIntrospectionsProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
             defaultTestServerPort();
-            if (pythonSource) {
-                GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader, Map.of(), GraalPyContextFactory.APPLICATION_MAIN);
-            }
-
-            now = System.currentTimeMillis();
-            LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
-            List<String> testClassNames = testClassNames(invocation.testSources());
-            if (testClassNames.isEmpty()) {
-                throw new IllegalArgumentException("No JUnit test classes were found in the supplied test sources");
-            }
-            int selectedTestClasses = 0;
-            for (String testClassName : testClassNames) {
-                Class<?> testClass = loadTestClass(testClassName, applicationClassLoader);
-                if (testClass == null) {
-                    // Source scanning is heuristic (comments, nested types); skip what cannot be loaded.
-                    if (invocation.verbose()) {
-                        System.out.println("Skipping test class candidate " + testClassName + ": class not found");
-                    }
-                    continue;
-                }
-                requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
-                selectedTestClasses++;
-            }
-            if (selectedTestClasses == 0) {
-                throw new IllegalArgumentException("No JUnit test classes could be loaded from the supplied test sources: " + testClassNames);
-            }
-            // Direct source execution currently supports compiled JUnit modules only.
-            // Do not let the pytest engine bootstrap (and require pytest on disk).
-            if (pythonSource) {
-                requestBuilder.filters(EngineFilter.includeEngines("junit-jupiter"));
-            }
-            LauncherDiscoveryRequest request = requestBuilder.build();
-            Launcher launcher = LauncherFactory.create();
-            SummaryGeneratingListener listener = new SummaryGeneratingListener();
-            List<JUnitReportWriter.TestResult> reportResults = new ArrayList<>();
             PrintStream originalOut = System.out;
             PrintStream originalErr = System.err;
-            launcher.registerTestExecutionListeners(listener);
-            launcher.registerTestExecutionListeners(new TestExecutionListener() {
-                private ByteArrayOutputStream out;
-                private ByteArrayOutputStream err;
-
-                @Override
-                public void executionStarted(TestIdentifier identifier) {
-                    if (identifier.isTest()) {
-                        out = new ByteArrayOutputStream();
-                        err = new ByteArrayOutputStream();
-                        System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
-                        System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
-                    }
-                }
-
-                @Override
-                public void executionFinished(TestIdentifier identifier, TestExecutionResult result) {
-                    if (identifier.isTest()) {
-                        System.setOut(originalOut);
-                        System.setErr(originalErr);
-                        JUnitReportWriter.Status status = switch (result.getStatus()) {
-                            case SUCCESSFUL -> JUnitReportWriter.Status.PASSED;
-                            case FAILED -> JUnitReportWriter.Status.FAILED;
-                            case ABORTED -> JUnitReportWriter.Status.SKIPPED;
-                        };
-                        reportResults.add(new JUnitReportWriter.TestResult(
-                            identifier.getDisplayName(), status,
-                            result.getThrowable().map(Throwable::toString).orElse(""),
-                            out == null ? "" : out.toString(StandardCharsets.UTF_8),
-                            err == null ? "" : err.toString(StandardCharsets.UTF_8)));
-                    }
-                }
-            });
+            // Open the reporter before the Python runtime bootstraps and the test
+            // classes load: its "Starting test runtime" row covers that wait too.
             try (TestProgressReporter reporter = TestProgressReporter.create(originalErr, invocation.verbose())) {
+                if (pythonSource) {
+                    GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader, Map.of(), GraalPyContextFactory.APPLICATION_MAIN);
+                }
+
+                now = System.currentTimeMillis();
+                LauncherDiscoveryRequestBuilder requestBuilder = LauncherDiscoveryRequestBuilder.request();
+                List<String> testClassNames = testClassNames(invocation.testSources());
+                if (testClassNames.isEmpty()) {
+                    throw new IllegalArgumentException("No JUnit test classes were found in the supplied test sources");
+                }
+                int selectedTestClasses = 0;
+                for (String testClassName : testClassNames) {
+                    Class<?> testClass = loadTestClass(testClassName, applicationClassLoader);
+                    if (testClass == null) {
+                        // Source scanning is heuristic (comments, nested types); skip what cannot be loaded.
+                        if (invocation.verbose()) {
+                            System.out.println("Skipping test class candidate " + testClassName + ": class not found");
+                        }
+                        continue;
+                    }
+                    requestBuilder.selectors(DiscoverySelectors.selectClass(testClass));
+                    selectedTestClasses++;
+                }
+                if (selectedTestClasses == 0) {
+                    throw new IllegalArgumentException("No JUnit test classes could be loaded from the supplied test sources: " + testClassNames);
+                }
+                // Direct source execution currently supports compiled JUnit modules only.
+                // Do not let the pytest engine bootstrap (and require pytest on disk).
+                if (pythonSource) {
+                    requestBuilder.filters(EngineFilter.includeEngines("junit-jupiter"));
+                }
+                LauncherDiscoveryRequest request = requestBuilder.build();
+                Launcher launcher = LauncherFactory.create();
+                SummaryGeneratingListener listener = new SummaryGeneratingListener();
+                List<JUnitReportWriter.TestResult> reportResults = new ArrayList<>();
+                launcher.registerTestExecutionListeners(listener);
+                launcher.registerTestExecutionListeners(new TestExecutionListener() {
+                    private ByteArrayOutputStream out;
+                    private ByteArrayOutputStream err;
+
+                    @Override
+                    public void executionStarted(TestIdentifier identifier) {
+                        if (identifier.isTest()) {
+                            out = new ByteArrayOutputStream();
+                            err = new ByteArrayOutputStream();
+                            System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
+                            System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
+                        }
+                    }
+
+                    @Override
+                    public void executionFinished(TestIdentifier identifier, TestExecutionResult result) {
+                        if (identifier.isTest()) {
+                            System.setOut(originalOut);
+                            System.setErr(originalErr);
+                            JUnitReportWriter.Status status = switch (result.getStatus()) {
+                                case SUCCESSFUL -> JUnitReportWriter.Status.PASSED;
+                                case FAILED -> JUnitReportWriter.Status.FAILED;
+                                case ABORTED -> JUnitReportWriter.Status.SKIPPED;
+                            };
+                            reportResults.add(new JUnitReportWriter.TestResult(
+                                identifier.getDisplayName(), status,
+                                result.getThrowable().map(Throwable::toString).orElse(""),
+                                out == null ? "" : out.toString(StandardCharsets.UTF_8),
+                                err == null ? "" : err.toString(StandardCharsets.UTF_8)));
+                        }
+                    }
+                });
                 launcher.registerTestExecutionListeners(reporter);
                 launcher.execute(request);
                 TestExecutionSummary summary = listener.getSummary();

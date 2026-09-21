@@ -24,6 +24,8 @@ import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
+import io.micronaut.pyronaut.config.terminal.PhaseReporter;
+import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
@@ -214,7 +216,7 @@ public class PyronautRunMain implements Callable<Integer> {
             ApplicationArgs applicationArgs = new ApplicationArgs(
                     model == null ? Boolean.TRUE : model.pyronaut().run().bannerEnabled(), appArgs, verboseLogger != null
             );
-            if (applicationStarter.start(layout.processedClassesRoot(), applicationArgs)) {
+            if (startApplication(layout, applicationArgs)) {
                 blockUntilInterrupted();
             }
             return 0;
@@ -229,6 +231,28 @@ public class PyronautRunMain implements Callable<Integer> {
             restoreSystemProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionClassLoaderProperty);
             restoreSystemProperty(MICRONAUT_PYTHON_ENABLED, previousPythonEnabledProperty);
             restoreSystemProperty(LOGGER_CONFIG_PROPERTY, previousLoggerConfigProperty);
+        }
+    }
+
+    /**
+     * Start the application. On a terminal a {@code Starting application} row
+     * spins until the context is up, with the banner and startup logging
+     * flowing above it; elsewhere nothing is added to the application's output.
+     */
+    private boolean startApplication(ResolvedProjectLayout layout, ApplicationArgs applicationArgs) throws Exception {
+        if (!Terminal.isInteractive() || verboseLogger != null) {
+            return applicationStarter.start(layout.processedClassesRoot(), applicationArgs);
+        }
+        try (PhaseReporter progress = PhaseReporter.create()) {
+            PhaseReporter.Phase starting = progress.start("Starting application");
+            try {
+                boolean started = applicationStarter.start(layout.processedClassesRoot(), applicationArgs);
+                starting.done("Application started");
+                return started;
+            } catch (Exception e) {
+                starting.fail("Application failed to start");
+                throw e;
+            }
         }
     }
 
@@ -563,6 +587,7 @@ public class PyronautRunMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        Terminal.notifyLaunched();
         PyronautRuntimeProperties.disableGraalVmImageSingletons();
         loadRunConfigurer().initializeLauncher();
         int exitCode = new CommandLine(new PyronautRunMain()).execute(args);

@@ -127,6 +127,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        Terminal.notifyLaunched();
         PyronautLauncherLogging.initialize();
         int exit = new CommandLine(new PyronautValidateConfigMain()).execute(args);
         if (exit != 0) {

@@ -320,6 +320,7 @@ public final class PyronautNativeImageBuilder {
     private boolean includePython;
     private boolean emitBuildReport;
     private boolean includeSbom;
+    private boolean verbose;
 
     /**
      * @param output native executable output path
@@ -408,6 +409,18 @@ public final class PyronautNativeImageBuilder {
      */
     public PyronautNativeImageBuilder includePython(boolean enabled) {
         includePython = enabled;
+        return this;
+    }
+
+    /**
+     * Configure whether native-image runs with {@code --verbose}, printing the
+     * builder command line and every applied configuration.
+     *
+     * @param enabled whether to pass {@code --verbose}
+     * @return this builder
+     */
+    public PyronautNativeImageBuilder verbose(boolean enabled) {
+        verbose = enabled;
         return this;
     }
 
@@ -523,7 +536,9 @@ public final class PyronautNativeImageBuilder {
 
         List<String> command = new ArrayList<>();
         command.add(nativeImageExecutable.toString());
-        command.add("--verbose");
+        if (verbose) {
+            command.add("--verbose");
+        }
         command.add("-cp");
         command.add(effectiveClasspath.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(java.io.File.pathSeparator)));
         command.addAll(effectiveCommonArguments(effectiveClasspath));

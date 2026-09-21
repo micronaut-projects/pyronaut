@@ -19,6 +19,7 @@ import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.testresources.buildtools.ServerFactory;
 import io.micronaut.testresources.buildtools.ServerSettings;
 import io.micronaut.testresources.buildtools.ServerUtils;
@@ -84,6 +85,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
     }
 
     public static void main(String[] args) {
+        Terminal.notifyLaunched();
         initializeLogging(args);
         int exit = new CommandLine(new PyronautTestResourcesServerMain()).execute(args);
         if (exit != 0) {

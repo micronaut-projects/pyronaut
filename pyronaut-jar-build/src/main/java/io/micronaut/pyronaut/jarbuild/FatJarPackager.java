@@ -67,6 +67,18 @@ public final class FatJarPackager {
      * @throws IOException when an input cannot be read or the output cannot be written
      */
     public FatJarResult packageApplication(FatJarRequest request) throws IOException {
+        return packageApplication(request, (index, total, entry) -> { });
+    }
+
+    /**
+     * Packages an application, reporting each dependency root as it is copied.
+     *
+     * @param request packaging inputs
+     * @param listener receives progress events
+     * @return packaging result
+     * @throws IOException when an input cannot be read or the output cannot be written
+     */
+    public FatJarResult packageApplication(FatJarRequest request, PackagingListener listener) throws IOException {
         validate(request);
         Path output = request.output();
         Files.createDirectories(output.getParent());
@@ -111,7 +123,9 @@ public final class FatJarPackager {
                 }
 
                 write(zip, written, CLASSPATH_INDEX, classpathIndex(request.mainClass(), roots));
+                int copied = 0;
                 for (RootInput classpathRoot : classpathRoots) {
+                    listener.classpathEntry(++copied, classpathRoots.size(), classpathRoot.input());
                     if (Files.isDirectory(classpathRoot.input())) {
                         copyDirectory(zip, written, classpathRoot.input(), classpathRoot.root().prefix(), true);
                     } else {
@@ -430,6 +444,21 @@ public final class FatJarPackager {
         } catch (AtomicMoveNotSupportedException e) {
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
+    }
+
+    /**
+     * Receives packaging progress.
+     */
+    @FunctionalInterface
+    public interface PackagingListener {
+        /**
+         * A dependency root is about to be copied into the archive.
+         *
+         * @param index the 1-based position of the root
+         * @param total the number of dependency roots
+         * @param entry the root being copied
+         */
+        void classpathEntry(int index, int total, Path entry);
     }
 
     private record Root(String prefix, boolean multiRelease) {
