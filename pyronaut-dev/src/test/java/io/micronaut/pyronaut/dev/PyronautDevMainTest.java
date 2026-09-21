@@ -77,6 +77,48 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void retainsNativeProvidedPolyglotApiForDirectCompilation(@TempDir Path tempDir) throws IOException {
+        Path polyglot = tempDir.resolve("polyglot-25.3.4.1.jar");
+        Path application = tempDir.resolve("application-1.0.jar");
+        Files.createFile(polyglot);
+        Files.createFile(application);
+        String previous = System.getProperty("pyronaut.dev.native.provided.artifacts");
+        try {
+            System.setProperty(
+                "pyronaut.dev.native.provided.artifacts",
+                "org.graalvm.polyglot:polyglot"
+            );
+            PyronautDevMain.DirectSourceInvocation invocation = PyronautDevMain.parseDirectSourceArgs(List.of("App.py"));
+
+            // ValueCoercible extends ProxyObject from this native-provided API jar.
+            List<Path> processorClasspath = PyronautDevMain.filterDirectSourcePaths(
+                List.of(polyglot, application), invocation, false, false
+            );
+            List<Path> compileClasspath = PyronautDevMain.filterDirectSourcePaths(
+                List.of(polyglot, application), invocation, false, false
+            );
+            assertEquals(
+                List.of(polyglot, application),
+                processorClasspath
+            );
+            assertEquals(
+                List.of(polyglot, application),
+                compileClasspath
+            );
+            assertEquals(
+                List.of(application),
+                PyronautDevMain.filterDirectSourcePaths(List.of(polyglot, application), invocation, false, true)
+            );
+        } finally {
+            if (previous == null) {
+                System.clearProperty("pyronaut.dev.native.provided.artifacts");
+            } else {
+                System.setProperty("pyronaut.dev.native.provided.artifacts", previous);
+            }
+        }
+    }
+
+    @Test
     void keepsSelectedProjectTestsWithTheTestDelegate() {
         List<String> calls = new ArrayList<>();
         PyronautDevMain.DelegateInvoker invoker = (command, args) -> {
