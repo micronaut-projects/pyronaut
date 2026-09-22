@@ -325,7 +325,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             ProcessorSourceCache.MAIN_HASH_FILE,
                             mainFingerprint,
                             resolvedMainTargetDir,
-                            incrementalCompilation
+                            incrementalCompilation || compilePythonBytecode,
+                            compilePythonBytecode
                         )) {
                         progressReporter.cacheHit("main", mainSourceCount);
                         mainStatus = "cache hit";
@@ -364,7 +365,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                                 resolvedCacheDir,
                                 ProcessorSourceCache.MAIN_HASH_FILE,
                                 mainFingerprint,
-                                incrementalCompilation ? resolvedMainTargetDir : null
+                                incrementalCompilation || compilePythonBytecode ? resolvedMainTargetDir : null
                             );
                         }
                         progressReporter.finishPass("main", mainSourceCount);
@@ -444,7 +445,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                                 ProcessorSourceCache.TEST_HASH_FILE,
                                 testFingerprint,
                                 resolvedTestTargetDir,
-                                incrementalCompilation
+                                incrementalCompilation || compilePythonBytecode,
+                                compilePythonBytecode
                             )) {
                             syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                             progressReporter.cacheHit("test", testSourceCount);
@@ -484,7 +486,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                                     resolvedCacheDir,
                                     ProcessorSourceCache.TEST_HASH_FILE,
                                     testFingerprint,
-                                    incrementalCompilation ? resolvedTestTargetDir : null
+                                    incrementalCompilation || compilePythonBytecode ? resolvedTestTargetDir : null
                                 );
                             }
                             syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
