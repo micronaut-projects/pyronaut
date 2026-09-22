@@ -1513,9 +1513,9 @@ public final class PyronautDevMain implements Callable<Integer> {
             }
         }
         return new DirectSourceClasspaths(
-            filterDirectSourcePaths(processor, invocation, developmentMode),
-            filterDirectSourcePaths(compile, invocation, developmentMode),
-            filterDirectSourcePaths(runtimeClasspath, invocation, developmentMode)
+            filterDirectSourcePaths(processor, invocation, developmentMode, false),
+            filterDirectSourcePaths(compile, invocation, developmentMode, false),
+            filterDirectSourcePaths(runtimeClasspath, invocation, developmentMode, true)
         );
     }
 
@@ -1532,17 +1532,19 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
-    private static List<Path> filterDirectSourcePaths(List<Path> paths,
-                                                       DirectSourceInvocation invocation,
-                                                       boolean developmentMode) {
-        Set<String> nativeArtifacts = nativeProvidedArtifacts();
+    static List<Path> filterDirectSourcePaths(List<Path> paths,
+                                              DirectSourceInvocation invocation,
+                                              boolean developmentMode,
+                                              boolean filterNativeProvided) {
+        Set<String> nativeArtifacts = filterNativeProvided ? nativeProvidedArtifacts() : Set.of();
         boolean excludeTestResources = !testResourcesEnabled(invocation, developmentMode);
         List<Path> filtered = new ArrayList<>();
         for (Path path : paths) {
             boolean controlPanel = controlPanelRequested(invocation)
                 || "true".equalsIgnoreCase(System.getProperty("micronaut.control-panel.enabled"));
             if ((excludeTestResources && isTestResourcesJar(path))
-                || (isNativeProvidedArtifact(path, nativeArtifacts) && !controlPanel && !isPyronautBuildAnnotationsArtifact(path))) {
+                || (filterNativeProvided && isNativeProvidedArtifact(path, nativeArtifacts)
+                && !controlPanel && !isPyronautBuildAnnotationsArtifact(path))) {
                 continue;
             }
             if (!filtered.contains(path)) {
@@ -1559,7 +1561,7 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static Set<String> nativeProvidedArtifacts() {
         String configured = System.getProperty(NATIVE_PROVIDED_ARTIFACTS, "");
-        return Arrays.stream(configured.split(Pattern.quote(File.pathSeparator)))
+        return Arrays.stream(configured.split(","))
             .map(String::trim)
             .filter(value -> !value.isEmpty())
             .collect(java.util.stream.Collectors.toSet());
