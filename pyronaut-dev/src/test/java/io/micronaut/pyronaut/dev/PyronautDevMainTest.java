@@ -24,6 +24,7 @@ import io.micronaut.pyronaut.directsource.DirectSourceDeclarationsVisitor;
 import io.micronaut.pyronaut.logback.LogbackConfigurer;
 import io.micronaut.python.processing.PythonCall;
 import io.micronaut.python.processing.PythonSource;
+import io.micronaut.context.env.PropertySourceLoader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
@@ -40,6 +41,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -994,6 +996,57 @@ final class PyronautDevMainTest {
                 Collections.list(classLoader.getResources("META-INF/GRAALPY-VFS/micronaut-application/fileslist.txt"))
             );
             assertEquals(1, Collections.list(classLoader.getResources("META-INF/example.txt")).size());
+        }
+    }
+
+    @Test
+    void setupDirectSourceUsesOneTestResourcesPropertySource(@TempDir Path tempDir) throws Exception {
+        Path clientJar = tempDir.resolve("micronaut-test-resources-client-4.2.0.jar");
+        writeJar(clientJar, Map.of(
+            "META-INF/services/io.micronaut.context.env.PropertySourceLoader",
+            "io.micronaut.testresources.client.TestResourcesClientPropertySourceLoader\n"
+        ));
+        Path setup = tempDir.resolve("pyproject.toml");
+        Path source = tempDir.resolve("app.py");
+        Files.writeString(setup, "[project]\nname = 'demo'\nversion = '0.1.0'\n");
+        Files.writeString(source, "print('ok')\n");
+        PyronautDevMain.DirectSourceInvocation invocation = new PyronautDevMain.DirectSourceInvocation(
+            false,
+            setup,
+            null,
+            List.of(),
+            List.of(source),
+            List.of(),
+            false,
+            Map.of(),
+            null
+        );
+
+        var method = PyronautDevMain.class.getDeclaredMethod("directSourceLauncherClassLoader", PyronautDevMain.DirectSourceInvocation.class);
+        method.setAccessible(true);
+        ClassLoader launcher = (ClassLoader) method.invoke(null, invocation);
+        var runtimeMethod = PyronautDevMain.class.getDeclaredMethod(
+            "directSourceRuntimeClassLoader",
+            List.class,
+            PyronautDevMain.DirectSourceInvocation.class,
+            ClassLoader.class
+        );
+        runtimeMethod.setAccessible(true);
+        try (URLClassLoader runtime = (URLClassLoader) runtimeMethod.invoke(
+            null,
+            List.of(clientJar.toUri().toURL()),
+            invocation,
+            launcher
+        )) {
+            List<Class<? extends PropertySourceLoader>> resourcesProviders = ServiceLoader.load(PropertySourceLoader.class, runtime).stream()
+                .map(ServiceLoader.Provider::type)
+                .filter(type -> type.getName().equals("io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader")
+                    || type.getName().equals("io.micronaut.testresources.client.TestResourcesClientPropertySourceLoader"))
+                .toList();
+            assertEquals(
+                List.of(io.micronaut.pyronaut.dev.runtime.PyronautDevTestResourcesPropertySourceLoader.class),
+                resourcesProviders
+            );
         }
     }
 

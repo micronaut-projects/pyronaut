@@ -777,7 +777,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         String previousIntrospectionClassLoaderProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
-        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
+        try (URLClassLoader runtimeClassLoader = directSourceRuntimeClassLoader(runtimeUrls, invocation, launcherClassLoader)) {
             long now = System.currentTimeMillis();
             PyronautCompiler.Builder builder = PyronautCompiler.builder()
                 .annotationProcessorPath(toFiles(classpaths.processor()))
@@ -860,7 +860,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         String previousServerPortProperty = System.getProperty(MICRONAUT_SERVER_PORT);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         ClassLoader launcherClassLoader = directSourceLauncherClassLoader(invocation);
-        try (URLClassLoader runtimeClassLoader = new URLClassLoader(runtimeUrls.toArray(URL[]::new), launcherClassLoader)) {
+        try (URLClassLoader runtimeClassLoader = directSourceRuntimeClassLoader(runtimeUrls, invocation, launcherClassLoader)) {
             DeferredGeneratedClassLoader testContextClassLoader = new DeferredGeneratedClassLoader(runtimeClassLoader);
             Thread.currentThread().setContextClassLoader(testContextClassLoader);
             DirectSourceApplicationContextConfigurer.set(
@@ -1233,10 +1233,19 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private static ClassLoader directSourceLauncherClassLoader(DirectSourceInvocation invocation) {
         ClassLoader launcherClassLoader = PyronautDevMain.class.getClassLoader();
-        if (invocation.setup() != null || controlPanelRequested(invocation)) {
+        if (controlPanelRequested(invocation)) {
             return launcherClassLoader;
         }
-        return new DirectSourceLauncherClassLoader(launcherClassLoader);
+        return new DirectSourceLauncherClassLoader(new URL[0], launcherClassLoader);
+    }
+
+    private static URLClassLoader directSourceRuntimeClassLoader(List<URL> runtimeUrls,
+                                                                 DirectSourceInvocation invocation,
+                                                                 ClassLoader parent) {
+        if (controlPanelRequested(invocation)) {
+            return new URLClassLoader(runtimeUrls.toArray(URL[]::new), parent);
+        }
+        return new DirectSourceLauncherClassLoader(runtimeUrls.toArray(URL[]::new), parent);
     }
 
     private static BeanDefinitionsProvider directSourceBeanDefinitionsProvider(
@@ -1882,9 +1891,13 @@ public final class PyronautDevMain implements Callable<Integer> {
         }
     }
 
-    static final class DirectSourceLauncherClassLoader extends ClassLoader {
+    static final class DirectSourceLauncherClassLoader extends URLClassLoader {
         DirectSourceLauncherClassLoader(ClassLoader parent) {
-            super(parent);
+            this(new URL[0], parent);
+        }
+
+        DirectSourceLauncherClassLoader(URL[] urls, ClassLoader parent) {
+            super(urls, parent);
         }
 
         @Override
