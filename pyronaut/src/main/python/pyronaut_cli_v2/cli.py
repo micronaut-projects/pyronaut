@@ -571,6 +571,12 @@ def run(
         if command in {"dev", "run", "test"}
         else delegated_args
     )
+    # --type-check and --compile-static (and their negations) are processor
+    # settings: they reach the preflight's process invocations, not the
+    # application, the test runner or the packager.
+    processor_args = _extract_processor_flags(forwarded_args) if command in {"dev", "run", "test", "build"} else []
+    delegated_args = _strip_processor_flags(delegated_args) if command in {"dev", "run", "test"} else delegated_args
+    forwarded_args = _strip_processor_flags(forwarded_args) if command == "build" else forwarded_args
     # Keep the dev process under the Python auto-restart loop for both managed
     # and external builds. The native pyronaut-dev launcher runs one
     # application instance; it does not watch Gradle/Maven source trees.
@@ -604,6 +610,7 @@ def run(
                 no_validate=no_validate,
                 java_home_provider=effective_java_home_provider,
                 platform_name=current_platform,
+                processor_args=processor_args,
             )
         return _run_build(
             args=forwarded_args,
@@ -613,6 +620,7 @@ def run(
             no_validate=no_validate,
             java_home_provider=effective_java_home_provider,
             platform_name=current_platform,
+            processor_args=processor_args,
         )
 
     if command == "test-resources-server" and _is_test_resources_start(forwarded_args):
@@ -680,6 +688,7 @@ def run(
                     install=False,
                     process_pass="main",
                     java_home_provider=effective_java_home_provider,
+                    processor_args=processor_args,
                 )
                 if preflight_code != SUCCESS:
                     return preflight_code
@@ -719,6 +728,7 @@ def run(
                 local_repository=local_repository,
                 process_pass="main",
                 no_install=no_install,
+                processor_args=processor_args,
             )
 
         if command in {"dev", "run"}:
@@ -734,6 +744,7 @@ def run(
                     # the explicit pass can skip Java-only output generation.
                     process_pass=None,
                     java_home_provider=effective_java_home_provider,
+                    processor_args=processor_args,
                 )
                 if preflight_code != SUCCESS:
                     return preflight_code
@@ -748,6 +759,7 @@ def run(
                     install=False,
                     process_pass="main",
                     java_home_provider=effective_java_home_provider,
+                    processor_args=processor_args,
                 )
                 if preflight_code != SUCCESS:
                     return preflight_code
@@ -803,6 +815,7 @@ def run(
                     local_repository=local_repository,
                     external_install_done=external_install_done,
                     no_install=no_install,
+                    processor_args=processor_args,
                 )
 
             test_exit_code, _ = _run_test_cycle(
@@ -819,6 +832,7 @@ def run(
                 local_repository=local_repository,
                 external_install_done=external_install_done,
                 no_install=no_install,
+                processor_args=processor_args,
             )
             return test_exit_code
 
@@ -2554,6 +2568,7 @@ def _run_preflight(
     install: bool = True,
     process_pass: str | None = None,
     java_home_provider: JavaHomeProvider | None = None,
+    processor_args: Sequence[str] = (),
 ) -> int:
     if install:
         install_args = ["--project-dir", project_dir, *_local_repository_install_args(local_repository)]
@@ -2577,6 +2592,9 @@ def _run_preflight(
         process_args.extend(["--java-src", layout.java_source_dir])
     if process_pass is not None:
         process_args.extend(["--pass", process_pass])
+    # Type checking and static compilation flags given to dev, run, test or
+    # build belong to the processor: they ride on every pass of the preflight.
+    process_args.extend(processor_args)
     # Native pyronaut-dev resolves its embedded compiler descriptor from the
     # selected local repository. Keep that repository available while building
     # the native command; the delegate strips this orchestration-only option
@@ -2897,6 +2915,7 @@ def _run_direct_source_build(
     no_validate: bool,
     java_home_provider: JavaHomeProvider | None,
     platform_name: str | None,
+    processor_args: Sequence[str] = (),
 ) -> int:
     root = Path(_extract_project_dir(args)).resolve()
     selectors = _direct_build_source_selectors(args)
@@ -3050,6 +3069,7 @@ def _run_direct_source_build(
             dist_dir=root / "dist",
             # The staged pyproject.toml is regenerated for every direct build.
             record_native_base=False,
+            processor_args=processor_args,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
@@ -3068,6 +3088,7 @@ def _run_build(
     platform_name: str | None = None,
     dist_dir: Path | None = None,
     record_native_base: bool = True,
+    processor_args: Sequence[str] = (),
 ) -> int:
     if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
         _print_build_usage()
@@ -3168,6 +3189,7 @@ def _run_build(
         resolver,
         install=preflight_install,
         java_home_provider=java_home_provider,
+        processor_args=processor_args,
     )
     if preflight != SUCCESS:
         return preflight
@@ -6040,6 +6062,7 @@ def _run_with_auto_restart(
     local_repository: str | None,
     process_pass: str | None = None,
     no_install: bool = False,
+    processor_args: Sequence[str] = (),
 ) -> int:
     validate_on_restart = True
     if poll_interval <= 0:
@@ -6069,6 +6092,7 @@ def _run_with_auto_restart(
                 install=False,
                 process_pass=process_pass,
                 java_home_provider=java_home_provider,
+                processor_args=processor_args,
             )
             if preflight_code != SUCCESS:
                 return preflight_code
@@ -6173,6 +6197,7 @@ def _run_with_auto_restart(
                             install=False,
                             process_pass=process_pass,
                             java_home_provider=java_home_provider,
+                            processor_args=processor_args,
                         )
                         if refresh_code == SUCCESS and validate_on_restart:
                             refresh_code = _run_lifecycle_validation(
@@ -6232,6 +6257,7 @@ def _run_test_cycle(
     local_repository: str | None,
     external_install_done: bool = False,
     no_install: bool = False,
+    processor_args: Sequence[str] = (),
 ) -> tuple[int, dict[str, str] | None]:
     prepare_code, test_resources_env_overrides = _prepare_test_cycle(
         project_dir=project_dir,
@@ -6245,6 +6271,7 @@ def _run_test_cycle(
         local_repository=local_repository,
         external_install_done=external_install_done,
         no_install=no_install,
+        processor_args=processor_args,
     )
     if prepare_code != SUCCESS:
         return prepare_code, test_resources_env_overrides
@@ -6276,6 +6303,7 @@ def _prepare_test_cycle(
     external_install_done: bool = False,
     process_pass: str = "all",
     no_install: bool = False,
+    processor_args: Sequence[str] = (),
 ) -> tuple[int, dict[str, str] | None]:
     """
     What a test run needs before its tests run: the processing of the project
@@ -6293,6 +6321,7 @@ def _prepare_test_cycle(
             and not (_pyronaut_output_dir(project_dir) / "project-layout.properties").exists(),
             process_pass="all",
             java_home_provider=java_home_provider,
+            processor_args=processor_args,
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
@@ -6320,6 +6349,7 @@ def _prepare_test_cycle(
             install=False,
             process_pass=process_pass,
             java_home_provider=java_home_provider,
+            processor_args=processor_args,
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
@@ -6367,6 +6397,7 @@ def _run_test_continuously(
     local_repository: str | None,
     external_install_done: bool = False,
     no_install: bool = False,
+    processor_args: Sequence[str] = (),
 ) -> int:
     project_root = project_dir.resolve()
     if _test_reload_in_process(project_root, delegated_args, debug_vm=debug_vm, resolver=resolver):
@@ -6385,6 +6416,7 @@ def _run_test_continuously(
             # without a terminal no key can end the session: run the tests once
             once=input_reader is None and not _stdin_is_terminal(),
             no_install=no_install,
+            processor_args=processor_args,
         )
     snapshot = snapshotter(project_root)
     watch_mode = False
@@ -6435,6 +6467,7 @@ def _run_test_continuously(
                     local_repository=local_repository,
                     external_install_done=external_install_done,
                     no_install=no_install,
+                    processor_args=processor_args,
                 )
                 # Only the first cycle can reuse the install performed by run().
                 external_install_done = False
@@ -6587,6 +6620,7 @@ def _run_tests_in_process(
     local_repository: str | None,
     once: bool = False,
     no_install: bool = False,
+    processor_args: Sequence[str] = (),
 ) -> int:
     """
     Continuous testing in one JVM: validate and process the project once, then
@@ -6609,6 +6643,7 @@ def _run_tests_in_process(
         local_repository=local_repository,
         process_pass="main",
         no_install=no_install,
+        processor_args=processor_args,
     )
     if prepare_code != SUCCESS:
         return prepare_code
@@ -9396,6 +9431,44 @@ def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
             skip_next = True
             continue
         if token.startswith("--local-repository=") or token.startswith("--local-repo="):
+            continue
+        filtered.append(token)
+    return filtered + application_args
+
+
+_PROCESSOR_SETTING_FLAGS = ("--type-check", "--no-type-check", "--compile-static", "--no-compile-static", "--compile-static-report", "--compile-static-strict")
+_PROCESSOR_SETTING_VALUE_FLAGS = ("--compile-static-report",)
+
+
+def _extract_processor_flags(args: Sequence[str]) -> list[str]:
+    """The type checking and static compilation flags among the orchestrator arguments, as given."""
+    extracted: list[str] = []
+    tokens = _orchestrator_args(args)
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        name = token.split("=", 1)[0]
+        if name in _PROCESSOR_SETTING_FLAGS:
+            extracted.append(token)
+            if name in _PROCESSOR_SETTING_VALUE_FLAGS and "=" not in token and index + 1 < len(tokens) and not tokens[index + 1].startswith("-"):
+                index += 1
+                extracted.append(tokens[index])
+        index += 1
+    return extracted
+
+
+def _strip_processor_flags(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
+    filtered: list[str] = []
+    skip_next = False
+    for token in option_args:
+        if skip_next:
+            skip_next = False
+            continue
+        name = token.split("=", 1)[0]
+        if name in _PROCESSOR_SETTING_FLAGS:
+            following = option_args[option_args.index(token) + 1] if option_args.index(token) + 1 < len(option_args) else None
+            skip_next = name in _PROCESSOR_SETTING_VALUE_FLAGS and "=" not in token and following is not None and not following.startswith("-")
             continue
         filtered.append(token)
     return filtered + application_args

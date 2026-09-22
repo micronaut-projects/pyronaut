@@ -7,6 +7,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProcessorOptionsTest {
@@ -28,5 +30,27 @@ class ProcessorOptionsTest {
         assertTrue(main.contains("-Amicronaut.openapi.views.spec=swagger-ui.enabled=true,redoc.enabled=true"));
         assertTrue(main.contains("-Aexample.option=42"));
         assertTrue(test.contains("-Amicronaut.openapi.enabled=false"));
+    }
+
+    @Test
+    void emitsTypeCheckingAndStaticCompilationSettingsAsOptions() throws Exception {
+        Path root = Files.createTempDirectory("processor-settings");
+        List<String> none = ProcessorOptions.resolve(root, null, List.of(), false, ProcessorOptions.ProcessorSettings.DEFAULT);
+        assertTrue(none.stream().noneMatch(option -> option.startsWith("-Amicronaut.python.")), none.toString());
+
+        ProcessorOptions.ProcessorSettings settings = new ProcessorOptions.ProcessorSettings("error", "all", root.resolve("reports"), true);
+        List<String> main = ProcessorOptions.resolve(root, null, List.of(), false, settings);
+        List<String> test = ProcessorOptions.resolve(root, null, List.of(), true, settings);
+        assertTrue(main.contains("-Amicronaut.python.typecheck=error"), main.toString());
+        assertTrue(main.contains("-Amicronaut.python.compile.static=all"), main.toString());
+        assertTrue(main.contains("-Amicronaut.python.compile.static.strict=true"), main.toString());
+        assertTrue(main.contains("-Amicronaut.python.compile.static.report=" + root.resolve("reports/main").toAbsolutePath().normalize()), main.toString());
+        assertTrue(test.contains("-Amicronaut.python.compile.static.report=" + root.resolve("reports/test").toAbsolutePath().normalize()), test.toString());
+
+        List<String> explicit = ProcessorOptions.resolve(root, null, List.of("-Amicronaut.python.typecheck=warn"), false, settings);
+        assertTrue(explicit.contains("-Amicronaut.python.typecheck=warn"), explicit.toString());
+        assertTrue(explicit.stream().noneMatch("-Amicronaut.python.typecheck=error"::equals), explicit.toString());
+        assertEquals("type-check error · static all (strict)", settings.describe());
+        assertNull(ProcessorOptions.ProcessorSettings.DEFAULT.describe());
     }
 }
