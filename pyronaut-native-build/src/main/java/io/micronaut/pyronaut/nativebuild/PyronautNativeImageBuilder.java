@@ -167,6 +167,7 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=io.netty.resolver.*",
             "-H:Preserve=package=io.netty.util.concurrent",
             "-H:Preserve=package=io.netty.util",
+            "-H:Preserve=package=io.netty.util.internal",
 
             /* reactor.* */
             "-H:Preserve=package=reactor.core.*",
