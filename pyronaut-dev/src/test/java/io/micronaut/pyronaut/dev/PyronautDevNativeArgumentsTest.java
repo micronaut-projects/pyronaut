@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class PyronautDevNativeArgumentsTest {
     @Test
-    void reusableImagePreservesNettyLoggingClasses() throws IOException {
+    void reusableImagePreservesNettyRuntimeClasses() throws IOException {
         Path repositoryRoot = Path.of("").toAbsolutePath().normalize();
         while (repositoryRoot != null && !Files.isRegularFile(repositoryRoot.resolve("settings.gradle.kts"))) {
             repositoryRoot = repositoryRoot.getParent();
@@ -39,6 +39,10 @@ final class PyronautDevNativeArgumentsTest {
         assertTrue(
             buildScript.substring(argsStart, argsEnd).contains("-H:Preserve=package=io.netty.handler.logging.*"),
             "The reusable image must preserve Netty logging classes"
+        );
+        assertTrue(
+            buildScript.substring(argsStart, argsEnd).contains("-H:Preserve=package=io.netty.util.internal\""),
+            "The reusable image must preserve direct Netty internal classes"
         );
     }
 }

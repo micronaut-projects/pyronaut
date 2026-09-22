@@ -73,6 +73,17 @@ class PyronautNativeImageBuilderTest {
     }
 
     @Test
+    void preservesDirectNettyInternalClasses() throws Exception {
+        Path classpathEntry = tempDir.resolve("netty-common");
+        Files.createDirectories(classpathEntry.resolve("io/netty/util/internal"));
+        Files.createFile(classpathEntry.resolve("io/netty/util/internal/PlatformDependent.class"));
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=io.netty.util.internal"));
+    }
+
+    @Test
     void addsPythonClasspathAndTruffleAccessOnlyWhenPythonIsEnabled() throws Exception {
         Path javaClasspathEntry = tempDir.resolve("runtime.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(javaClasspathEntry))) {
