@@ -52,6 +52,8 @@ class PyronautNativeImageBuilderTest {
         assertFalse(defaultCommand.contains("-H:Preserve=package=java.applet.*"));
         assertTrue(defaultCommand.contains("-H:Preserve=package=org.xml.sax"));
         assertTrue(defaultCommand.contains("--initialize-at-build-time=io.micronaut.core.io"));
+        assertTrue(defaultCommand.indexOf("--initialize-at-build-time=io.micronaut.http.server.cors.CorsOriginConverter")
+            > defaultCommand.indexOf("--initialize-at-run-time=io.micronaut"));
         assertTrue(reportingCommand.contains("--emit"));
         assertTrue(reportingCommand.contains("build-report"));
         assertTrue(reportingCommand.contains("-H:IncludeSBOM=embed,export"));

@@ -288,6 +288,7 @@ public final class PyronautNativeImageBuilder {
 
 //    Runtime Init
             "--initialize-at-run-time=io.micronaut",
+            "--initialize-at-build-time=io.micronaut.http.server.cors.CorsOriginConverter",
             "--initialize-at-run-time=jdk.internal.loader.ClassLoaders",
             "--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm",
             "--initialize-at-run-time=ch.qos.logback.classic.Logger",
