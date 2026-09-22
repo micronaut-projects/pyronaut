@@ -78,10 +78,23 @@ final class ProcessorProgressReporter implements AutoCloseable {
     }
 
     void startPass(String passName, boolean incremental) {
-        startPass(passName, -1L, incremental);
+        startPass(passName, -1L, incremental, null);
+    }
+
+    /**
+     * @param passName    The pass
+     * @param incremental Whether the pass is incremental
+     * @param settings    The type checking and static compilation settings of the pass, or {@code null} when off
+     */
+    void startPass(String passName, boolean incremental, String settings) {
+        startPass(passName, -1L, incremental, settings);
     }
 
     void startPass(String passName, long sourceCount, boolean incremental) {
+        startPass(passName, sourceCount, incremental, null);
+    }
+
+    void startPass(String passName, long sourceCount, boolean incremental, String settings) {
         if (!enabled) {
             return;
         }
@@ -90,6 +103,9 @@ final class ProcessorProgressReporter implements AutoCloseable {
         String message = sourceCount < 0
             ? action + " " + passName + " sources"
             : action + " " + passName + " sources (" + sourceCount + " files)";
+        if (settings != null) {
+            message = message + " · " + settings;
+        }
         synchronized (lock) {
             passes.put(passName, new Pass(message));
         }
@@ -199,6 +215,15 @@ final class ProcessorProgressReporter implements AutoCloseable {
         } else {
             output.println(message);
         }
+    }
+
+    /**
+     * Prints a line of information about a pass, above the live region.
+     *
+     * @param message The message
+     */
+    void info(String message) {
+        note(message);
     }
 
     private void note(String message) {
