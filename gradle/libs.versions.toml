@@ -27,7 +27,7 @@ micronaut-cache = "6.1.1"
 micronaut-sql = "7.1.3"
 micronaut-data = "5.1.5"
 javaparser = "3.28.2"
-graalvm-reachability-metadata = "1.1.12"
+graalvm-reachability-metadata = "1.1.14"
 
 [libraries]
 micronaut-serde = { module = "io.micronaut.serde:micronaut-serde-bom", version.ref = "micronaut-serde" }
