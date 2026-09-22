@@ -179,6 +179,7 @@ public final class PyronautNativeImageBuilder {
 
             /* other */
             "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
+            "-H:Preserve=package=com.google.gson.*",
             "-H:Preserve=package=org.slf4j.*",
             "-H:Preserve=package=org.w3c.dom.bootstrap",
             "-H:Preserve=package=org.w3c.dom.events",

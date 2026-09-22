@@ -58,6 +58,17 @@ class PyronautNativeImageBuilderTest {
     }
 
     @Test
+    void preservesGsonForJdkHttpClientJsonPayloads() throws Exception {
+        Path classpathEntry = tempDir.resolve("gson-runtime");
+        Files.createDirectories(classpathEntry.resolve("com/google/gson"));
+        Files.createFile(classpathEntry.resolve("com/google/gson/Gson.class"));
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=com.google.gson.*"));
+    }
+
+    @Test
     void preservesOnlyPackagesPresentOnTheEffectiveClasspath() throws Exception {
         Path classpathEntry = tempDir.resolve("jackson-core.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {
@@ -69,6 +80,7 @@ class PyronautNativeImageBuilderTest {
         List<String> command = build(classpathEntry, false, false);
 
         assertTrue(command.contains("-H:Preserve=package=tools.jackson.core.*"));
+        assertFalse(command.contains("-H:Preserve=package=com.google.gson.*"));
         assertFalse(command.contains("-H:Preserve=package=io.micronaut.expressions.*"));
     }
 
