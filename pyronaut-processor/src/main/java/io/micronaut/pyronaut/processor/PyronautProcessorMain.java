@@ -120,6 +120,39 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     )
     Boolean daemon;
 
+    @CommandLine.Option(
+        names = "--type-check",
+        arity = "0..1",
+        fallbackValue = "warn",
+        description = "Check Python sources against the Java types they use: off|warn|error (the bare flag means warn)"
+    )
+    String typeCheck;
+
+    @CommandLine.Option(names = "--no-type-check", description = "Switch type checking off for this invocation")
+    boolean noTypeCheck;
+
+    @CommandLine.Option(
+        names = "--compile-static",
+        arity = "0..1",
+        fallbackValue = "annotated",
+        description = "Compile Python method bodies to Java: off|annotated|all (the bare flag means annotated)"
+    )
+    String compileStatic;
+
+    @CommandLine.Option(names = "--no-compile-static", description = "Switch static compilation off for this invocation")
+    boolean noCompileStatic;
+
+    @CommandLine.Option(
+        names = "--compile-static-report",
+        arity = "0..1",
+        fallbackValue = "",
+        description = "Directory the static compilation report is written to (default __pyronaut__/reports/static-compilation)"
+    )
+    String compileStaticReport;
+
+    @CommandLine.Option(names = "--compile-static-strict", description = "Fail when an explicit CompileStatic cannot be honoured")
+    boolean compileStaticStrict;
+
     @CommandLine.Option(names = "--daemon-server", hidden = true)
     Path daemonServerDirectory;
 
@@ -153,6 +186,41 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         this.modelReader = modelReader;
         this.compilerExecutor = compilerExecutor;
         this.daemonRequest = daemonRequest;
+    }
+
+    /**
+     * The type checking and static compilation settings of this run: an explicit flag, else the
+     * project model, else the defaults, as {@code --incremental} resolves.
+     */
+    ProcessorOptions.ProcessorSettings resolveSettings(Path root, ExternalProjectLayout externalLayout, PyprojectModel model) {
+        if (noTypeCheck && typeCheck != null) {
+            throw new IllegalArgumentException("--type-check and --no-type-check cannot both be given");
+        }
+        if (noCompileStatic && compileStatic != null) {
+            throw new IllegalArgumentException("--compile-static and --no-compile-static cannot both be given");
+        }
+        PyprojectModel.Processor processor = model == null ? null : model.pyronaut().processor();
+        PyprojectModel.TypeCheck configuredTypeCheck = processor == null || processor.typeCheck() == null ? PyprojectModel.TypeCheck.DEFAULT : processor.typeCheck();
+        PyprojectModel.StaticCompilation configuredStatic = processor == null || processor.staticCompilation() == null ? PyprojectModel.StaticCompilation.DEFAULT : processor.staticCompilation();
+        String typeCheckMode = noTypeCheck ? "off" : typeCheck != null ? typeCheck : configuredTypeCheck.mode();
+        if (!List.of("off", "warn", "error").contains(typeCheckMode)) {
+            throw new IllegalArgumentException("Unknown --type-check mode [" + typeCheckMode + "]; expected off, warn or error");
+        }
+        String staticMode = noCompileStatic ? "off" : compileStatic != null ? compileStatic : configuredStatic.mode();
+        if (!List.of("off", "annotated", "all").contains(staticMode)) {
+            throw new IllegalArgumentException("Unknown --compile-static mode [" + staticMode + "]; expected off, annotated or all");
+        }
+        Path report;
+        if (compileStaticReport != null && !compileStaticReport.isBlank()) {
+            report = root.resolve(compileStaticReport);
+        } else if (externalLayout != null && PyprojectModel.StaticCompilation.DEFAULT.report().equals(configuredStatic.report())) {
+            // a Maven or Gradle project keeps the report with its other outputs, like the incremental cache
+            report = ExternalProjectLayout.outputDirectory(root).resolve("reports/static-compilation");
+        } else {
+            report = root.resolve(configuredStatic.report());
+        }
+        boolean strict = compileStaticStrict || Boolean.TRUE.equals(configuredStatic.strict());
+        return new ProcessorOptions.ProcessorSettings(typeCheckMode, staticMode, report.toAbsolutePath().normalize(), strict);
     }
 
     @Override
@@ -202,8 +270,18 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             }
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
             ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
-            List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false);
-            List<String> testOptions = ProcessorOptions.resolve(root, model, options, true);
+            ProcessorOptions.ProcessorSettings settings;
+            try {
+                settings = resolveSettings(root, externalLayout, model);
+            } catch (IllegalArgumentException e) {
+                System.err.println(e.getMessage());
+                return PyronautProcessorExitCode.USAGE_ERROR.code();
+            }
+            if (settings.compilesStatically() && !settings.typeChecks()) {
+                System.out.println("Static compilation runs the type checker silently; add --type-check to see why a method is not compiled.");
+            }
+            List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false, settings);
+            List<String> testOptions = ProcessorOptions.resolve(root, model, options, true, settings);
             List<Path> pyronautProcessorSupport = externalProcessorSupportClasspath();
 
             List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()
@@ -296,7 +374,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         effectiveClasspath = appendDistinct(effectiveClasspath, pyronautProcessorSupport);
                     }
 
-                    progressReporter.startPass("main", incrementalCompilation);
+                    progressReporter.startPass("main", incrementalCompilation, settings.describe());
                     long mainSourceCount;
 
                     String mainFingerprint = null;
@@ -368,6 +446,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             );
                         }
                         progressReporter.finishPass("main", mainSourceCount);
+                        StaticCompilationSummary.report(progressReporter, settings.reportDirectory(false));
                         mainStatus = "processed";
                     }
                     if (externalLayout != null) {
@@ -405,7 +484,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         mergeSourceTrees(resolvedTestJavaSrc, mergedTestJavaSrc);
                     }
 
-                    progressReporter.startPass("test", incrementalCompilation);
+                    progressReporter.startPass("test", incrementalCompilation, settings.describe());
                     long testSourceCount;
                     ProcessorSourceCache.InputSnapshot testSnapshot = null;
                     if (!noCache && (Files.isDirectory(mergedTestPythonSrc) || Files.isDirectory(mergedTestJavaSrc))) {
@@ -489,6 +568,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             }
                             syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                             progressReporter.finishPass("test", testSourceCount);
+                            StaticCompilationSummary.report(progressReporter, settings.reportDirectory(true));
                             testStatus = "processed";
                         }
                     }

@@ -22,6 +22,14 @@ incremental = false
 python-incremental-mode = "conservative"
 daemon = false
 
+[tool.pyronaut.processor.type-check]
+mode = "warn"
+
+[tool.pyronaut.processor.static-compilation]
+mode = "annotated"
+report = "build/reports/static"
+strict = true
+
 [tool.pyronaut.dependencies]
 runtime = [ "io.micronaut:micronaut-inject-python",
     "io.micronaut:micronaut-context-python",

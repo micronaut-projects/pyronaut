@@ -73,6 +73,14 @@ incremental = false
 python-incremental-mode = "conservative" # conservative|optimistic
 daemon = false
 
+[tool.pyronaut.processor.type-check]
+mode = "off" # off|warn|error
+
+[tool.pyronaut.processor.static-compilation]
+mode = "off" # off|annotated|all
+report = "__pyronaut__/reports/static-compilation"
+strict = false
+
 [tool.pyronaut.test]
 mode = "jvm" # jvm|native
 engine = "both" # junit|pytest|both

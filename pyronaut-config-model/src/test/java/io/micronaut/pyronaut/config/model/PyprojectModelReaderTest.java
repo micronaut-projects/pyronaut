@@ -51,6 +51,10 @@ class PyprojectModelReaderTest {
         assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
         assertEquals("conservative", model.pyronaut().processor().pythonIncrementalMode());
         assertEquals(Boolean.FALSE, model.pyronaut().processor().daemon());
+        assertEquals("warn", model.pyronaut().processor().typeCheck().mode());
+        assertEquals("annotated", model.pyronaut().processor().staticCompilation().mode());
+        assertEquals("build/reports/static", model.pyronaut().processor().staticCompilation().report());
+        assertEquals(Boolean.TRUE, model.pyronaut().processor().staticCompilation().strict());
         assertEquals("src", model.pyronaut().sources().python());
         assertEquals("tests", model.pyronaut().sources().pythonTest());
         assertEquals("src-java", model.pyronaut().sources().java());
@@ -456,6 +460,10 @@ class PyprojectModelReaderTest {
         assertEquals(Boolean.FALSE, model.pyronaut().processor().incremental());
         assertEquals("conservative", model.pyronaut().processor().pythonIncrementalMode());
         assertEquals(Boolean.FALSE, model.pyronaut().processor().daemon());
+        assertEquals("off", model.pyronaut().processor().typeCheck().mode());
+        assertEquals("off", model.pyronaut().processor().staticCompilation().mode());
+        assertEquals("__pyronaut__/reports/static-compilation", model.pyronaut().processor().staticCompilation().report());
+        assertEquals(Boolean.FALSE, model.pyronaut().processor().staticCompilation().strict());
     }
 
     @Test

@@ -39,6 +39,20 @@ By default, one `pyronaut-processor` invocation performs two processing passes:
 The test pass uses `resolved-test-dependencies` and compiles a fused source tree so `__pyronaut__/test-classes` contains everything needed for isolated test execution.
 If only main sources are present, they are still compiled into `__pyronaut__/test-classes`; if no processable Python/Java sources exist at all, the directory is created empty.
 
+## Type checking and static compilation
+
+`--type-check[=off|warn|error]` checks the Python sources against the Java types they use and
+`--compile-static[=off|annotated|all]` compiles Python method bodies to Java; the bare flags mean
+`warn` and `annotated`. `--no-type-check` and `--no-compile-static` switch either off for one
+invocation, `--compile-static-report <dir>` moves the report (`decisions.jsonl` and `summary.txt`
+under `main/` and `test/`, by default in `__pyronaut__/reports/static-compilation`), and
+`--compile-static-strict` fails the build when an explicit `CompileStatic` cannot be honoured. The
+`tool.pyronaut.processor.type-check` and `tool.pyronaut.processor.static-compilation` tables of
+`pyproject.toml` hold the same settings; a flag wins over the table. Both travel to the compiler as
+`-A` options and are part of the source cache fingerprint, so changing a mode re-processes the
+sources. After a pass that compiled statically, one line reports how many methods compiled, how many
+were skipped, the most common reason and where the summary is.
+
 ## Compilation cache
 
 `pyronaut-processor` stores deterministic per-pass hashes under `__pyronaut__`:

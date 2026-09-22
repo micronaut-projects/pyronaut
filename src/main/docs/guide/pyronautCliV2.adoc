@@ -354,9 +354,15 @@ Common options:
 - `--daemon`: use the persistent compiler daemon for this invocation
 - `--no-daemon`: process in the current command process for this invocation
 - `--no-cache`: clear processor outputs and incremental state, then perform a full compilation without reusing either cache
+- `--type-check[=off|warn|error]`: check the Python sources against the Java types they use; the bare flag means `warn`
+- `--no-type-check`: switch type checking off for this invocation
+- `--compile-static[=off|annotated|all]`: compile Python method bodies to Java; the bare flag means `annotated`, only the scopes carrying `CompileStatic`
+- `--no-compile-static`: switch static compilation off for this invocation
+- `--compile-static-report[=<dir>]`: where the static compilation report (`decisions.jsonl` and `summary.txt`, per pass) is written; `__pyronaut__/reports/static-compilation` by default
+- `--compile-static-strict`: fail when an explicit `CompileStatic` cannot be honoured
 
 The CLI `--incremental` and `--no-incremental` options override `tool.pyronaut.processor.incremental`.
-Likewise, `--daemon` and `--no-daemon` override `tool.pyronaut.processor.daemon`.
+Likewise, `--daemon` and `--no-daemon` override `tool.pyronaut.processor.daemon`, and the type checking and static compilation flags override the `tool.pyronaut.processor.type-check` and `tool.pyronaut.processor.static-compilation` tables. The same flags are accepted by `dev`, `run`, `test` and `build`, which pass them to the processing they run first. Both settings travel to the compiler as annotation processor options, so switching one on or off re-processes the sources; a Micronaut core older than the feature ignores them. The escape hatches are the decorators `pyronaut.build.TypeChecked` and `pyronaut.build.CompileStatic`, applied with `False` to leave a class, a function or a module out.
 Incremental compilation is disabled when neither the CLI nor project configuration enables it.
 See <<incrementalProcessing,Incremental Processing>> for cache locations, invalidation behavior, and source-writing guidance.
 

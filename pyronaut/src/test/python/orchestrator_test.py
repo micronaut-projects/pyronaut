@@ -495,6 +495,89 @@ class OrchestratorTest(unittest.TestCase):
             executed,
         )
 
+    def test_process_forwards_type_check_and_compile_static_flags(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        exit_code = cli.run(
+            ["process", "--project-dir", "/tmp/demo", "--type-check=error", "--compile-static", "--compile-static-report", "reports/static"],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--type-check=error", "--compile-static", "--compile-static-report", "reports/static"]],
+            executed,
+        )
+
+    def test_run_passes_processor_flags_to_the_preflight_only(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            exit_code = cli.run(
+                ["run", "--project", str(project_dir), "--type-check", "--no-compile-static", "--main-class", "example.Main"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual(3, len(executed))
+            self.assertEqual(
+                ["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "main", "--type-check", "--no-compile-static"],
+                executed[1],
+            )
+            self._assert_run_delegate(executed[2], str(project_dir), ["--main-class", "example.Main"])
+
+    def test_processor_flag_helpers_keep_the_report_directory_with_its_flag(self):
+        args = ["--project", "demo", "--compile-static-report", "reports", "--type-check=warn", "--", "--compile-static"]
+        self.assertEqual(["--compile-static-report", "reports", "--type-check=warn"], cli._extract_processor_flags(args))
+        self.assertEqual(["--project", "demo", "--", "--compile-static"], cli._strip_processor_flags(args))
+        bare = ["--compile-static-report", "--main-class", "example.Main"]
+        self.assertEqual(["--compile-static-report"], cli._extract_processor_flags(bare))
+        self.assertEqual(["--main-class", "example.Main"], cli._strip_processor_flags(bare))
+
+    def test_test_passes_processor_flags_to_every_preflight(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            exit_code = cli.run(
+                ["test", "--project", str(project_dir), "--compile-static=all"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+            self.assertEqual(0, exit_code)
+            processor_calls = [line for line in executed if line and line[0].endswith("pyronaut-processor")]
+            self.assertTrue(processor_calls, executed)
+            for call in processor_calls:
+                self.assertIn("--compile-static=all", call)
+            for call in executed:
+                if call and call[0].endswith("pyronaut-test"):
+                    self.assertNotIn("--compile-static=all", call)
+
     def test_install_prefers_bundled_native_executable_when_available(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:

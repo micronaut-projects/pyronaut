@@ -217,8 +217,25 @@ public record PyprojectModel(Project project,
      * @param incremental whether incremental compilation is enabled
      * @param pythonIncrementalMode handling of dynamic or unresolved Python relationships
      * @param daemon whether the compiler daemon is enabled
+     * @param typeCheck the tool.pyronaut.processor.type-check table
+     * @param staticCompilation the tool.pyronaut.processor.static-compilation table
      */
-    public record Processor(String mode, Boolean incremental, String pythonIncrementalMode, Boolean daemon) {
+    public record Processor(String mode,
+                            Boolean incremental,
+                            String pythonIncrementalMode,
+                            Boolean daemon,
+                            TypeCheck typeCheck,
+                            StaticCompilation staticCompilation) {
+        /**
+         * @param mode processor execution mode
+         * @param incremental whether incremental compilation is enabled
+         * @param pythonIncrementalMode handling of dynamic or unresolved Python relationships
+         * @param daemon whether the compiler daemon is enabled
+         */
+        public Processor(String mode, Boolean incremental, String pythonIncrementalMode, Boolean daemon) {
+            this(mode, incremental, pythonIncrementalMode, daemon, TypeCheck.DEFAULT, StaticCompilation.DEFAULT);
+        }
+
         /**
          * @param mode processor execution mode
          */
@@ -242,6 +259,32 @@ public record PyprojectModel(Project project,
         public Processor(String mode, Boolean incremental, String pythonIncrementalMode) {
             this(mode, incremental, pythonIncrementalMode, Boolean.FALSE);
         }
+    }
+
+    /**
+     * tool.pyronaut.processor.type-check table.
+     *
+     * @param mode how Python sources are checked against the Java types they use: off, warn or error
+     */
+    public record TypeCheck(String mode) {
+        /**
+         * The defaults: no checking.
+         */
+        public static final TypeCheck DEFAULT = new TypeCheck("off");
+    }
+
+    /**
+     * tool.pyronaut.processor.static-compilation table.
+     *
+     * @param mode which Python method bodies are compiled to Java: off, annotated or all
+     * @param report the directory the report is written to, relative to the project
+     * @param strict whether an explicit CompileStatic that cannot be honoured fails the build
+     */
+    public record StaticCompilation(String mode, String report, Boolean strict) {
+        /**
+         * The defaults: no compilation, the report under the project's pyronaut directory.
+         */
+        public static final StaticCompilation DEFAULT = new StaticCompilation("off", "__pyronaut__/reports/static-compilation", Boolean.FALSE);
     }
 
     /**
