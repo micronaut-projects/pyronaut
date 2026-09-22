@@ -2,6 +2,7 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 
+import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.pyronaut.config.model.PyprojectJsonSchemaGenerator;
@@ -32,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautInstallMainTest {
@@ -1706,6 +1708,47 @@ class PyronautInstallMainTest {
             model, InstallScope.RUNTIME, tempDir.resolve("m2-custom-bom"), false);
         assertTrue(result.classpath().stream().anyMatch(path -> path.getFileName().toString().contains("root-1.0.0")));
         assertTrue(result.classpath().stream().noneMatch(path -> path.getFileName().toString().contains("transitive-1.0.0")));
+    }
+
+    @Test
+    void resolvesPomOnlyDependencyDeclaredWithAnExplicitExtension(@TempDir Path tempDir) throws Exception {
+        Path repository = tempDir.resolve("repo");
+        writePomOnlyArtifact(repository, "com.example", "aggregator", "1.0.0",
+            List.of(new DependencyCoordinate("com.example", "engine", "1.0.0")));
+        writeArtifact(repository, "com.example", "engine", "1.0.0");
+
+        PyprojectModel model = new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of("com.example:aggregator:pom:1.0.0"), List.of(), List.of(),
+                List.of(), List.of(), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+
+        MavenClasspathResolver.ResolvedScopeDetails result = new MavenClasspathResolver().resolveScopeDetails(
+            model, InstallScope.RUNTIME, tempDir.resolve("m2-pom-type"), false);
+
+        // The artifacts the aggregator exists to pull in are on the classpath.
+        assertTrue(result.classpath().stream()
+            .anyMatch(path -> path.getFileName().toString().equals("engine-1.0.0.jar")));
+        // The aggregator's own .pom is not classpath content.
+        assertTrue(result.classpath().stream()
+            .noneMatch(path -> path.getFileName().toString().endsWith(".pom")));
+    }
+
+    @Test
+    void rejectsACoordinateWithTooManySegments(@TempDir Path tempDir) throws Exception {
+        Path repository = tempDir.resolve("repo");
+        writeArtifact(repository, "com.example", "root", "1.0.0");
+
+        PyprojectModel model = new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of("a:b:c:d:e:f"), List.of(), List.of(),
+                List.of(), List.of(), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+
+        PyprojectModelException failure = assertThrows(PyprojectModelException.class, () ->
+            new MavenClasspathResolver().resolveScopeDetails(
+                model, InstallScope.RUNTIME, tempDir.resolve("m2-bad-coordinate"), false));
+        assertTrue(failure.getMessage().contains("Invalid dependency coordinate"));
     }
 
     @Test
@@ -4147,6 +4190,48 @@ class PyronautInstallMainTest {
 
         Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
         Files.write(jarFile, new byte[]{0});
+        ensureDefaultControlPanelArtifact(repository);
+    }
+
+    /**
+     * Writes an artifact published only as a POM, with no jar alongside it —
+     * the shape used by aggregators such as {@code org.graalvm.polyglot:js},
+     * whose purpose is to pull in a set of real artifacts.
+     */
+    private static void writePomOnlyArtifact(Path repository,
+                                             String groupId,
+                                             String artifactId,
+                                             String version,
+                                             List<DependencyCoordinate> dependencies) throws IOException {
+        Path artifactDir = repository
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version);
+        Files.createDirectories(artifactDir);
+
+        StringBuilder dependencyBlock = new StringBuilder();
+        for (DependencyCoordinate dependency : dependencies) {
+            dependencyBlock
+                .append("    <dependency>\n")
+                .append("      <groupId>").append(dependency.groupId()).append("</groupId>\n")
+                .append("      <artifactId>").append(dependency.artifactId()).append("</artifactId>\n")
+                .append("      <version>").append(dependency.version()).append("</version>\n")
+                .append("    </dependency>\n");
+        }
+
+        Files.writeString(artifactDir.resolve(artifactId + "-" + version + ".pom"), """
+            <project xmlns="http://maven.apache.org/POM/4.0.0"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>%s</groupId>
+              <artifactId>%s</artifactId>
+              <version>%s</version>
+              <packaging>pom</packaging>
+              <dependencies>
+            %s  </dependencies>
+            </project>
+            """.formatted(groupId, artifactId, version, dependencyBlock), StandardCharsets.UTF_8);
         ensureDefaultControlPanelArtifact(repository);
     }
 
