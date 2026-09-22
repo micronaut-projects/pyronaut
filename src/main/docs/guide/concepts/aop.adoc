@@ -1,4 +1,4 @@
-Aspect-oriented programming (AOP) sounds abstract but describes something every Python developer has done: writing a decorator that wraps a function to add behaviour such as logging, retrying, caching or timing. Micronaut ships many such decorators ready to use, and lets you write your own in a way that integrates with dependency injection.
+Aspect-oriented programming (AOP) describes a familiar Python pattern: a decorator wraps a function to add behaviour such as logging, retrying, caching, or timing. We include many such decorators and let you write your own so they work with dependency injection.
 
 == AOP compared with Python decorators
 
@@ -17,13 +17,13 @@ def retry(func):
     return wrapper
 ----
 
-A Micronaut _advice_ decorator does not change the function at all. It records metadata at build time. When the bean is created, Micronaut generates a proxy that intercepts calls to the decorated method and hands them to an _interceptor_, an ordinary bean that can receive its own dependencies. The important consequences are:
+An _advice_ decorator does not change the function. It records metadata that we use to generate a proxy class during processing. At runtime, the application context creates the proxy bean; the proxy intercepts calls to the decorated method and hands them to an _interceptor_, an ordinary bean that can receive its own dependencies. The important consequences are:
 
 * Advice only applies to beans obtained through dependency injection. If you call `BookService()` yourself, none of the decorators below have any effect.
-* Interceptors can be configured through `application.toml` and can use other beans, which is hard to do with a closure-based decorator.
-* The same decorator works on Python and Java beans.
+* Configure interceptors through `application.toml`; they can use other beans, which is hard to do with a closure-based decorator.
+* The same decorator works across the application.
 
-== Advice you will use every day
+== Common advice
 
 The following decorators are built in and require no code from you:
 
@@ -53,7 +53,7 @@ The following decorators are built in and require no code from you:
 |Wrap the method in a database transaction when using Micronaut Data.
 
 |`@Client` (`micronaut.http.client.annotation`)
-|Turn an abstract class into an HTTP client. Micronaut implements every method for you. See <<httpApis,Building HTTP APIs>>.
+|Turn an abstract class into an HTTP client. We implement its declared client methods. See <<httpApis,Building HTTP APIs>>.
 |===
 
 For example, a retrying service needs only a decorator:
@@ -71,7 +71,7 @@ class CatalogClient:
         ...
 ----
 
-Annotation members accept configuration placeholders, so the retry policy can be tuned without changing code:
+Annotation members accept configuration placeholders, so you can tune the retry policy without changing code:
 
 [source,python]
 ----
@@ -105,7 +105,7 @@ NOTE: Annotation member names keep their Java spelling (`fixedRate`, not `fixed_
 
 Custom advice has two parts: a decorator that marks the methods to intercept, and an interceptor bean that implements the behaviour.
 
-First define the decorator. It is a plain function that returns its argument unchanged; the `@Around` decorator tells Micronaut it is an AOP marker and `@Executable` makes the target methods callable through the proxy:
+First define the decorator. It is a plain function that returns its argument unchanged; the `@Around` decorator marks it as AOP advice and `@Executable` makes the target methods callable through the proxy:
 
 [source,python]
 ----
@@ -164,8 +164,4 @@ The interceptor is a bean, so it can receive dependencies through its constructo
 
 == Introduction advice
 
-_Around_ advice wraps an existing implementation. _Introduction_ advice supplies the implementation of an abstract method. `@Client` is the best-known example: you declare an abstract class describing the remote API and Micronaut generates the code that performs the HTTP calls. Micronaut Data repositories work the same way. Writing your own introduction advice is rarely necessary; the https://docs.micronaut.io/latest/guide/#introductionAdvice[Micronaut guide] shows how.
-
-== Further reading
-
-The https://docs.micronaut.io/latest/guide/#aop[Aspect Oriented Programming chapter] of the Micronaut guide covers interceptor ordering, constructor interception, lifecycle advice and the built-in validation, caching, retry and scheduling advice in depth, with Python examples for each.
+_Around_ advice wraps an existing implementation. _Introduction_ advice supplies the implementation of an abstract method. `@Client` is the best-known example: you declare an abstract class describing the remote API and we generate the code that performs the HTTP calls. Micronaut Data repositories work the same way. Writing your own introduction advice is rarely necessary; the https://docs.micronaut.io/latest/guide/#introductionAdvice[Micronaut guide] shows how.

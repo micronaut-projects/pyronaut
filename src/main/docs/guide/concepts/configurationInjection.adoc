@@ -1,8 +1,8 @@
-Python applications usually read configuration from `os.environ`, a `.env` file or a `pydantic-settings` model. Micronaut generalises this idea. Configuration comes from many sources with a defined priority, is converted to the types your code declares, can be validated at startup and can be injected into any bean.
+Python applications usually read configuration from `os.environ`, a `.env` file or a `pydantic-settings` model. We generalise this idea through Micronaut. We read configuration from many sources with a defined priority, convert it to the types your code declares, validate it at startup, and inject it into beans.
 
 == Where configuration comes from
 
-Micronaut merges configuration from several sources. Later entries in this list override earlier ones:
+We merge configuration from several sources. Later entries in this list override earlier ones:
 
 . `config/application.toml` (or `.yml`, `.properties`, `.json`) on the classpath.
 . Environment-specific files such as `config/application-dev.toml` and `config/application-test.toml`. Which ones apply depends on the active environments (see below).
@@ -25,13 +25,13 @@ timeout = "5s"
 page-size = 50
 ----
 
-Micronaut normalises key styles, so `page-size`, `pageSize` and `PAGE_SIZE` all refer to the same property. Prefer kebab-case in files and upper snake case in environment variables.
+We normalise key styles, so `page-size`, `pageSize` and `PAGE_SIZE` all refer to the same property. Prefer kebab-case in files and upper snake case in environment variables.
 
-TIP: After `pyronaut install`, `config/application.toml` carries a JSON schema directive. Editors that understand TOML schemas (VS Code with the Even Better TOML extension, PyCharm) then autocomplete Micronaut property names and flag typos. `pyronaut validate-config` performs the same check from the command line; see <<validateConfig,Configuration Validation>>.
+TIP: After `pyronaut install`, `config/application.toml` carries a JSON schema directive. Editors that understand TOML schemas (VS Code with the Even Better TOML extension, PyCharm) then autocomplete Micronaut property names and flag typos. `pyronaut validate-config` performs the same check from the command line; see <<validateConfig,Configuration validation>>.
 
 == Environments
 
-An environment is a named profile such as `dev`, `test` or `production`. Micronaut activates environments from the `MICRONAUT_ENVIRONMENTS` environment variable or the `micronaut.environments` property, and detects some automatically (for example `test` during `pyronaut test`). For each active environment the file `application-<env>.toml` is loaded on top of `application.toml`.
+An environment is a named profile such as `dev`, `test` or `production`. We activate environments from the `MICRONAUT_ENVIRONMENTS` environment variable or the `micronaut.environments` property, and detect some automatically (for example `test` during `pyronaut test`). For each active environment, we load `application-<env>.toml` on top of `application.toml`.
 
 This replaces the common Python pattern of `if os.environ.get("ENV") == "production":`. Keep shared settings in `application.toml` and only the differences in the environment files.
 
@@ -53,7 +53,7 @@ class CatalogClient:
     page_size: Annotated[int, Value("${bookstore.catalog.page-size:20}")]
 ----
 
-Micronaut converts the raw string to the declared type, so `page_size` is an `int`. Durations such as `"5s"` convert to `java.time.Duration`, and comma-separated values convert to `list[str]`.
+We convert the raw string to the declared type, so `page_size` is an `int`. Durations such as `"5s"` convert to `java.time.Duration`, and comma-separated values convert to `list[str]`.
 
 `@Property(name="...")` does the same without the placeholder syntax and is slightly clearer when no default is needed:
 
@@ -69,7 +69,7 @@ class CatalogClient:
 
 == Configuration classes
 
-Injecting values one at a time does not scale. `@ConfigurationProperties` binds an entire prefix to a class, the way a `pydantic-settings` model binds environment variables. Each attribute maps to a property under the prefix, type hints drive conversion and `jakarta.validation` constraints are enforced when the application starts:
+Injecting values one at a time does not scale. `@ConfigurationProperties` binds an entire prefix to a class, the way a `pydantic-settings` model binds environment variables. Each attribute maps to a property under the prefix, type hints drive conversion and we enforce `jakarta.validation` constraints when we create the bean:
 
 [source,python]
 ----
@@ -121,7 +121,7 @@ url = "https://catalog.example.com"
 
 === Immutable configuration
 
-A frozen dataclass produces an immutable configuration bean. Micronaut passes the bound values to the generated constructor:
+A frozen dataclass produces an immutable configuration bean. We pass the bound values to the generated constructor:
 
 [source,python]
 ----
@@ -140,11 +140,11 @@ class ValueAddedTaxConfiguration:
 
 === Validating at startup
 
-Constraints on a configuration class are checked when the bean is first created. Add `@Context` from `micronaut.context.annotation` to a configuration class to create it eagerly, so an invalid deployment fails immediately at startup rather than on the first request that touches it.
+We check constraints on a configuration class when we first create the bean. Add `@Context` from `micronaut.context.annotation` to a configuration class to create it eagerly, so an invalid deployment fails immediately at startup rather than on the first request that touches it.
 
 === Repeated configuration
 
-`@EachProperty` creates one bean per entry under a prefix. It is the Micronaut equivalent of a dictionary of settings, for example several named data sources:
+`@EachProperty` creates one bean per entry under a prefix. It is our equivalent of a dictionary of settings, for example several named data sources:
 
 [source,toml]
 ----
@@ -174,7 +174,7 @@ Injecting `list[DataSourceConfig]` returns every entry, and `Annotated[DataSourc
 
 == Conditional beans and configuration
 
-`@Requires` from <<dependencyInjection,Dependency Injection>> reads configuration too. This is how optional features are switched on:
+`@Requires` from <<dependencyInjection,Dependency Injection>> reads configuration too. Use it to enable optional features:
 
 [source,python]
 ----
@@ -190,4 +190,7 @@ class CachingCatalogClient(CatalogClient):
 
 == Further reading
 
-The https://docs.micronaut.io/latest/guide/#config[Application Configuration chapter] of the Micronaut guide covers placeholders, expression language, custom type converters, bootstrap configuration for distributed configuration servers, and more. <<appConfig,Application Configuration with application.toml>> lists the defaults Pyronaut applies on top of Micronaut's.
+The https://docs.micronaut.io/latest/core/#core-config[Application Configuration chapter] of the Micronaut guide covers
+property placeholders, expression language, custom type converters, and bootstrap configuration for distributed
+configuration sources. <<appConfig,Application Configuration with application.toml>> lists the defaults that Pyronaut
+applies in addition to the framework defaults.

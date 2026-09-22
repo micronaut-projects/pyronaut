@@ -38,12 +38,12 @@ The extension settings are:
 - `pyronaut.executable`: path to the Pyronaut executable. Defaults to `pyronaut`.
 - `pyronaut.test.extraArgs`: additional arguments appended to `pyronaut test` before test selectors.
 
-== Python Extension Pytest Support
+== Python extension pytest support
 
-Do not enable VS Code Python pytest discovery for Micronaut-backed Pyronaut tests that import Java-backed APIs such as `micronaut.runtime.server`.
+Do not enable VS Code Python pytest discovery for Micronaut-backed Pyronaut tests that import runtime APIs such as `micronaut.runtime.server`.
 Those tests need the Pyronaut processed classpath, test resources, and GraalPy runtime bootstrapping provided by `pyronaut test`.
 
-If VS Code Python pytest discovery has already been enabled, disable it in `.vscode/settings.json`:
+If you already enabled VS Code Python pytest discovery, disable it in `.vscode/settings.json`:
 
 [source,json]
 ----
@@ -52,7 +52,7 @@ If VS Code Python pytest discovery has already been enabled, disable it in `.vsc
 }
 ----
 
-== Current Limitations
+== Current limitations
 
 - The extension is not yet published to the VS Code Marketplace.
 - Installation is manual through the generated VSIX.

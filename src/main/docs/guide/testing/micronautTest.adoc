@@ -1,7 +1,7 @@
 = Using MicronautTest
 
 `MicronautTest` is the Python-side configuration object used by Pyronaut's pytest fixture support.
-It starts a Micronaut application context for a pytest and exposes it through a Python wrapper.
+We start a Micronaut application context for pytest and expose it through a Python wrapper.
 
 [source,python]
 ----
@@ -23,11 +23,11 @@ def my_context(request):
     fixture.stop()
 ----
 
-`MicronautTest()` mirrors the options of the Java `@MicronautTest` annotation. The `environments`, `packages`, `start_application`, `properties` and `sql` options are fully supported by the pytest integration.
+`MicronautTest()` mirrors the options of the `@MicronautTest` annotation. The `environments`, `packages`, `start_application`, `properties` and `sql` options are fully supported by the pytest integration.
 
-WARNING: The pytest fixture integration does not currently drive Micronaut Test's per-test transaction and context-rebuild lifecycle. `transactional`, `rollback` and `rebuild_context` are accepted for compatibility but have no effect, and `Sql` scripts declared with `Sql.Phase.AFTER_ALL` do not run. Use explicit clean-up in a fixture, or write the test as a JUnit 5 Python module (see <<testing,Testing>>), when transactional rollback is required.
+WARNING: The pytest fixture integration does not currently drive Micronaut Test's per-test transaction and context-rebuild lifecycle. The integration accepts `transactional`, `rollback` and `rebuild_context` for compatibility, but ignores them. It also does not run `Sql` scripts declared with `Sql.Phase.AFTER_ALL`. Use explicit clean-up in a fixture, or write the test as a JUnit 5 Python module (see <<testing,Testing>>), when transactional rollback is required.
 
-== Common Options
+== Common options
 
 [source,python]
 ----
@@ -44,12 +44,12 @@ MicronautTest(
 ----
 
 `environments` defaults to `["test"]`.
-Additional properties are passed into the Micronaut context during fixture bootstrap.
+The fixture passes additional properties into the Micronaut context during bootstrap.
 
-== Bean Lookup
+== Bean lookup
 
 The fixture returns an application context wrapper.
-Beans can be looked up by Java class name, Java type, or Python class when the Python type can be resolved to its generated bean name.
+You can look up beans by class name, resolved type, or Python class when Pyronaut can resolve the Python type to its generated bean name.
 
 [source,python]
 ----
@@ -75,7 +75,7 @@ def test_context_running(my_context):
     assert my_context.isRunning()
 ----
 
-== Embedded Server
+== Embedded server
 
 When `start_application=True`, an `EmbeddedServer` is available from the context:
 
@@ -103,10 +103,10 @@ def test_health(client):
     assert response.status_code == 200
 ----
 
-== SQL Scripts
+== SQL scripts
 
 Use `Sql` with `MicronautTest` to execute SQL scripts during the pytest lifecycle.
-The scripts are resolved with Micronaut's `ResourceLoader`, so classpath resources such as `classpath:sql/seed-data.sql` work the same way they do with Micronaut Test on the JVM.
+We resolve the scripts with `ResourceLoader`, so classpath resources such as `classpath:sql/seed-data.sql` work the same way they do with Micronaut Test.
 
 [source,python]
 ----
@@ -131,7 +131,7 @@ def my_context(request):
     fixture.stop()
 ----
 
-Pass a list when multiple scripts or phases are needed:
+Pass a list when you need multiple scripts or phases:
 
 [source,python]
 ----
@@ -145,4 +145,4 @@ MicronautTest(
 
 `Sql` defaults to the `default` datasource and `javax.sql.DataSource`.
 Use `data_source_name` or `resource_type` when the test needs another SQL resource.
-`Sql.Phase.BEFORE_ALL`, `BEFORE_EACH` and `AFTER_EACH` are executed by the pytest integration; see the warning above regarding `AFTER_ALL`.
+The pytest integration executes `Sql.Phase.BEFORE_ALL`, `BEFORE_EACH` and `AFTER_EACH`; see the warning above regarding `AFTER_ALL`.

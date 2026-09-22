@@ -1,4 +1,4 @@
-Pyronaut Requests is a drop-in replacement for the Python https://requests.readthedocs.io[`requests`] library that delegates the HTTP work to the Micronaut HTTP client. Existing code that does `import requests` keeps working, and the same client can be pointed at the embedded server in tests.
+Pyronaut Requests provides a subset of the Python https://requests.readthedocs.io[`requests`] API. We use the Micronaut HTTP client for the underlying work, and the client can also target an embedded server in tests.
 
 Add it to the scope where you need it. For application code declare it under `runtime`; for tests only, under `test`:
 
@@ -12,7 +12,7 @@ runtime = [
 
 Direct-source files can declare it inline with `Dependency(group="io.micronaut.pyronaut", module="micronaut-pyronaut-requests")`.
 
-== Quickstart
+== Quick start
 
 [source,python]
 ----
@@ -31,13 +31,13 @@ print(response.status_code, response.json())
 - Response: `status_code`, `reason`, `ok`, `url`, `headers` (case-insensitive, iterable), `content`, `text`, `json()`, `raise_for_status()`
 - Exceptions under `requests.exceptions`: `RequestException`, `ConnectionError`, `Timeout`, `HTTPError`
 
-Not supported: `proxies` (configure a proxy on the Micronaut HTTP client instead), streaming responses (`stream=True`), and `ssl` contexts beyond `verify=False`.
+Not supported: a per-request `proxies` argument, streaming responses (`stream=True`), and SSL contexts beyond `verify=False`. For proxies, use standard proxy environment variables or set `Session.proxies`.
 
-Per-call `timeout`, `verify` and `allow_redirects` values that differ from the defaults are honoured by creating a short-lived Micronaut client with those settings for that request.
+When a request uses `timeout`, `verify` or `allow_redirects` values that differ from the defaults, we create a short-lived Micronaut client with those settings and close it after the request.
 
 == Typed JSON
 
-`response.json()` returns Python `dict` and `list` values. Pass a class to deserialize with Micronaut Serialization, using the same `JsonMapper` configuration as the application:
+`response.json()` returns Python `dict` and `list` values. Pass a class to deserialize with our Micronaut Serialization integration, using the same `JsonMapper` configuration as the application:
 
 [source,python]
 ----
@@ -57,7 +57,7 @@ message = response.json(Message)
 assert message.message.startswith("Hello")
 ----
 
-== Using with MicronautTest
+== Use with MicronautTest
 
 `requests.with_context(context)` binds a client to a running Micronaut application context. Relative URLs resolve against the `EmbeddedServer` in that context and JSON uses the context's `JsonMapper`:
 
@@ -91,6 +91,6 @@ See <<requestsTesting,Using Requests for Testing>> for more test patterns.
 
 == Client lifecycle
 
-Micronaut HTTP clients created by the library are registered in a registry. They are closed when a Micronaut application context shuts down, and an `atexit` hook closes any that remain at interpreter exit. Use `Session` as a context manager (`with requests.Session() as session:`) to close a session's client deterministically.
+We register Micronaut HTTP clients in a registry. Our shutdown listener closes them when an application context stops, and an `atexit` hook closes any clients that remain at interpreter exit. Use `Session` as a context manager (`with requests.Session() as session:`) to close a session's client deterministically.
 
 NOTE: The shutdown listener closes every registered client when any application context stops. In a test suite that starts several contexts in one JVM, create clients with `with_context` per fixture rather than sharing module-level sessions across contexts.

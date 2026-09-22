@@ -1,11 +1,11 @@
 = Testing
 
 Pyronaut supports JUnit 5 tests, pytest tests, or both through the JUnit Platform.
-Use `pyronaut test` when tests need the Micronaut classpath, processed sources, test resources, or Micronaut test integration.
+Use `pyronaut test` when tests need the resolved Micronaut classpath, processed sources, test resources, or Micronaut test integration.
 
-If you are used to pytest, keep using it: write ordinary `test_*.py` modules with fixtures, parametrization and marks, and use the `MicronautTest` fixture described in <<micronautTest,Using MicronautTest>> when a test needs a running application. The JUnit 5 Python module style described below trades pytest's fixture model for direct dependency injection into the test module; it is the better fit for direct-source tests and for tests that share an application context across many test functions.
+If you usually use pytest, keep using it: write ordinary `test_*.py` modules with fixtures, parametrization and marks, and use the `MicronautTest` fixture described in <<micronautTest,Using MicronautTest>> when a test needs a running application. The JUnit 5 Python module style described below trades pytest's fixture model for direct dependency injection into the test module; it is the better fit for direct-source tests and for tests that share an application context across many test functions.
 
-== Selecting a Test Engine
+== Selecting a test engine
 
 Configure the engine under `[tool.pyronaut.test]`:
 
@@ -17,7 +17,7 @@ engine = "both" # junit|pytest|both
 
 The default is `both`, preserving the current behavior. `junit` runs only JUnit Jupiter tests, `pytest` runs only pytest tests, and `both` runs both engines in one JUnit Platform launch.
 
-JUnit tests written as Python modules can use module-level `MicronautTest()` and JUnit lifecycle annotations such as `BeforeAll` and `BeforeEach`. Pytest tests use pytest fixtures, scopes, parametrization, marks, and plugins. A module-level JUnit `MicronautTest()` module is owned by JUnit and is excluded from pytest discovery when both engines are enabled.
+When you write JUnit tests as Python modules, you can use module-level `MicronautTest()` and JUnit lifecycle annotations such as `BeforeAll` and `BeforeEach`. Pytest tests use pytest fixtures, scopes, parametrization, marks, and plugins. JUnit owns a module-level `MicronautTest()` module and excludes it from pytest discovery when both engines are enabled.
 
 Add the pytest integration to the test scope:
 
@@ -43,7 +43,7 @@ See <<vscodeExtension,VS Code Test Explorer Extension>>.
 
 `pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts configured project test resources, and delegates discovery to the configured engines. For direct sources, Test Resources starts only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. Use `--disable-test-resources` to disable either form of automatic orchestration.
 
-== JUnit 5 Python Modules
+== JUnit 5 Python modules
 
 The JUnit engine supports Python modules as JUnit 5 tests. Invoke `MicronautTest()` at module level. Top-level functions whose names start with `test` become test methods, while helper and lifecycle functions are also defined at module level. Injected values are available through their module-level attributes.
 
@@ -68,11 +68,11 @@ def test_context():
     assert context.isRunning()
 ----
 
-JUnit module tests can run in direct source mode. They do not use pytest fixtures or require a Python virtual environment.
+JUnit module tests can run in direct-source mode. They do not use pytest fixtures or require a Python virtual environment.
 
-== Direct JUnit 5 Tests
+== Direct JUnit 5 tests
 
-For a small application, Java or Python sources can be tested without a project manifest. By default, direct tests recursively discover `**Test.java` files for Java and `*Test.py` or `test_*.py` modules for Python from the current working directory:
+For a small application, you can test Java or Python sources without a project manifest. By default, Pyronaut recursively discovers `**Test.java` files for Java and `*Test.py` or `test_*.py` modules for Python from the current working directory:
 
 [source,bash]
 ----
@@ -80,7 +80,7 @@ pyronaut test Foo.java
 pyronaut test Foo.py
 ----
 
-Test sources can also be supplied explicitly after `--`, which is useful for
+You can also supply test sources explicitly after `--`, which is useful for
 custom test layouts:
 
 [source,bash]
@@ -92,13 +92,13 @@ pyronaut test -t Foo.java -- *Test.java
 
 An explicit `--` without test sources remains invalid.
 
-Direct tests are compiled and executed in-memory through the JUnit Platform. Python direct tests use the JUnit engine and can use module-level `MicronautTest()`; pytest is not invoked because it requires test files on disk. Direct Java runs disable Python runtime infrastructure automatically; Python remains enabled by default for Python tests.
+Pyronaut compiles direct tests and executes them in memory through the JUnit Platform. Python direct tests use the JUnit engine and can use module-level `MicronautTest()`; Pyronaut does not invoke pytest because pytest requires test files on disk. Direct runs without Python sources disable Python runtime infrastructure automatically; Python remains enabled by default for Python tests.
 
 Use `--continuous` or `-t` to rerun direct tests when application or test sources change. The console prints execution progress and a final test summary.
 
 Direct tests write JUnit XML and HTML reports to
 `__pyronaut__/reports/tests` and print a terminal link to the HTML report.
-Container startup failures that prevent tests from starting are included in the
+Pyronaut includes container startup failures that prevent tests from starting in the
 report. Pass a directory after `--report` to choose another location:
 
 [source,bash]
@@ -107,9 +107,9 @@ pyronaut test --report Foo.java -- FooTest.java
 pyronaut test --report build/test-reports Foo.java -- FooTest.java
 ----
 
-== Project Test Discovery
+== Project test discovery
 
-Python tests are discovered from the configured `python-test` source directory.
+Pyronaut discovers Python tests from the configured `python-test` source directory.
 The default directory is `tests`.
 
 [source,toml]
@@ -127,7 +127,7 @@ pyronaut test --tests tests/test_controller.py::test_index
 
 == Reports
 
-Test reports are written under:
+Pyronaut writes test reports under:
 
 [source,text]
 ----
@@ -148,9 +148,8 @@ With `engine = "both"`, the JUnit XML and HTML reports contain results from both
 `pyronaut test` keeps the terminal for progress: each test collapses into a
 pass, fail, or skip line as it finishes, failures print their assertion
 message beneath, and a summary with a link to the HTML report follows.
-Everything the application and the test frameworks write to the console
-during a test (Micronaut logging, GraalPy diagnostics, `print` calls, the
-pytest session banner) is captured instead and attributed to that test in
+Pyronaut captures everything that the application and test frameworks write to the console
+during a test (Micronaut logging, GraalPy diagnostics, and `print` calls) and attributes the output to that test in
 the reports: the `<system-out>` and `<system-err>` elements of `junit.xml`,
 the collapsible sections of `index.html`, and `test_output` events in
 `events.ndjson`. Output produced outside any test, such as the pytest session
@@ -166,9 +165,9 @@ enables trace logging) or set:
 verbose = true
 ----
 
-Streaming disables the live progress display; tests are reported as plain lines.
+Streaming disables the live progress display; Pyronaut reports tests as plain lines.
 
-== Context Tests
+== Context tests
 
 Use `MicronautTest` with the pytest fixture integration when a pytest needs a Micronaut `ApplicationContext`, injected beans, an `EmbeddedServer`, or configuration properties.
 Use `pyronaut.requests` or the `requests` shim for HTTP tests against the embedded server.

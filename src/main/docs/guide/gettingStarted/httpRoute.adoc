@@ -1,0 +1,19 @@
+= Step 2: Add an HTTP route
+
+An HTTP route maps an HTTP method and path to a Python function. Although the example uses `controllers.py` as its filename, the
+example does not define a controller class annotated with `@Controller`; it defines a module-level route function.
+
+Create `src/controllers.py`:
+
+[source,python]
+----
+from micronaut.http.annotation import Get
+
+
+@Get(value="/", produces="text/plain")
+def index() -> str:
+    return "Hello from Pyronaut"
+----
+
+The `@Get` decorator maps `GET /` to the `index` function. Group routes in a `@Controller` class when they share a
+prefix or need injected services. See <<httpApis,Building HTTP APIs>> for more options.

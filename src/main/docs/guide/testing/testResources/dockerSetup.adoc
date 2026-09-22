@@ -1,6 +1,6 @@
 = Docker Requirements
 
-Micronaut Test Resources uses Testcontainers, so Docker or a compatible container runtime must be available before `pyronaut dev`, `pyronaut run`, or `pyronaut test` can provision containers.
+We use Testcontainers for Micronaut Test Resources, so make Docker or a compatible container runtime available before `pyronaut dev` or `pyronaut test` provisions containers.
 
 Verify the runtime first:
 
@@ -10,7 +10,7 @@ docker ps
 docker info
 ----
 
-If these commands cannot connect to a daemon, Test Resources will fail before the application dependency can be started.
+If these commands cannot connect to a daemon, Test Resources fails before it can start the application dependency.
 
 == macOS
 
@@ -38,7 +38,7 @@ On Linux, ensure the Docker service or rootless Docker daemon is running:
 docker ps
 ----
 
-If Docker is installed in rootful mode, the user running Pyronaut must have permission to access the Docker socket.
+If you install Docker in rootful mode, give the user running Pyronaut permission to access the Docker socket.
 Common setups add the user to the `docker` group and require a new login session before the permission is active.
 
 For rootless Docker, ensure `DOCKER_HOST` points at the rootless socket when it is not the CLI default.

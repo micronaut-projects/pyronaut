@@ -18,7 +18,7 @@ import pyronaut.build.AppConfig;
 import pyronaut.build.Dependency;
 ----
 
-For example, `App.java` can be self-contained:
+For example, `App.java` can contain everything it needs:
 
 [source,java]
 ----
@@ -46,15 +46,15 @@ Direct declarations also support test dependencies, BOMs, and transitive exclusi
 @Dependency(group = "org.junit.jupiter", module = "junit-jupiter-engine", scope = Dependency.Scope.TEST)
 ----
 
-`BOM` declarations provide dependency management without being placed on the classpath. `TEST` declarations are available to `pyronaut test` and are omitted from normal run and dev classpaths. Python declarations use the corresponding `Dependency.Scope.BOM` and `Dependency.Scope.TEST` values and may pass `exclusions=["group:artifact"]`.
+`BOM` declarations provide dependency management without adding entries to the classpath. Pyronaut makes `TEST` declarations available to `pyronaut test` and omits them from normal run and dev classpaths. Python declarations use the corresponding `Dependency.Scope.BOM` and `Dependency.Scope.TEST` values and may pass `exclusions=["group:artifact"]`.
 
-== Conditional Test Resources
+== Conditional test resources
 
 Direct `pyronaut dev` and `pyronaut test` commands inspect runtime dependencies together with inline runtime `@AppConfig` declarations.
 When an inferred Micronaut Test Resources provider can supply a missing property in a configured namespace, Pyronaut starts or attaches to a project-local Test Resources server for that launch.
 Dependencies alone, build-scoped configuration, fully supplied connection properties, `--property`, `-D`, and `--config` do not activate automatic orchestration.
 Use `--disable-test-resources` to turn it off explicitly.
-Direct `pyronaut run` remains production-only and never activates Test Resources.
+Direct `pyronaut run` never activates Test Resources.
 
 For example, this complete source declares Micronaut Data JDBC and MySQL, but deliberately omits the datasource URL and credentials:
 
@@ -73,7 +73,7 @@ curl -X POST http://localhost:8080/books/TheDispossessed
 curl http://localhost:8080/books/count
 ----
 
-Both requests return `1`. The first launch starts the inferred MySQL container; stopping the development process also stops the owned Test Resources server. An already-running project-local server is attached to without transferring ownership.
+Both requests return `1`. The first launch starts the inferred MySQL container; stopping the development process also stops the owned Test Resources server. Pyronaut attaches to an already-running project-local server without transferring ownership.
 
 == Python
 
@@ -88,6 +88,6 @@ AppConfig(name="datasources.default.dialect", value="Oracle")
 == Repositories and cache
 
 Declare a repository with `MavenRepository("https://repository.example.com/maven/")` in Java or Python.
-Maven Central is used when no repository is declared; once a repository is declared, only declared repositories are used.
+Pyronaut uses Maven Central when you declare no repository; once you declare a repository, Pyronaut uses only the repositories you declare.
 
-Pyronaut records resolved direct-source dependencies and the declaration fingerprint in `__pyronaut__` under the project directory (the current working directory unless `--project-dir` is given). The cached launch metadata includes command eligibility, sorted inline runtime configuration, and the positive or negative Test Resources decision. A subsequent launch with unchanged inputs reuses that cache.
+Pyronaut records resolved direct-source dependencies and the declaration fingerprint in `__pyronaut__` under the project directory (the current working directory unless you give `--project-dir`). The cached launch metadata includes command eligibility, sorted inline runtime configuration, and the positive or negative Test Resources decision. A subsequent launch with unchanged inputs reuses that cache.

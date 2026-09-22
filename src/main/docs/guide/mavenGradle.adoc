@@ -1,6 +1,6 @@
 = Using Maven and Gradle Projects
 
-Pyronaut can run Java applications whose source layout and dependencies are managed by Maven or Gradle. Run the commands from the build root (the directory containing `pom.xml` or a Gradle build file):
+Pyronaut can run Micronaut applications whose Maven or Gradle build manages their source layout and dependencies. Run the commands from the build root (the directory containing `pom.xml` or a Gradle build file):
 
 [source,bash]
 ----
@@ -11,15 +11,15 @@ pyronaut test
 
 Pyronaut resolves the build's source sets and classpaths, processes the application, and then launches the processed classes. `dev`, `run`, and `test` validate configuration using their respective scenarios. Use `--no-validate` to skip the lifecycle validation step.
 
-Generated state such as processed classes, dependency manifests, validation reports and test reports is written under `target/pyronaut` (Maven) or `build/pyronaut` (Gradle) rather than `__pyronaut__`.
+Pyronaut writes generated state such as processed classes, dependency manifests, validation reports and test reports under `target/pyronaut` (Maven) or `build/pyronaut` (Gradle) rather than `__pyronaut__`.
 
 == Development control panel
 
-The Micronaut Control Panel is disabled by default. For Maven/Gradle projects, `pyronaut dev --control-panel` enables it for that invocation; `pyronaut run` never enables it automatically. Python projects can opt in through `[tool.pyronaut.control-panel].enabled`, and `--control-panel` always overrides configuration.
+Pyronaut disables the Micronaut Control Panel by default. For Maven/Gradle projects, `pyronaut dev --control-panel` enables it for that invocation; `pyronaut run` never enables it automatically. Python projects can opt in through `[tool.pyronaut.control-panel].enabled`, and `--control-panel` always overrides configuration.
 
-== Test Resources
+== Test resources
 
-When the root Gradle project applies `io.micronaut.test-resources`, or the effective Maven model sets `micronaut.test.resources.enabled` to `true`, Pyronaut starts or attaches to Test Resources for `dev` and `test`. A plugin applied only in a Gradle subproject is not detected. The resulting connection settings are passed to the launched application. `run` does not automatically start Test Resources.
+When the root Gradle project applies `io.micronaut.test-resources`, or the effective Maven model sets `micronaut.test.resources.enabled` to `true`, Pyronaut starts or attaches to Test Resources for `dev` and `test`. A plugin applied only in a Gradle subproject is not detected. Pyronaut passes the resulting connection settings to the launched application. `run` does not automatically start Test Resources.
 
 == Versioning
 

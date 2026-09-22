@@ -1,4 +1,4 @@
-Pyronaut applications expose HTTP APIs with the same decorators that Micronaut uses in Java, but the resulting code looks very much like FastAPI: functions with type hints, path variables in braces and dataclasses for request and response bodies. This section shows the day-to-day patterns and how they map to Flask and FastAPI.
+Pyronaut applications expose HTTP APIs with Micronaut decorators while the Python code looks familiar to FastAPI users: functions with type hints, path variables in braces, and dataclasses for request and response bodies. This section covers the common patterns and their Flask and FastAPI equivalents.
 
 == Routes
 
@@ -29,7 +29,7 @@ Path variables use `{name}` in the route and a parameter of the same name in the
 
 == Binding request data
 
-Micronaut binds function parameters from the request using the parameter name, the type hint and an optional decorator inside `typing.Annotated`:
+We bind function parameters from the request using the parameter name, the type hint and an optional decorator inside `typing.Annotated`:
 
 [cols="2,3", options="header"]
 |===
@@ -57,7 +57,7 @@ Micronaut binds function parameters from the request using the parameter name, t
 |The full request object, for headers, the URI or attributes.
 |===
 
-A JSON body is modelled with a dataclass decorated with `@Serdeable` from `micronaut.serde.annotation`. This replaces a Pydantic `BaseModel`: the decorator makes Micronaut generate the JSON encoder and decoder at build time, without reflection or runtime schema building:
+Model a JSON body with a dataclass decorated with `@Serdeable` from `micronaut.serde.annotation`. This replaces a Pydantic `BaseModel`: we generate the JSON encoder and decoder during processing, without reflection or runtime schema building:
 
 [source,python]
 ----
@@ -83,13 +83,13 @@ def create_item(item: Annotated[Item, Body, Valid]) -> Item:
     return item
 ----
 
-`Valid` asks Micronaut Validation to check the constraints declared on the dataclass before the function runs. Constraints can also be applied directly to parameters, for example `page: Annotated[int, Min(1)] = 1`.
+`Valid` asks our Micronaut Validation integration to check the constraints declared on the dataclass before the function runs. You can also apply constraints directly to parameters, for example `page: Annotated[int, Min(1)] = 1`.
 
 TIP: Dataclasses may reference each other and contain lists, dictionaries, enums, `datetime`, `date`, `timedelta` and `uuid.UUID` fields. Quote forward references (`"Room | None"`) when the referenced class is declared later in the file. Rename a JSON property with `Annotated[int, JsonProperty("person_age")]` from `com.fasterxml.jackson.annotation`.
 
 == Responses
 
-The return type hint decides how the response is encoded:
+We use the return type hint to encode the response:
 
 [cols="1,2", options="header"]
 |===
@@ -111,7 +111,7 @@ The return type hint decides how the response is encoded:
 |An empty response with the given status.
 
 |`Publisher`, `Mono`, `CompletionStage`, or an `async def` function
-|Asynchronous responses; see <<threading,Threading, Blocking Work and asyncio>>.
+|Asynchronous responses; see <<threading,Threading, blocking work, and asyncio>>.
 |===
 
 Change the status of a successful response with `@Status`:
@@ -162,7 +162,7 @@ The exception type of the second parameter selects which exceptions the handler 
 
 == Calling other services
 
-The `requests` library works in Pyronaut through the `pyronaut-requests` shim (see <<pyronautRequests,Pyronaut Requests>>), but for services you call regularly a declarative client is more convenient. Declare an abstract class describing the remote API and Micronaut implements it:
+The `requests` library works in Pyronaut through the `pyronaut-requests` shim (see <<pyronautRequests,Pyronaut Requests>>), but for services you call regularly a declarative client is more convenient. Declare an abstract class describing the remote API and we implement it:
 
 [source,python]
 ----
@@ -186,7 +186,7 @@ Inject `CatalogClient` like any bean. Declaring the method `async def` returns a
 
 Pyronaut generates an OpenAPI description from your routes and dataclasses during processing and serves Swagger UI at `/swagger-ui/index.html` and ReDoc at `/redoc/index.html` in development mode. Add descriptions with the annotations in `io.swagger.v3.oas.annotations`, which are available as decorators.
 
-== Coming from FastAPI
+== FastAPI equivalents in Pyronaut
 
 [cols="1,1", options="header"]
 |===
@@ -232,7 +232,7 @@ Pyronaut generates an OpenAPI description from your routes and dataclasses durin
 |`requests.with_context(context)`
 |===
 
-== Coming from Flask
+== Flask equivalents in Pyronaut
 
 [cols="1,1", options="header"]
 |===
@@ -268,7 +268,3 @@ Pyronaut generates an OpenAPI description from your routes and dataclasses durin
 |`flask run --debug`
 |`pyronaut dev`
 |===
-
-== Further reading
-
-The https://docs.micronaut.io/latest/guide/#httpServer[HTTP Server chapter] of the Micronaut guide documents every feature with Python examples, including file uploads, server-sent events, WebSockets, filters, CORS, sessions and API versioning.

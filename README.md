@@ -2,14 +2,14 @@
 
 # Pyronaut
 
-Pyronaut is a polyglot runtime for running Python and Java code built on the Micronaut programming model. Python and Java code can combine seamlessly and utilize Micronaut features like dependency injection, AOP, configuration properties, serialization and so on.
+Pyronaut is a runtime for Python applications built with Micronaut. We include HTTP routing, dependency injection,
+configuration, validation, serialization, testing, and access to Micronaut APIs and libraries from Python.
 
-For Python developers Pyronaut is a viable alternative to frameworks like FastAPI built on one of the most popular and mature frameworks in the Java ecosystem and highly scalable thanks to Netty.
-
-For Java developers Pyronaut provides a faster GraalVM Crema-based development model that allows easy incorporation of Python code using GraalPy.
+We let Micronaut applications include Python code through GraalPy. Python code and the rest of the application share
+the Micronaut application context, configuration, and test lifecycle.
 
 The main user entry point is the `pyronaut` command. The command is a Python
-orchestrator that delegates to focused JVM/native tools for dependency
+orchestrator that delegates to focused managed/native tools for dependency
 resolution, source processing, application execution, tests, configuration
 validation, native builds, and test resources.
 
@@ -21,7 +21,7 @@ that make Python applications work with Micronaut:
 - `pyronaut`: the packaged Python CLI orchestrator and SDK wheel.
 - `pyronaut-install`: resolves Maven dependencies, writes classpath manifests,
   generates configuration schemas, and creates IDE stubs.
-- `pyronaut-processor`: processes Python and Java sources into Micronaut
+- `pyronaut-processor`: processes application sources into Micronaut
   metadata/classes.
 - `pyronaut-dev`: runs applications in development mode with automatic
   install/process preflight.
@@ -37,76 +37,15 @@ that make Python applications work with Micronaut:
 
 The full user guide lives in `src/main/docs/guide`.
 
-## Installation
+## Installation and user guide
 
-Install the latest published Pyronaut CLI from PyPI with Python 3.10 or later:
+The [Pyronaut guide](src/main/docs/guide/introduction.adoc) contains the user-facing installation, setup, project,
+testing, configuration, and packaging instructions.
+Start with [Installing Pyronaut](src/main/docs/guide/installation.adoc), then
+choose the [project workflow](src/main/docs/guide/gettingStarted.adoc) or the
+[direct-source tutorial](src/main/docs/guide/gettingStarted/fastApiTutorial.adoc).
 
-```bash
-python3 -m pip install --upgrade pyronaut
-pyronaut --version
-```
-
-If PyPI is unavailable, download the `pyronaut-<version>-py3-none-any.whl`
-file from the Assets section of a [GitHub Release](https://github.com/micronaut-projects/pyronaut/releases),
-then install the downloaded wheel manually:
-
-```bash
-python3 -m pip install --upgrade /path/to/downloaded/pyronaut-<version>-py3-none-any.whl
-pyronaut --version
-```
-
-To keep the CLI isolated from other Python packages, install it in a virtual
-environment:
-
-```bash
-python3 -m venv .venv-pyronaut-cli
-source .venv-pyronaut-cli/bin/activate
-python -m pip install --upgrade pip pyronaut
-pyronaut --help
-```
-
-After installing or upgrading the wheel, provision the local Pyronaut SDK:
-
-```bash
-pyronaut setup
-```
-
-Setup is idempotent. It provisions GraalVM, resolves the SDK dependencies, and
-downloads the native launchers required by the CLI. The validated setup state
-and downloaded tools are cached under `~/.pyronaut`; run `pyronaut setup`
-again after changing the wheel or use `pyronaut setup --refresh` to re-resolve
-the setup.
-
-If setup or any later command fails, `pyronaut doctor` checks the local
-environment (Python, setup state, GraalVM, GraalPy, native launchers, proxy,
-Docker) and the current project (stale generated state, threading
-configuration, declared packages imported on GraalPy under the configured
-context pool, and GraalPy's published package compatibility) and prints a fix
-for every failing check:
-
-```bash
-pyronaut doctor
-```
-
-Create a Python application directly with Micronaut Launch:
-
-```bash
-pyronaut create demo
-pyronaut create demo --features data-jdbc,mysql
-```
-
-The command fixes the language, build tool, and test framework to Python,
-Pyronaut, and pytest. It installs the matching Micronaut Launch CLI on demand
-under `~/.pyronaut/sdks` (or reuses an exact SDKMAN Micronaut candidate) and
-uses the configured proxy and download progress reporting.
-
-The package does not require cloning this repository or running Gradle. Pyronaut
-uses an embedded GraalPy runtime for application code. Commands that need Java
-use a compatible GraalVM JDK 25; Pyronaut discovers local installations and can
-provision one under `~/.pyronaut/sdks` when necessary. Native launcher bundles
-are downloaded on demand and cached under `~/.pyronaut/bin`. Pytest-backed tests
-also require `pytest` in the project's GraalPy environment; see [Test
-prerequisite: pytest in GraalPy](#test-prerequisite-pytest-in-graalpy).
+This README focuses on building and contributing to the Pyronaut repository.
 
 ## Getting started from a source checkout
 
@@ -179,7 +118,7 @@ compilation errors caused by a version mismatch between a Micronaut Core
 snapshot downloaded from the Maven snapshots repository and the checked-out
 Pyronaut sources.
 
-The wheel is written to:
+The `buildSdkWheel` task writes the wheel to:
 
 ```text
 pyronaut/build/wheel/dist/
@@ -201,19 +140,10 @@ pyronaut --version
 pyronaut setup
 ```
 
-The help command should print the CLI usage. The released 0.0.3 wheel reports:
-
-```text
-Pyronaut: 0.0.3
-Micronaut Core: 5.2.3
-Micronaut Platform: 5.1.0
-GraalPy: 25.3.4.1
-Native Image JDK: 25
-```
-
-A wheel built from a snapshot checkout reports the `projectVersion` from
-`gradle.properties` with `-SNAPSHOT` mapped to `.dev0` instead. The Pyronaut,
-Micronaut Core, and platform versions may change as the repository evolves.
+The help command should print the CLI usage. The version command reports the
+installed Pyronaut version and its managed Micronaut, GraalPy, and JDK
+versions. A wheel built from a snapshot checkout reports the `projectVersion`
+from `gradle.properties` with `-SNAPSHOT` mapped to `.dev0`.
 
 #### Option 2: Install into a project-local virtual environment
 
@@ -242,10 +172,11 @@ python -m pip install --force-reinstall /absolute/path/to/pyronaut/pyronaut/buil
 
 ### Test prerequisite: pytest in GraalPy
 
-`pyronaut test` requires `pytest` to be installed in the GraalPy environment
-used by the project. Pyronaut does not install Python packages automatically,
-and a CPython virtual environment cannot provide packages to the embedded
-GraalPy runtime.
+The pytest-backed hello-world workflow below requires `pytest` in the GraalPy
+environment used by the project. Pyronaut does not install Python packages
+automatically, and a CPython virtual environment cannot provide packages to
+the embedded GraalPy runtime. Direct-source JUnit 5 tests do not require
+`pytest`.
 
 If the CLI is installed into the active GraalPy pyenv environment (Option 1)
 and the project does not have a `.venv`, install `pytest` into that environment:
@@ -269,81 +200,7 @@ When a project `.venv` exists, Pyronaut uses it when launching the application
 and tests. Create that environment with GraalPy even when the CLI itself is
 installed in a separate CPython environment.
 
-## CLI at a glance
-
-```bash
-pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] \
-  <setup|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
-```
-
-Current platform support is macOS and Linux. Commands that delegate to the JVM
-require a compatible GraalVM JDK; the CLI can discover local GraalVM
-installations or provision configured toolchains.
-
-## Typical project layout
-
-Pyronaut reads project settings from `pyproject.toml`.
-
-Default directories are:
-
-```text
-src            Python application sources
-tests          Python tests
-src-java       optional Java application sources
-test-java      optional Java test sources
-config         Micronaut application resources
-tests-config   Micronaut test resources
-__pyronaut__   generated Pyronaut state, reports, caches, and manifests
-```
-
-A minimal `pyproject.toml` looks like this:
-
-```toml
-[project]
-name = "hello-pyronaut"
-version = "0.1.0"
-dynamic = ["scripts"]
-
-[build-system]
-requires = ["setuptools", "wheel", "tomli"]
-build-backend = "setuptools.build_meta"
-
-[tool.pyronaut]
-repositories = [
-  "mavenCentral",
-  "https://central.sonatype.com/repository/maven-snapshots/"
-]
-
-[tool.pyronaut.dependencies]
-runtime = [
-  "io.micronaut:micronaut-http-server-netty",
-  "io.micronaut:micronaut-json-core",
-  "io.micronaut:micronaut-jackson-databind",
-  "ch.qos.logback:logback-classic"
-]
-build = []
-test = [
-  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
-  "io.micronaut.test:micronaut-test-junit5",
-  "io.micronaut.pyronaut:micronaut-pyronaut-requests"
-]
-```
-
-Custom source directories can be configured with:
-
-```toml
-[tool.pyronaut.sources]
-python = "app"
-python-test = "test/python"
-java = "src/main/java"
-java-test = "src/test/java"
-resources = "app-config"
-test-resources = "tests-config"
-additional-resources = ["views", "assets"]
-additional-test-resources = ["test-fixtures"]
-```
-
-## Hello-world application
+## Hello-world source-checkout example
 
 Create the hello-world application in its own directory outside the Pyronaut
 checkout. Run the following commands from the parent directory of the
@@ -361,10 +218,10 @@ from the `hello-world` directory.
 
 ### 2. Create `pyproject.toml`
 
-Create `pyproject.toml` in the `hello-world` directory using the minimal
-example shown in [Typical project layout](#typical-project-layout) above.
-The source checkout uses Micronaut Core `5.2.3`, which is published to Maven
-Central.
+Create `pyproject.toml` in the `hello-world` directory using the project
+configuration shown in [Getting Started](src/main/docs/guide/gettingStarted.adoc).
+The source checkout uses the Micronaut Core version declared by
+`pyronaut.micronaut.core.version` in `gradle.properties`.
 
 ### 3. Add a controller
 
@@ -494,87 +351,11 @@ If `pyronaut test` reports that pytest is not installed, activate the GraalPy
 environment where pytest was installed and verify it with
 `python -m pytest --version` before rerunning the test.
 
-## Common CLI workflows
+## CLI reference
 
-Resolve dependencies and generate editor support:
-
-```bash
-pyronaut install --project-dir /path/to/app
-```
-
-Inspect dependency trees without rewriting install manifests:
-
-```bash
-pyronaut install --dependencies --scope all --project-dir /path/to/app
-```
-
-Process sources:
-
-```bash
-pyronaut process --project-dir /path/to/app
-pyronaut process --no-cache --project-dir /path/to/app
-```
-
-Run or test with lifecycle validation:
-
-```bash
-pyronaut dev --project-dir /path/to/app
-pyronaut test --project-dir /path/to/app
-pyronaut test --tests test_controller.py::test_index --project-dir /path/to/app
-```
-
-Skip lifecycle configuration validation explicitly:
-
-```bash
-pyronaut dev --no-validate
-pyronaut test --no-validate
-```
-
-Validate configuration directly:
-
-```bash
-pyronaut validate-config --scenario production --format both
-pyronaut validate-config --scenario test --env test --validate-dependency-injection
-```
-
-Manage a reusable Test Resources server:
-
-```bash
-pyronaut test-resources-server start --project-dir /path/to/app
-pyronaut test-resources-server status --project-dir /path/to/app
-pyronaut test-resources-server stop --project-dir /path/to/app
-```
-
-Build deployable artifacts:
-
-```bash
-pyronaut build --jvm
-pyronaut build --native
-pyronaut build --docker
-pyronaut build --native --docker
-pyronaut build --native --docker --static
-pyronaut build --native-base=default
-pyronaut build App.java --native --name hello-java --version 1.0.0
-```
-
-Launch the terminal UI:
-
-```bash
-pyronaut --tui --project-dir /path/to/app
-pyronaut --tui --test --project-dir /path/to/app
-```
-
-Trace delegated tool invocations while debugging:
-
-```bash
-PYRONAUT_TRACE_DELEGATION=true pyronaut dev --project-dir /path/to/app
-```
-
-Disable automatic Test Resources orchestration for `dev` and `test`:
-
-```bash
-PYRONAUT_TEST_RESOURCES_DISABLED=true pyronaut test
-```
+The [CLI reference](src/main/docs/guide/pyronautCliV2.adoc) is the source of
+truth for command syntax, options, generated files, environment variables,
+exit codes, and representative workflows.
 
 ## Building the CLI locally
 
@@ -587,7 +368,7 @@ Build and test the repository:
 ./gradlew check
 ```
 
-Build the JVM-based SDK wheel:
+Build the SDK wheel:
 
 ```bash
 ./gradlew :micronaut-pyronaut:buildSdkWheel
@@ -614,13 +395,13 @@ version:
 ```toml
 [native-images]
 base-url = "/path/to/pyronaut"
-version = "0.0.3"
+version = "<version>"
 ```
 
-For example, `./gradlew -PprojectVersion=0.0.3 :micronaut-pyronaut-dev:assemble`
+For example, `./gradlew -PprojectVersion=<version> :micronaut-pyronaut-dev:assemble`
 writes the bundle under `pyronaut-dev/build/distributions/`. The CLI looks
 below each native module for a platform-specific archive such as
-`pyronaut-dev-macos-aarch64-0.0.3.tar.gz` and unpacks it into the normal local
+`pyronaut-dev-macos-aarch64-<version>.tar.gz` and unpacks it into the normal local
 cache. Omit `-PprojectVersion` to build the snapshot version from
 `gradle.properties` and select that `<version>-SNAPSHOT` string instead.
 

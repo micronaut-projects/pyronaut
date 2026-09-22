@@ -1,11 +1,11 @@
-Pyronaut routes Python logging through https://logback.qos.ch[Logback], the logging backend used by Micronaut, instead of Python's own handlers. You keep writing `logging.getLogger(__name__).info(...)` and configuring logging with the familiar `dictConfig` schema; the records are formatted and written by Logback appenders alongside the framework's own log output.
+Pyronaut routes Python logging through https://logback.qos.ch[Logback], the logging backend used by Micronaut, instead of Python's own handlers. You keep writing `logging.getLogger(__name__).info(...)` and configuring logging with the familiar `dictConfig` schema; Logback appenders format and write the records alongside the framework's own log output.
 
-== Why Logback for Python?
+== Why use Logback for Python?
 
 When Python runs inside a Micronaut application, two logging systems would otherwise compete: Python's `logging` module writing to its own handlers, and Logback writing the framework's messages. Routing Python records into Logback gives:
 
 - *One log stream.* Python and Java messages share the same appenders, format, ordering and files.
-- *One configuration.* Log levels for Python loggers, Micronaut packages and libraries are set in one place, and Micronaut's management endpoints can change them at runtime.
+- *One configuration.* Log levels for Python loggers, Micronaut packages and libraries are set in one place, and our management endpoints can change them at runtime.
 - *Less contention.* Formatting and writing happen on Logback's side, outside the GraalPy interpreter lock, so logging from many threads does not serialise Python execution.
 - *Logback's ecosystem.* Rolling files, syslog, email, JSON encoders and every other Logback appender are available to Python code.
 
@@ -60,13 +60,13 @@ LOGGING = {
 dictConfig(LOGGING)
 ----
 
-Call `dictConfig` once, early, for example at the top of your main module. Loggers created before the call, such as module-level `logging.getLogger(__name__)` loggers, are routed to Logback as well. `disable_existing_loggers` is honoured only when it is explicitly `True`; the Python default of disabling pre-existing loggers is not applied, because it would silence exactly those module-level loggers.
+Call `dictConfig` once, early, for example at the top of your main module. Pyronaut routes loggers created before the call, such as module-level `logging.getLogger(__name__)` loggers, to Logback as well. Pyronaut honors `disable_existing_loggers` only when you set it explicitly to `True`; it does not apply Python's default of disabling pre-existing loggers because that would silence exactly those module-level loggers.
 
-Levels use Python's names (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) or numeric values and are mapped to the corresponding Logback levels. `NOTSET` inherits the parent level; an unknown level name raises `ValueError`, as it does in Python.
+Levels use Python's names (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) or numeric values, and Pyronaut maps them to the corresponding Logback levels. `NOTSET` inherits the parent level; an unknown level name raises `ValueError`, as it does in Python.
 
 == Handler translation
 
-Python handler classes are translated to Logback appenders:
+Pyronaut translates Python handler classes to Logback appenders:
 
 [cols="1,1,2", options="header"]
 |===
@@ -78,7 +78,7 @@ Python handler classes are translated to Logback appenders:
 
 |`logging.FileHandler`
 |`FileAppender`
-|Plain file logging. `filename` is required.
+|Plain file logging. Provide `filename`.
 
 |`logging.handlers.RotatingFileHandler`
 |`RollingFileAppender`
@@ -89,7 +89,7 @@ A handler's `level` becomes a threshold filter on the appender, so a `DEBUG` roo
 
 == Format translation
 
-Format strings in `%(name)s` style are translated to Logback patterns. Width and alignment modifiers are preserved, so `%(levelname)-5s` becomes `%-5level`:
+Pyronaut translates format strings in `%(name)s` style to Logback patterns. It preserves width and alignment modifiers, so `%(levelname)-5s` becomes `%-5level`:
 
 [cols="1,1", options="header"]
 |===
@@ -120,11 +120,11 @@ Format strings in `%(name)s` style are translated to Logback patterns. Width and
 |`%method`
 |===
 
-A newline (`%n`) is appended automatically. `%(process)d` renders the JVM process id, and a record attribute with no Logback equivalent becomes an MDC lookup (`%X{name}`), which renders as empty text unless your code puts that key into the MDC.
+The adapter appends a newline (`%n`) automatically. `%(process)d` renders the JVM process id, and a record attribute with no Logback equivalent becomes an MDC lookup (`%X{name}`), which renders as empty text unless your code puts that key into the MDC.
 
 == Using Logback appenders directly
 
-Any Logback appender can be configured by giving its fully qualified class name as the handler `class`. Keys other than `class`, `level` and `formatter` are applied as properties of the appender:
+Configure any Logback appender by giving its fully qualified class name as the handler `class`. Pyronaut applies keys other than `class`, `level` and `formatter` as properties of the appender:
 
 [source,python]
 ----
@@ -147,7 +147,7 @@ LOGGING = {
 
 Property mapping rules:
 
-- A scalar value `"name": "value"` calls the appender's `setName(value)` method. Only `String`, `int`, `long`, `boolean` and similar simple parameters are converted; a property whose setter needs another type is skipped with a warning on standard error.
+- A scalar value `"name": "value"` calls the appender's `setName(value)` method. Pyronaut converts only `String`, `int`, `long`, `boolean` and similar simple parameters; it skips a property whose setter needs another type and prints a warning on standard error.
 - A list value `"name": ["a", "b"]` calls `addName(...)` once per element.
 - Nested objects (for example a custom `layout` or `encoder`) are not supported. Configure such appenders in a `logback.xml` on the classpath instead.
 
@@ -166,14 +166,8 @@ logger.info("Started processing order %s", order_id)
 logger.warning("Slow response from %s", service)
 ----
 
-Messages are formatted with Python's `%` arguments and then passed to Logback, so `%s` placeholders and lazy formatting work as usual.
+The adapter formats messages with Python's `%` arguments and then passes them to Logback, so `%s` placeholders and lazy formatting work as usual.
 
 == Combining with logback.xml
 
-Micronaut applications can also ship a `logback.xml` in the `config` directory. Loggers and appenders declared there apply to Python loggers too, because Python records are delivered to the same Logback context. Use `logback.xml` for appenders that need nested configuration and `dictConfig` for settings you want to keep in Python.
-
-== Links
-
-- https://logback.qos.ch/manual/configuration.html[Logback configuration manual]
-- https://logback.qos.ch/manual/appenders.html[Logback appenders reference]
-- https://docs.micronaut.io/latest/guide/#logging[Micronaut logging guide]
+Micronaut applications can also ship a `logback.xml` in the `config` directory. The shared Logback context applies loggers and appenders declared there to Python loggers too because the adapter delivers Python records to that context. Use `logback.xml` for appenders that need nested configuration and `dictConfig` for settings you want to keep in Python.

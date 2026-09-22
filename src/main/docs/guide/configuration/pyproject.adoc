@@ -1,9 +1,9 @@
 = Configuring pyproject.toml
 
-`pyproject.toml` is the source of truth for Pyronaut's build-time and runtime project model.
+`pyproject.toml` is the source of truth for Pyronaut's project configuration and runtime project model.
 It includes standard Python project metadata plus the `[tool.pyronaut]` tables consumed by the CLI.
 
-== Minimal Structure
+== Minimal structure
 
 [source,toml]
 ----
@@ -25,7 +25,7 @@ build = []
 test = []
 ----
 
-== Managed Versions
+== Managed versions
 
 Pyronaut can resolve versionless Micronaut coordinates from configured BOM versions:
 
@@ -40,7 +40,7 @@ version = "5.1.0"
 
 If these tables are omitted, Pyronaut uses the managed versions bundled with the current Pyronaut distribution, which `pyronaut --version` prints. Python support requires Micronaut Core 5.2 or later.
 
-== Source Layout
+== Source layout
 
 Use `[tool.pyronaut.sources]` to move source and resource directories away from the defaults:
 
@@ -57,7 +57,7 @@ additional-resources = ["views", "assets"]
 additional-test-resources = ["tests-fixtures"]
 ----
 
-== Packaging, Processor, and Test Modes
+== Packaging, processor, and test modes
 
 Choose what `pyronaut build` produces when no packaging-shaping command-line
 option is present:
@@ -104,11 +104,11 @@ the current operating system.
 A closed-world
 `wheel-native` or `docker-native` format rejects a configured reusable base.
 See the CLI reference for the full build option surface.
-See <<incrementalProcessing,Incremental Processing>> before enabling incremental processing, the compiler daemon, or the optimistic Python dependency policy.
+See <<incrementalProcessing,Incremental processing>> before enabling incremental processing, the compiler daemon, or the optimistic Python dependency policy.
 
-== Control Panel
+== Control panel
 
-The development/TUI Control Panel is opt-in and is disabled by default. Enable it for `pyronaut dev` and `pyronaut --tui` with:
+The development/TUI Control Panel is opt-in, and Pyronaut disables it by default. Enable it for `pyronaut dev` and `pyronaut --tui` with:
 
 [source,toml]
 ----
@@ -118,17 +118,17 @@ path = "/control-panel"
 production-enabled = false
 ----
 
-The command-line option `--control-panel` enables it for that invocation and overrides this setting. `pyronaut dev --control-panel` also works for direct source execution.
-When development Control Panel support is enabled, Pyronaut also adds Micronaut Management and the Control Panel management integration to the development runtime so health and diagnostic panels are available.
-The implicitly enabled development Control Panel dependencies are written only to the `development-runtime` dependency manifest, so they are not packaged by `pyronaut build`.
+The command-line option `--control-panel` enables it for that invocation and overrides this setting. `pyronaut dev --control-panel` also works for direct-source execution.
+When you enable development Control Panel support, Pyronaut also adds Micronaut Management and the Control Panel management integration to the development runtime so health and diagnostic panels are available.
+Pyronaut writes the implicitly enabled development Control Panel dependencies only to the `development-runtime` dependency manifest, so `pyronaut build` does not package them.
 Applications can declare their own development-only runtime dependencies with `development-runtime = [...]` under `[tool.pyronaut.dependencies]`.
 
-Set `production-enabled = true` only when the application has Micronaut Security on the runtime classpath and the Control Panel should be included in production runtime artifacts.
+Set `production-enabled = true` only when the application has Micronaut Security on the runtime classpath and you want the Control Panel in production runtime artifacts.
 Production Control Panel inclusion keeps the Micronaut Control Panel security defaults; the anonymous access used by `pyronaut --tui` is not applied to production builds.
 
 == Toolchain
 
-Commands that delegate to Java use a GraalVM JDK.
+Commands that use the managed toolchain use a GraalVM JDK.
 You can let Pyronaut discover a compatible installed JDK, or pin a toolchain:
 
 [source,toml]

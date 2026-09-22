@@ -1,8 +1,8 @@
 Blocking code is any code that makes the current thread wait: a database query, a synchronous HTTP call, reading a large file, `time.sleep()` or CPU-heavy computation. The rules for handling it depend on the kind of function you are in.
 
-== In a `def` route: nothing to do
+== In a `def` route
 
-Synchronous Python routes already run on the `io` executor, so blocking is acceptable. This is the right choice for most CRUD endpoints:
+Synchronous Python routes already run on the `io` executor, so they can perform blocking work. This is the usual choice for CRUD endpoints:
 
 [source,python]
 ----
@@ -38,7 +38,7 @@ class ReportController:
         return build_report(year)   # slow, runs on the blocking executor
 ----
 
-Custom executors are declared in configuration and referenced by name:
+Declare custom executors in configuration and reference them by name:
 
 [source,toml]
 ----
@@ -54,11 +54,11 @@ def yearly(self, year: int) -> Report:
     ...
 ----
 
-Micronaut Data repositories and other Java libraries that perform blocking I/O are commonly combined with `@ExecuteOn(TaskExecutors.BLOCKING)` in Java code. In Python code this is optional, because synchronous Python methods already avoid the event loop, but it remains useful for separating pools.
+Micronaut Data repositories and other libraries that perform blocking I/O are commonly combined with `@ExecuteOn(TaskExecutors.BLOCKING)`. In Python code this is optional, because synchronous Python methods already avoid the event loop, but it remains useful for separating pools.
 
 == In an `async def` route: use `run_in_executor`
 
-A coroutine runs on the event loop, so blocking inside it blocks Netty. Hand the blocking call to Micronaut's blocking executor with `loop.run_in_executor(None, ...)` and await the result:
+A coroutine runs on the event loop, so blocking inside it blocks Netty. Hand the blocking call to our blocking executor with `loop.run_in_executor(None, ...)` and await the result:
 
 [source,python]
 ----
@@ -73,7 +73,7 @@ async def report() -> Report:
     return await loop.run_in_executor(None, build_report)
 ----
 
-The `None` executor argument selects Micronaut's blocking executor. Passing your own `concurrent.futures.Executor` is not supported and raises `NotImplementedError`. Pass arguments with `functools.partial` or a lambda:
+The `None` executor argument selects our blocking executor. Passing your own `concurrent.futures.Executor` is not supported and raises `NotImplementedError`. Pass arguments with `functools.partial` or a lambda:
 
 [source,python]
 ----
@@ -84,7 +84,7 @@ result = await loop.run_in_executor(None, partial(build_report, year=2026))
 
 == Background work with `@Async`
 
-To start work and return immediately, decorate a bean method with `@Async`. The caller returns as soon as the task is submitted to the `scheduled` executor:
+To start work and return immediately, decorate a bean method with `@Async`. The caller returns as soon as the runtime submits the task to the `scheduled` executor:
 
 [source,python]
 ----
@@ -99,8 +99,8 @@ class Mailer:
         deliver(address)   # runs on a background thread
 ----
 
-This is the equivalent of FastAPI's `BackgroundTasks`. Because the method runs on another bean, the call must go through dependency injection for the decorator to take effect.
+This is similar to FastAPI's `BackgroundTasks`. Because the method runs on another bean, the call must go through dependency injection for the decorator to take effect.
 
 == Threads and `threading`
 
-The standard `threading` module works on GraalPy, and threads created this way execute Python code subject to the interpreter lock described in <<contextPool,The GIL and the Context Pool>>. Prefer Micronaut executors over creating threads by hand: they are sized through configuration, shut down with the application and are visible to Micronaut's metrics and management endpoints.
+The standard `threading` module works on GraalPy, and threads created this way execute Python code subject to the interpreter lock described in <<contextPool,The GIL and the Context Pool>>. Prefer our executors over creating threads by hand: we size them through configuration, shut them down with the application, and expose them through metrics and management endpoints.

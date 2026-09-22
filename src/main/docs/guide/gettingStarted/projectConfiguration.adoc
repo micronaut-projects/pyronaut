@@ -1,0 +1,39 @@
+= Step 1: Create the project configuration
+
+`pyproject.toml` is the standard Python project file. Pyronaut reads its own settings from the `[tool.pyronaut]` tables
+and uses the standard `[project]` and `[build-system]` tables for Python packaging.
+
+Create `pyproject.toml`:
+
+[source,toml]
+----
+[project] # <1>
+name = "hello-pyronaut"
+version = "0.1.0"
+dynamic = ["scripts"]
+
+[build-system]
+requires = ["setuptools", "wheel", "tomli"]
+build-backend = "setuptools.build_meta"
+
+[tool.pyronaut]
+repositories = ["mavenCentral"] # <2>
+
+[tool.pyronaut.dependencies] # <3>
+runtime = []
+build = []
+test = [
+  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
+  "io.micronaut.pyronaut:micronaut-pyronaut-requests"
+]
+----
+
+<1> The project name and version are also used when packaging the application.
+<2> The `repositories` setting tells Pyronaut where to resolve Micronaut libraries. `mavenCentral` is the default repository, roughly equivalent to PyPI for Python packages.
+<3> Declare dependencies by scope. Pyronaut makes `runtime` dependencies available to application code, uses `build`
+dependencies while it processes sources, and makes `test` dependencies available when tests run. This example leaves
+`runtime` empty because the Pyronaut launcher already includes the HTTP server, serialization, and validation
+support. See <<how,How Pyronaut Works>> for details.
+
+For dependency syntax, Python packages, and additional dependency options, see
+<<dependencies,Installing Python and Micronaut Dependencies>>.
