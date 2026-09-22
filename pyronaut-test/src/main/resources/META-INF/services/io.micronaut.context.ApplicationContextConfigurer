@@ -1,1 +1,2 @@
 io.micronaut.pyronaut.test.ExternalApplicationContextConfigurer
+io.micronaut.pyronaut.test.TestClassLoaderApplicationContextConfigurer
