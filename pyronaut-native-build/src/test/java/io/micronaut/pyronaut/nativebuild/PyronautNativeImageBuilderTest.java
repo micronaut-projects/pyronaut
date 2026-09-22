@@ -80,6 +80,7 @@ class PyronautNativeImageBuilderTest {
         List<String> command = build(classpathEntry, false, false);
 
         assertTrue(command.contains("-H:Preserve=package=tools.jackson.core.*"));
+        assertFalse(command.contains("-H:Preserve=package=com.google.gson.*"));
         assertFalse(command.contains("-H:Preserve=package=io.micronaut.expressions.*"));
     }
 
