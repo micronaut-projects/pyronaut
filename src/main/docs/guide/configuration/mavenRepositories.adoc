@@ -1,6 +1,6 @@
 = Configuring Maven Repositories
 
-Pyronaut resolves Java dependencies through Apache Maven Resolver.
+Pyronaut resolves Maven dependencies through Apache Maven Resolver.
 
 Direct-source applications can instead use `MavenRepository`; see <<directSourceDeclarations,Declaring Direct Source Dependencies>>.
 Configure remote and local repositories in `[tool.pyronaut]`:

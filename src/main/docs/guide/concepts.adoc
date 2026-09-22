@@ -7,13 +7,13 @@ Micronaut has its own vocabulary. Words such as _bean_, _dependency injection_, 
 |Micronaut term |What it means for a Python developer
 
 |Bean
-|An object whose creation and lifetime Micronaut manages instead of your code. You declare a bean by decorating a class with `@Singleton` (or another scope) and never call its constructor yourself.
+|An object whose creation and lifetime the application context manages instead of your code. You declare a bean by decorating a class with `@Singleton` (or another scope) and never call its constructor yourself.
 
 |Application context
 |The container that creates beans, wires them together, reads configuration and starts the HTTP server. `pyronaut dev` and `pyronaut run` create one for you. In tests you interact with it through `MicronautTest`.
 
 |Dependency injection (DI)
-|Micronaut looks at the type hints of a bean's `__init__` parameters (or of `Annotated[..., Inject]` attributes) and passes in the matching beans automatically. It replaces module-level globals and FastAPI's `Depends()`.
+|The application context looks at the type hints of a bean's `__init__` parameters (or of `Annotated[..., Inject]` attributes) and passes in the matching beans automatically. This replaces module-level globals and FastAPI's `Depends()`.
 
 |Scope
 |How long a bean lives. `@Singleton` means one instance per application; `@Prototype` means a new instance every time it is injected; `@RequestScope` means one instance per HTTP request.
@@ -28,10 +28,10 @@ Micronaut has its own vocabulary. Words such as _bean_, _dependency injection_, 
 |Behaviour that wraps a method call, such as retrying on failure, validating arguments or running the method on another thread. Pyronaut expresses this behaviour with decorators like `@Retryable`, `@Validated` and `@ExecuteOn`.
 
 |Executor
-|A named thread pool. Micronaut decides which executor runs each request based on whether your function is `def` or `async def` and on decorators such as `@ExecuteOn`.
+|A named thread pool. The runtime chooses which executor runs each request based on whether your function is `def` or `async def` and on decorators such as `@ExecuteOn`.
 
 |Publisher, Mono, Flux, CompletionStage
-|Java's asynchronous result types. You can `await` them from `async def` Python code; see <<threading,Threading, blocking work, and asyncio>>.
+|Micronaut asynchronous result types. You can `await` them from `async def` Python code; see <<threading,Threading, blocking work, and asyncio>>.
 |===
 
 == Processing happens before startup

@@ -10,14 +10,14 @@ If you do not want to install GraalVM manually, Pyronaut can provision it from t
 type = "jvm" # jvm|native
 distribution = "ee"
 java-version = 25
-version = "25i4"
+version = "25i3"
 ----
 
 Pyronaut supports two toolchains, `native` and `jvm`, with different trade-offs.
 
-The `jvm` toolchain runs on a GraalVM Java runtime. It typically takes longer to start and uses more memory, but JIT compilation can improve throughput after warm-up.
+The `jvm` toolchain runs on a GraalVM runtime. It typically takes longer to start and uses more memory, but JIT compilation can improve throughput after warm-up.
 
-The `native` toolchain typically starts faster and uses less memory, so it is often useful for development with frequent restarts and test runs. Some Java libraries need reachability metadata in a native image, and profile-guided optimization can improve native peak performance. You can use the native toolchain locally and still deploy a JVM application, or use the JVM toolchain locally and deploy a native application.
+The `native` toolchain typically starts faster and uses less memory, so it is often useful for development with frequent restarts and test runs. Some libraries need reachability metadata in a native image, and profile-guided optimization can improve native peak performance. You can use the native toolchain locally and still deploy a JVM application, or use the JVM toolchain locally and deploy a native application.
 
 The following table summarizes the trade-offs.
 
@@ -33,7 +33,7 @@ The following table summarizes the trade-offs.
 |Lower
 
 |Compatibility
-|Broad Java library compatibility
+|Broad library compatibility
 |Some libraries require metadata
 
 |Peak performance
@@ -133,7 +133,7 @@ additional-resources = []
 additional-test-resources = []
 ----
 
-`pyronaut process` compiles the configured Python and Java source trees into `__pyronaut__/classes`.
+`pyronaut process` compiles the configured source trees into `__pyronaut__/classes`.
 For tests, Pyronaut also creates `__pyronaut__/test-classes` from the application and test source sets.
 
 == Resource directories

@@ -5,7 +5,7 @@ Pyronaut routes Python logging through https://logback.qos.ch[Logback], the logg
 When Python runs inside a Micronaut application, two logging systems would otherwise compete: Python's `logging` module writing to its own handlers, and Logback writing the framework's messages. Routing Python records into Logback gives:
 
 - *One log stream.* Python and Java messages share the same appenders, format, ordering and files.
-- *One configuration.* Log levels for Python loggers, Micronaut packages and libraries are set in one place, and Micronaut's management endpoints can change them at runtime.
+- *One configuration.* Log levels for Python loggers, Micronaut packages and libraries are set in one place, and the management endpoints can change them at runtime.
 - *Less contention.* Formatting and writing happen on Logback's side, outside the GraalPy interpreter lock, so logging from many threads does not serialise Python execution.
 - *Logback's ecosystem.* Rolling files, syslog, email, JSON encoders and every other Logback appender are available to Python code.
 

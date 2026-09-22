@@ -13,7 +13,7 @@ enabled = true
 ----
 
 When enabled in a project, `pyronaut install` resolves a test-resources-server classpath and `pyronaut dev` or `pyronaut test` starts a server when needed.
-The CLI propagates test resources client settings to delegated JVM processes.
+The CLI propagates test resources client settings to delegated application processes.
 
 For direct-source execution without a `pyproject.toml`, Pyronaut resolves the server and client only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. This applies to direct `dev` and `test` only.
 
@@ -36,10 +36,6 @@ __pyronaut__/test-resources-session.json
 
 Pyronaut writes logs to `.micronaut/test-resources/logs` by default unless you configure `logs-dir`.
 
-The server pulls and starts containers in its own process, so `pyronaut dev` and `pyronaut test` tail that log while they
-wait and report the image pulls, container starts and failures alongside their own progress output.
-Configuring `logs-dir` moves the log the launchers follow along with the log itself.
-
 == Configuration
 
 [source,toml]
@@ -55,7 +51,7 @@ startup-optimization = "none" # none|auto|leyden|cds
 additional-modules = ["jdbc-mysql"]
 ----
 
-`startup-optimization` controls JVM start-up optimisation for the server process. `auto` and `cds` use class-data sharing when the JDK supports it; Pyronaut accepts `leyden` but currently falls back to `cds` with a warning.
+`startup-optimization` controls server start-up optimisation. `auto` and `cds` use class-data sharing when the JDK supports it; Pyronaut accepts `leyden` but currently falls back to `cds` with a warning.
 `logs-dir` applies to the server process; the launcher's own log output is always written under `.micronaut/test-resources/logs` in the project.
 
 `infer-classpath` lets Pyronaut infer test resources modules from application dependencies.

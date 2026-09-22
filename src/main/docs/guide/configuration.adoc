@@ -12,3 +12,18 @@ Run `pyronaut install` after changing `pyproject.toml` to refresh dependency man
 
 Use `pyronaut validate-config` when changing application configuration or dependency sets.
 It validates Micronaut configuration for run, test, or production scenarios and writes reports under `__pyronaut__/reports/config-validation`.
+
+== Choose your setup
+
+* *New Pyronaut project:* Start with <<pyproject,Configuring `pyproject.toml`>>, then add dependencies with
+  <<dependencies,Installing Python and Micronaut Dependencies>> and application settings with
+  <<appConfig,Application Configuration with `application.toml`>>. Use <<validateConfig,Configuration Validation>> before
+  deployment.
+* *Existing Maven or Gradle project:* Start with <<mavenGradle,Using Maven and Gradle Projects>> to connect the existing
+  build, then use the dependency and application configuration pages as needed.
+* *Direct-source application:* Use <<directSourceDeclarations,Declaring Direct Source Dependencies>> when the application
+  does not have a `pyproject.toml`.
+* *Custom repositories or a proxy:* Read <<mavenRepositories,Configuring Maven Repositories>> and
+  <<proxyConfig,Proxy Configuration>> when dependency resolution needs non-default network settings.
+* *Editor support:* Run `pyronaut install`, then follow <<ideSetup,IDE Setup for VS Code and PyCharm>>. Use the
+  <<vscodeExtension,VS Code Test Explorer Extension>> page when tests must run through `pyronaut test`.

@@ -23,9 +23,36 @@ documented.
 - Avoid unnecessary implementation jargon. When a technical term is necessary, define it at first use.
 - Avoid vague claims such as "easy", "simple", "seamless", "magic", or "just" unless the claim is demonstrated by the
   surrounding workflow.
-- Avoid **we** unless describing system behavior that genuinely requires an actor.
+- When describing behavior Pyronaut provides, name Pyronaut or the concrete component when that makes the sentence
+  clearer: "Pyronaut generates..." or "The launcher includes...". Do not attribute Pyronaut-provided behavior to
+  Micronaut alone. Keep Micronaut as the actor when describing the external framework, its documented APIs, or behavior
+  outside Pyronaut's control.
+- Prefer **Micronaut** or a concrete component over **Java** or **JVM** when the language or runtime label adds no
+  useful information. Keep Java/JVM terminology for source-language support, API and package names, toolchain modes,
+  package formats, flags, and compatibility boundaries.
 - Describe limitations plainly. Prefer headings such as **Supported behavior**, **Limits**, or **Troubleshooting**;
   do not call a page a **stub**.
+
+### Product voice and framework attribution
+
+Describe capabilities included in Pyronaut as Pyronaut behavior. Prefer Pyronaut or the concrete component as the
+active subject: **Pyronaut includes**, **The launcher provides**, **The processor generates**, and **The binder maps**.
+Use **we** only when no clearer active subject exists. Do not describe an included Pyronaut capability as if Micronaut
+provides it independently.
+
+| Prefer | Avoid |
+| --- | --- |
+| The launcher includes Micronaut's HTTP server and validation support. | Micronaut provides the HTTP server and validation support. |
+| The processor generates route and bean metadata before startup. | Micronaut generates route and bean metadata before startup. |
+| Pyronaut exposes Micronaut APIs through Python decorators. | Java APIs are available through Python decorators. |
+
+Use **Micronaut** when naming the framework model, an included Micronaut module, an API, a configuration property, or
+an external Micronaut reference. Prefer **Micronaut** or a concrete component over **Java** or **JVM** in general
+descriptions when the language or runtime does not affect the reader's decision. Keep Java/JVM terminology when it
+identifies a source language, API or package name, toolchain mode, package format, flag, or compatibility boundary.
+
+Do not replace a precise technical term with Micronaut merely to reduce Java/JVM mentions. Change the surrounding prose,
+not literal commands, identifiers, paths, package coordinates, source-language labels, or configuration values.
 
 ## Page boundaries and page types
 
@@ -42,7 +69,7 @@ deployment instructions into one page unless comparing those surfaces is the pur
   out of the main path.
 - **Reference** pages document exact commands, options, properties, files, exit codes, API behavior, or compatibility
   boundaries. Do not turn a reference page into a general tutorial.
-- **Integration guides** explain how Pyronaut works with a Python package, Java library, Micronaut module, build tool,
+- **Integration guides** explain how Pyronaut works with a Python package, library, Micronaut module, build tool,
   IDE, or external service. Include setup, a minimal example, supported behavior, limitations, and testing.
 - **Decision guides** help the reader choose between supported approaches. Start with the decision, show the meaningful
   trade-offs, then provide the commands or configuration for the selected option.
@@ -221,7 +248,7 @@ lead-ins such as **For example:** when the sentence can state the user's goal.
   can define it.
 - Distinguish project configuration in `pyproject.toml` from runtime application configuration in
   `config/application.toml`.
-- Distinguish Python package installation from Java dependency resolution. Do not imply that `pyronaut install` installs
+- Distinguish Python package installation from Micronaut dependency resolution. Do not imply that `pyronaut install` installs
   Python packages unless that behavior is explicitly documented and tested.
 - Keep exact TOML keys, Maven coordinates, environment variables, and command options unchanged.
 - For a list of related settings, use a focused AsciiDoc table with a header row. Do not create a table for one setting
@@ -261,7 +288,7 @@ package names, option names, and API identifiers remain unchanged even when the 
 | **project configuration** | Build-time settings for a project, including sources, dependencies, packaging, and toolchain settings. | application configuration |
 | **application configuration** | Runtime Micronaut settings, normally in `config/application.toml` or its environment-specific variants. | project settings |
 | **generated state** | Files Pyronaut creates for processing, manifests, schemas, reports, stubs, caches, and similar outputs. | source files, application state |
-| **processed output** | Classes and metadata generated from Python and Java sources so the application can run. | compiled Python, generated application, transformed code |
+| **processed output** | Classes and metadata generated from application sources so the application can run. | compiled Python, generated application, transformed code |
 | **processing** | The Pyronaut phase that reads source declarations and generates Micronaut metadata and classes. | startup scanning, reflection processing |
 | **Pyronaut launcher** | A focused executable such as `pyronaut-dev`, `pyronaut-run`, or `pyronaut-test`. | runtime, binary, tool, unless the distinction is unimportant |
 | **development mode** | The behavior of `pyronaut dev`, including reload-oriented execution and development support. | dev environment when referring to the command behavior |
@@ -309,8 +336,31 @@ Before submitting documentation, check that:
 - Commands, paths, options, package coordinates, and configuration keys match the implementation.
 - Behavioral, compatibility, performance, and platform claims are backed by implementation, tests, or an authoritative
   source and are qualified to the scope that evidence covers.
-- Active-voice sentences name the component that performs the action; they do not assign behavior to Pyronaut or
-  Micronaut merely to avoid passive voice.
+- Active-voice sentences name the component that performs the action. Use "we" only when no clearer subject exists, and
+  do not assign Pyronaut-provided behavior to Micronaut merely because the implementation uses Micronaut.
+- Examples include their required setup and use the correct language tag.
+- Source executable examples from tests, or check them against tests, when possible.
+- Configuration defaults, precedence, generated files, and limitations are explicit where relevant.
+- Troubleshooting items name a symptom and give an actionable diagnostic or fix.
+- Use `Next steps` only on entry-point pages, quickstarts, and tutorials when two or three goal-based links help the
+  reader continue. Use inline cross-references on reference pages.
+- The page uses the canonical Pyronaut terminology.
+- Run `./gradlew publishGuide` for guide changes; run `./gradlew docs` when API documentation is also relevant.
+
+## Review checklist
+
+Before submitting documentation, check that:
+
+- The page has one clear reader goal and one primary surface.
+- The page type matches the content: overview, concepts, quickstart, guide, reference, integration, decision, or
+  troubleshooting.
+- The page title and headings follow the capitalization rules.
+- `toc.yml` contains the page and all cross-references resolve.
+- Commands, paths, options, package coordinates, and configuration keys match the implementation.
+- Behavioral, compatibility, performance, and platform claims are backed by implementation, tests, or an authoritative
+  source and are qualified to the scope that evidence covers.
+- Active-voice sentences name the component that performs the action. Use "we" only when no clearer subject exists, and
+  do not assign Pyronaut-provided behavior to Micronaut merely because the implementation uses Micronaut.
 - Examples include their required setup and use the correct language tag.
 - Source executable examples from tests, or check them against tests, when possible.
 - Configuration defaults, precedence, generated files, and limitations are explicit where relevant.

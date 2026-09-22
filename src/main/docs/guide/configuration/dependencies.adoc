@@ -1,6 +1,6 @@
-= Installing Python and Java Dependencies
+= Installing Python and Micronaut Dependencies
 
-Pyronaut uses normal Python packaging for Python dependencies and Maven coordinates for Java dependencies.
+Pyronaut uses normal Python packaging for Python dependencies and Maven coordinates for Micronaut and application dependencies.
 
 For direct-source applications without `pyproject.toml`, see <<directSourceDeclarations,Declaring direct source dependencies>>.
 
@@ -19,9 +19,9 @@ dependencies = [
 Pyronaut does not resolve Python packages during `pyronaut install`.
 The command expects the Python environment used to run Pyronaut and pytest to already contain the Python packages your tests or application import.
 
-== Java dependencies
+== Micronaut dependencies
 
-Declare Java dependencies by scope under `[tool.pyronaut.dependencies]`:
+Declare Micronaut and application dependencies by scope under `[tool.pyronaut.dependencies]`:
 
 [source,toml]
 ----

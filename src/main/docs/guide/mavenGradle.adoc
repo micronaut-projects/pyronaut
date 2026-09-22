@@ -1,6 +1,6 @@
 = Using Maven and Gradle Projects
 
-Pyronaut can run Java applications whose Maven or Gradle build manages their source layout and dependencies. Run the commands from the build root (the directory containing `pom.xml` or a Gradle build file):
+Pyronaut can run Micronaut applications whose Maven or Gradle build manages their source layout and dependencies. Run the commands from the build root (the directory containing `pom.xml` or a Gradle build file):
 
 [source,bash]
 ----

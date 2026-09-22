@@ -1,0 +1,39 @@
+= Step 4: Run the application
+
+If you installed or upgraded Pyronaut, provision the SDK before starting the application:
+
+[source,bash]
+----
+pyronaut setup
+----
+
+Then start the development server:
+
+[source,bash]
+----
+pyronaut dev
+----
+
+`pyronaut dev` prepares and starts the application in one command. The command:
+
+* installs the dependencies declared in `pyproject.toml`;
+* processes the Python sources; and
+* enables file watching so that edits reload the application.
+
+Run `pyronaut install` and `pyronaut process` separately when you change dependencies or want to inspect processing errors
+without starting the server:
+
+[source,bash]
+----
+pyronaut install
+pyronaut process
+----
+
+Verify the route:
+
+[source,bash]
+----
+curl http://localhost:8080/
+----
+
+The response is `Hello from Pyronaut`.

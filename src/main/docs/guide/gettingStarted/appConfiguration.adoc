@@ -1,0 +1,16 @@
+= Step 3: Add application configuration
+
+Create `config/application.toml`:
+
+[source,toml]
+----
+[micronaut.application]
+name = "hello-pyronaut"
+
+[micronaut.server]
+port = 8080
+----
+
+The `config/` directory is on the runtime classpath. Use `application.toml` for Micronaut settings such as the server
+port, data sources, and application-specific properties. See <<configurationInjection,Configuration Injection>> to read
+those settings from Python.

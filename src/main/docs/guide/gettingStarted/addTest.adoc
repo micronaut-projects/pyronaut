@@ -1,0 +1,46 @@
+= Step 5: Add a test
+
+Create `tests/test_controller.py`:
+
+[source,python]
+----
+import pytest
+import requests
+
+from pyronaut.test import MicronautTest, micronaut_test_fixture
+
+
+@pytest.fixture
+def my_context(request):
+    fixture = micronaut_test_fixture(request, MicronautTest())  # <1>
+    yield fixture
+    fixture.stop()
+
+
+@pytest.fixture
+def client(my_context):
+    return requests.with_context(my_context)  # <2>
+
+
+def test_index(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.text == "Hello from Pyronaut"
+----
+
+<1> `micronaut_test_fixture` starts the application and an embedded HTTP server on a random port for the fixture's
+duration.
+<2> `requests.with_context` returns a `requests`-compatible client whose relative URLs point at the embedded server,
+so the test does not need to know the port. The `micronaut-pyronaut-requests` test dependency provides it.
+
+Run the test suite through Pyronaut so that the Micronaut classpath, processed sources, and GraalPy runtime are set up
+consistently:
+
+[source,bash]
+----
+pyronaut test
+----
+
+Pyronaut runs pytest inside the application runtime and writes an HTML report to
+`__pyronaut__/reports/tests/index.html`. See <<testing,Testing>> for JUnit-style Python tests, test selection, and Test
+Resources.

@@ -1,4 +1,5 @@
-Pyronaut Requests provides a subset of the Python https://requests.readthedocs.io[`requests`] API and delegates HTTP work to the Micronaut HTTP client. Code that uses the supported API can keep `import requests`, and the client can also target an embedded server in tests.
+Pyronaut Requests provides a subset of the Python https://requests.readthedocs.io[`requests`] API. The Micronaut HTTP client
+performs the underlying work, and the client can also target an embedded server in tests.
 
 Add it to the scope where you need it. For application code declare it under `runtime`; for tests only, under `test`:
 
@@ -33,11 +34,13 @@ print(response.status_code, response.json())
 
 Not supported: a per-request `proxies` argument, streaming responses (`stream=True`), and SSL contexts beyond `verify=False`. For proxies, use standard proxy environment variables or set `Session.proxies`.
 
-When a request uses `timeout`, `verify` or `allow_redirects` values that differ from the defaults, Pyronaut Requests creates a short-lived Micronaut client with those settings and closes it after the request.
+When a request uses `timeout`, `verify` or `allow_redirects` values that differ from the defaults, Pyronaut creates a
+short-lived Micronaut client with those settings and closes it after the request.
 
 == Typed JSON
 
-`response.json()` returns Python `dict` and `list` values. Pass a class to deserialize with Micronaut Serialization, using the same `JsonMapper` configuration as the application:
+`response.json()` returns Python `dict` and `list` values. Pass a class to deserialize with the Micronaut Serialization
+integration, using the same `JsonMapper` configuration as the application:
 
 [source,python]
 ----
@@ -91,6 +94,8 @@ See <<requestsTesting,Using Requests for Testing>> for more test patterns.
 
 == Client lifecycle
 
-The library registers Micronaut HTTP clients in a registry. Its shutdown listener closes them when an application context stops, and an `atexit` hook closes any clients that remain at interpreter exit. Use `Session` as a context manager (`with requests.Session() as session:`) to close a session's client deterministically.
+Pyronaut registers Micronaut HTTP clients in a registry. The shutdown listener closes them when an application context
+stops, and an `atexit` hook closes any clients that remain at interpreter exit. Use `Session` as a context manager
+(`with requests.Session() as session:`) to close a session's client deterministically.
 
 NOTE: The shutdown listener closes every registered client when any application context stops. In a test suite that starts several contexts in one JVM, create clients with `with_context` per fixture rather than sharing module-level sessions across contexts.

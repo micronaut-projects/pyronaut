@@ -1,11 +1,11 @@
-Python web developers already know two execution models: WSGI frameworks such as Flask run every request on its own thread, while ASGI frameworks such as FastAPI run `async def` handlers on an event loop and push plain `def` handlers to a thread pool. Pyronaut combines both models on top of Micronaut's Netty-based server, and adds a third element that has no equivalent in CPython: the ability to run Python code in several interpreter contexts at once.
+Python web developers already know two execution models: WSGI frameworks such as Flask run every request on its own thread, while ASGI frameworks such as FastAPI run `async def` handlers on an event loop and push plain `def` handlers to a thread pool. Pyronaut combines both models on a Netty-based server and adds a third element that has no equivalent in CPython: the ability to run Python code in several interpreter contexts at once.
 
 This section explains:
 
 * <<threadingModel,The Threading Model>>: which thread runs each kind of Python function and why.
 * <<blockingWork,Running Blocking Code>>: how to keep slow operations away from the event loop.
 * <<asyncAwait,Using async/await>>: which `asyncio` features work inside a Pyronaut application.
-* <<reactiveInterop,Awaiting Reactive and Java Async Types>>: how Python coroutines interact with Micronaut's `CompletionStage`, `Publisher`, `Mono`, and `Flux` types.
+* <<reactiveInterop,Awaiting Reactive and Java Async Types>>: how Python coroutines interact with the `CompletionStage`, `Publisher`, `Mono`, and `Flux` integrations.
 * <<contextPool,The GIL and the Context Pool>>: how GraalPy's interpreter lock affects throughput and how to configure the pool of Python contexts.
 
 The short version: write `def` routes for ordinary code, write `async def` routes when you want to await other services concurrently, and never call blocking code from an `async def` function without `run_in_executor`. If you follow those three rules, the defaults Pyronaut applies will serve most applications well.

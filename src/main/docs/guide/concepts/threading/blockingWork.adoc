@@ -54,11 +54,11 @@ def yearly(self, year: int) -> Report:
     ...
 ----
 
-Micronaut Data repositories and other Java libraries that perform blocking I/O are commonly combined with `@ExecuteOn(TaskExecutors.BLOCKING)` in Java code. In Python code this is optional, because synchronous Python methods already avoid the event loop, but it remains useful for separating pools.
+Micronaut Data repositories and other libraries that perform blocking I/O are commonly combined with `@ExecuteOn(TaskExecutors.BLOCKING)`. In Python code this is optional, because synchronous Python methods already avoid the event loop, but it remains useful for separating pools.
 
 == In an `async def` route: use `run_in_executor`
 
-A coroutine runs on the event loop, so blocking inside it blocks Netty. Hand the blocking call to Micronaut's blocking executor with `loop.run_in_executor(None, ...)` and await the result:
+A coroutine runs on the event loop, so blocking inside it blocks Netty. Hand the blocking call to the blocking executor with `loop.run_in_executor(None, ...)` and await the result:
 
 [source,python]
 ----
@@ -73,7 +73,7 @@ async def report() -> Report:
     return await loop.run_in_executor(None, build_report)
 ----
 
-The `None` executor argument selects Micronaut's blocking executor. Passing your own `concurrent.futures.Executor` is not supported and raises `NotImplementedError`. Pass arguments with `functools.partial` or a lambda:
+The `None` executor argument selects the blocking executor. Passing your own `concurrent.futures.Executor` is not supported and raises `NotImplementedError`. Pass arguments with `functools.partial` or a lambda:
 
 [source,python]
 ----
@@ -103,4 +103,4 @@ This is similar to FastAPI's `BackgroundTasks`. Because the method runs on anoth
 
 == Threads and `threading`
 
-The standard `threading` module works on GraalPy, and threads created this way execute Python code subject to the interpreter lock described in <<contextPool,The GIL and the Context Pool>>. Prefer Micronaut executors over creating threads by hand: they are sized through configuration, shut down with the application, and are visible to Micronaut's metrics and management endpoints.
+The standard `threading` module works on GraalPy, and threads created this way execute Python code subject to the interpreter lock described in <<contextPool,The GIL and the Context Pool>>. Prefer the managed executors over creating threads by hand: Pyronaut sizes them through configuration, shuts them down with the application, and exposes them through metrics and management endpoints.

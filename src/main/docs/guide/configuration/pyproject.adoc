@@ -128,7 +128,7 @@ Production Control Panel inclusion keeps the Micronaut Control Panel security de
 
 == Toolchain
 
-Commands that delegate to Java use a GraalVM JDK.
+Commands that use the managed toolchain use a GraalVM JDK.
 You can let Pyronaut discover a compatible installed JDK, or pin a toolchain:
 
 [source,toml]

@@ -38,6 +38,6 @@ enabled = false
 
 == Interaction with executors
 
-Contexts and threads are independent. The `io` executor can have fifty threads while the pool has eight contexts; at most eight of those threads execute Python code at any moment and the rest wait for a context or run Java code. Keep the two settings in proportion when tuning, and remember that the executors must stay on platform threads (`virtual = false`), because GraalPy cannot run on virtual threads.
+Contexts and threads are independent. The `io` executor can have fifty threads while the pool has eight contexts; at most eight of those threads execute Python code at any moment and the rest wait for a context or run Java code. Keep the two settings in proportion when tuning, and remember that the executors must stay on platform threads (`virtual = false`), because GraalPy cannot run on Java virtual threads.
 
 The GIL and virtual-thread limitations are properties of the current GraalPy release. Revisit the pool recommendations if a future release changes either limitation. See the https://docs.micronaut.io/latest/guide/#pythonThreading[Python Threading] section of the Micronaut guide for the current guidance and the full list of pool properties.

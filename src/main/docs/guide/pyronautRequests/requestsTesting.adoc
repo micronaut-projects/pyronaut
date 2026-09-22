@@ -1,6 +1,6 @@
 = Using Requests for Testing
 
-Pyronaut Requests provides a `requests`-compatible module backed by the Micronaut HTTP client.
+Pyronaut Requests provides a `requests`-compatible module backed by the Micronaut HTTP client integration.
 When you bind it to a `MicronautTest` context, the client resolves relative URLs against the running `EmbeddedServer`.
 
 Add the requests integration to the test scope:
@@ -42,7 +42,7 @@ def test_http_endpoint(client):
     assert response.status_code == 200
 ----
 
-`requests.with_context(my_context)` looks up the Micronaut `EmbeddedServer` and `JsonMapper` from the context.
+`requests.with_context(my_context)` looks up the `EmbeddedServer` and `JsonMapper` from the context.
 This lets tests use relative URLs and the same JSON configuration as the application.
 
 == Absolute URLs
@@ -62,7 +62,7 @@ def test_absolute_url(my_context):
 == JSON responses
 
 Untyped `response.json()` returns Python-native dictionaries and lists.
-Pass a target type to deserialize with Micronaut Serialization:
+Pass a target type to deserialize with the Micronaut Serialization integration:
 
 [source,python]
 ----
@@ -77,4 +77,4 @@ def test_typed_json(client):
     assert message.message.startswith("Hello")
 ----
 
-The library's shutdown listener closes its clients when a Micronaut context stops; see <<pyronautRequests,Pyronaut Requests>> for the lifecycle details.
+The shutdown listener closes its clients when an application context stops; see <<pyronautRequests,Pyronaut Requests>> for the lifecycle details.

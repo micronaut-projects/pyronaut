@@ -1,6 +1,6 @@
 = Application Configuration with application.toml
 
-Micronaut application configuration lives in the configured resources directory.
+Application configuration lives in the configured resources directory.
 
 Direct-source applications can declare individual runtime properties with `AppConfig`; see <<directSourceDeclarations,Declaring Direct Source Dependencies>>.
 By default, that directory is `config`, so the main configuration file is:
@@ -68,7 +68,7 @@ It includes the configured `test-resources` directory and any `additional-test-r
 
 == Schema support
 
-When `application.toml` exists, `pyronaut install` builds a JSON schema from Micronaut configuration metadata present on the resolved runtime classpath.
+When `application.toml` exists, `pyronaut install` builds a JSON schema from the configuration metadata present on the resolved runtime classpath.
 It writes the schema to:
 
 [source,text]
@@ -76,7 +76,7 @@ It writes the schema to:
 __pyronaut__/schemas/micronaut-application.schema.json
 ----
 
-If `application.toml` does not already contain a user-managed schema directive, Pyronaut prepends one so TOML-aware editors can validate Micronaut configuration keys.
+If `application.toml` does not already contain a user-managed schema directive, Pyronaut prepends one so TOML-aware editors can validate configuration keys.
 
 == Validation
 

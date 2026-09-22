@@ -30,5 +30,5 @@ python -m pytest --version
 Create `.venv` with GraalPy. Pyronaut uses this environment for application and test launches. A CPython-created
 environment cannot provide packages to the embedded GraalPy runtime.
 
-See <<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>> for Python package compatibility and Java
+See <<usingPackagesJavaLibraries,Using Python Packages and Micronaut Libraries>> for Python package compatibility and Micronaut
 library guidance.

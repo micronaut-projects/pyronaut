@@ -1,6 +1,6 @@
-In Pyronaut, `async def` routes, clients, and bean methods use standard Python `asyncio` syntax. Micronaut provides the event loop: each coroutine is bound to the Netty event loop handling the current request, and awaiting a Micronaut client call, a timer, or a supported network operation suspends the coroutine without holding a thread.
+In Pyronaut, `async def` routes, clients, and bean methods use standard Python `asyncio` syntax. Pyronaut provides the event loop: each coroutine is bound to the Netty event loop handling the current request, and awaiting a Micronaut client call, a timer, or a supported network operation suspends the coroutine without holding a thread.
 
-There is no `asyncio.run()` and no `uvicorn`. The event loop already exists when Micronaut calls your function.
+There is no `asyncio.run()` and no `uvicorn`. The event loop already exists when Pyronaut calls your function.
 
 == Writing an async route
 
@@ -79,7 +79,7 @@ class DemoController:
 
 == Running work concurrently
 
-`asyncio.gather` and `asyncio.TaskGroup` schedule several coroutines on the Micronaut loop and wait for all of them:
+`asyncio.gather` and `asyncio.TaskGroup` schedule several coroutines on the Pyronaut event loop and wait for all of them:
 
 [source,python]
 ----
@@ -100,17 +100,17 @@ Cancellation, `except*` handling of `ExceptionGroup`, `asyncio.wait_for` timeout
 
 == Supported asyncio APIs
 
-The Micronaut-managed loop implements the parts of `asyncio` that make sense inside a server:
+The managed loop implements the parts of `asyncio` that make sense inside a server:
 
 * `asyncio.get_running_loop()`, `loop.create_future()` and `loop.create_task(...)`
 * `loop.call_soon(...)`, `loop.call_soon_threadsafe(...)`, `loop.call_later(...)` and `loop.call_at(...)`
 * `asyncio.sleep(...)`, `asyncio.gather(...)`, `asyncio.TaskGroup` and task cancellation
-* `loop.run_in_executor(None, ...)`, which uses Micronaut's blocking executor
+* `loop.run_in_executor(None, ...)`, which uses the blocking executor
 * Networking: `asyncio.open_connection`, `asyncio.start_server`, `loop.create_connection`, `loop.create_server`, Unix-domain sockets, datagram endpoints and the `sock_*` helpers, all backed by Netty channels, with TLS for TCP and Unix-domain connections
 
 The following are not implemented and fail immediately with `NotImplementedError` rather than silently blocking:
 
-* `loop.run_forever()` and `loop.run_until_complete(...)` on Micronaut-managed loops
+* `loop.run_forever()` and `loop.run_until_complete(...)` on the managed loops
 * `run_in_executor` with a custom executor
 * Eager task start (`eager_start=True`)
 * Python `ssl.SSLContext` objects. Use `ssl=True` or the Micronaut TLS mapping described in the https://docs.micronaut.io/latest/guide/#asyncioNetworking[Micronaut guide]
@@ -122,15 +122,15 @@ Third-party async libraries that only rely on the supported primitives (timers, 
 
 == Async event listeners and scheduled jobs
 
-Coroutines are not limited to HTTP. Pyronaut exposes an `async def` method on any bean to Java as a `CompletionStage`, so Java code and other Micronaut modules can await it. Event listeners, scheduled jobs and message consumers can therefore use coroutines when they need to await other async APIs.
+Coroutines are not limited to HTTP. Pyronaut exposes an `async def` method on any bean as a `CompletionStage`, so other application components can await it. Event listeners, scheduled jobs and message consumers can therefore use coroutines when they need to await other async APIs.
 
 == Graceful shutdown
 
-Active coroutine bridges participate in Micronaut's graceful shutdown. With `micronaut.lifecycle.graceful-shutdown.enabled = true`, shutdown waits for in-flight Python coroutines up to the configured grace period before stopping the server.
+Active coroutine bridges participate in Pyronaut's graceful shutdown. With `micronaut.lifecycle.graceful-shutdown.enabled = true`, shutdown waits for in-flight Python coroutines up to the configured grace period before stopping the server.
 
 == Disabling the bridge
 
-Pyronaut enables the asyncio bridge by default. You can switch it off; in that case `async def` methods remain valid Python, but Micronaut executes them to completion on an executor instead of on the event loop:
+Pyronaut enables the asyncio bridge by default. You can switch it off; in that case `async def` methods remain valid Python, but Pyronaut executes them to completion on an executor instead of on the event loop:
 
 [source,toml]
 ----

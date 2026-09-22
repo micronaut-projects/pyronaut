@@ -40,7 +40,7 @@ The extension settings are:
 
 == Python extension pytest support
 
-Do not enable VS Code Python pytest discovery for Micronaut-backed Pyronaut tests that import Java-backed APIs such as `micronaut.runtime.server`.
+Do not enable VS Code Python pytest discovery for Micronaut-backed Pyronaut tests that import runtime APIs such as `micronaut.runtime.server`.
 Those tests need the Pyronaut processed classpath, test resources, and GraalPy runtime bootstrapping provided by `pyronaut test`.
 
 If you already enabled VS Code Python pytest discovery, disable it in `.vscode/settings.json`:

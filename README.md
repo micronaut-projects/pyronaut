@@ -2,14 +2,14 @@
 
 # Pyronaut
 
-Pyronaut is a polyglot runtime for Python and Java applications built on the Micronaut programming model. Both languages can use Micronaut features such as dependency injection, AOP, configuration properties, and serialization.
+Pyronaut is a runtime for Python applications built with Micronaut. Pyronaut includes HTTP routing, dependency injection,
+configuration, validation, serialization, testing, and access to Micronaut APIs and libraries from Python.
 
-For Python developers, Pyronaut provides HTTP routing, dependency injection, configuration, validation, serialization, testing, and access to Java libraries through Python declarations.
-
-For Java developers, Pyronaut adds Python support to a Micronaut application through GraalPy and the shared Micronaut application context.
+Micronaut applications can include Python code through GraalPy. Python code and the rest of the application share
+the Micronaut application context, configuration, and test lifecycle.
 
 The main user entry point is the `pyronaut` command. The command is a Python
-orchestrator that delegates to focused JVM/native tools for dependency
+orchestrator that delegates to focused managed/native tools for dependency
 resolution, source processing, application execution, tests, configuration
 validation, native builds, and test resources.
 
@@ -21,7 +21,7 @@ that make Python applications work with Micronaut:
 - `pyronaut`: the packaged Python CLI orchestrator and SDK wheel.
 - `pyronaut-install`: resolves Maven dependencies, writes classpath manifests,
   generates configuration schemas, and creates IDE stubs.
-- `pyronaut-processor`: processes Python and Java sources into Micronaut
+- `pyronaut-processor`: processes application sources into Micronaut
   metadata/classes.
 - `pyronaut-dev`: runs applications in development mode with automatic
   install/process preflight.
@@ -370,7 +370,7 @@ Build and test the repository:
 ./gradlew check
 ```
 
-Build the JVM-based SDK wheel:
+Build the SDK wheel:
 
 ```bash
 ./gradlew :micronaut-pyronaut:buildSdkWheel

@@ -1,7 +1,7 @@
 = Using MicronautTest
 
 `MicronautTest` is the Python-side configuration object used by Pyronaut's pytest fixture support.
-It starts a Micronaut application context for a pytest and exposes it through a Python wrapper.
+The fixture starts a Micronaut application context for pytest and exposes it through a Python wrapper.
 
 [source,python]
 ----
@@ -23,7 +23,7 @@ def my_context(request):
     fixture.stop()
 ----
 
-`MicronautTest()` mirrors the options of the Java `@MicronautTest` annotation. The `environments`, `packages`, `start_application`, `properties` and `sql` options are fully supported by the pytest integration.
+`MicronautTest()` mirrors the options of the `@MicronautTest` annotation. The `environments`, `packages`, `start_application`, `properties` and `sql` options are fully supported by the pytest integration.
 
 WARNING: The pytest fixture integration does not currently drive Micronaut Test's per-test transaction and context-rebuild lifecycle. The integration accepts `transactional`, `rollback` and `rebuild_context` for compatibility, but ignores them. It also does not run `Sql` scripts declared with `Sql.Phase.AFTER_ALL`. Use explicit clean-up in a fixture, or write the test as a JUnit 5 Python module (see <<testing,Testing>>), when transactional rollback is required.
 
@@ -49,7 +49,7 @@ The fixture passes additional properties into the Micronaut context during boots
 == Bean lookup
 
 The fixture returns an application context wrapper.
-You can look up beans by Java class name, Java type, or Python class when Pyronaut can resolve the Python type to its generated bean name.
+You can look up beans by class name, resolved type, or Python class when Pyronaut can resolve the Python type to its generated bean name.
 
 [source,python]
 ----
@@ -106,7 +106,7 @@ def test_health(client):
 == SQL scripts
 
 Use `Sql` with `MicronautTest` to execute SQL scripts during the pytest lifecycle.
-Micronaut resolves the scripts with its `ResourceLoader`, so classpath resources such as `classpath:sql/seed-data.sql` work the same way they do with Micronaut Test on the JVM.
+The fixture resolves the scripts with `ResourceLoader`, so classpath resources such as `classpath:sql/seed-data.sql` work the same way they do with Micronaut Test.
 
 [source,python]
 ----

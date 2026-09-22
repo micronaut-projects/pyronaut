@@ -1,7 +1,7 @@
 = IDE Setup for VS Code and PyCharm
 
 `pyronaut install` generates editor support from the resolved runtime and test classpaths.
-This gives Python editors stubs for Java-backed APIs such as Micronaut annotations and Jakarta injection types.
+This gives Python editors stubs for Micronaut and Jakarta APIs.
 
 Generated editor files include:
 

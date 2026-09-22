@@ -1,7 +1,7 @@
 = Testing
 
 Pyronaut supports JUnit 5 tests, pytest tests, or both through the JUnit Platform.
-Use `pyronaut test` when tests need the Micronaut classpath, processed sources, test resources, or Micronaut test integration.
+Use `pyronaut test` when tests need the resolved Micronaut classpath, processed sources, test resources, or Micronaut test integration.
 
 If you usually use pytest, keep using it: write ordinary `test_*.py` modules with fixtures, parametrization and marks, and use the `MicronautTest` fixture described in <<micronautTest,Using MicronautTest>> when a test needs a running application. The JUnit 5 Python module style described below trades pytest's fixture model for direct dependency injection into the test module; it is the better fit for direct-source tests and for tests that share an application context across many test functions.
 
@@ -92,7 +92,7 @@ pyronaut test -t Foo.java -- *Test.java
 
 An explicit `--` without test sources remains invalid.
 
-Pyronaut compiles direct tests and executes them in memory through the JUnit Platform. Python direct tests use the JUnit engine and can use module-level `MicronautTest()`; Pyronaut does not invoke pytest because pytest requires test files on disk. Direct Java runs disable Python runtime infrastructure automatically; Python remains enabled by default for Python tests.
+Pyronaut compiles direct tests and executes them in memory through the JUnit Platform. Python direct tests use the JUnit engine and can use module-level `MicronautTest()`; Pyronaut does not invoke pytest because pytest requires test files on disk. Direct runs without Python sources disable Python runtime infrastructure automatically; Python remains enabled by default for Python tests.
 
 Use `--continuous` or `-t` to rerun direct tests when application or test sources change. The console prints execution progress and a final test summary.
 

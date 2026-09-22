@@ -84,7 +84,7 @@ After you create a project with `pyronaut create` or add a `pyproject.toml` as d
 pyronaut install
 ----
 
-`pyronaut install` resolves Java dependencies for the configured build, runtime, development-runtime, test, and test-resources-server scopes.
+`pyronaut install` resolves Micronaut and application dependencies for the configured build, runtime, development-runtime, test, and test-resources-server scopes.
 
 By default, Pyronaut installs dependency artifacts into Maven local:
 
