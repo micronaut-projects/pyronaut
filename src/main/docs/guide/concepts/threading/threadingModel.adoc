@@ -40,9 +40,9 @@ Micronaut decides where to run a route from its signature, the same way FastAPI 
 |Micronaut subscribes on the event loop and writes the response when the value arrives. The code that produces the value decides which thread does the work.
 |===
 
-The consequence for everyday code is simple. A plain `def` route can call a JDBC repository, read a file or use the `requests` shim without any decorator, because it is already off the event loop. An `async def` route must only await non-blocking operations; blocking work inside a coroutine needs `run_in_executor` (see <<blockingWork,Running Blocking Code>>).
+In practice, a plain `def` route can call a JDBC repository, read a file, or use the `requests` shim without an extra decorator because it already runs off the event loop. An `async def` route must await non-blocking operations; move blocking work to `run_in_executor` (see <<blockingWork,Running Blocking Code>>).
 
-NOTE: This is different from Micronaut in Java, where controller methods run on the event loop unless they are annotated. The Python-specific selector exists because Python code usually has no way to signal that it is non-blocking.
+NOTE: This is different from Micronaut in Java, where controller methods run on the event loop unless you annotate them. The Python-specific selector exists because Python code usually has no way to signal that it is non-blocking.
 
 == Pyronaut executor defaults
 
@@ -70,4 +70,4 @@ n-threads = 20
 
 WARNING: Never set `virtual = true` for an executor that runs Python code. GraalPy does not support executing Python on Java virtual threads and the application will fail at runtime.
 
-Executor types and their options are documented in the https://docs.micronaut.io/latest/guide/#threadPools[Configuring Server Thread Pools] section of the Micronaut guide.
+See the https://docs.micronaut.io/latest/guide/#threadPools[Configuring Server Thread Pools] section of the Micronaut guide for executor types and options.

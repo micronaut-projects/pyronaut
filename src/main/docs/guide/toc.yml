@@ -14,37 +14,37 @@ concepts:
   aop: Aspect-Oriented Programming (AOP)
   httpApis: Building HTTP APIs
   threading:
-    title: Threading, Blocking Work and asyncio
+    title: Threading, Blocking Work, and asyncio
     threadingModel: The Threading Model
     blockingWork: Running Blocking Code
     asyncAwait: Using async/await
     reactiveInterop: Awaiting Reactive and Java Async Types
     contextPool: The GIL and the Context Pool
 projectStructure:
-  title: Pyronaut Toolchain & Project Layout
-usingPackagesJavaLibraries: Using Python Packages & Java Libraries
+  title: Pyronaut Toolchain and Project Layout
+usingPackagesJavaLibraries: Using Python Packages and Java Libraries
 configuration:
-  title: Configuration & Build Setup
+  title: Configuration and Build Setup
   mavenGradle: Using Maven and Gradle Projects
   pyproject: Configuring pyproject.toml
   incrementalProcessing: Incremental Processing
-  dependencies: Installing Python & Java dependencies
+  dependencies: Installing Python and Java Dependencies
   directSourceDeclarations: Declaring Direct Source Dependencies
   mavenRepositories: Configuring Maven Repositories
   proxyConfig: Proxy Configuration
-  ideSetup: IDE Setup for VS Code & PyCharm
+  ideSetup: IDE Setup for VS Code and PyCharm
   vscodeExtension: VS Code Test Explorer Extension
   appConfig: Application Configuration with application.toml
   validateConfig: Configuration Validation
 packaging:
-  title: Packaging & Deployment
+  title: Packaging and Deployment
 logging:
   title: Python Logging with Logback
 testing:
   title: Testing
   micronautTest: Using MicronautTest
   testResources:
-    title: Test Resources & Docker
+    title: Test Resources and Docker
     dockerSetup: Docker Requirements
 pyronautRequests:
   title: Pyronaut Requests

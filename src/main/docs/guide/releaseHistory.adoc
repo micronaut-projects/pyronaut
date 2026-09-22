@@ -1,3 +1,1 @@
-For this project, you can find a list of releases (with release notes) here:
-
-https://github.com/{githubSlug}/releases[https://github.com/{githubSlug}/releases]
+See the https://github.com/{githubSlug}/releases[Pyronaut releases on GitHub] for version history and release notes.

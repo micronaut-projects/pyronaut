@@ -1,6 +1,6 @@
 ---
 name: docs
-description: Write and maintain Micronaut Framework module guides for micronaut-projects repositories. Use when users ask to add or update AsciiDoc guide sections, edit guide toc.yml, apply Micronaut docs macros, or fix docs build/publishing tasks.
+description: Write and maintain Micronaut Framework module guides for micronaut-projects repositories using the repository style guide. Use when users ask to add or update AsciiDoc guide sections, edit guide toc.yml, apply Micronaut docs macros, review documentation wording, or fix docs build/publishing tasks.
 license: Apache-2.0
 compatibility: Micronaut framework repositories in micronaut-projects generated from micronaut-project-template
 metadata:
@@ -16,15 +16,34 @@ Use this skill for maintainer-facing guide work in Micronaut framework repositor
 
 Implement source-backed documentation changes in `src/main/docs/guide`, keep `toc.yml` and content in sync, and validate with the Gradle docs pipeline used across `micronaut-projects` modules.
 
+## Project style guide
+
+Read the repository-root `STYLEGUIDE.md` before editing or reviewing documentation. Treat it as the source of truth for
+user-facing voice, page types, headings, links, examples, formatting, and Pyronaut terminology.
+
+This skill owns the documentation workflow, Micronaut-specific macros, and build validation. `STYLEGUIDE.md` owns
+editorial decisions. When the two overlap, apply `STYLEGUIDE.md` for prose and terminology and this skill for repository
+workflow and Micronaut documentation mechanics. Follow explicit user instructions when they differ.
+
 ## Procedure
 
-1. Confirm repository docs layout and build tasks.
-2. Plan `toc.yml` and `.adoc` updates in lockstep.
-3. Apply Micronaut docs macro conventions used by maintainers.
-4. Prefer generated configuration property references over manual tables.
-5. Build and validate `publishGuide` and `docs` outputs.
+1. Read and apply the repository style guide.
+2. Confirm repository docs layout and build tasks.
+3. Plan `toc.yml` and `.adoc` updates in lockstep.
+4. Apply Micronaut docs macro conventions used by maintainers.
+5. Prefer generated configuration property references over manual tables.
+6. Build and validate `publishGuide` and `docs` outputs.
 
-### 1) Confirm docs layout and build tasks
+### 1) Read and apply the repository style guide
+
+- Read `STYLEGUIDE.md` from the repository root before making or reviewing a documentation change.
+- Identify the page type and primary reader goal before changing structure or content.
+- Use the style guide's canonical terminology, heading rules, link conventions, example conventions, and guidance on
+  concise, direct, user-facing prose.
+- Keep the style guide as a separate repository-level reference so human contributors and documentation tooling can use
+  it as well as agents.
+
+### 2) Confirm docs layout and build tasks
 
 - Check `src/main/docs/guide/toc.yml` first.
 - List relevant guide files under `src/main/docs/guide/**/*.adoc`.
@@ -35,7 +54,7 @@ Implement source-backed documentation changes in `src/main/docs/guide`, keep `to
   - `./gradlew docs` for guide + API docs assembly.
 - If repository layout diverges from template conventions, follow local conventions and explicitly report the divergence.
 
-### 2) Keep `toc.yml` and files in lockstep
+### 3) Keep `toc.yml` and files in lockstep
 
 Treat `src/main/docs/guide/toc.yml` as navigation source of truth.
 
@@ -61,7 +80,7 @@ This maps to:
 - `src/main/docs/guide/controlPanels/builtIn.adoc`
 - `src/main/docs/guide/controlPanels/management.adoc`
 
-### 3) Apply Micronaut docs macro conventions
+### 4) Apply Micronaut docs macro conventions
 
 Use docs macros registered by `micronaut-build` (`DocsExtensionRegistry`) and maintained for framework guides.
 
@@ -83,7 +102,7 @@ Guardrails:
 - Keep environment-sensitive instructions explicit (for example `MICRONAUT_ENVIRONMENTS=dev`).
 - Prefer stable links to official Micronaut docs for endpoint semantics.
 
-### 4) Use generated configuration property references correctly
+### 5) Use generated configuration property references correctly
 
 - `micronaut-docs` provides `AsciiDocPropertyReferenceWriter`, which generates AsciiDoc property fragments from configuration metadata.
 - Micronaut docs build wiring consumes those fragments via `{includedir}configurationProperties/...` includes.
@@ -91,7 +110,7 @@ Guardrails:
 
 See `references/micronaut-docs-providers.md` for confirmed provider/macro details and source locations.
 
-### 5) Build and validate documentation
+### 6) Build and validate documentation
 
 From repository root, run:
 
@@ -117,10 +136,12 @@ When finishing docs work, report:
 2. Which conventions were applied (`dependency:`, `snippet::`, `[configuration]`, generated property includes).
 3. Build commands run and outcomes.
 4. Any repo-specific divergences or follow-ups.
+5. For comparison or review requests, include a concise before/after/reasoning table.
 
 ## Validation Checklist
 
 - [ ] `toc.yml` and `.adoc` changes are consistent.
+- [ ] `STYLEGUIDE.md` was read and its editorial and terminology guidance was applied.
 - [ ] Macros and includes follow Micronaut maintainer conventions.
 - [ ] `publishGuide` and `docs` executed successfully.
 - [ ] Output and navigation verified under `build/docs/`.
@@ -128,6 +149,7 @@ When finishing docs work, report:
 
 ## References
 
+- `../../../STYLEGUIDE.md`
 - `references/micronaut-docs-providers.md`
 - `references/control-panel-patterns.md`
 - `CONTRIBUTING.md`

@@ -1,8 +1,8 @@
-= Test Resources & Docker
+= Test Resources and Docker
 
 Pyronaut can orchestrate Micronaut Test Resources for `pyronaut dev` and `pyronaut test`.
 This is useful for tests and local runs that need services such as databases without hard-coding connection settings.
-`pyronaut run` is production-only: it does not infer, start, or consume Test Resources.
+`pyronaut run` does not infer, start, or consume Test Resources.
 
 Enable test resources in `pyproject.toml`:
 
@@ -15,18 +15,18 @@ enabled = true
 When enabled in a project, `pyronaut install` resolves a test-resources-server classpath and `pyronaut dev` or `pyronaut test` starts a server when needed.
 The CLI propagates test resources client settings to delegated JVM processes.
 
-For direct source execution without a `pyproject.toml`, Pyronaut resolves the server and client only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. This applies to direct `dev` and `test` only.
+For direct-source execution without a `pyproject.toml`, Pyronaut resolves the server and client only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. This applies to direct `dev` and `test` only.
 
 == Lifecycle
 
 Default behavior:
 
 - `pyronaut dev` and `pyronaut test` start an owned server on demand.
-- Owned servers stop when the owning run or test session exits.
+- Owned servers stop when the owning development or test session exits.
 - If an external project-local server is already running, the CLI attaches to it instead of claiming ownership.
 - Shared servers stay running across command invocations.
 
-Project-local metadata is written under:
+Pyronaut writes project-local metadata under:
 
 [source,text]
 ----
@@ -34,7 +34,7 @@ Project-local metadata is written under:
 __pyronaut__/test-resources-session.json
 ----
 
-Logs default to `.micronaut/test-resources/logs` unless `logs-dir` is configured.
+Pyronaut writes logs to `.micronaut/test-resources/logs` by default unless you configure `logs-dir`.
 
 == Configuration
 
@@ -51,13 +51,13 @@ startup-optimization = "none" # none|auto|leyden|cds
 additional-modules = ["jdbc-mysql"]
 ----
 
-`startup-optimization` controls JVM start-up optimisation for the server process. `auto` and `cds` use class-data sharing when the JDK supports it; `leyden` is accepted but currently falls back to `cds` with a warning.
+`startup-optimization` controls JVM start-up optimisation for the server process. `auto` and `cds` use class-data sharing when the JDK supports it; Pyronaut accepts `leyden` but currently falls back to `cds` with a warning.
 `logs-dir` applies to the server process; the launcher's own log output is always written under `.micronaut/test-resources/logs` in the project.
 
 `infer-classpath` lets Pyronaut infer test resources modules from application dependencies.
-Use `additional-modules` for modules that cannot be inferred or for explicit module selection.
+Use `additional-modules` when Pyronaut cannot infer a module or when you want to select modules explicitly.
 
-== Standalone Server Commands
+== Standalone server commands
 
 Use the explicit server command when you want a reusable server:
 
@@ -69,4 +69,4 @@ pyronaut test-resources-server stop
 ----
 
 Set `PYRONAUT_TEST_RESOURCES_DISABLED=true` to disable automatic orchestration for a command invocation.
-For direct source execution, `--disable-test-resources` is also authoritative.
+For direct-source execution, `--disable-test-resources` is also authoritative.

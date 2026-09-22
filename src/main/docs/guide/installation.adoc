@@ -1,27 +1,45 @@
 = Installing Pyronaut
 
-Pyronaut can be installed into your existing Python installation via `pip`.
+Install the Pyronaut CLI, then run `pyronaut setup` to provision the SDK that runs Pyronaut applications.
 
+== Install the Pyronaut CLI
+
+The CLI requires Python 3.10 or later. Install or upgrade it with `pip`:
 
 [source,bash]
 ----
-pip install pyronaut
+python3 -m pip install --upgrade pyronaut
 pyronaut --version
+----
+
+The Python installation used by `pip` only installs the CLI. Pyronaut applications run with the embedded GraalPy
+runtime supplied by the Pyronaut SDK. If your application or tests use Python packages, set up a GraalPy virtual
+environment as described in <<prerequisites,Prerequisites>>.
+
+== Provision the Pyronaut SDK
+
+Provision the SDK after installing or upgrading the Pyronaut CLI:
+
+[source,bash]
+----
 pyronaut setup
 ----
 
-Note the version of Python used to run applications is dictated by `pyronaut` which bundles GraalPy and DOES NOT use your local Python installation but instead an isolated embedded version of GraalPy.
+Setup locates or provisions a compatible GraalVM JDK, downloads the native Pyronaut launchers, resolves the SDK
+dependencies, and stores validated machine-local state under `~/.pyronaut`. You do not need to install GraalVM
+manually for the default setup.
 
-`pyronaut setup` is required once after installing or upgrading the SDK wheel.
-It locates or provisions the packaged GraalVM JDK, downloads all three native launchers, resolves the SDK and native compiler dependencies into Maven local, and publishes validated machine-local state under:
+Pyronaut records setup state in `setup.json` under the Pyronaut home directory:
 
 [source,text]
 ----
 ~/.pyronaut/setup/<sdk-version>/<os>-<architecture>/setup.json
 ----
 
-The setup command is idempotent. Use `pyronaut setup --refresh` to re-resolve dependencies and rewrite setup state, or `pyronaut setup --offline` to use only an already cached JDK, native launchers, and Maven artifacts.
-If a recorded artifact is removed or the SDK, platform, repository, or native bundle configuration changes, execution commands exit with code `8` and instruct you to run `pyronaut setup` again.
+The placeholders `<sdk-version>`, `<os>`, and `<architecture>` identify the SDK version and the platform where setup runs.
+
+The setup command is idempotent. Run `pyronaut setup --refresh` when you need to re-resolve setup dependencies or rewrite setup state. Use `pyronaut setup --offline` only when the required JDK, native launchers, and Maven artifacts are already cached.
+If Pyronaut cannot find a recorded artifact, or if the SDK, platform, repository, or native bundle configuration changes, execution commands exit with code `8` and instruct you to run `pyronaut setup` again.
 Help and version commands remain available before setup.
 
 If `pyronaut setup` or any later command fails, run `pyronaut doctor` first:
@@ -32,10 +50,10 @@ pyronaut doctor
 ----
 
 It checks the Python version, the installed wheel and its setup state, the GraalVM JDK, GraalPy and interpreter mismatches, the native launchers, proxy settings, and Docker. Inside a project it also checks `pyproject.toml`, stale `pyronaut install` state, the threading configuration, that every declared Python package imports on the project's GraalPy under the configured context pool, GraalPy's published compatibility results for those packages, and `pytest`.
-Every failing row comes with the command that fixes it, and `pyronaut doctor --json` produces the same report for tooling.
+Failing rows include a suggested command or action when Pyronaut can identify one, and `pyronaut doctor --json` produces the same report for tooling.
 See <<pyronautCliV2,Pyronaut CLI Reference>> for the full list of checks.
 
-By default setup resolves SDK dependencies from Maven Central. Snapshot SDK versions also use the Sonatype Central snapshots repository.
+By default, setup resolves SDK dependencies from Maven Central. When the installed SDK is a snapshot build, setup also checks Sonatype Central's snapshots repository for pre-release artifacts.
 Override the setup repositories globally in `~/.pyronaut/settings.toml`; an explicit list replaces these defaults:
 
 [source,toml]
@@ -54,12 +72,12 @@ Setup installs native executables into `~/.pyronaut/bin`:
 ~/.pyronaut/bin/<version>/<os>-<architecture>/
 ----
 
-TIP: see
+TIP: See
 <<proxyConfig,Proxy Configuration>> for proxy setup.
 
-== Project Installation
+== Project installation
 
-After a project has a `pyproject.toml`, run:
+After you create a project with `pyronaut create` or add a `pyproject.toml` as described in <<gettingStarted,Getting Started>>, run:
 
 [source,bash]
 ----
@@ -68,25 +86,25 @@ pyronaut install
 
 `pyronaut install` resolves Java dependencies for the configured build, runtime, development-runtime, test, and test-resources-server scopes.
 
-Dependency artifacts are installed into Maven local by default:
+By default, Pyronaut installs dependency artifacts into Maven local:
 
 [source,text]
 ----
 ~/.m2/repository
 ----
 
-If the JVM was started with `-Dmaven.repo.local=/path/to/repo`, that value is used as the default local repository instead.
-The selected repository can be overridden per invocation:
+If you start the JVM with `-Dmaven.repo.local=/path/to/repo`, Pyronaut uses that value as the default local repository instead.
+Override the selected repository for an invocation:
 
 [source,bash]
 ----
 pyronaut install --local-repository .pyronaut-m2
 ----
 
-Relative paths passed to `--local-repository` are resolved against the project directory.
-Pyronaut still writes project state and classpath manifests under `__pyronaut__`; the option only changes where resolved Maven artifacts are stored.
+Pyronaut resolves relative paths passed to `--local-repository` against the project directory.
+Pyronaut still writes project state and classpath manifests under `__pyronaut__`; the option changes only where Pyronaut stores resolved Maven artifacts.
 
-== Generated Project State
+== Generated project state
 
 `pyronaut install` writes files that later commands consume:
 
@@ -95,10 +113,10 @@ Pyronaut still writes project state and classpath manifests under `__pyronaut__`
 - optional `application.toml` schema support
 - Python IDE stubs under `__pyronaut__/ide-stubs`
 
-The `__pyronaut__` directory is generated state.
-It should not be treated as application source.
+Pyronaut generates the `__pyronaut__` directory as state.
+Treat it as generated state, not application source.
 
-== Platform Notes
+== Platform notes
 
 The CLI currently targets macOS and Linux.
-Docker is only required when using Micronaut Test Resources or Docker-based build modes.
+Docker is only required when using Micronaut Test Resources or Docker package formats.

@@ -4,8 +4,8 @@ This section explains:
 
 * <<threadingModel,The Threading Model>>: which thread runs each kind of Python function and why.
 * <<blockingWork,Running Blocking Code>>: how to keep slow operations away from the event loop.
-* <<asyncAwait,Using async/await>>: what `asyncio` features work inside a Pyronaut application.
-* <<reactiveInterop,Awaiting Reactive and Java Async Types>>: how Python coroutines interact with Micronaut's `CompletionStage`, `Publisher`, `Mono` and `Flux` types.
+* <<asyncAwait,Using async/await>>: which `asyncio` features work inside a Pyronaut application.
+* <<reactiveInterop,Awaiting Reactive and Java Async Types>>: how Python coroutines interact with Micronaut's `CompletionStage`, `Publisher`, `Mono`, and `Flux` types.
 * <<contextPool,The GIL and the Context Pool>>: how GraalPy's interpreter lock affects throughput and how to configure the pool of Python contexts.
 
 The short version: write `def` routes for ordinary code, write `async def` routes when you want to await other services concurrently, and never call blocking code from an `async def` function without `run_in_executor`. If you follow those three rules, the defaults Pyronaut applies will serve most applications well.
