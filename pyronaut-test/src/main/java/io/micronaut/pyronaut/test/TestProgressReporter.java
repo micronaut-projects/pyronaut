@@ -265,6 +265,19 @@ public final class TestProgressReporter implements TestExecutionListener, AutoCl
     }
 
     /**
+     * Print a neutral line that must reach the console regardless of capture.
+     *
+     * @param message the message
+     */
+    public void note(String message) {
+        if (interactive) {
+            region.printAbove(region.stamp(null, glyphs().bullet(), message, -1));
+        } else {
+            output.println(message);
+        }
+    }
+
+    /**
      * Print a diagnostic line that must reach the console regardless of capture.
      *
      * @param message the message

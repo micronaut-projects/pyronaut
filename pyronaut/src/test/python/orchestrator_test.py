@@ -3689,75 +3689,58 @@ additional-test-resources = ["test-fixtures"]
                 self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
                 self.assertFalse(session_file.exists())
 
-    def test_owned_test_resources_session_mirrors_late_container_logs(self):
+    def test_owned_test_resources_session_hands_the_log_directory_to_the_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
-            project_dir.mkdir(parents=True, exist_ok=True)
             settings_dir = project_dir / ".micronaut" / "test-resources"
             settings_dir.mkdir(parents=True, exist_ok=True)
-            settings_file = settings_dir / "test-resources.properties"
-            settings_file.write_text(
+            (settings_dir / "test-resources.properties").write_text(
                 "server.uri=http\\://localhost\\:18900\n"
                 "server.access.token=token-abc\n",
                 encoding="utf-8",
             )
-            log_dir = settings_dir / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "test-resources.log"
-            log_file.write_text("", encoding="utf-8")
 
-            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut run")
-            stderr = io.StringIO()
-            try:
-                with redirect_stderr(stderr):
-                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
-                    with log_file.open("a", encoding="utf-8") as handle:
-                        handle.write(
-                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
-                        )
-                        handle.flush()
-                    deadline = time.time() + 2.0
-                    while "Creating container for image: mysql:8.4.0" not in stderr.getvalue() and time.time() < deadline:
-                        time.sleep(0.05)
-            finally:
-                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+            session = cli._OwnedTestResourcesSession(
+                project_dir=project_dir.resolve(),
+                owner_command="pyronaut dev",
+            )
+            session._client_env_overrides = cli._test_resources_client_env_from_settings(  # noqa: SLF001
+                settings_dir / "test-resources.properties"
+            )
+            overrides = session.client_env_overrides()
 
-            self.assertIn("Creating container for image: mysql:8.4.0", stderr.getvalue())
+            self.assertEqual(
+                str((settings_dir / "logs").resolve()),
+                overrides["PYRONAUT_TEST_RESOURCES_LOGS_DIR"],
+            )
 
-    def test_owned_test_resources_session_mirrors_late_container_logs_from_launcher_stdio(self):
+    def test_owned_test_resources_session_honours_a_configured_logs_dir(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
-            project_dir.mkdir(parents=True, exist_ok=True)
             settings_dir = project_dir / ".micronaut" / "test-resources"
             settings_dir.mkdir(parents=True, exist_ok=True)
-            settings_file = settings_dir / "test-resources.properties"
-            settings_file.write_text(
-                "server.uri=http\\://localhost\\:18900\n"
-                "server.access.token=token-abc\n",
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.test-resources]\nlogs-dir = \"var/tr-logs\"\n",
                 encoding="utf-8",
             )
-            log_dir = settings_dir / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "launcher-stdio.log"
-            log_file.write_text("", encoding="utf-8")
+            (settings_dir / "test-resources.properties").write_text(
+                "server.uri=http\\://localhost\\:18900\n",
+                encoding="utf-8",
+            )
 
-            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut run")
-            stderr = io.StringIO()
-            try:
-                with redirect_stderr(stderr):
-                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
-                    with log_file.open("a", encoding="utf-8") as handle:
-                        handle.write(
-                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
-                        )
-                        handle.flush()
-                    deadline = time.time() + 2.0
-                    while "Creating container for image: mysql:8.4.0" not in stderr.getvalue() and time.time() < deadline:
-                        time.sleep(0.05)
-            finally:
-                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+            session = cli._OwnedTestResourcesSession(
+                project_dir=project_dir.resolve(),
+                owner_command="pyronaut dev",
+            )
+            session._client_env_overrides = cli._test_resources_client_env_from_settings(  # noqa: SLF001
+                settings_dir / "test-resources.properties"
+            )
+            overrides = session.client_env_overrides()
 
-            self.assertIn("Creating container for image: mysql:8.4.0", stderr.getvalue())
+            self.assertEqual(
+                str((project_dir / "var" / "tr-logs").resolve()),
+                overrides["PYRONAUT_TEST_RESOURCES_LOGS_DIR"],
+            )
 
     def test_owned_test_resources_session_quiet_mode_suppresses_stderr_output(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3782,18 +3765,8 @@ additional-test-resources = ["test-fixtures"]
                 quiet=True,
             )
             stderr = io.StringIO()
-            try:
-                with redirect_stderr(stderr):
-                    session._report_started_server()  # noqa: SLF001 - internal helper coverage
-                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
-                    with log_file.open("a", encoding="utf-8") as handle:
-                        handle.write(
-                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
-                        )
-                        handle.flush()
-                    time.sleep(0.2)
-            finally:
-                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+            with redirect_stderr(stderr):
+                session._report_started_server()  # noqa: SLF001 - internal helper coverage
 
             self.assertEqual("", stderr.getvalue())
 
