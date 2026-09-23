@@ -25,6 +25,7 @@ import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
+import io.micronaut.pyronaut.config.testresources.TestResourcesLogMirror;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.test.pytest.PytestTestEngine;
 import io.micronaut.test.pytest.execution.JUnitReportWriter;
@@ -233,7 +234,19 @@ public final class PyronautTestMain implements Callable<Integer> {
         String previousLoggerConfigProperty = System.getProperty(LOGGER_CONFIG_PROPERTY);
         BeanIntrospectionsProvider previousBeanIntrospectionsProvider = null;
         ConsoleCapture capture = streamOutput ? null : ConsoleCapture.install();
-        try (layout; TestProgressReporter reporter = TestProgressReporter.create(console, streamOutput)) {
+        // A test that needs a container waits on the Test Resources server,
+        // which logs to its own file in its own process. This launcher owns the
+        // terminal, so it is the one that can report that wait without tearing
+        // the live region.
+        try (layout;
+             TestProgressReporter reporter = TestProgressReporter.create(console, streamOutput);
+             TestResourcesLogMirror testResources = TestResourcesLogMirror.start(entry -> {
+                 if (entry.error()) {
+                     reporter.error(entry.message());
+                 } else {
+                     reporter.note(entry.message());
+                 }
+             })) {
             ClassLoader applicationClassLoader = layout.applicationClassLoader();
             if (ExternalProjectLayout.isExternal(root)) {
                 applyExternalPythonDefault(applicationClassLoader, System.getenv());
