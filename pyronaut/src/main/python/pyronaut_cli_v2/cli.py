@@ -85,7 +85,7 @@ PACKAGING_FORMATS = {
 }
 DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
-_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i3"
+_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i4"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
 _SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
@@ -117,11 +117,11 @@ _TEST_RESOURCES_ENV_TO_PROPERTY = {
     "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT": "micronaut.test.resources.server.client.read.timeout",
     "MICRONAUT_TEST_RESOURCES_PROJECT_PATH_URI": "micronaut.test.resources.project-path-uri",
 }
-_TEST_RESOURCES_LOG_FILE = "test-resources.log"
-_TEST_RESOURCES_STDIO_LOG_FILE = "launcher-stdio.log"
-_TEST_RESOURCES_IMAGE_PULL_MARKER = "Pulling docker image:"
-_TEST_RESOURCES_CONTAINER_CREATE_MARKER = "Creating container for image:"
-_TEST_RESOURCES_CONTAINER_STARTED_MARKER = " started in PT"
+# Names the server's log directory for the launcher we delegate to. Container
+# pulls happen while the launcher owns the terminal, so the launcher mirrors
+# that log itself: a line written here would be repainted away by its live
+# progress region, taking a row of that region with it.
+_TEST_RESOURCES_LOGS_DIR_ENV = "PYRONAUT_TEST_RESOURCES_LOGS_DIR"
 _DEFAULT_PYTHON_SOURCE_DIR = "src"
 _DEFAULT_PYTHON_TEST_DIR = "tests"
 _DEFAULT_JAVA_SOURCE_DIR = "src-java"
@@ -4986,14 +4986,18 @@ def _read_pyproject_test_resources_shared(project_dir: Path) -> bool:
     test_resources = _read_pyproject_test_resources_table(project_dir)
     if not isinstance(test_resources, dict):
         return False
-    shared_server = test_resources.get("sharedServer")
+    shared_server = test_resources.get("shared-server", test_resources.get("sharedServer"))
     return isinstance(shared_server, bool) and shared_server
 
 
 def _resolve_test_resources_logs_dir(project_dir: Path, settings_file: Path) -> Path:
     test_resources = _read_pyproject_test_resources_table(project_dir)
     if isinstance(test_resources, dict):
-        configured = test_resources.get("logsDir")
+        # "logs-dir" is the spelling the pyproject schema documents; the
+        # camel-cased form is accepted as well.
+        configured = test_resources.get("logs-dir")
+        if not isinstance(configured, str):
+            configured = test_resources.get("logsDir")
         if isinstance(configured, str):
             stripped = configured.strip()
             if stripped:
@@ -5120,6 +5124,7 @@ def _strip_test_resources_java_tool_options(env: dict[str, str] | None) -> dict[
         sanitized.pop("JAVA_TOOL_OPTIONS", None)
     for env_name in _TEST_RESOURCES_ENV_TO_PROPERTY:
         sanitized.pop(env_name, None)
+    sanitized.pop(_TEST_RESOURCES_LOGS_DIR_ENV, None)
     return sanitized
 
 
@@ -5791,8 +5796,52 @@ def _stop_managed_process(process: ManagedProcess) -> bool:
             return False
 
 
+def _read_dev_restart_excludes(project_dir: Path) -> tuple[str, ...]:
+    """
+    Paths dev mode watches but must not restart for.
+
+    A directory a build tool writes into, whose contents the running application reloads by itself,
+    should not cost a restart: micronaut-views-react watches its JavaScript bundle and swaps it in
+    process, and restarting first makes that unreachable while discarding every connection pool and
+    container the run had warmed up.
+    """
+    data = _read_pyproject_data(project_dir)
+    if not isinstance(data, dict):
+        return ()
+    section = data.get("tool", {})
+    for key in ("pyronaut", "dev"):
+        if not isinstance(section, dict):
+            return ()
+        section = section.get(key, {})
+    if not isinstance(section, dict):
+        return ()
+    configured = section.get("restart-excludes", section.get("restartExcludes", ()))
+    if isinstance(configured, str):
+        configured = (configured,)
+    if not isinstance(configured, (list, tuple)):
+        return ()
+    excludes: list[str] = []
+    for entry in configured:
+        if not isinstance(entry, str):
+            continue
+        normalized = entry.strip().strip("/")
+        if normalized:
+            excludes.append(normalized)
+    return tuple(excludes)
+
+
+def _is_restart_excluded(relative_path: str, excludes: Sequence[str]) -> bool:
+    for exclude in excludes:
+        if relative_path == exclude or relative_path.startswith(exclude + "/"):
+            return True
+        if fnmatch.fnmatch(relative_path, exclude):
+            return True
+    return False
+
+
 def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ...]:
     layout = _read_pyproject_sources(project_dir)
+    restart_excludes = _read_dev_restart_excludes(project_dir)
     watched_roots = (
         layout.python_source_dir,
         layout.python_test_dir,
@@ -5831,6 +5880,8 @@ def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ..
                     relative = file_path.relative_to(project_dir).as_posix()
                 except ValueError:
                     relative = file_path.as_posix()
+                if _is_restart_excluded(relative, restart_excludes):
+                    continue
                 entries.append((relative, int(stat.st_mtime_ns), int(stat.st_size)))
 
     if project_manifest.exists():
@@ -6273,7 +6324,7 @@ def _detect_graalvm_distribution(version_output: str, java_home: Path, version: 
     if version is not None and "dev" in version.lower():
         return "dev"
     # Development archives identify themselves in the build string and/or
-    # installation directory (for example, graalvm-community-25.3.4.1-dev).
+    # installation directory (for example, graalvm-community-25.4.4.1.1-dev).
     # Check this before the generic "graalvm community" marker so CE dev
     # builds can satisfy an explicitly requested `distribution = "dev"`.
     if "dev" in lowered:
@@ -9119,10 +9170,21 @@ def _probe_python_version(python: Path) -> str | None:
     return _last_line(out) or _last_line(err) or None
 
 
+def _graalpy_versions_match(version_line: str, expected: str | None, expected_pyenv: str | None) -> bool:
+    if expected and expected in version_line:
+        return True
+    if expected_pyenv:
+        runtime_version = expected_pyenv.rsplit("-", 1)[-1]
+        return bool(runtime_version and runtime_version in version_line)
+    return False
+
+
 def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
-    expected = _read_version_properties().get("graalpy")
-    data: dict[str, object] = {"expectedVersion": expected}
-    suggested = f"graalpy3.13-{expected}" if expected else "graalpy3.13-<version>"
+    version_properties = _read_version_properties()
+    expected = version_properties.get("graalpy")
+    expected_pyenv = version_properties.get("graalpy.pyenv")
+    data: dict[str, object] = {"expectedVersion": expected, "expectedPyenvVersion": expected_pyenv}
+    suggested = expected_pyenv or (f"graalpy3.13-{expected}" if expected else "graalpy3.13-<version>")
     install_fix = f"Install GraalPy with pyenv: pyenv install {suggested} && pyenv global {suggested}"
     venv_fix = "Create the project environment with GraalPy: graalpy -m venv .venv && .venv/bin/python -m pip install pytest"
 
@@ -9150,7 +9212,7 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
                     "graalpy", "GraalPy", _doctor.FAIL, f"{venv_python} does not start",
                     f"Recreate it: rm -rf {venv_dir} && graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
                 )
-            if expected and expected not in version_line:
+            if expected and not _graalpy_versions_match(version_line, expected, expected_pyenv):
                 return _doctor.CheckResult(
                     "graalpy", "GraalPy", _doctor.WARN,
                     f"project .venv uses {version_line} but this Pyronaut bundles GraalPy {expected}",
@@ -9189,7 +9251,7 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
         return _doctor.CheckResult(
             "graalpy", "GraalPy", _doctor.WARN, f"no project .venv; {detail}", venv_fix, data
         )
-    if expected and expected not in version_line:
+    if expected and not _graalpy_versions_match(version_line, expected, expected_pyenv):
         return _doctor.CheckResult(
             "graalpy", "GraalPy", _doctor.WARN, f"{detail}; this Pyronaut bundles GraalPy {expected}", install_fix, data
         )
@@ -10365,8 +10427,6 @@ class _OwnedTestResourcesSession:
         self._started = False
         self._shutdown_registered = False
         self._client_env_overrides: dict[str, str] | None = None
-        self._log_mirror_stop: threading.Event | None = None
-        self._log_mirror_thread: threading.Thread | None = None
 
     @staticmethod
     def _new_owner_token() -> str:
@@ -10406,7 +10466,6 @@ class _OwnedTestResourcesSession:
         if exit_code != SUCCESS:
             raise RuntimeError(f"Test resources server failed to start (exit code {exit_code})")
         self._report_started_server()
-        self._start_log_mirror()
 
         if self._shared_server:
             self._emit_status("[test-resources] shared-server mode: will not stop server on session exit")
@@ -10423,7 +10482,6 @@ class _OwnedTestResourcesSession:
         resolver: Callable[[str], str | None],
         java_home_provider: JavaHomeProvider | None = None,
     ) -> None:
-        self._stop_log_mirror()
         if not self._started:
             return
 
@@ -10459,7 +10517,13 @@ class _OwnedTestResourcesSession:
     def client_env_overrides(self) -> dict[str, str] | None:
         if self._client_env_overrides is None:
             return None
-        return dict(self._client_env_overrides)
+        overrides = dict(self._client_env_overrides)
+        # The delegated launcher blocks on the server while it owns the
+        # terminal, so it is the one that reports the containers being pulled.
+        overrides[_TEST_RESOURCES_LOGS_DIR_ENV] = str(
+            _resolve_test_resources_logs_dir(self._project_dir, self._settings_file)
+        )
+        return overrides
 
     def _report_started_server(self) -> None:
         settings = _parse_properties_file(self._settings_file)
@@ -10497,82 +10561,6 @@ class _OwnedTestResourcesSession:
         atexit.register(_shutdown)
         self._shutdown_registered = True
 
-    def _start_log_mirror(self) -> None:
-        logs_dir = _resolve_test_resources_logs_dir(self._project_dir, self._settings_file)
-        log_files = [
-            logs_dir / _TEST_RESOURCES_LOG_FILE,
-            logs_dir / _TEST_RESOURCES_STDIO_LOG_FILE,
-        ]
-        initial_positions: dict[Path, int] = {}
-        for candidate in log_files:
-            try:
-                initial_positions[candidate] = candidate.stat().st_size
-            except OSError:
-                initial_positions[candidate] = 0
-        if self._log_mirror_thread is not None and self._log_mirror_thread.is_alive():
-            return
-        stop_event = threading.Event()
-        self._log_mirror_stop = stop_event
-
-        def _tail() -> None:
-            position = 0
-            active_log_file: Path | None = None
-
-            def _resolve_active_log_file() -> Path | None:
-                for candidate in log_files:
-                    if candidate.exists():
-                        return candidate
-                return None
-
-            while not stop_event.is_set() and active_log_file is None:
-                active_log_file = _resolve_active_log_file()
-                stop_event.wait(0.1)
-            if active_log_file is None:
-                return
-            position = initial_positions.get(active_log_file, 0)
-            while not stop_event.is_set():
-                try:
-                    candidate = _resolve_active_log_file()
-                    if candidate is None:
-                        stop_event.wait(0.1)
-                        continue
-                    if active_log_file != candidate:
-                        active_log_file = candidate
-                        position = initial_positions.get(active_log_file, 0)
-                    current_size = active_log_file.stat().st_size
-                    if current_size < position:
-                        position = 0
-                    if current_size > position:
-                        with active_log_file.open("r", encoding="utf-8") as handle:
-                            handle.seek(position)
-                            chunk = handle.read()
-                            position = handle.tell()
-                        for line in chunk.splitlines():
-                            stripped = line.strip()
-                            if stripped and _should_mirror_test_resources_log_line(stripped):
-                                self._emit_status(stripped)
-                    stop_event.wait(0.1)
-                except OSError:
-                    stop_event.wait(0.1)
-
-        self._log_mirror_thread = threading.Thread(
-            target=_tail,
-            name="pyronaut-test-resources-log-mirror",
-            daemon=True,
-        )
-        self._log_mirror_thread.start()
-
-    def _stop_log_mirror(self) -> None:
-        stop_event = self._log_mirror_stop
-        thread = self._log_mirror_thread
-        self._log_mirror_stop = None
-        self._log_mirror_thread = None
-        if stop_event is None:
-            return
-        stop_event.set()
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=1.0)
-
     def _persist_session(self, *, started_at: float) -> None:
         data = {
             "ownerToken": self._owner_token,
@@ -10604,8 +10592,7 @@ class _OwnedTestResourcesSession:
     def _emit_status(self, line: str) -> None:
         if self._quiet:
             return
-        sys.stderr.write(line + "\n")
-        sys.stderr.flush()
+        _progress_console().note(line)
 
     def _should_attach_to_external_server(self) -> bool:
         if self._shared_server:
@@ -10688,15 +10675,6 @@ def _test_resources_server_available(settings_path: Path) -> bool:
             return True
     except OSError:
         return False
-
-
-def _should_mirror_test_resources_log_line(line: str) -> bool:
-    return (
-        " ERROR " in line
-        or _TEST_RESOURCES_IMAGE_PULL_MARKER in line
-        or _TEST_RESOURCES_CONTAINER_CREATE_MARKER in line
-        or _TEST_RESOURCES_CONTAINER_STARTED_MARKER in line
-    )
 
 
 def _split_tui_mode_token(args: Sequence[str]) -> tuple[str | None, list[str]]:

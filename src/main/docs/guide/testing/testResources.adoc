@@ -36,6 +36,10 @@ __pyronaut__/test-resources-session.json
 
 Pyronaut writes logs to `.micronaut/test-resources/logs` by default unless you configure `logs-dir`.
 
+The server pulls and starts containers in its own process, so `pyronaut dev` and `pyronaut test` tail that log while they
+wait and report the image pulls, container starts and failures alongside their own progress output.
+Configuring `logs-dir` moves the log the launchers follow along with the log itself.
+
 == Configuration
 
 [source,toml]

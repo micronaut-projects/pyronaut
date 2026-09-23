@@ -16,6 +16,7 @@
 package io.micronaut.test.pytest.execution;
 
 import org.graalvm.polyglot.PolyglotException;
+import io.micronaut.test.pytest.extension.PytestMicronautExtension;
 import org.graalvm.polyglot.Value;
 
 import java.io.PrintWriter;
@@ -30,8 +31,24 @@ public final class PytestFunctionInvoker {
     }
 
     public static Result call(Value callable) {
+        return call(callable, null);
+    }
+
+    /**
+     * Calls a test body, inside the Micronaut test interceptor chain when a fixture has built a context
+     * for this test. Everything the chain delivers -- a rolled-back transaction above all -- depends on
+     * the body running here rather than being invoked directly.
+     *
+     * @param callable The test body
+     * @param testName The pytest node id
+     * @return The result
+     */
+    public static Result call(Value callable, String testName) {
         try {
-            callable.executeVoid();
+            PytestMicronautExtension.interceptTestBody(() -> {
+                callable.executeVoid();
+                return null;
+            }, testName);
             return Result.success();
         } catch (Throwable t) {
             return Result.failure(t);

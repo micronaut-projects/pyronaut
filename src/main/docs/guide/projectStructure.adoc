@@ -10,7 +10,7 @@ If you do not want to install GraalVM manually, Pyronaut can provision it from t
 type = "jvm" # jvm|native
 distribution = "ee"
 java-version = 25
-version = "25i3"
+version = "25i4"
 ----
 
 Pyronaut supports two toolchains, `native` and `jvm`, with different trade-offs.

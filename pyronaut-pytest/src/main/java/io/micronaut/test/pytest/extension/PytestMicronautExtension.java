@@ -38,6 +38,8 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospect
 import io.micronaut.test.annotation.MicronautTestValue;
 import io.micronaut.test.annotation.Sql;
 import io.micronaut.test.annotation.TransactionMode;
+import io.micronaut.test.context.TestContext;
+import io.micronaut.test.context.TestMethodInvocationContext;
 import io.micronaut.test.extensions.AbstractMicronautExtension;
 import io.micronaut.test.pytest.FailureDiagnostics;
 import io.micronaut.test.pytest.PythonAssertionError;
@@ -71,6 +73,13 @@ import javax.sql.DataSource;
  */
 @SuppressWarnings("checkstyle:InnerTypeLast")
 public final class PytestMicronautExtension extends AbstractMicronautExtension<Value> {
+
+    // The extension serving the test that is running right now. pytest runs a test on the thread that
+    // built its fixture, and the fixture is function-scoped, so a thread-local is the whole of the
+    // bookkeeping: PytestFunctionInvoker needs to find the extension to run the test body inside the
+    // TestMethodInterceptor chain, and it is handed only the Python callable.
+    private static final ThreadLocal<PytestMicronautExtension> CURRENT = new ThreadLocal<>();
+
 
     public static final String ID = "_micronaut_test_extension";
     private static final Logger LOG = LoggerFactory.getLogger(PytestMicronautExtension.class);
@@ -134,6 +143,9 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
                     resolveParameters
                 )
             );
+            if (error == null) {
+                CURRENT.set(extension);
+            }
             return new FixtureBootstrapResult(extension.getContext(), error);
         } catch (Throwable e) {
             LOG.error("Error bootstrapping Micronaut pytest fixture:\n{}", FailureDiagnostics.render(e));
@@ -309,6 +321,54 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     public void beforeEach(Value context, @Nullable Object testInstance, @Nullable AnnotatedElement method, List<Property> propertyAnnotations) {
         super.beforeEach(context, testInstance, method, propertyAnnotations);
         runSql(Sql.Phase.BEFORE_EACH);
+    }
+
+    /**
+     * Runs a test body inside the {@link io.micronaut.test.context.TestMethodInterceptor} chain of the
+     * extension serving the current test, so that the interceptors configured by {@code MicronautTest}
+     * actually wrap it.
+     *
+     * <p>Without this the chain is never entered and everything delivered through it is inert --
+     * {@code transactional} and {@code rollback} above all, which are accepted, turned into properties
+     * and then never acted on, so a row written by one test is still there in the next.
+     *
+     * @param body The test body
+     * @param testName The pytest node id, used as the test name in the {@link TestContext}
+     * @return The value the body returned
+     * @throws Throwable Anything the body or an interceptor threw
+     */
+    public static Object interceptTestBody(Callable body, String testName) throws Throwable {
+        PytestMicronautExtension extension = CURRENT.get();
+        if (extension == null || extension.applicationContext == null) {
+            return body.call();
+        }
+        // No Java class or method backs a pytest function; the interceptors that care about a test
+        // identity read the name, and the transactional one needs only the application context.
+        TestContext testContext = new TestContext(
+            extension.applicationContext, null, null, null, null, testName, true);
+        return extension.interceptTest(new TestMethodInvocationContext<>() {
+            @Override
+            public TestContext getTestContext() {
+                return testContext;
+            }
+
+            @Override
+            public Object proceed() throws Throwable {
+                return body.call();
+            }
+        });
+    }
+
+    /**
+     * A test body, as a type the Python side can implement.
+     */
+    @FunctionalInterface
+    public interface Callable {
+        /**
+         * @return The value the body returned
+         * @throws Throwable Anything the body threw
+         */
+        Object call() throws Throwable;
     }
 
     @Override

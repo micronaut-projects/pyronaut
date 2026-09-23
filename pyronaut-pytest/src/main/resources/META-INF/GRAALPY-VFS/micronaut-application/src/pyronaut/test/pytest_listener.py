@@ -211,7 +211,7 @@ class MicronautPytestPlugin:
             for arg in fixtureinfo.argnames
         }
 
-        result = PytestFunctionInvoker.call(lambda: testfunction(**testargs))
+        result = PytestFunctionInvoker.call(lambda: testfunction(**testargs), self._get_test_id(pyfuncitem))
         if getattr(result, "success", False):
             return True
         pytest.fail(_format_call_failure(result), pytrace=False)

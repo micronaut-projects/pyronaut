@@ -4,7 +4,7 @@ inputs:
   graalpy-version:
     description: pyenv GraalPy version to install and activate.
     required: false
-    default: graalpy3.13-25.3.4.1
+    default: graalpy3.13-25.4.4
   pytest-version:
     description: pytest version to install into the GraalPy virtual environment.
     required: false

@@ -9,8 +9,8 @@ Install https://github.com/pyenv/pyenv#installation[pyenv], then install and sel
 
 [source,bash]
 ----
-pyenv install --skip-existing graalpy3.13-25.3.4.1
-pyenv shell graalpy3.13-25.3.4.1
+pyenv install --skip-existing graalpy3.13-25.4.4
+pyenv shell graalpy3.13-25.4.4
 python --version
 ----
 

@@ -34,6 +34,7 @@ import java.util.stream.Stream;
 final class ProcessorSourceCache {
     static final String MAIN_HASH_FILE = "processor-main.sha256";
     static final String TEST_HASH_FILE = "processor-test.sha256";
+    private static final String APPLICATION_VFS_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/";
 
     private ProcessorSourceCache() {
     }
@@ -47,6 +48,15 @@ final class ProcessorSourceCache {
                             String hash,
                             Path outputDirectory,
                             boolean validateOutputs) {
+        return cacheHit(cacheDir, hashFileName, hash, outputDirectory, validateOutputs, false);
+    }
+
+    static boolean cacheHit(Path cacheDir,
+                            String hashFileName,
+                            String hash,
+                            Path outputDirectory,
+                            boolean validateOutputs,
+                            boolean compilePythonBytecode) {
         Path hashFile = cacheDir.resolve(hashFileName);
         if (!Files.exists(hashFile) || !Files.isDirectory(outputDirectory)) {
             return false;
@@ -56,11 +66,11 @@ final class ProcessorSourceCache {
             if (lines.isEmpty() || !lines.getFirst().equals(hash)) {
                 return false;
             }
-            if (!validateOutputs) {
+            if (!validateOutputs && !compilePythonBytecode) {
                 return true;
             }
             if (lines.size() == 1) {
-                return false;
+                return compilePythonBytecode && hasPythonBytecode(outputDirectory);
             }
             Path normalizedOutputDirectory = outputDirectory.toAbsolutePath().normalize();
             Set<String> expected = lines.subList(1, lines.size()).stream()
@@ -72,11 +82,59 @@ final class ProcessorSourceCache {
                     .map(normalizedOutputDirectory::relativize)
                     .map(path -> path.toString().replace(outputDirectory.getFileSystem().getSeparator(), "/"))
                     .forEach(expected::remove);
-                return expected.isEmpty();
+                return expected.isEmpty() && (!compilePythonBytecode || hasPythonBytecode(outputDirectory));
             }
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private static boolean hasPythonBytecode(Path outputDirectory) throws Exception {
+        List<Path> pythonSources;
+        try (Stream<Path> paths = Files.walk(outputDirectory)) {
+            pythonSources = paths
+                .filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".py"))
+                .filter(path -> outputDirectory.relativize(path).toString().replace('\\', '/').startsWith(APPLICATION_VFS_PREFIX))
+                .toList();
+        }
+        if (pythonSources.isEmpty()) {
+            return true;
+        }
+
+        Path filesList = outputDirectory.resolve(APPLICATION_VFS_PREFIX).resolve("fileslist.txt");
+        if (!Files.isRegularFile(filesList)) {
+            return false;
+        }
+        Set<String> listedFiles = Files.readAllLines(filesList, StandardCharsets.UTF_8).stream()
+            .map(String::trim)
+            .collect(java.util.stream.Collectors.toSet());
+        for (Path source : pythonSources) {
+            Path relative = outputDirectory.relativize(source);
+            String relativeName = relative.toString().replace('\\', '/');
+            String listedSource = "/" + relativeName;
+            Path parent = relative.getParent();
+            if (parent == null) {
+                return false;
+            }
+            String sourceName = relative.getFileName().toString();
+            String moduleName = sourceName.substring(0, sourceName.length() - ".py".length());
+            Path cacheDirectory = outputDirectory.resolve(parent).resolve("__pycache__");
+            boolean found = false;
+            if (Files.isDirectory(cacheDirectory)) {
+                try (Stream<Path> cacheFiles = Files.list(cacheDirectory)) {
+                    found = cacheFiles.anyMatch(path -> {
+                        String name = path.getFileName().toString();
+                        return Files.isRegularFile(path) && name.startsWith(moduleName + ".") && name.endsWith(".pyc")
+                            && listedFiles.contains("/" + outputDirectory.relativize(path).toString().replace('\\', '/'));
+                    });
+                }
+            }
+            if (!found || !listedFiles.contains(listedSource)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static void writeHash(Path cacheDir, String hashFileName, String hash) {

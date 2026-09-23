@@ -85,6 +85,7 @@ final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_SERVER_MODULE = "io.micronaut.testresources:micronaut-test-resources-server";
     private static final String TEST_RESOURCES_CONTROL_PANEL_MODULE = "io.micronaut.testresources:micronaut-test-resources-control-panel";
     private static final String NASHORN_MODULE = "org.openjdk.nashorn:nashorn-core";
+    private static final String POM_EXTENSION = "pom";
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
     private static final String MICRONAUT_OPENAPI_PROCESSOR_MODULE = "io.micronaut.openapi:micronaut-openapi";
     private static final String MICRONAUT_OPENAPI_ANNOTATIONS_MODULE = "io.micronaut.openapi:micronaut-openapi-annotations";
@@ -423,6 +424,10 @@ final class MavenClasspathResolver {
             List<Path> classpath = result.getArtifactResults().stream()
                 .map(artifactResult -> artifactResult.getArtifact())
                 .filter(Objects::nonNull)
+                // A POM-only artifact is resolved for its dependency management
+                // and its transitives; the .pom file itself is not classpath
+                // content.
+                .filter(artifact -> !POM_EXTENSION.equals(artifact.getExtension()))
                 .map(Artifact::getPath)
                 .filter(Objects::nonNull)
                 .map(Path::toAbsolutePath)
@@ -1062,6 +1067,14 @@ final class MavenClasspathResolver {
                                            Map<String, String> managedVersions) {
         String[] parts = coordinate.split(":");
         List<Exclusion> exclusions = exclusions(model, scope, coordinate);
+        if (parts.length == 4 || parts.length == 5) {
+            // group:artifact:extension:version, optionally with a classifier as
+            // group:artifact:extension:classifier:version. Resolver's own parser
+            // understands both, and this is the only way to depend on an
+            // artifact that is not published as a jar -- a POM-only aggregator
+            // such as org.graalvm.polyglot:js, for example.
+            return new Dependency(new DefaultArtifact(coordinate), JavaScopes.RUNTIME, false, exclusions);
+        }
         if (parts.length == 3) {
             return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", parts[2]), JavaScopes.RUNTIME, false, exclusions);
         }
@@ -1075,7 +1088,9 @@ final class MavenClasspathResolver {
             }
             return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", managedVersion), JavaScopes.RUNTIME, false, exclusions);
         }
-        throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate + "'. Expected group:artifact[:version]");
+        throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate
+            + "'. Expected group:artifact[:version], group:artifact:extension:version"
+            + " or group:artifact:extension:classifier:version");
     }
 
     private static List<Exclusion> exclusions(PyprojectModel model, InstallScope scope, String coordinate) {

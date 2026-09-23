@@ -2,6 +2,7 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 
+import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.pyronaut.config.model.PyprojectJsonSchemaGenerator;
@@ -32,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautInstallMainTest {
@@ -1709,6 +1711,47 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void resolvesPomOnlyDependencyDeclaredWithAnExplicitExtension(@TempDir Path tempDir) throws Exception {
+        Path repository = tempDir.resolve("repo");
+        writePomOnlyArtifact(repository, "com.example", "aggregator", "1.0.0",
+            List.of(new DependencyCoordinate("com.example", "engine", "1.0.0")));
+        writeArtifact(repository, "com.example", "engine", "1.0.0");
+
+        PyprojectModel model = new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of("com.example:aggregator:pom:1.0.0"), List.of(), List.of(),
+                List.of(), List.of(), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+
+        MavenClasspathResolver.ResolvedScopeDetails result = new MavenClasspathResolver().resolveScopeDetails(
+            model, InstallScope.RUNTIME, tempDir.resolve("m2-pom-type"), false);
+
+        // The artifacts the aggregator exists to pull in are on the classpath.
+        assertTrue(result.classpath().stream()
+            .anyMatch(path -> path.getFileName().toString().equals("engine-1.0.0.jar")));
+        // The aggregator's own .pom is not classpath content.
+        assertTrue(result.classpath().stream()
+            .noneMatch(path -> path.getFileName().toString().endsWith(".pom")));
+    }
+
+    @Test
+    void rejectsACoordinateWithTooManySegments(@TempDir Path tempDir) throws Exception {
+        Path repository = tempDir.resolve("repo");
+        writeArtifact(repository, "com.example", "root", "1.0.0");
+
+        PyprojectModel model = new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of("a:b:c:d:e:f"), List.of(), List.of(),
+                List.of(), List.of(), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+
+        PyprojectModelException failure = assertThrows(PyprojectModelException.class, () ->
+            new MavenClasspathResolver().resolveScopeDetails(
+                model, InstallScope.RUNTIME, tempDir.resolve("m2-bad-coordinate"), false));
+        assertTrue(failure.getMessage().contains("Invalid dependency coordinate"));
+    }
+
+    @Test
     void resolvesDependenciesManagedByNestedPomBomDependencies() throws Exception {
         Path repository = tempDir.resolve("repo-nested-managed-bom");
         writeBom(
@@ -2370,6 +2413,11 @@ class PyronautInstallMainTest {
                  * Represents an HTTP response exposed to Python code.
                  */
                 public class HttpResponse {
+                    /**
+                     * The default response status code.
+                     */
+                    public static final int DEFAULT_CODE = 200;
+
                     public static HttpResponse ok(Object body) {
                         return new HttpResponse();
                     }
@@ -2440,7 +2488,14 @@ class PyronautInstallMainTest {
                  * Handles HTTP GET requests.
                  */
                 public @interface Get {
+                    /**
+                     * @return The URI of the GET route
+                     */
                     String value() default "";
+
+                    /**
+                     * The produced {@code MediaType} values.
+                     */
                     String[] produces() default {};
                 }
                 """,
@@ -2450,6 +2505,17 @@ class PyronautInstallMainTest {
                 public @interface Post {
                     String value() default "";
                     String[] consumes() default {};
+                }
+                """,
+            "io.micronaut.http.HttpMethod", """
+                package io.micronaut.http;
+
+                public enum HttpMethod {
+                    /**
+                     * See https://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html#sec9.3.
+                     */
+                    GET,
+                    POST
                 }
                 """,
             "io.micronaut.http.annotation.Body", """
@@ -2497,13 +2563,23 @@ class PyronautInstallMainTest {
 
         assertTrue(editorManifest.contains("\"scope\":\"runtime\""));
         assertTrue(editorManifest.contains("\"sourceJar\""));
-        assertTrue(annotationStub.contains("@overload\ndef Get(target: _T, /) -> _T: ..."));
-        assertTrue(annotationStub.contains("@overload\ndef Get(value: str = ..., *, produces: str | list[str] = ...) -> Callable[[_T], _T]: ..."));
-        assertTrue(annotationStub.contains("def Get(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n    \"\"\""));
-        assertTrue(annotationStub.contains("    Handles HTTP GET requests."));
+        String getDocstring = """
+                \"\"\"
+                Handles HTTP GET requests.
+                :param value: The URI of the GET route
+                :param produces: The produced `MediaType` values.
+                \"\"\"
+                ...
+            """;
+        assertTrue(annotationStub.contains("@overload\ndef Get(target: _T, /) -> _T:\n" + getDocstring), annotationStub);
+        assertTrue(annotationStub.contains("@overload\ndef Get(value: str = ..., *, produces: str | list[str] = ...) -> Callable[[_T], _T]:\n" + getDocstring));
+        assertTrue(annotationStub.contains("def Get(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n" + getDocstring));
         assertTrue(annotationStub.contains("@overload\ndef Post(value: str = ..., *, consumes: str | list[str] = ...) -> Callable[[_T], _T]: ..."));
         assertTrue(annotationStub.contains("def Post(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:"));
         assertTrue(annotationStub.contains("def Body(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:"));
+        assertTrue(annotationStub.contains("@overload\ndef Body() -> Callable[[_T], _T]: ..."));
+        assertTrue(httpStub.contains("    DEFAULT_CODE: ClassVar[int]\n    \"\"\"\n    The default response status code.\n    \"\"\"\n"), httpStub);
+        assertTrue(httpStub.contains("    GET = ...\n    \"\"\"\n    See https://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html#sec9.3.\n    \"\"\"\n    POST = ...\n"), httpStub);
         assertTrue(httpStub.contains("class HttpResponse:"));
         assertTrue(httpStub.contains("Represents an HTTP response exposed to Python code"));
         assertTrue(httpStub.contains("def ok(body: Any) -> HttpResponse: ..."));
@@ -2519,7 +2595,7 @@ class PyronautInstallMainTest {
         assertTrue(httpClientStub.contains("def create(self, *args: Any, **kwargs: Any) -> HttpClient:\n        \"\"\""));
         assertTrue(httpClientStub.contains("        Builds a client without a preset request."));
         assertTrue(httpClientStub.contains("@overload\n    def create(self, request: HttpRequest) -> HttpClient: ..."));
-        assertTrue(injectStub.contains("@overload\ndef Inject(target: _T, /) -> _T: ..."));
+        assertTrue(injectStub.contains("@overload\ndef Inject(target: _T, /) -> _T:\n    \"\"\"\n    Injects a dependency from the Micronaut context."));
         assertTrue(injectStub.contains("@overload\ndef Singleton() -> Callable[[_T], _T]: ..."));
         assertTrue(injectStub.contains("@overload\ndef Singleton(target: _T, /) -> _T: ..."));
         assertTrue(injectStub.contains("def Inject(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n    \"\"\""));
@@ -3244,10 +3320,9 @@ class PyronautInstallMainTest {
             project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/http/__init__.pyi"),
             StandardCharsets.UTF_8
         );
-        assertTrue(httpStub.contains("# Successful response status."));
-        assertTrue(httpStub.contains("OK: ClassVar[int]"));
-        assertTrue(httpStub.contains("# Human readable reason."));
-        assertTrue(httpStub.contains("reason: str"));
+        assertTrue(httpStub.contains("    OK: ClassVar[int]\n    \"\"\"\n    Successful response status.\n    \"\"\"\n"), httpStub);
+        assertTrue(httpStub.contains("    reason: str\n    \"\"\"\n    Human readable reason.\n    \"\"\"\n"), httpStub);
+        assertFalse(httpStub.contains("# Successful response status."));
     }
 
     @Test
@@ -4147,6 +4222,48 @@ class PyronautInstallMainTest {
 
         Path jarFile = artifactDir.resolve(artifactId + "-" + version + ".jar");
         Files.write(jarFile, new byte[]{0});
+        ensureDefaultControlPanelArtifact(repository);
+    }
+
+    /**
+     * Writes an artifact published only as a POM, with no jar alongside it —
+     * the shape used by aggregators such as {@code org.graalvm.polyglot:js},
+     * whose purpose is to pull in a set of real artifacts.
+     */
+    private static void writePomOnlyArtifact(Path repository,
+                                             String groupId,
+                                             String artifactId,
+                                             String version,
+                                             List<DependencyCoordinate> dependencies) throws IOException {
+        Path artifactDir = repository
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version);
+        Files.createDirectories(artifactDir);
+
+        StringBuilder dependencyBlock = new StringBuilder();
+        for (DependencyCoordinate dependency : dependencies) {
+            dependencyBlock
+                .append("    <dependency>\n")
+                .append("      <groupId>").append(dependency.groupId()).append("</groupId>\n")
+                .append("      <artifactId>").append(dependency.artifactId()).append("</artifactId>\n")
+                .append("      <version>").append(dependency.version()).append("</version>\n")
+                .append("    </dependency>\n");
+        }
+
+        Files.writeString(artifactDir.resolve(artifactId + "-" + version + ".pom"), """
+            <project xmlns="http://maven.apache.org/POM/4.0.0"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>%s</groupId>
+              <artifactId>%s</artifactId>
+              <version>%s</version>
+              <packaging>pom</packaging>
+              <dependencies>
+            %s  </dependencies>
+            </project>
+            """.formatted(groupId, artifactId, version, dependencyBlock), StandardCharsets.UTF_8);
         ensureDefaultControlPanelArtifact(repository);
     }
 

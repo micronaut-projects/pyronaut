@@ -2954,6 +2954,42 @@ sharedServer = true
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
 
+    def test_shared_server_mode_honors_kebab_case_pyproject_key(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "shared-kebab"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "shared-kebab"
+
+[tool.pyronaut.test-resources]
+shared-server = true
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            exit_code = cli.run(
+                ["run", "--project-dir", str(project_dir)],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+            shared = cli._read_pyproject_test_resources_shared(project_dir)  # noqa: SLF001 - internal helper coverage
+
+        self.assertEqual(0, exit_code)
+        self.assertTrue(shared)
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
+
     def test_external_test_resources_server_is_not_claimed_or_stopped(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3123,6 +3159,30 @@ name = "demo"
 
 [tool.pyronaut.testResources]
 logsDir = "var/custom-test-resources-logs"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            resolved = cli._resolve_test_resources_logs_dir(  # noqa: SLF001 - internal helper coverage
+                project_dir.resolve(),
+                settings_file.resolve(),
+            )
+
+        self.assertEqual((project_dir / "var" / "custom-test-resources-logs").resolve(), resolved)
+
+    def test_resolve_test_resources_logs_dir_honors_kebab_case_pyproject_key(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo-kebab"
+            settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo-kebab"
+
+[tool.pyronaut.test-resources]
+logs-dir = "var/custom-test-resources-logs"
 """.strip()
                 + "\n",
                 encoding="utf-8",
@@ -3363,6 +3423,66 @@ additional-test-resources = ["test-fixtures"]
             self.assertNotIn(str((project_dir / "test-resources").resolve()), entries)
             self.assertNotIn(str((project_dir / "test-fixtures").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
+
+    def test_snapshot_watched_files_honors_dev_restart_excludes(self):
+        """An excluded directory is still watched by the application, just not by the restarter."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "src").mkdir(parents=True, exist_ok=True)
+            (project_dir / "views").mkdir(parents=True, exist_ok=True)
+            (project_dir / "static" / "css").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            (project_dir / "views" / "ssr-components.mjs").write_text("export const App = 1;\n", encoding="utf-8")
+            (project_dir / "static" / "client.js").write_text("console.log(1);\n", encoding="utf-8")
+            (project_dir / "static" / "css" / "app.css").write_text("body{}\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.sources]
+python = "src"
+additional-resources = ["views", "static"]
+
+[tool.pyronaut.dev]
+restart-excludes = ["views", "static"]
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot = cli._snapshot_watched_files(project_dir.resolve())  # noqa: SLF001
+            watched_files = {entry[0] for entry in snapshot}
+            self.assertIn("src/main.py", watched_files)
+            self.assertIn("pyproject.toml", watched_files)
+            self.assertNotIn("views/ssr-components.mjs", watched_files)
+            self.assertNotIn("static/client.js", watched_files)
+            self.assertNotIn("static/css/app.css", watched_files)
+
+    def test_dev_restart_excludes_default_to_nothing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "src").mkdir(parents=True, exist_ok=True)
+            (project_dir / "views").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            (project_dir / "views" / "ssr-components.mjs").write_text("export const App = 1;\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.sources]
+python = "src"
+additional-resources = ["views"]
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            watched_files = {entry[0] for entry in cli._snapshot_watched_files(project_dir.resolve())}  # noqa: SLF001
+            self.assertIn("views/ssr-components.mjs", watched_files)
 
     def test_snapshot_watched_files_honors_configured_layout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3689,75 +3809,58 @@ additional-test-resources = ["test-fixtures"]
                 self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
                 self.assertFalse(session_file.exists())
 
-    def test_owned_test_resources_session_mirrors_late_container_logs(self):
+    def test_owned_test_resources_session_hands_the_log_directory_to_the_launcher(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
-            project_dir.mkdir(parents=True, exist_ok=True)
             settings_dir = project_dir / ".micronaut" / "test-resources"
             settings_dir.mkdir(parents=True, exist_ok=True)
-            settings_file = settings_dir / "test-resources.properties"
-            settings_file.write_text(
+            (settings_dir / "test-resources.properties").write_text(
                 "server.uri=http\\://localhost\\:18900\n"
                 "server.access.token=token-abc\n",
                 encoding="utf-8",
             )
-            log_dir = settings_dir / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "test-resources.log"
-            log_file.write_text("", encoding="utf-8")
 
-            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut run")
-            stderr = io.StringIO()
-            try:
-                with redirect_stderr(stderr):
-                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
-                    with log_file.open("a", encoding="utf-8") as handle:
-                        handle.write(
-                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
-                        )
-                        handle.flush()
-                    deadline = time.time() + 2.0
-                    while "Creating container for image: mysql:8.4.0" not in stderr.getvalue() and time.time() < deadline:
-                        time.sleep(0.05)
-            finally:
-                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+            session = cli._OwnedTestResourcesSession(
+                project_dir=project_dir.resolve(),
+                owner_command="pyronaut dev",
+            )
+            session._client_env_overrides = cli._test_resources_client_env_from_settings(  # noqa: SLF001
+                settings_dir / "test-resources.properties"
+            )
+            overrides = session.client_env_overrides()
 
-            self.assertIn("Creating container for image: mysql:8.4.0", stderr.getvalue())
+            self.assertEqual(
+                str((settings_dir / "logs").resolve()),
+                overrides["PYRONAUT_TEST_RESOURCES_LOGS_DIR"],
+            )
 
-    def test_owned_test_resources_session_mirrors_late_container_logs_from_launcher_stdio(self):
+    def test_owned_test_resources_session_honours_a_configured_logs_dir(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
-            project_dir.mkdir(parents=True, exist_ok=True)
             settings_dir = project_dir / ".micronaut" / "test-resources"
             settings_dir.mkdir(parents=True, exist_ok=True)
-            settings_file = settings_dir / "test-resources.properties"
-            settings_file.write_text(
-                "server.uri=http\\://localhost\\:18900\n"
-                "server.access.token=token-abc\n",
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.test-resources]\nlogs-dir = \"var/tr-logs\"\n",
                 encoding="utf-8",
             )
-            log_dir = settings_dir / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "launcher-stdio.log"
-            log_file.write_text("", encoding="utf-8")
+            (settings_dir / "test-resources.properties").write_text(
+                "server.uri=http\\://localhost\\:18900\n",
+                encoding="utf-8",
+            )
 
-            session = cli._OwnedTestResourcesSession(project_dir=project_dir.resolve(), owner_command="pyronaut run")
-            stderr = io.StringIO()
-            try:
-                with redirect_stderr(stderr):
-                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
-                    with log_file.open("a", encoding="utf-8") as handle:
-                        handle.write(
-                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
-                        )
-                        handle.flush()
-                    deadline = time.time() + 2.0
-                    while "Creating container for image: mysql:8.4.0" not in stderr.getvalue() and time.time() < deadline:
-                        time.sleep(0.05)
-            finally:
-                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+            session = cli._OwnedTestResourcesSession(
+                project_dir=project_dir.resolve(),
+                owner_command="pyronaut dev",
+            )
+            session._client_env_overrides = cli._test_resources_client_env_from_settings(  # noqa: SLF001
+                settings_dir / "test-resources.properties"
+            )
+            overrides = session.client_env_overrides()
 
-            self.assertIn("Creating container for image: mysql:8.4.0", stderr.getvalue())
+            self.assertEqual(
+                str((project_dir / "var" / "tr-logs").resolve()),
+                overrides["PYRONAUT_TEST_RESOURCES_LOGS_DIR"],
+            )
 
     def test_owned_test_resources_session_quiet_mode_suppresses_stderr_output(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3782,18 +3885,8 @@ additional-test-resources = ["test-fixtures"]
                 quiet=True,
             )
             stderr = io.StringIO()
-            try:
-                with redirect_stderr(stderr):
-                    session._report_started_server()  # noqa: SLF001 - internal helper coverage
-                    session._start_log_mirror()  # noqa: SLF001 - internal helper coverage
-                    with log_file.open("a", encoding="utf-8") as handle:
-                        handle.write(
-                            "17:36:59.686 [pool-1-thread-1] INFO  tc.mysql:8.4.0 - Creating container for image: mysql:8.4.0\n"
-                        )
-                        handle.flush()
-                    time.sleep(0.2)
-            finally:
-                session._stop_log_mirror()  # noqa: SLF001 - internal helper coverage
+            with redirect_stderr(stderr):
+                session._report_started_server()  # noqa: SLF001 - internal helper coverage
 
             self.assertEqual("", stderr.getvalue())
 
@@ -4900,7 +4993,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("PYRONAUT_BUILD_MODE=jvm", docker_command)
         self.assertIn("PYRONAUT_PROJECT_NAME=demo-app", docker_command)
         self.assertIn("PYRONAUT_PROJECT_VERSION=1.2.3", docker_command)
-        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i3", docker_command)
+        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i4", docker_command)
         self.assertIn("-t", docker_command)
         self.assertIn("demo-app:1.2.3", docker_command)
         self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
@@ -5143,7 +5236,7 @@ additional-test-resources = ["test-fixtures"]
             self.assertEqual(0, exit_code_jvm)
             self.assertEqual("Dockerfile.jvm", captured["dockerfile_name"])
             self.assertIn("ARG PYRONAUT_PROJECT_NAME", captured["dockerfile"])
-            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i3", captured["docker_command"])
+            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i4", captured["docker_command"])
 
             captured.clear()
             executed.clear()
@@ -5157,7 +5250,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code_native)
         self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
         self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
-        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i3", captured["docker_command"])
+        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i4", captured["docker_command"])
 
     def test_build_docker_reuses_configured_base_with_custom_runtime_dockerfile(self):
         captured: dict[str, object] = {}
@@ -6515,8 +6608,8 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
 
     def test_detect_graalvm_distribution_recognizes_community_dev_build(self):
         metadata = cli._detect_graalvm_distribution(
-            'openjdk version "25.0.4.1"\nOpenJDK Runtime Environment GraalVM CE 25.3.4.1-dev+0.1',
-            Path("/tmp/graalvm-community-25.3.4.1-dev+0.1"),
+            'openjdk version "25.0.4.1"\nOpenJDK Runtime Environment GraalVM CE 25.4.4.1.1-dev+0.1',
+            Path("/tmp/graalvm-community-25.4.4.1.1-dev+0.1"),
             "25.0.4.1",
         )
         self.assertEqual("dev", metadata)
@@ -6526,8 +6619,8 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         with patch.object(cli.platform, "system", return_value="Linux"), \
                 patch.object(cli.platform, "machine", return_value="aarch64"):
             url = cli._resolve_graalvm_archive_url(spec)
-        self.assertIn("gds.oracle.com/download/graal/25i3/latest/", url)
-        self.assertIn("graalvm-jdk-25i3-25_linux-aarch64_bin.tar.gz", url)
+        self.assertIn("gds.oracle.com/download/graal/25i4/latest/", url)
+        self.assertIn("graalvm-jdk-25i4-25_linux-aarch64_bin.tar.gz", url)
 
     def test_read_pyproject_toolchain_spec_uses_packaged_default_when_not_explicit(self):
         packaged = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
