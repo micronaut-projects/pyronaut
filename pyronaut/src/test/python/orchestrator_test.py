@@ -3424,6 +3424,66 @@ additional-test-resources = ["test-fixtures"]
             self.assertNotIn(str((project_dir / "test-fixtures").resolve()), entries)
             self.assertNotIn(str((project_dir / "config").resolve()), entries)
 
+    def test_snapshot_watched_files_honors_dev_restart_excludes(self):
+        """An excluded directory is still watched by the application, just not by the restarter."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "src").mkdir(parents=True, exist_ok=True)
+            (project_dir / "views").mkdir(parents=True, exist_ok=True)
+            (project_dir / "static" / "css").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            (project_dir / "views" / "ssr-components.mjs").write_text("export const App = 1;\n", encoding="utf-8")
+            (project_dir / "static" / "client.js").write_text("console.log(1);\n", encoding="utf-8")
+            (project_dir / "static" / "css" / "app.css").write_text("body{}\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.sources]
+python = "src"
+additional-resources = ["views", "static"]
+
+[tool.pyronaut.dev]
+restart-excludes = ["views", "static"]
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            snapshot = cli._snapshot_watched_files(project_dir.resolve())  # noqa: SLF001
+            watched_files = {entry[0] for entry in snapshot}
+            self.assertIn("src/main.py", watched_files)
+            self.assertIn("pyproject.toml", watched_files)
+            self.assertNotIn("views/ssr-components.mjs", watched_files)
+            self.assertNotIn("static/client.js", watched_files)
+            self.assertNotIn("static/css/app.css", watched_files)
+
+    def test_dev_restart_excludes_default_to_nothing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "src").mkdir(parents=True, exist_ok=True)
+            (project_dir / "views").mkdir(parents=True, exist_ok=True)
+            (project_dir / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            (project_dir / "views" / "ssr-components.mjs").write_text("export const App = 1;\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.sources]
+python = "src"
+additional-resources = ["views"]
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            watched_files = {entry[0] for entry in cli._snapshot_watched_files(project_dir.resolve())}  # noqa: SLF001
+            self.assertIn("views/ssr-components.mjs", watched_files)
+
     def test_snapshot_watched_files_honors_configured_layout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"

@@ -304,6 +304,15 @@ public final class PyprojectConfigSpec {
         List.of(),
         List.of("tool.pyronaut.sources.additionalResources")
     );
+    public static final FieldSpec PYRONAUT_DEV_RESTART_EXCLUDES = stringArray(
+        "tool.pyronaut.dev.restart-excludes",
+        "Paths, relative to the project directory, that dev mode watches but does not restart for. "
+            + "Use it for directories a build tool writes into that the running application reloads "
+            + "itself, such as a JavaScript bundle picked up by micronaut-views-react.",
+        List.of(),
+        List.of(),
+        List.of("tool.pyronaut.dev.restartExcludes")
+    );
     public static final FieldSpec PYRONAUT_SOURCES_ADDITIONAL_TEST_RESOURCES = stringArray(
         "tool.pyronaut.sources.additional-test-resources",
         "Additional test resources directories included for test scope.",
@@ -908,7 +917,8 @@ public final class PyprojectConfigSpec {
         PYRONAUT_TEST_RESOURCES_DEBUG_SERVER,
         PYRONAUT_TEST_RESOURCES_JAVA_EXECUTABLE,
         PYRONAUT_TEST_RESOURCES_STARTUP_OPTIMIZATION,
-        PYRONAUT_TEST_RESOURCES_LEYDEN_JVM_ARGS
+        PYRONAUT_TEST_RESOURCES_LEYDEN_JVM_ARGS,
+        PYRONAUT_DEV_RESTART_EXCLUDES
     );
 
     public static final List<SectionSpec> STRICT_SECTIONS = List.of(
@@ -922,6 +932,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.processor", true),
         section("tool.pyronaut.test", true),
         section("tool.pyronaut.run", true),
+        section("tool.pyronaut.dev", true),
         section("tool.pyronaut.control-panel", true, "tool.pyronaut.controlPanel"),
         PYRONAUT_SOURCES_SECTION,
         section("tool.pyronaut.toolchain", true),
