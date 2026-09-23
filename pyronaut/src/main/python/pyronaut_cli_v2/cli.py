@@ -4986,7 +4986,7 @@ def _read_pyproject_test_resources_shared(project_dir: Path) -> bool:
     test_resources = _read_pyproject_test_resources_table(project_dir)
     if not isinstance(test_resources, dict):
         return False
-    shared_server = test_resources.get("sharedServer")
+    shared_server = test_resources.get("shared-server", test_resources.get("sharedServer"))
     return isinstance(shared_server, bool) and shared_server
 
 

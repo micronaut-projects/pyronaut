@@ -2954,6 +2954,42 @@ sharedServer = true
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
 
+    def test_shared_server_mode_honors_kebab_case_pyproject_key(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "shared-kebab"
+            project_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "shared-kebab"
+
+[tool.pyronaut.test-resources]
+shared-server = true
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def runner(command_line):
+                executed.append(command_line)
+                return 0
+
+            exit_code = cli.run(
+                ["run", "--project-dir", str(project_dir)],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+            shared = cli._read_pyproject_test_resources_shared(project_dir)  # noqa: SLF001 - internal helper coverage
+
+        self.assertEqual(0, exit_code)
+        self.assertTrue(shared)
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
+        self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
+
     def test_external_test_resources_server_is_not_claimed_or_stopped(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3123,6 +3159,30 @@ name = "demo"
 
 [tool.pyronaut.testResources]
 logsDir = "var/custom-test-resources-logs"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            resolved = cli._resolve_test_resources_logs_dir(  # noqa: SLF001 - internal helper coverage
+                project_dir.resolve(),
+                settings_file.resolve(),
+            )
+
+        self.assertEqual((project_dir / "var" / "custom-test-resources-logs").resolve(), resolved)
+
+    def test_resolve_test_resources_logs_dir_honors_kebab_case_pyproject_key(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo-kebab"
+            settings_file = project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo-kebab"
+
+[tool.pyronaut.test-resources]
+logs-dir = "var/custom-test-resources-logs"
 """.strip()
                 + "\n",
                 encoding="utf-8",
