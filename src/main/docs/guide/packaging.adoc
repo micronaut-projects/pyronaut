@@ -1,4 +1,4 @@
-= Packaging & Deployment
+= Packaging and Deployment
 
 `pyronaut build` packages the processed application for distribution. The
 default is `wheel-jvm`; configure another default with
@@ -42,8 +42,7 @@ runtime image. Choose this when the target platform is a container platform.
 
 |`wheel-crema`
 |`pyronaut build --native-base=default`
-|A wheel using a reusable native production runtime. A configured custom base
-is preferred; otherwise Pyronaut uses the bundled default.
+|A wheel using a reusable native production runtime. Pyronaut prefers a configured custom base; otherwise it uses the bundled default.
 
 |`docker-crema`
 |`pyronaut build --native-base=default --docker`
@@ -54,7 +53,7 @@ layer.
 `pyronaut build --native-base` remains a separate operation that creates a
 reusable base; it does not select a final packaging format.
 
-== Runnable FAT JARs
+== Runnable fat JARs
 
 Build one executable JAR with:
 
@@ -64,8 +63,8 @@ pyronaut build --jar
 java -jar dist/hello-pyronaut-0.1.0.jar argument1 argument2
 ----
 
-The artifact is written as `dist/<project-name>-<version>.jar`; unsafe filename
-characters are replaced with `-`. Both Java and Python applications require a
+Pyronaut writes the artifact as `dist/<project-name>-<version>.jar` and replaces unsafe filename
+characters with `-`. Both Java and Python applications require a
 compatible GraalVM JDK, as they use the same production runtime selected for a
 JVM wheel. Python FAT JARs therefore include GraalPy and are larger than their
 Java equivalents. The command supports Pyronaut projects, direct Java or Python
@@ -75,14 +74,13 @@ The outer JAR contains a small launcher plus an indexed `PYRONAUT-INF` layout.
 Application classes and resources precede dependencies, followed by dependency
 roots in resolved-classpath order. Duplicate classes use first-root-wins
 semantics. Resources, including `META-INF/services` descriptors, remain
-enumerable across every root. Multi-release JAR selection and package manifest
-metadata such as sealing are preserved. The launcher reads entries directly
+enumerable across every root. The launcher preserves multi-release JAR
+selection and package manifest metadata such as sealing. It reads entries directly
 from the artifact and does not extract them to disk.
 
-Packaging is reproducible: entry ordering and timestamps are deterministic and
-source paths are not recorded. Dependency signature files and stale JAR indexes
-are omitted because repackaging invalidates them. Sign the completed FAT JAR if
-artifact signing is required.
+The packager produces reproducible artifacts by using deterministic entry ordering and timestamps and omitting source
+paths. Repackaging invalidates dependency signature files and stale JAR indexes, so Pyronaut omits them. Sign the completed FAT JAR if
+you require artifact signing.
 
 == Wheels and JVM containers
 
@@ -145,7 +143,7 @@ other development tooling. `pyronaut-run` is the Java runtime; Python projects
 use `pyronaut-run-python`, which additionally contains GraalPy, Truffle, and
 the Python Logback integration.
 
-Build a native base once after declaring the dependencies that should be shared:
+Build a native base once after declaring the dependencies to share:
 
 [source,bash]
 ----
@@ -166,10 +164,10 @@ the bundle matching the current operating system and architecture; a Docker
 build selects the Linux bundle matching the current architecture. Pyronaut
 chooses `pyronaut-run` for Java projects and `pyronaut-run-python` for Python
 projects.
-The bundle is resolved using `[native-images]` in
+Pyronaut resolves the bundle using `[native-images]` in
 `~/.pyronaut/settings.toml`, including its configured repository, version,
-proxy, and authentication settings. A valid bundle already cached under
-`~/.pyronaut` is reused; otherwise it is downloaded with progress reporting.
+proxy, and authentication settings. Pyronaut reuses a valid bundle already cached under
+`~/.pyronaut`; otherwise it downloads the bundle with progress reporting.
 
 The native launcher projects publish the same complete bundle format used by
 the CLI downloader. Running `./gradlew :micronaut-pyronaut-dev:assemble`,
@@ -178,10 +176,10 @@ the CLI downloader. Running `./gradlew :micronaut-pyronaut-dev:assemble`,
 the module's `build/distributions` directory. Each archive contains the native
 executable, generated native classpath manifests, and the native-image
 `resources` directory. Python-capable images are built with
-`-H:+CopyLanguageResources`, so `resources` is a runtime input and must remain
-beside its executable when an archive is extracted, copied into a wheel, or
-installed in a container. Adjacent native runtime libraries are part of the
-same bundle contract.
+`-H:+CopyLanguageResources`, so `resources` is a runtime input. Keep it beside
+its executable when you extract an archive, copy it into a wheel, or install it
+in a container. The bundle also includes adjacent native runtime libraries as
+part of the same bundle contract.
 
 [source,toml]
 ----
@@ -199,8 +197,7 @@ Later native builds reuse the configured native base:
 pyronaut build
 ----
 
-Set a stable output location in `pyproject.toml` when the image is shared by
-multiple builds:
+Set a stable output location in `pyproject.toml` when multiple builds share the image:
 
 [source,toml]
 ----
@@ -215,7 +212,7 @@ The value may instead be an HTTP(S) URL to a native executable. Pyronaut uses
 the configured proxy settings and displays download progress. URL-based native
 bases are unavailable with `--offline`. A raw URL continues to represent a
 self-contained executable; use a published Pyronaut native bundle when
-external language resources must be transported with the launcher.
+the launcher must transport external language resources with the application.
 
 Crema avoids rebuilding the native runtime for each source change. The native
 base is the only expensive native-image build; subsequent application builds
@@ -223,7 +220,7 @@ package processed classes and application dependencies for runtime loading.
 They retain native startup time without requiring each application to meet the
 same closed-world reflection configuration requirements as a fully
 application-native image. Inspect the SBOM exported with the native base to
-confirm that its shared dependencies are included.
+confirm that it contains the shared dependencies.
 
 For Docker, build and tag the native base layer, then build the application
 layer:
@@ -271,7 +268,7 @@ pyronaut build App.py --docker --native-base=default
 pyronaut build App.java --jar --name hello-java --version 1.0.0
 ----
 
-Sources compile to disk under `__pyronaut__/direct-source-build`. Use
-`--setup pyproject.toml` for project configuration. Inline `@Dependency`
-declarations are resolved before packaging and become part of a custom native
-base's SBOM.
+Pyronaut compiles sources to disk under `__pyronaut__/direct-source-build`. Use
+`--setup pyproject.toml` for project configuration. Pyronaut resolves inline
+`@Dependency` declarations before packaging and includes them in a custom
+native base's SBOM.

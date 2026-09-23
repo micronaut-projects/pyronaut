@@ -1,4 +1,4 @@
-= IDE Setup for VS Code & PyCharm
+= IDE Setup for VS Code and PyCharm
 
 `pyronaut install` generates editor support from the resolved runtime and test classpaths.
 This gives Python editors stubs for Java-backed APIs such as Micronaut annotations and Jakarta injection types.
@@ -13,7 +13,7 @@ Generated editor files include:
 
 `pyronaut install` prepends a Taplo schema directive to `pyproject.toml` and to `application.toml` when those files do not already have user-managed schema directives.
 
-== Configure Stub Generation
+== Configure stub generation
 
 [source,toml]
 ----
@@ -26,11 +26,11 @@ destination-dir = "__pyronaut__/ide-stubs"
 ----
 
 The default IDE target is `vscode`.
-Stub generation is best effort; APIs that cannot be rendered cleanly are skipped and reported in the stub generation report.
+Stub generation is best effort; Pyronaut skips APIs that it cannot render cleanly and reports them in the stub generation report.
 
 == VS Code
 
-When `ide = "vscode"` and the project does not already own Pyright configuration, Pyronaut writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the generated stub directory. When the Python executable or site-packages directory is known (from the project `.venv`, the `PYRONAUT_PYTHON_EXECUTABLE` or `PYRONAUT_PYTHON_SITE_PACKAGES` environment variables, or the matching `pyronaut.python.*` system properties), the site-packages directory is added to `extraPaths` and `python.defaultInterpreterPath` is set as well.
+When `ide = "vscode"` and the project does not already own Pyright configuration, Pyronaut writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the generated stub directory. When Pyronaut knows the Python executable or site-packages directory (from the project `.venv`, the `PYRONAUT_PYTHON_EXECUTABLE` or `PYRONAUT_PYTHON_SITE_PACKAGES` environment variables, or the matching `pyronaut.python.*` system properties), it adds the site-packages directory to `extraPaths` and sets `python.defaultInterpreterPath` as well.
 
 If `pyrightconfig.json` or `[tool.pyright]` already exists, Pyronaut leaves the configuration user-managed and records that decision in the editor stub report.
 
@@ -41,10 +41,10 @@ For VS Code Test Explorer integration, see <<vscodeExtension,VS Code Test Explor
 When `ide = "pycharm"`, Pyronaut writes a generated `.idea/pyronaut-editor-stubs.iml` module and registers it in `.idea/modules.xml`.
 The generated module marks the stub directory as a source root without rewriting the main PyCharm project module.
 
-== Refreshing IDE State
+== Refresh IDE state
 
 Run `pyronaut install` after changing dependencies, source layout, or IDE stub settings.
 
-Generated stubs are cached per classpath under `~/.pyronaut/ide-stubs` and shared between projects on the same machine. Deleting `__pyronaut__/ide-stubs` makes the next install restore the stubs from that cache; delete the matching cache directory as well (or the whole of `~/.pyronaut/ide-stubs`) to force regeneration.
+Pyronaut caches generated stubs per classpath under `~/.pyronaut/ide-stubs` and shares them between projects on the same machine. Deleting `__pyronaut__/ide-stubs` makes the next install restore the stubs from that cache; delete the matching cache directory as well (or the whole of `~/.pyronaut/ide-stubs`) to force regeneration.
 
 WARNING: `destination-dir` must point at a directory that Pyronaut owns. The generator replaces the directory's contents on every install and refuses to run when the directory contains files it did not generate.

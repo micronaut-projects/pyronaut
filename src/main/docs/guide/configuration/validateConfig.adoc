@@ -19,11 +19,11 @@ Supported scenarios are:
 - `production`
 
 The standalone command defaults to `production`.
-`pyronaut dev`, `pyronaut run`, `pyronaut test`, and native build flows call validation with their own scenario defaults unless `--no-validate` is supplied.
+`pyronaut dev`, `pyronaut run`, `pyronaut test`, and native build flows call validation with their own scenario defaults unless you pass `--no-validate`.
 
 == Reports
 
-By default, reports are written under:
+By default, Pyronaut writes reports under:
 
 [source,text]
 ----
@@ -37,9 +37,9 @@ The default report files are:
 
 Pyronaut also writes `__pyronaut__/.config-validation-cache.properties` to avoid repeating unchanged validations.
 
-For Maven and Gradle projects the reports and the cache are written under `target/pyronaut` or `build/pyronaut` instead of `__pyronaut__`.
+For Maven and Gradle projects Pyronaut writes the reports and cache under `target/pyronaut` or `build/pyronaut` instead of `__pyronaut__`.
 
-== Project Configuration
+== Project configuration
 
 [source,toml]
 ----
@@ -61,9 +61,9 @@ environments = []
 
 Scenario-specific settings can override environments, classpath entries, resources directories, and output directories.
 
-== Dependency Injection Validation
+== Dependency injection validation
 
-Dependency injection validation is disabled by default.
+Pyronaut disables dependency injection validation by default.
 Enable it when you want validation to include bean graph checks:
 
 [source,bash]
@@ -84,7 +84,7 @@ Available strategies are `reachable`, `application-beans`, and `all-beans`.
 
 == Suppressions
 
-When validation finds suppressible errors, the CLI prints a TOML snippet that can be copied into `pyproject.toml`:
+When validation finds suppressible errors, the CLI prints a TOML snippet that you can copy into `pyproject.toml`:
 
 [source,toml]
 ----

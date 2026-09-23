@@ -1,18 +1,18 @@
-GraalPy, like CPython, has a global interpreter lock (GIL). Only one thread can execute Python code in a given GraalPy _context_ at a time. GraalPy releases the lock while calling into Java or performing I/O, so a Python route that spends most of its time waiting on a JDBC query or an HTTP call scales well, but two requests that both run Python bytecode in the same context take turns.
+GraalPy, like CPython, has a global interpreter lock (GIL). Only one thread can execute Python code in a given GraalPy _context_ at a time. GraalPy releases the lock while calling Java or performing I/O, so a Python route that mostly waits on a JDBC query or HTTP call scales well. Two requests that both run Python bytecode in the same context take turns.
 
 Unlike CPython, Micronaut can create several GraalPy contexts inside one JVM, each with its own lock. Pooling contexts therefore gives true parallelism for Python code, at the cost of memory and of separate module state per context.
 
 == What the pool changes
 
-When the pool is enabled, beans whose scope is `@ContextPooled` (the automatic scope of module-level route files that declare no other scope) are instantiated once per context. A request borrows a context, runs the Python code there, and returns it. Two requests can execute Python bytecode at the same time as long as two contexts are free.
+When you enable the pool, Pyronaut instantiates beans with the `@ContextPooled` scope (the automatic scope of module-level route files that declare no other scope) once per context. A request borrows a context, runs the Python code there, and returns it. Two requests can execute Python bytecode at the same time as long as two contexts are free.
 
-Compiled Python code is shared between contexts where possible, but module globals are not. Each context imports your modules separately, so a module-level counter, cache or connection is per context, not per application. State that must be shared across requests belongs in a `@Singleton` bean, which is created once regardless of the pool, or in an external store.
+GraalPy shares compiled Python code between contexts where possible, but it does not share module globals. Each context imports your modules separately, so a module-level counter, cache or connection is per context, not per application. Put state that must be shared across requests in a `@Singleton` bean, which Pyronaut creates once regardless of the pool, or in an external store.
 
 WARNING: Context pooling, including the `@ContextPooled` scope, is experimental. Test pooled applications carefully if Python code relies on mutable module or global state.
 
 == Configuration
 
-The pool is configured under `micronaut.python.pool` in `application.toml`:
+Configure the pool under `micronaut.python.pool` in `application.toml`:
 
 [source,toml]
 ----
@@ -23,7 +23,7 @@ warn-wait = "2s"
 ----
 
 `enabled`:: Defaults to `true`.
-`size`:: The number of additional contexts. `0` selects the default of twice the number of available processors. Contexts are created lazily and each one costs memory and start-up work.
+`size`:: The number of additional contexts. `0` selects the default of twice the number of available processors. The runtime creates contexts lazily, and each one costs memory and start-up work.
 `warn-wait`:: Log a warning when a request waits longer than this for a free context. Use it as the signal for tuning `size`.
 
 For CPU-bound Python code, start with a size close to the number of processors and increase it only when the wait warnings show that requests are queuing. For I/O-heavy code a larger pool can raise throughput, but keep it bounded by the concurrency the downstream systems can sustain.
@@ -40,4 +40,4 @@ enabled = false
 
 Contexts and threads are independent. The `io` executor can have fifty threads while the pool has eight contexts; at most eight of those threads execute Python code at any moment and the rest wait for a context or run Java code. Keep the two settings in proportion when tuning, and remember that the executors must stay on platform threads (`virtual = false`), because GraalPy cannot run on virtual threads.
 
-The GIL and virtual-thread limitations are properties of the current GraalPy release. A future GraalPy is expected to provide GIL-free execution and virtual-thread support, at which point the pool recommendations above should be revisited. See the https://docs.micronaut.io/latest/guide/#pythonThreading[Python Threading] section of the Micronaut guide for the current guidance and the full list of pool properties.
+The GIL and virtual-thread limitations are properties of the current GraalPy release. Revisit the pool recommendations if a future release changes either limitation. See the https://docs.micronaut.io/latest/guide/#pythonThreading[Python Threading] section of the Micronaut guide for the current guidance and the full list of pool properties.

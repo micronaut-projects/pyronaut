@@ -1,4 +1,4 @@
-= Pyronaut CLI v2
+= Pyronaut CLI V2
 
 Pyronaut CLI v2 is a process-oriented toolchain. The `pyronaut` command is a Python orchestrator that delegates work to focused executables:
 
@@ -27,7 +27,7 @@ SDK for Windows x64.
 pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ----
 
-== Quickstart workflow
+== Quick-start workflow
 
 [source,bash]
 ----
@@ -70,11 +70,11 @@ additional-resources = ["views", "assets"]
 additional-test-resources = ["tests-fixtures"]
 ----
 
-`additional-resources` is a list of extra application resource directories. These directories are included for `dev`, `run`, and `test` scopes, watched by auto-restart in `dev`, included in lifecycle validation defaults, and staged into JVM wheels and Docker images.
+`additional-resources` is a list of extra application resource directories. Pyronaut includes these directories for `dev`, `run`, and `test` scopes, watches them for auto-restart in `dev`, includes them in lifecycle validation defaults, and stages them into JVM wheels and Docker images.
 
-`additional-test-resources` is a list of extra test-only resource directories. These directories are included for `test` scope, watched by auto-restart in `dev` and `test`, and included in test lifecycle validation defaults.
+`additional-test-resources` is a list of extra test-only resource directories. Pyronaut includes these directories for `test` scope, watches them for auto-restart in `dev` and `test`, and includes them in test lifecycle validation defaults.
 
-These settings are used by `pyronaut process`, `pyronaut dev`, `pyronaut run`, `pyronaut test`, lifecycle validation, auto-restart file watching, and build staging for wheels and Docker images.
+The commands `pyronaut process`, `pyronaut dev`, `pyronaut run`, and `pyronaut test` use these settings, as do lifecycle validation, auto-restart file watching, and build staging for wheels and Docker images.
 
 == Command reference
 
@@ -87,9 +87,9 @@ Provisions the complete SDK before any project command runs:
 pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--progress <auto|on|off>]
 ----
 
-Setup provisions the packaged/default GraalVM JDK first, so neither `JAVA_HOME` nor a preinstalled Java runtime is required.
+Setup provisions the packaged/default GraalVM JDK first, so you do not need `JAVA_HOME` or a preinstalled Java runtime.
 It then caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python`, seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel's portable dependency descriptors.
-Validated state is atomically written below `~/.pyronaut/setup`.
+Pyronaut writes validated state atomically below `~/.pyronaut/setup`.
 
 The default remote repository is Maven Central. Snapshot SDK versions also use `https://central.sonatype.com/repository/maven-snapshots/`.
 Configure a replacement list in `~/.pyronaut/settings.toml`:
@@ -106,7 +106,7 @@ When setup is missing, corrupt, or stale, execution commands exit with code `8` 
 
 === `pyronaut doctor`
 
-Checks the local environment without changing it and prints one pass/warn/fail row per check, each non-passing row followed by a concrete fix:
+Checks the local environment without changing it and prints one pass/warn/fail row per check. A non-passing row includes a suggested fix when Pyronaut can identify one:
 
 [source,bash]
 ----
@@ -120,29 +120,29 @@ The checks, in order:
 
 - Python: the interpreter running the CLI is 3.10 or newer.
 - Pyronaut SDK: the installed wheel version and whether the cached setup state below `~/.pyronaut/setup` is valid for it (suggests `pyronaut setup`, or `pyronaut setup --refresh` when stale state exists).
-- GraalVM JDK: the discovery used by `pyronaut setup --offline` (`JAVA_HOME`, `~/.pyronaut/sdks`, SDKMAN, jenv, Gradle JDKs) finds a GraalVM JDK 25+. A `JAVA_HOME` that is silently ignored because it is not a compatible GraalVM is reported as a warning.
-- GraalPy: inside a project, `.venv` was created with GraalPy; otherwise a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
-- Interpreter: no interpreter mismatch between the pieces that must agree. `PYRONAUT_PYTHON_EXECUTABLE` must point at an existing GraalPy, an activated `VIRTUAL_ENV` must be the project `.venv`, and the `.venv` must have been created from the GraalPy that is currently selected (a `.venv` left behind after `pyenv global` moved to another version, or whose base interpreter was removed, is reported).
-- Native launchers: `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` are cached below `~/.pyronaut/bin` for the configured version and platform.
+- GraalVM JDK: the discovery used by `pyronaut setup --offline` (`JAVA_HOME`, `~/.pyronaut/sdks`, SDKMAN, jenv, Gradle JDKs) finds a GraalVM JDK 25+. The check reports a warning when it silently ignores `JAVA_HOME` because it does not point to a compatible GraalVM.
+- GraalPy: inside a project, the check verifies that `.venv` uses GraalPy; otherwise it checks a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
+- Interpreter: the check verifies that the pieces agree. `PYRONAUT_PYTHON_EXECUTABLE` must point at an existing GraalPy, an activated `VIRTUAL_ENV` must be the project `.venv`, and the `.venv` must use the currently selected GraalPy (the check reports a `.venv` that remained after `pyenv global` moved to another version, or whose base interpreter someone removed).
+- Native launchers: Pyronaut caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` below `~/.pyronaut/bin` for the configured version and platform.
 
-Inside a project the following checks are added:
+Inside a project, Pyronaut adds the following checks:
 
 - pyproject.toml: the file parses and its `[tool.pyronaut]` settings are valid.
 - Classpath manifests: the manifests written by `pyronaut install` exist.
-- Generated state: the manifests are not stale. Classpath entries that no longer exist (the Maven repository changed) fail the check; a `pyproject.toml` edited after the last `pyronaut install` is a warning, because the preflight of `dev`, `run` and `test` only checks that the manifests exist. Sources newer than the processed classes are reported for information since processing is incremental and automatic.
+- Generated state: the check verifies that the manifests are current. Classpath entries that no longer exist (the Maven repository changed) fail the check; a `pyproject.toml` edited after the last `pyronaut install` is a warning, because the preflight of `dev`, `run` and `test` only checks that the manifests exist. The check reports sources newer than the processed classes for information because `dev`, `run`, and `test` process changed sources automatically.
 - Threading: the application configuration in `config/application.toml` (or `application.properties`) is read the way the runtime reads it. An executor with `virtual = true` fails the check because GraalPy cannot run Python code on virtual threads, and invalid `micronaut.python.pool` values fail it. The row reports the effective context pool size, executor overrides, and the deployment mode from `[tool.pyronaut.packaging]` and `[tool.pyronaut.toolchain]`. Configuration kept in `application.yml` is not inspected and produces a warning.
-- Python packages: a smoke test of every package declared in `[project].dependencies`. A probe runs inside the project `.venv` (that is, on the GraalPy that the application uses), resolves each distribution, derives its importable modules, and imports them concurrently from as many threads as the configured context pool would use (`micronaut.python.pool.size`, or twice the CPU count by default, one thread when the pool is disabled). Missing packages fail the check with the exact `pip install` command; import errors fail it with the first error; packages that ship native extensions are a warning, phrased for the configured deployment mode (native extensions are experimental on GraalPy and in native images).
-- GraalPy compatibility: each declared package is looked up in the package test results that GraalPy publishes per release at https://graalpy.org/python-developers/compatibility/. Packages that fail to install on the project's GraalPy release, or pass fewer than 90% of their tests there, are a warning; unknown packages are listed as untested. The release is taken from the `.venv` interpreter, falling back to the GraalPy bundled with the SDK. The CSV is cached below `~/.pyronaut/graalpy-compatibility` for a week; `--offline` uses only the cache and never downloads.
+- Python packages: a smoke test of every package declared in `[project].dependencies`. A probe runs inside the project `.venv` (that is, on the GraalPy that the application uses), resolves each distribution, derives its importable modules, and imports them concurrently from as many threads as the configured context pool would use (`micronaut.python.pool.size`, or twice the CPU count by default, one thread when the pool is disabled). Missing packages fail the check with the exact `pip install` command; import errors fail it with the first error; the check warns about packages that ship native extensions, using wording for the configured deployment mode (native extensions are experimental on GraalPy and in native images).
+- GraalPy compatibility: each declared package is looked up in the package test results that GraalPy publishes per release at https://graalpy.org/python-developers/compatibility/. Packages that fail to install on the project's GraalPy release, or pass fewer than 90% of their tests there, produce a warning; the check lists unknown packages as untested. The check reads the release from the `.venv` interpreter, falling back to the GraalPy bundled with the SDK. Pyronaut caches the CSV below `~/.pyronaut/graalpy-compatibility` for a week; `--offline` uses only the cache and never downloads.
 - pytest: `pytest` is importable from the project `.venv`.
 
 The remaining checks run everywhere:
 
 - Proxy: the proxy in effect (environment variables, `~/.pyronaut/settings.toml`, or `~/.m2/settings.xml`) is a well-formed `http(s)://host:port` URL. Conflicting `HTTPS_PROXY`/`https_proxy` values or an incomplete `[proxy]` table are warnings. Credentials are never printed.
-- Docker: the daemon answers `docker version`. Docker is needed only for test resources and `pyronaut build --docker`, so a missing CLI or unreachable daemon is a warning.
+- Docker: the daemon answers `docker version`. Pyronaut needs Docker only for test resources and `pyronaut build --docker`, so a missing CLI or unreachable daemon is a warning.
 
 Project checks run for the current directory when it contains a `pyproject.toml`, and always for an explicit `--project-dir`.
 
-The human-readable rows use the same live progress display as `pyronaut setup` and are written to stderr; the summary line is written to stdout.
+Pyronaut writes the human-readable rows to stderr using the same live progress display as `pyronaut setup`; it writes the summary line to stdout.
 `--json` instead writes a single JSON document to stdout for tooling:
 
 [source,json]
@@ -190,27 +190,27 @@ automatically. Supported options are:
 
 `--lang`, `--build`, `--test`, and `--jdk` are intentionally not exposed. Use
 `pyronaut create --list-features` for the Python-compatible feature catalog;
-known reflection-dependent and JVM-only features are removed before the
-catalog is shown, while Micronaut Starter performs final validation.
+the command removes known reflection-dependent and JVM-only features before it
+shows the catalog, while Micronaut Starter performs final validation.
 
 The command does not require `pyronaut setup`. It first looks for an exact
 matching Micronaut candidate in `SDKMAN_DIR/candidates/micronaut/<version>`
 (default `~/.sdkman`), then in
 `~/.pyronaut/sdks/micronaut/<version>`. If neither contains a matching
-executable, the platform-specific archive is downloaded from Micronaut
-Starter releases and installed in the latter location.
+executable, the command downloads the platform-specific archive from Micronaut
+Starter releases and installs it in the latter location.
 
 Downloads use the same proxy settings, retry behavior, and progress indicator
 as the rest of the CLI. The first download prints `Project Creation Tooling is
 being installed`. Python creation requires Micronaut Platform 5.2.0 or newer.
 Published native archives are available for macOS x64/arm64, Linux x64, and
-Windows x64. A locally built snapshot must be staged at the exact versioned
-SDK path before it can be used.
+Windows x64. Stage a locally built snapshot at the exact versioned SDK path
+before using it.
 
 === `pyronaut install`
 
 Resolves dependencies into the configured local Maven repository and writes scoped manifests under `__pyronaut__/`.
-By default, dependency artifacts are installed into Maven local (`~/.m2/repository`, or the path configured by the `maven.repo.local` system property).
+By default, Pyronaut installs dependency artifacts into Maven local (`~/.m2/repository`, or the path configured by the `maven.repo.local` system property).
 
 Common options:
 
@@ -235,13 +235,13 @@ Proxy configuration:
 
 `pyronaut setup` and `pyronaut install` use the configured proxy for Maven dependency resolution; setup also applies it to GraalVM and native-launcher downloads.
 This includes dependencies resolved from the global `[maven].repositories` list and project `tool.pyronaut.repositories`.
-Proxy configuration is discovered in this order:
+Pyronaut discovers proxy configuration in this order:
 
 . Environment variables: `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy`
 . Pyronaut user settings: `~/.pyronaut/settings.toml`
 . Maven user settings: `~/.m2/settings.xml`
 
-Environment proxy URLs may include credentials and may omit the scheme, in which case `http` is used.
+Environment proxy URLs may include credentials and may omit the scheme; Pyronaut uses `http` when the scheme is absent.
 `NO_PROXY` or `no_proxy` configures hosts that should bypass the proxy.
 Comma-separated and pipe-separated bypass lists are both accepted.
 
@@ -275,7 +275,7 @@ noProxyHosts = "localhost,127.0.0.1,*.internal.example.com"
 ----
 
 If neither environment variables nor `~/.pyronaut/settings.toml` define a proxy, `pyronaut install` reads the first active Maven proxy from `~/.m2/settings.xml`.
-If no proxy is marked active, the first proxy entry is used.
+If no proxy is marked active, Pyronaut uses the first proxy entry.
 
 [source,xml]
 ----
@@ -306,7 +306,7 @@ Build-wheel and Docker packaging copy those artifacts into the packaged applicat
 
 Managed runtime defaults:
 
-- When dependency versions are managed from the Micronaut platform, `pyronaut install` adds `io.micronaut.toml:micronaut-toml` to the runtime classpath by default, so `application.toml` in the configured resources directory works without an explicit dependency declaration.
+- When the Micronaut platform manages dependency versions, `pyronaut install` adds `io.micronaut.toml:micronaut-toml` to the runtime classpath by default, so `application.toml` in the configured resources directory works without an explicit dependency declaration.
 - `pyronaut install` also adds `io.micronaut:micronaut-context-python` to `runtime` by default.
 - `pyronaut install` also adds `io.micronaut:micronaut-inject-python` and `io.micronaut:micronaut-context-python` to `build` by default.
 - `pyronaut install` also adds `io.micronaut.openapi:micronaut-openapi` to `build` and its annotations to `runtime`, enabling OpenAPI processing without a project-specific processor declaration.
@@ -318,28 +318,28 @@ Editor support:
 - `pyronaut install` also materializes a project-local JSON schema at `__pyronaut__/schemas/pyronaut-pyproject.schema.json`.
 - `pyronaut install` prepends a Taplo schema directive to `pyproject.toml` pointing at that schema.
 - If `application.toml` exists in the configured resources directory, `pyronaut install` also builds `__pyronaut__/schemas/micronaut-application.schema.json` from the Micronaut configuration schemas present on the resolved runtime classpath and prepends a schema directive to that file.
-- Runtime configuration schemas are merged by their `x-micronaut.prefix` path, so overlapping contributors such as `micronaut.server` and `micronaut.server.netty` are combined into one rooted schema tree.
+- Pyronaut merges runtime configuration schemas by their `x-micronaut.prefix` path, so it combines overlapping contributors such as `micronaut.server` and `micronaut.server.netty` into one rooted schema tree.
 
 Annotation processor options:
 
 - During installation, Pyronaut discovers `TypeElementVisitor.getSupportedOptions()` from the resolved processor classpath and caches the sorted option names under `__pyronaut__/annotation-processor-options.properties`.
-- Matching values from the Micronaut application environment (including `application.toml`, `application.yml`, and `application.properties`) are flattened to dotted keys and passed to processing as `-A` compiler arguments. Unrelated application configuration is ignored.
-- Pyronaut supplies the supported `micronaut.openapi.views.spec` option with `swagger-ui.enabled=true,redoc.enabled=true` by default, unless the application overrides it. This causes Swagger UI and ReDoc HTML assets to be generated under `META-INF/swagger/views`.
+- Pyronaut flattens matching values from the Micronaut application environment (including `application.toml`, `application.yml`, and `application.properties`) to dotted keys and passes them to processing as `-A` compiler arguments. It ignores unrelated application configuration.
+- Pyronaut supplies the supported `micronaut.openapi.views.spec` option with `swagger-ui.enabled=true,redoc.enabled=true` by default, unless the application overrides it. This causes Pyronaut to generate Swagger UI and ReDoc HTML assets under `META-INF/swagger/views`.
 - `pyronaut dev` and direct-source `pyronaut run <source>` supply default static-resource routes for the generated YAML, Swagger UI, and ReDoc under `/swagger/**`, `/swagger-ui/**`, and `/redoc/**`. Explicit `--property` values or application configuration take precedence; project-mode `pyronaut run` does not add these routes automatically.
-- The test processing pass always passes `micronaut.openapi.enabled=false`, so OpenAPI files are generated only for main sources.
+- The test processing pass always passes `micronaut.openapi.enabled=false`, so Pyronaut generates OpenAPI files only for main sources.
 - `pyronaut install` also generates Python editor stubs under `__pyronaut__/ide-stubs` from the resolved `runtime` and `test` classpaths.
 - Python editor stub generation is configurable under `[tool.pyronaut.ide-stubs]` with `enabled`, `ide`, `packages`, `exclude-patterns`, and `destination-dir`.
 - `ide` defaults to `vscode` and currently supports `vscode` and `pycharm`.
 - `exclude-patterns` accepts wildcard matches against fully qualified Java type names and defaults to `["*ModuleInfo"]` to skip generated module metadata classes.
-- The resolved editor input set is recorded in `__pyronaut__/resolved-editor-artifacts.json`, including binary JAR and source JAR paths when available.
-- When `ide = "vscode"` is used without user-managed Pyright configuration, `pyronaut install` writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the configured stub directory so Pylance can resolve Java-backed Python imports such as `micronaut.http.annotation` and `jakarta.inject`.
+- Pyronaut records the resolved editor input set in `__pyronaut__/resolved-editor-artifacts.json`, including binary JAR and source JAR paths when available.
+- When you select `ide = "vscode"` without user-managed Pyright configuration, `pyronaut install` writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the configured stub directory so Pylance can resolve Java-backed Python imports such as `micronaut.http.annotation` and `jakarta.inject`.
 - If `pyrightconfig.json` or `[tool.pyright]` already exists, `pyronaut install` leaves that configuration user-managed and records the skipped settings update in the editor stub report.
 - When `ide = "pycharm"`, `pyronaut install` writes a generated `.idea/pyronaut-editor-stubs.iml` module and adds it to `.idea/modules.xml` so the stub directory is visible as a source root without rewriting the main project module.
-- Python editor stub generation is best effort. If a particular Java type cannot be rendered cleanly, Pyronaut skips that API surface and continues install processing.
-- Detailed stub-generation warnings are written to `__pyronaut__/reports/editor-stubs/stub-generation-report.txt` instead of being streamed line-by-line to the console.
+- Python editor stub generation is best effort. If Pyronaut cannot render a particular Java type cleanly, it skips that API surface and continues install processing.
+- Pyronaut writes detailed stub-generation warnings to `__pyronaut__/reports/editor-stubs/stub-generation-report.txt` instead of streaming them line-by-line to the console.
 - Existing user-managed `#:schema ...` directives at the top of `pyproject.toml` are left untouched.
 - Existing user-managed `#:schema ...` directives at the top of `application.toml` in the configured resources directory are left untouched.
-- Older generated `.taplo.toml` files from previous Pyronaut installs are removed to avoid conflicting schema associations. User-managed `.taplo.toml` files are left untouched.
+- Pyronaut removes older generated `.taplo.toml` files from previous installs to avoid conflicting schema associations. It leaves user-managed `.taplo.toml` files untouched.
 
 === `pyronaut process`
 
@@ -357,8 +357,8 @@ Common options:
 
 The CLI `--incremental` and `--no-incremental` options override `tool.pyronaut.processor.incremental`.
 Likewise, `--daemon` and `--no-daemon` override `tool.pyronaut.processor.daemon`.
-Incremental compilation is disabled when neither the CLI nor project configuration enables it.
-See <<incrementalProcessing,Incremental Processing>> for cache locations, invalidation behavior, and source-writing guidance.
+Pyronaut disables incremental compilation when neither the CLI nor project configuration enables it.
+See <<incrementalProcessing,Incremental processing>> for cache locations, invalidation behavior, and source-writing guidance.
 
 Default processing outputs:
 
@@ -379,10 +379,10 @@ Common options:
 
 Behavior:
 
-- When no source is specified, detects `main.py` in the current directory for standalone direct-source development. A `pyproject.toml`, Maven build, or Gradle build keeps project mode.
+- When you supply no source, Pyronaut detects `main.py` in the current directory for direct-source development. A `pyproject.toml`, Maven build, or Gradle build keeps project mode.
 - Runs `pyronaut-validate-config --scenario dev` before preflight by default.
 - Automatically performs install/process preflight before launching.
-- Starts an owned test-resources server when test resources are enabled and no reusable external server settings are present.
+- Starts an owned test-resources server when configuration enables test resources and no reusable external server settings are present.
 - Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
 - Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
 - Uses the development runtime classpath manifest plus processed classes.
@@ -406,8 +406,8 @@ Behavior:
 - Runs `pyronaut-validate-config --scenario run` before preflight by default.
 - Automatically performs install/process preflight before launching.
 - Does not start test resources by default.
-- Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS` when an external project-local server is configured.
-- Direct source execution is production-only and never infers, starts, or consumes Test Resources.
+- Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS` when project configuration defines an external project-local server.
+- Direct-source `pyronaut run` never infers, starts, or consumes Test Resources.
 - Uses the runtime classpath manifest plus processed classes.
 - For native toolchains, excludes runtime artifacts already bundled in the
   selected production image by Maven `group:artifact`, so the image's copy
@@ -430,16 +430,16 @@ Behavior:
 
 - Runs `pyronaut-validate-config --scenario test` before preflight by default.
 - Automatically performs install/process preflight.
-- Starts an owned test-resources server when test resources are enabled and no reusable external server settings are present.
+- Starts an owned test-resources server when configuration enables test resources and no reusable external server settings are present.
 - Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
 - Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
 - Uses test classpath manifest and processed test classes when available.
-- Uses the configured Python test directory for pytest discovery unless `--tests-dir` overrides it; JUnit Python modules are discovered from processed test classes.
+- Uses the configured Python test directory for pytest discovery unless `--tests-dir` overrides it; JUnit discovers Python modules from processed test classes.
 - Includes the configured resources directory, any `additional-resources` directories, the configured test resources directory, and any `additional-test-resources` directories on the classpath when present.
 - Writes reports under `__pyronaut__/reports/tests`, including each test's captured console output; `console.log` keeps output produced outside any test.
 - Shows a live progress display on a terminal; `--verbose` or `tool.pyronaut.test.verbose = true` streams application and test framework output to the console instead.
 
-Direct source tests:
+Direct-source tests:
 
 Direct tests automatically discover recursive `**Test.java` sources for Java
 and Python test modules named `*Test.py` or `test_*.py`, based on the
@@ -460,11 +460,11 @@ pyronaut test Foo.py -- FooTest.py
 pyronaut test src/*.java -- test/*.java
 ----
 
-The implicit search is rooted at the current working directory. An explicit
+The implicit search starts at the current working directory. An explicit
 `--` with no test source is invalid; use the shorthand form when you want the
 default recursive test discovery.
 
-Direct tests are compiled in-memory and executed through JUnit 5. Python direct tests use the Python compiler's JUnit 5 integration; they do not invoke pytest or require a Python virtual environment. Java-only direct tests disable Python runtime beans unless `micronaut.python.enabled` is supplied explicitly.
+Pyronaut compiles direct tests in memory and executes them through JUnit 5. Python direct tests use the Python compiler's JUnit 5 integration; they do not invoke pytest or require a Python virtual environment. Java-only direct tests disable Python runtime beans unless you supply `micronaut.python.enabled` explicitly.
 
 Use `-t` or `--continuous` to rerun direct tests after source changes:
 
@@ -473,9 +473,9 @@ Use `-t` or `--continuous` to rerun direct tests after source changes:
 pyronaut test -t Foo.java -- FooTest.java
 ----
 
-Direct source runs show each stage on the console: `Compiling main.py, test_main.py`, the dependency
+Direct-source runs show each stage on the console: `Compiling main.py, test_main.py`, the dependency
 declarations found in the sources (`Found 1 dependency declaration …` with each coordinate beneath it),
-one row per resolved scope while declared dependencies are fetched, the final compilation and, for
+one row per resolved scope while Maven fetches declared dependencies, the final compilation and, for
 `run`/`dev`, `Starting application` until the context is up. Direct test output then includes per-test
 progress and a final execution summary. Direct mode writes JUnit XML and HTML reports to
 `__pyronaut__/reports/tests` and prints a terminal link to the HTML report. The
@@ -514,7 +514,7 @@ Packaging selection:
 The configured values are `fat-jar`, `wheel-jvm`, `wheel-native`,
 `wheel-crema`, `docker-jvm`, `docker-native`, and `docker-crema`; the default is
 `wheel-jvm`. Explicit flags take precedence. The spelling `jar` is not accepted
-in configuration. `tool.pyronaut.build.mode` has been removed: migrate JVM and
+in configuration. Pyronaut no longer accepts `tool.pyronaut.build.mode`: migrate JVM and
 native values to `wheel-jvm` and `wheel-native` (or the matching Docker/Crema
 format). `tool.pyronaut.toolchain.type` continues to select how CLI tools run,
 but no longer changes build output.
@@ -523,7 +523,7 @@ Common options:
 
 - `--project-dir <dir>`
 - `--jar`: build one runnable FAT JAR
-- `--docker`: build a container image instead of a wheel/native binary on the host
+- `--docker`: build a container image instead of a wheel or native executable on the host
 - `--static`: static native container build; only valid with `--native --docker`
 - `--native-base`: build a reusable Crema production runtime image
 - `--native-base=default`: package against the configured Java or Python Crema runtime for the target platform
@@ -538,8 +538,8 @@ configuration validation and the install/process preflight, `Packaging FAT JAR �
 `Downloading reachability metadata`, `Building native image · [3/8] Performing analysis` (native-image's
 own output flows above the row), `Building wheel` (pip's output is shown only when it fails) and
 `Building Docker image <tag>` (Docker keeps the terminal while it builds). The final
-`✓ … build complete` line names the artifact and is followed by an `Install with:` or `Run it with:` hint.
-Without a terminal the same information is printed as plain lines. See <<progressOutput,Progress output>>.
+The `✓ … build complete` line names the artifact, and the CLI follows it with an `Install with:` or `Run it with:` hint.
+Without a terminal the CLI prints the same information as plain lines. See <<progressOutput,Progress output>>.
 
 JVM mode:
 
@@ -572,8 +572,8 @@ The SDK wheel contains JVM launchers only. Native project commands download
 `pyronaut-dev` on demand, and native production runs download `pyronaut-run`
 for Java projects or `pyronaut-run-python` for Python projects. Direct-source
 `run`, `test`, and `dev` commands use `pyronaut-dev` because it includes the
-compiler. Downloaded images are versioned under `~/.pyronaut/bin` and are reused
-on later invocations.
+compiler. Pyronaut versions downloaded images under `~/.pyronaut/bin` and reuses
+them on later invocations.
 
 JVM Docker mode (`pyronaut build --docker`):
 
@@ -630,7 +630,7 @@ operating system and architecture; Docker builds resolve Linux for the current
 architecture. Pyronaut caches the language-specific `pyronaut-run` image for
 Java applications or `pyronaut-run-python` for Python applications. Resolution
 uses the `[native-images]` repository, version, release, authentication, and
-proxy settings in `~/.pyronaut/settings.toml`; missing bundles are downloaded
+proxy settings in `~/.pyronaut/settings.toml`; Pyronaut downloads missing bundles
 with progress reporting. The equivalent `pyproject.toml` setting is
 `native-base = "default"`. Bare `--native-base`
 continues to create a custom base and export its SBOM.
@@ -647,7 +647,7 @@ pyronaut build --native-base
 pyronaut build
 ----
 
-Without `native-base`, Pyronaut builds an application-specific native binary.
+Without `native-base`, Pyronaut builds an application-specific native executable.
 With it, the later native build packages the configured reusable launcher and
 the processed application classes separately.
 
@@ -662,9 +662,9 @@ pyronaut build App.py --docker --native-base=default
 ----
 
 Sources compile into a disk-backed project under `__pyronaut__/direct-source-build`.
-Without `--name` and `--version`, the source stem and `0.1.0` are used.
+Without `--name` and `--version`, Pyronaut uses the source stem and `0.1.0`.
 `--setup pyproject.toml` supplies normal Pyronaut configuration. Inline
-`@Dependency` declarations are resolved before packaging and are included in
+Pyronaut resolves `@Dependency` declarations before packaging and includes them in
 a custom native base's SBOM.
 
 For Docker, `pyronaut build --docker --native-base` first creates and
@@ -691,7 +691,7 @@ runtime image. The base image contains `/opt/pyronaut/bin/pyronaut-run` (or
 
 ==== Production packaging matrix
 
-The installed production wheel can be exercised against direct sources and
+You can exercise the installed production wheel against direct sources and
 isolated copies of Gradle, Maven, and Python projects with the opt-in matrix:
 
 [source,bash]
@@ -706,7 +706,7 @@ The 45-case matrix runs FAT JAR, JVM, native, default-base, custom-base, and Doc
 sequentially. It uses isolated copies under `~/dev/pyronaut-testing` by
 default. Set `PYRONAUT_PACKAGING_E2E_WORKSPACE` to change that location and
 `PYRONAUT_PACKAGING_E2E_CLI` to select the installed `pyronaut` executable.
-Results, command logs, and `follow-up-issues.md` are written to
+The matrix writes results, command logs, and `follow-up-issues.md` to
 `build/packaging-e2e`.
 
 [[custom-dockerfiles]]
@@ -843,16 +843,16 @@ leyden-jvm-args = ["--enable-preview"]
 
 Canonical `pyproject.toml` keys are kebab-case. Legacy camelCase aliases are still accepted for compatibility, but the generated schema prefers the kebab-case names.
 
-`logs-dir` controls where standalone test resources server logs are written.
-If the value is relative, it is resolved against the project directory.
+`logs-dir` controls where standalone test resources server logs go.
+Pyronaut resolves a relative value against the project directory.
 When omitted, the default is `.micronaut/test-resources/logs`.
 
 Lifecycle behavior:
 
 - `pyronaut dev` and `pyronaut test` automatically orchestrate test resources when enabled.
-- Owned servers are started on demand and stopped when the owning development/test session exits.
+- Pyronaut starts owned servers on demand and stops them when the owning development/test session exits.
 - Shared servers (`shared-server = true`) are intentionally left running across command invocations.
-- Externally started servers are attached to when project-local settings already exist, but are not claimed or stopped by `dev`/`test`.
+- When project-local settings already exist, `dev` and `test` attach to externally started servers without claiming or stopping them.
 - `pyronaut test-resources-server start` remains the way to keep a reusable server running until you explicitly stop it.
 
 Integration behavior:
@@ -891,7 +891,7 @@ Supported keys:
 - `distribution`: requested GraalVM distribution. Supported values are `ce`, `ee`, and `dev`.
 - `version`: exact GraalVM version string to match or download.
 - `java-version`: minimum Java major version. Pyronaut CLI currently requires GraalVM JDK 25 or newer.
-- `release-tag`: required for `distribution = "dev"` unless `download-url` is provided directly. This must match the GitHub release tag from `graalvm-ce-dev-builds`, or an Oracle EA tag such as `jdk-25e1-25.0.3-ea.32` from `oracle-graalvm-ea-builds`.
+- `release-tag`: the `distribution = "dev"` setting requires this value unless you provide `download-url` directly. The value must match the GitHub release tag from `graalvm-ce-dev-builds`, or an Oracle EA tag such as `jdk-25e1-25.0.3-ea.32` from `oracle-graalvm-ea-builds`.
 - `download-url`: optional explicit archive URL override.
 
 Discovery order:
@@ -915,13 +915,13 @@ Behavior notes:
 - `tool.pyronaut.toolchain.type` controls how the `pyronaut` command executes CLI tooling. Build output defaults are configured separately with `tool.pyronaut.packaging.format`.
 - Command-specific `tool.pyronaut.processor.mode` and `tool.pyronaut.test.mode` settings override the global toolchain type for those commands.
 - If no explicit toolchain is configured, Pyronaut CLI accepts any compatible GraalVM JDK 25+ already available on the machine.
-- If an explicit toolchain is configured, Pyronaut only reuses an installed JDK when the distribution, version, and Java major version match the requested spec.
-- Downloaded JDKs are cached under `~/.pyronaut/sdks` for reuse across projects.
+- If you configure an explicit toolchain, Pyronaut reuses an installed JDK only when the distribution, version, and Java major version match the requested spec.
+- Pyronaut caches downloaded JDKs under `~/.pyronaut/sdks` for reuse across projects.
 - The generated `pyproject.toml` schema supports the canonical kebab-case keys and also accepts the compatibility aliases `javaVersion`, `releaseTag`, and `downloadUrl`.
 
 macOS note:
 
-- Development builds downloaded from GitHub may be quarantined by Gatekeeper.
+- Gatekeeper may quarantine development builds that you download from GitHub.
 - When Pyronaut detects a quarantined GraalVM, it prints the command you should run:
 +
 [source,bash]
@@ -946,7 +946,7 @@ pyronaut build --native --project-dir /path/to/app -- \
   --initialize-at-run-time io.netty.util.ResourceLeakDetector
 ----
 
-`--` is supported to explicitly separate orchestrator arguments from native-image passthrough arguments.
+The CLI supports `--` to explicitly separate orchestrator arguments from native-image passthrough arguments.
 
 [[reachability-metadata]]
 === Reachability metadata repository (native mode)
@@ -969,9 +969,9 @@ excluded-modules = ["ch.qos.logback:logback-classic"]
 
 Notes:
 
-- By default, metadata is enabled.
-- Versioned repository zips are resolved from Maven Central when only `version` is set.
-- Repository-based selection is applied to runtime artifacts and feeds `-H:ConfigurationFileDirectories=...`.
+- By default, Pyronaut enables metadata.
+- Pyronaut resolves versioned repository zips from Maven Central when you set only `version`.
+- Pyronaut applies repository-based selection to runtime artifacts and feeds the result to `-H:ConfigurationFileDirectories=...`.
 
 === `pyronaut --tui`
 
@@ -1004,10 +1004,10 @@ until the launcher reports that it is running. This covers the pause before a la
 executes its first instruction: on macOS the operating system verifies a freshly downloaded launcher on its
 first run, which can take several seconds. The row disappears as soon as the tool takes over.
 
-Without a terminal (CI, pipes, `pyronaut … 2>log`) the same steps are printed as deterministic plain
-lines and no cursor-control sequences are emitted. `NO_COLOR` disables colours, `--color never` does the
+Without a terminal (CI, pipes, `pyronaut … 2>log`) Pyronaut prints the same steps as deterministic plain
+lines and the CLI emits no cursor-control sequences. `NO_COLOR` disables colours, `--color never` does the
 same for the commands that accept it, and `--progress off` silences the live rows of `setup`, `install`
-and `doctor`. Unicode glyphs are used on a UTF-8 terminal; `-Dpyronaut.progress.unicode=false` forces the
+and `doctor`. The CLI uses Unicode glyphs on a UTF-8 terminal; `-Dpyronaut.progress.unicode=false` forces the
 ASCII set for the Java tools.
 
 == Preflight behavior summary
@@ -1037,9 +1037,9 @@ The orchestrator uses stable high-level categories:
 - `9`: unsupported platform
 - `10`: internal execution error
 
-Delegated tools may return command-specific non-zero codes for domain failures (for example, test failures), and those are propagated back to the caller.
+Delegated tools may return command-specific non-zero codes for domain failures (for example, test failures), and Pyronaut propagates those codes back to the caller.
 
-== Direct Source Execution
+== Direct-source execution
 
 Run a Java source file directly in a generated Micronaut application context:
 
@@ -1050,4 +1050,4 @@ pyronaut run Foo.java
 
 Java-only direct execution disables Micronaut Python infrastructure for that run by setting
 `micronaut.python.enabled=false`. Python applications remain enabled by default. The property can
-also be configured explicitly as an application property or system property.
+You can also configure the property explicitly as an application property or system property.

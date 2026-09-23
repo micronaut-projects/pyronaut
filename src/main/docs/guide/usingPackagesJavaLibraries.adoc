@@ -1,9 +1,9 @@
-= Using Python Packages & Java Libraries
+= Using Python Packages and Java Libraries
 
 Pyronaut applications can use both Python packages and Java libraries.
 Install Python packages into a GraalPy virtual environment and declare Java libraries as Maven coordinates in `pyproject.toml`.
 
-== Create a GraalPy Virtual Environment
+== Create a GraalPy virtual environment
 
 Install https://github.com/pyenv/pyenv#installation[pyenv], then install and select the GraalPy version currently used by Pyronaut:
 
@@ -14,7 +14,14 @@ pyenv shell graalpy3.13-25.4.4
 python --version
 ----
 
-From the project directory, create and activate a GraalPy virtual environment:
+Change to your project directory:
+
+[source,bash]
+----
+cd <project-dir>
+----
+
+Create and activate a GraalPy virtual environment:
 
 [source,bash]
 ----
@@ -28,22 +35,21 @@ Use the `pip` installed by the GraalPy virtual environment.
 It can apply GraalPy-specific package patches and select compatible distributions.
 
 When a project contains `.venv`, Pyronaut automatically uses its Python executable and installed packages when launching the application and tests.
-The virtual environment must be created with GraalPy; packages from a CPython-created virtual environment cannot be provided to Pyronaut's embedded GraalPy runtime.
+Create the virtual environment with GraalPy; Pyronaut cannot use packages from a CPython-created virtual environment in its embedded GraalPy runtime.
 
 Pyronaut does not install Python packages when you run `pyronaut install`.
-You can also record Python dependencies in the standard `[project].dependencies` table in `pyproject.toml`; see <<dependencies,Installing Python & Java Dependencies>>.
+You can also record Python dependencies in the standard `[project].dependencies` table in `pyproject.toml`; see <<dependencies,Installing Python and Java Dependencies>>.
 
-== Python Package Compatibility
+== Python package compatibility
 
-WARNING: As of September 3, 2026, not every Python package or package version is compatible with GraalPy or every Pyronaut execution model. Test the exact package versions and deployment mode used by your application.
+WARNING: Package compatibility depends on the GraalPy version, native extensions, threading, and deployment mode. Test the exact package versions and deployment mode used by your application.
 
 Support for packages containing native extensions remains experimental.
-Native wheels built for CPython are not binary-compatible with GraalPy, so native extensions require a GraalPy-specific wheel or must be built with GraalPy.
+Native wheels that target CPython are not binary-compatible with GraalPy. Use a GraalPy-specific wheel for native extensions or build the extensions with GraalPy.
 See the https://www.graalvm.org/python/compatibility/[GraalPy package compatibility checker] and https://www.graalvm.org/reference-manual/graalpy/[GraalPy reference documentation] for current compatibility and native-extension guidance.
 
 Pydantic 2 depends on `pydantic-core`, which is partially written in Rust and exposed to Python as native code.
-Pydantic may work in tested single-threaded scenarios, but it does not work reliably in Pyronaut's multithreaded scenarios involving native code and should not be considered generally compatible with Pyronaut.
-Compatibility-checker results describe the configurations covered by those tests; they do not establish compatibility across every threading or deployment model.
+Because native-extension support remains experimental, test the exact Pydantic, GraalPy, and Pyronaut versions under the threading and deployment model your application uses. A passing compatibility-checker result covers only its tested configuration.
 
 Many common Python library use cases have high-performance JVM alternatives that integrate directly with Micronaut:
 
@@ -60,9 +66,9 @@ Many common Python library use cases have high-performance JVM alternatives that
 |https://github.com/HubSpot/jinjava[Jinjava]
 |===
 
-== Optimise Hot Paths in Java
+== Optimise hot paths in Java
 
-Python is the right language for most of a Pyronaut application, but a CPU-bound loop, a tight parsing routine or a numeric kernel can be faster on the JVM. Instead of writing a C extension, add a Java class to the project's Java source directory (`src-java` by default, see <<projectStructure,Pyronaut Toolchain & Project Layout>>) and make it a bean:
+For CPU-bound work such as a tight parsing routine or numeric kernel, a Java implementation can run faster than Python. Add the Java class to the project's Java source directory (`src-java` by default; see <<projectStructure,Pyronaut Toolchain and Project Layout>>) and make it a bean:
 
 [source,java]
 ----
@@ -82,7 +88,7 @@ public class PriceCalculator {
 }
 ----
 
-`pyronaut process` compiles Java and Python sources together, so the bean can be injected into Python code by its type hint:
+`pyronaut process` compiles Java and Python sources together, so Python code can inject the bean through its type hint:
 
 [source,python]
 ----
@@ -101,9 +107,9 @@ class OrderController:
         return self.calculator.total(prices, 0.2)
 ----
 
-Python lists convert to Java arrays and collections automatically, and the Java class participates in the same dependency injection, configuration and tests as the rest of the application. The reverse also works: Java code can inject Python beans and call `async def` methods as `CompletionStage` values (see <<reactiveInterop,Awaiting Reactive and Java Async Types>>). Java tests belong under `test-java` and run in the same `pyronaut test` invocation.
+Python lists convert to Java arrays and collections automatically, and the Java class participates in the same dependency injection, configuration, and tests as the rest of the application. Java code can also inject Python beans and call `async def` methods as `CompletionStage` values (see <<reactiveInterop,Awaiting Reactive and Java Async Types>>). Java tests belong under `test-java` and run in the same `pyronaut test` invocation.
 
-== Use a Java Library from Python
+== Use a Java library from Python
 
 Declare Java dependencies by scope under `[tool.pyronaut.dependencies]`.
 For example, add Apache Commons Lang to the runtime classpath:
@@ -140,5 +146,5 @@ print(message)
 Use `group:artifact:version` coordinates for libraries such as Apache Commons Lang that are not managed by the configured Micronaut BOMs.
 Micronaut dependencies managed by the Micronaut platform, Micronaut core, or Pyronaut BOMs can use versionless `group:artifact` coordinates.
 
-For the complete dependency scopes and install options, see <<dependencies,Installing Python & Java Dependencies>>.
-See also <<pyproject,Configuring pyproject.toml>>, <<mavenRepositories,Configuring Maven Repositories>>, and <<directSourceDeclarations,Declaring Direct Source Dependencies>>.
+For dependency scopes and install options, see <<dependencies,Installing Python and Java Dependencies>>.
+See also <<pyproject,Configuring pyproject.toml>>, <<mavenRepositories,Configuring Maven repositories>>, and <<directSourceDeclarations,Declaring direct source dependencies>>.

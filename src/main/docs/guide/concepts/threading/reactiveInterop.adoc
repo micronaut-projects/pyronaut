@@ -1,4 +1,4 @@
-Micronaut is a reactive framework. Many of its APIs, and many Java libraries you will use from Python, return asynchronous types rather than plain values:
+Micronaut is a reactive framework. Its APIs and many Java libraries used from Python return asynchronous types rather than plain values:
 
 [cols="1,2", options="header"]
 |===
@@ -17,14 +17,14 @@ Micronaut is a reactive framework. Many of its APIs, and many Java libraries you
 |A Project Reactor `Publisher` that emits any number of values.
 |===
 
-You can work with these types from Python in two ways: await them inside a coroutine, or return them from a route and let Micronaut subscribe.
+From Python, you can either await these types inside a coroutine or return them from a route and let Micronaut subscribe.
 
 == Awaiting Java async values
 
 Inside an `async def` function, `await` accepts Java async values directly:
 
 * A `CompletionStage` awaits to its result.
-* A `Publisher` or `Mono` is treated as a single value. Micronaut requests one item, completes the await with it and cancels the subscription. An empty publisher awaits to `None`; an error fails the await with an exception.
+* Micronaut treats a `Publisher` or `Mono` as a single value. It requests one item, completes the await with it and cancels the subscription. An empty publisher awaits to `None`; an error fails the await with an exception.
 
 [source,python]
 ----
@@ -70,11 +70,11 @@ class ReactiveController:
         return Mono.just("hello")
 ----
 
-`Mono` and `Publisher` are obtained with `java.type(...)` here, as in the Micronaut examples; `from reactor.core.publisher import Mono` is equivalent. Note the module name `micronaut.core.async_`: `async` is a Python keyword, so the Java package `io.micronaut.core.async` is imported with a trailing underscore. The same rule renames Java methods, for example `Flux.from_(publisher)` calls `Flux.from`.
+This example obtains `Mono` and `Publisher` with `java.type(...)`, as in the Micronaut examples; `from reactor.core.publisher import Mono` is equivalent. Note the module name `micronaut.core.async_`: `async` is a Python keyword, so Pyronaut imports the Java package `io.micronaut.core.async` with a trailing underscore. The same rule renames Java methods, for example `Flux.from_(publisher)` calls `Flux.from`.
 
 == Streaming responses
 
-A route that returns a `Publisher` of several items streams them to the client. With `MediaType.APPLICATION_JSON_STREAM` each item is written as a JSON document as it becomes available, and with `MediaType.TEXT_EVENT_STREAM` the response is a server-sent event stream:
+A route that returns a `Publisher` of several items streams them to the client. With `MediaType.APPLICATION_JSON_STREAM`, the Micronaut HTTP server writes each item as a JSON document as it becomes available. With `MediaType.TEXT_EVENT_STREAM`, it sends the response as a server-sent event stream:
 
 [source,python]
 ----

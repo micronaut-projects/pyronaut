@@ -1,6 +1,6 @@
-Pyronaut supports `async def` routes, clients and bean methods using standard Python `asyncio` syntax. Under the hood Micronaut provides the event loop: each coroutine is bound to the Netty event loop handling the current request, and awaiting a Micronaut client call, a timer or a supported network operation suspends the coroutine without holding a thread.
+In Pyronaut, `async def` routes, clients, and bean methods use standard Python `asyncio` syntax. Micronaut provides the event loop: each coroutine is bound to the Netty event loop handling the current request, and awaiting a Micronaut client call, a timer, or a supported network operation suspends the coroutine without holding a thread.
 
-There is no `asyncio.run()` and no `uvicorn`. The loop already exists when your function is called.
+There is no `asyncio.run()` and no `uvicorn`. The event loop already exists when Micronaut calls your function.
 
 == Writing an async route
 
@@ -23,7 +23,7 @@ The same works for controller methods and for methods of any `@Singleton` bean.
 
 == Async HTTP clients
 
-A declarative client method declared as `async def` returns an awaitable. Combining an async route with an async client is the main reason to use coroutines: many outbound calls can be in flight while the event loop keeps serving other requests.
+When you declare a declarative client method as `async def`, it returns an awaitable. Combining an async route with an async client is the main reason to use coroutines: many outbound calls can be in flight while the event loop keeps serving other requests.
 
 [source,python]
 ----
@@ -51,7 +51,7 @@ async def proxy_message() -> str:
     return "proxied: " + await backend.message()
 ----
 
-The low-level `HttpClient` can be awaited too. Inject it with a `@Client` qualifier and await `exchange` or `retrieve`:
+You can await the low-level `HttpClient` too. Inject it with a `@Client` qualifier and await `exchange` or `retrieve`:
 
 [source,python]
 ----
@@ -122,7 +122,7 @@ Third-party async libraries that only rely on the supported primitives (timers, 
 
 == Async event listeners and scheduled jobs
 
-Coroutines are not limited to HTTP. An `async def` method on any bean is exposed to Java as a `CompletionStage`, so Java code and other Micronaut modules can await it. Event listeners, scheduled jobs and message consumers can therefore be written as coroutines when they need to await other async APIs.
+Coroutines are not limited to HTTP. Pyronaut exposes an `async def` method on any bean to Java as a `CompletionStage`, so Java code and other Micronaut modules can await it. Event listeners, scheduled jobs and message consumers can therefore use coroutines when they need to await other async APIs.
 
 == Graceful shutdown
 
@@ -130,7 +130,7 @@ Active coroutine bridges participate in Micronaut's graceful shutdown. With `mic
 
 == Disabling the bridge
 
-The asyncio bridge is enabled by default. It can be switched off, in which case `async def` methods are still valid Python but are executed to completion on a Micronaut executor instead of on the event loop:
+Pyronaut enables the asyncio bridge by default. You can switch it off; in that case `async def` methods remain valid Python, but Micronaut executes them to completion on an executor instead of on the event loop:
 
 [source,toml]
 ----
@@ -138,4 +138,4 @@ The asyncio bridge is enabled by default. It can be switched off, in which case 
 enabled = false
 ----
 
-The Netty-backed event loop is provided by the `micronaut-context-python-netty` module. The Pyronaut development and production launchers include it, so no dependency needs to be declared.
+The `micronaut-context-python-netty` module provides the Netty-backed event loop. The launchers used by `pyronaut dev` and `pyronaut run` include it, so you do not need to declare a dependency.

@@ -1,13 +1,12 @@
-= Installing Python & Java Dependencies
+= Installing Python and Java Dependencies
 
 Pyronaut uses normal Python packaging for Python dependencies and Maven coordinates for Java dependencies.
 
-For one-file/direct source applications without `pyproject.toml`, see <<directSourceDeclarations,Declaring Direct Source Dependencies>>.
+For direct-source applications without `pyproject.toml`, see <<directSourceDeclarations,Declaring direct source dependencies>>.
 
-== Python Dependencies
+== Python dependencies
 
-Declare Python dependencies using standard Python packaging metadata, or install them into the active virtual environment with `pip`.
-For example:
+Declare Python dependencies using standard Python packaging metadata:
 
 [source,toml]
 ----
@@ -20,9 +19,9 @@ dependencies = [
 Pyronaut does not resolve Python packages during `pyronaut install`.
 The command expects the Python environment used to run Pyronaut and pytest to already contain the Python packages your tests or application import.
 
-== Java Dependencies
+== Java dependencies
 
-Java dependencies are declared by scope under `[tool.pyronaut.dependencies]`:
+Declare Java dependencies by scope under `[tool.pyronaut.dependencies]`:
 
 [source,toml]
 ----
@@ -48,7 +47,7 @@ Use `group:artifact:version` for dependencies that are not managed.
 
 === Custom BOMs and exclusions
 
-Project BOMs can be applied to every dependency scope:
+Apply project BOMs to every dependency scope:
 
 [source,toml]
 ----
@@ -61,9 +60,9 @@ exclusions = ["commons:commons-lang"]
 "io.netty:netty-handler" = ["commons:commons-lang"]
 ----
 
-`boms` entries must use `group:artifact:version`. Explicit dependency versions take precedence over BOM management; user BOMs are applied before the bundled Micronaut and Pyronaut BOMs. Global exclusions remove matching transitive modules from all roots, while an explicitly declared dependency remains available. Artifact exclusions apply only below the matching direct `group:artifact` root.
+`boms` entries must use `group:artifact:version`. Explicit dependency versions take precedence over BOM management; Pyronaut applies user BOMs before the bundled Micronaut and Pyronaut BOMs. Global exclusions remove matching transitive modules from all roots, while an explicitly declared dependency remains available. Artifact exclusions apply only below the matching direct `group:artifact` root.
 
-== Install Behavior
+== Install behavior
 
 Run:
 
@@ -72,7 +71,7 @@ Run:
 pyronaut install
 ----
 
-By default, dependency artifacts are resolved into Maven local (`~/.m2/repository`, or `-Dmaven.repo.local` when set).
+By default, Pyronaut resolves dependency artifacts into Maven local (`~/.m2/repository`, or `-Dmaven.repo.local` when set).
 Pyronaut writes scoped classpath manifests under `__pyronaut__` that point at the selected local repository.
 
 To use a project-specific repository instead:
@@ -92,9 +91,9 @@ Useful install flags include:
 
 When several scopes are selected, Maven resolution runs in parallel. Interactive terminals show one
 progress row per scope, advancing from 0% to 100% by resolved artifact count and displaying the current
-artifact file name. ASCII bars are used by default for compatibility with terminals and log collectors;
+artifact file name. Pyronaut uses ASCII bars by default for compatibility with terminals and log collectors;
 Unicode block bars can be explicitly enabled with `-Dpyronaut.progress.unicode=true` on a known UTF-8 terminal.
 Redirected and CI output remains deterministic and does not contain cursor-control sequences.
 
 Use `tool.pyronaut.dependencies.development-runtime` for dependencies that should be available only to `pyronaut dev` and other development runtime launches.
-Those artifacts are written to `__pyronaut__/resolved-development-runtime-dependencies` and are not included in the production runtime manifest used by build/package flows.
+Pyronaut writes those artifacts to `__pyronaut__/resolved-development-runtime-dependencies` and excludes them from the production runtime manifest used by build/package flows.

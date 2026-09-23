@@ -1,7 +1,7 @@
 = Proxy Configuration
 
 `pyronaut install` and on-demand native-image downloads honor proxy configuration.
-Proxy settings are checked in this order:
+Pyronaut checks proxy settings in this order:
 
 . Environment variables
 . `~/.pyronaut/settings.toml`
@@ -9,7 +9,7 @@ Proxy settings are checked in this order:
 
 The first configured proxy wins.
 
-== Environment Variables
+== Environment variables
 
 Use the standard proxy environment variables:
 
@@ -23,9 +23,9 @@ pyronaut install
 Lowercase variants such as `https_proxy` and `no_proxy` are also recognized.
 If both HTTP and HTTPS proxy variables are set, HTTPS takes precedence.
 
-Bypass entries are matched as host-name patterns in which `*` is a wildcard. A leading dot (`.internal`) is treated as `*.internal` and a trailing port is ignored; CIDR ranges are not supported.
+Pyronaut matches bypass entries as host-name patterns in which `*` is a wildcard. It treats a leading dot (`.internal`) as `*.internal` and ignores a trailing port; CIDR ranges are not supported.
 
-== Pyronaut Settings
+== Pyronaut settings
 
 Use `~/.pyronaut/settings.toml` when proxy settings should apply to Pyronaut without changing the shell environment:
 
@@ -36,7 +36,7 @@ url = "https://user:password@proxy.example.com:8443"
 nonProxyHosts = "localhost,*.internal"
 ----
 
-The proxy can also be expressed as individual fields:
+You can also specify the proxy with individual fields:
 
 [source,toml]
 ----
@@ -50,9 +50,9 @@ nonProxyHosts = "localhost|127.*"
 ----
 
 `nonProxyHosts` and `noProxyHosts` are both accepted.
-Comma-separated and pipe-separated values are normalized before being passed to Maven Resolver.
+Pyronaut normalizes comma-separated and pipe-separated values before passing them to Maven Resolver.
 
-== Maven Settings Fallback
+== Maven settings fallback
 
 If neither environment variables nor Pyronaut settings define a proxy, Pyronaut reads the active proxy from `~/.m2/settings.xml`:
 
@@ -73,10 +73,10 @@ If neither environment variables nor Pyronaut settings define a proxy, Pyronaut 
 </settings>
 ----
 
-When dependency resolution fails and a proxy was selected, the install error includes the proxy source and host summary.
+When dependency resolution fails after Pyronaut selects a proxy, the install error includes the proxy source and host summary.
 
 Native-image downloads use the same precedence and bypass rules. The selected
-bundle URL is formed from `[native-images].base-url` and
+Pyronaut forms the bundle URL from `[native-images].base-url` and
 `[native-images].version`. For GitHub Releases, `[native-images].release-tag`
 selects the release used to resolve that versioned asset. These settings are
 independent of the `[proxy]` table.

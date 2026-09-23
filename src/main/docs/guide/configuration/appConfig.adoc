@@ -2,7 +2,7 @@
 
 Micronaut application configuration lives in the configured resources directory.
 
-Direct source applications can declare individual runtime properties with `AppConfig`; see <<directSourceDeclarations,Declaring Direct Source Dependencies>>.
+Direct-source applications can declare individual runtime properties with `AppConfig`; see <<directSourceDeclarations,Declaring Direct Source Dependencies>>.
 By default, that directory is `config`, so the main configuration file is:
 
 [source,text]
@@ -10,9 +10,9 @@ By default, that directory is `config`, so the main configuration file is:
 config/application.toml
 ----
 
-Pyronaut adds Micronaut TOML support to the runtime classpath by default when dependencies are managed from the Micronaut platform.
+Pyronaut adds Micronaut TOML support to the runtime classpath by default when the Micronaut platform manages dependencies.
 
-== Basic Configuration
+== Basic configuration
 
 [source,toml]
 ----
@@ -27,10 +27,10 @@ enabled = true
 sensitive = false
 ----
 
-== Executor Defaults
+== Executor defaults
 
-Pyronaut supplies the following low-priority defaults for Micronaut executors:
-This follows the https://github.com/micronaut-projects/micronaut-core/commit/1edbbb9f2d1627dedfd5a95d0a7eb7fd543f4029[Micronaut Core Python threading guidance].
+Pyronaut supplies the following low-priority defaults for Micronaut executors. This follows the
+https://github.com/micronaut-projects/micronaut-core/commit/1edbbb9f2d1627dedfd5a95d0a7eb7fd543f4029[Micronaut Core Python threading guidance].
 
 [cols="2,1,4", options="header"]
 |===
@@ -53,7 +53,7 @@ This follows the https://github.com/micronaut-projects/micronaut-core/commit/1ed
 |GraalPy does not support executing Python code on virtual threads, so the blocking executor must use platform threads.
 |===
 
-These defaults are applied only when the application does not provide a value. Normal application configuration, including `application.toml` or `application.properties`, can override them, and partial configuration leaves the unspecified defaults in place.
+Pyronaut applies these defaults only when the application does not provide a value. Normal application configuration, including `application.toml` or `application.properties`, can override them, and partial configuration leaves the unspecified defaults in place.
 
 Environment-specific files use the Micronaut naming convention:
 
@@ -63,10 +63,10 @@ config/application-test.toml
 config/application-dev.toml
 ----
 
-The configured `resources` directory and any `additional-resources` directories are included for `dev`, `run`, `test`, and build flows.
-The configured `test-resources` directory and any `additional-test-resources` directories are included for `dev` and `test` flows.
+Pyronaut includes the configured `resources` directory and any `additional-resources` directories for `dev`, `run`, `test`, and build flows.
+It includes the configured `test-resources` directory and any `additional-test-resources` directories for `dev` and `test` flows.
 
-== Schema Support
+== Schema support
 
 When `application.toml` exists, `pyronaut install` builds a JSON schema from Micronaut configuration metadata present on the resolved runtime classpath.
 It writes the schema to:

@@ -1,26 +1,27 @@
 = The FastAPI Tutorial
 
-This tutorial recreates the flow of the https://fastapi.tiangolo.com/#example[FastAPI example] with Pyronaut.
+This tutorial recreates the https://fastapi.tiangolo.com/#example[FastAPI example] using Pyronaut.
 
-The tutorial is designed for readers familiar with FastAPI and who want to learn Pyronaut.
+It is for readers familiar with FastAPI who want to learn Pyronaut.
 
-It uses standard Python type hints, generates an OpenAPI description and interactive documentation, validates input, reloads during development, and includes an automated test.
-Complete the <<prerequisites,Getting Started prerequisites>> before running the tutorial so that the GraalPy virtual environment and pytest are available.
+You will use standard Python type hints, generate OpenAPI documentation, validate input, reload the application during
+development, and run an automated test.
+First <<installation,install Pyronaut>> and run `pyronaut setup`. This direct-source workflow uses the embedded GraalPy
+runtime and JUnit 5 integration, so it does not require a project virtual environment or `pytest`.
 
-== Create It
+== Create the application
 
-Create an empty directory, change into it, and create `main.py`:
+Create an empty project directory, change into it, and create `main.py`:
 
 [source,python]
 ----
 include::src/main/docs/examples/gettingStarted/fastapi/initial/main.py[]
 ----
 
-The `@Get` decorators declare two HTTP `GET` operations.
-The `item_id: int` type hint tells Pyronaut to convert and validate the path value as an integer.
-Because `q` defaults to `None`, it is an optional query parameter.
+The `@Get` decorators declare two HTTP `GET` operations. The `item_id: int` type hint tells Pyronaut to convert and
+validate the path value as an integer. Because `q` defaults to `None`, it is optional.
 
-== Run It
+== Start the development server
 
 Run the development server from the directory containing `main.py`:
 
@@ -29,13 +30,13 @@ Run the development server from the directory containing `main.py`:
 pyronaut dev
 ----
 
-When no source is specified, `pyronaut dev` detects a standalone `main.py` in the current directory.
-Development mode watches the source and reloads the application after changes.
+When you omit the source argument, `pyronaut dev` detects `main.py` in the current directory. Development mode watches
+the source and reloads the application after changes.
 The server listens on `http://localhost:8080` by default.
 
-== Check It
+== Verify the routes
 
-Call the root operation:
+Verify the root route:
 
 [source,bash]
 ----
@@ -49,7 +50,7 @@ The response is:
 {"Hello":"World"}
 ----
 
-Call the item operation:
+Verify the item route:
 
 [source,bash]
 ----
@@ -65,12 +66,12 @@ The response is:
 
 The application now:
 
-* Handles `GET` requests at `/` and `/items/{item_id}`.
-* Converts `item_id` to an `int`.
-* Accepts the optional `q` query parameter as a `str`.
-* Returns both responses as JSON.
+* handles `GET` requests at `/` and `/items/{item_id}`.
+* converts `item_id` to an `int`.
+* accepts the optional `q` query parameter as a `str`.
+* returns both responses as JSON.
 
-Passing a value that cannot be converted to an integer returns `400 Bad Request`:
+Verify validation with a path value that Pyronaut cannot convert to an integer:
 
 [source,bash]
 ----
@@ -84,16 +85,14 @@ A representative response begins:
 HTTP/1.1 400 Bad Request
 ----
 
-== Interactive API Documentation
+== Explore the API documentation
 
-Open http://localhost:8080/swagger-ui/index.html[Swagger UI] to explore and call the API interactively.
-Pyronaut generates the OpenAPI description from the routes and Python types while compiling `main.py`.
+* Open http://localhost:8080/swagger-ui/index.html[Swagger UI] to explore and call the API interactively.
+* Open http://localhost:8080/redoc/index.html[ReDoc] for an alternative view of the same API documentation.
 
-== Alternative API Documentation
+Pyronaut generates the OpenAPI description from the routes and Python types while processing `main.py`.
 
-Open http://localhost:8080/redoc/index.html[ReDoc] for an alternative rendering of the same generated OpenAPI description.
-
-== Upgrade the Example
+== Add a request body
 
 Replace `main.py` with the following version to accept an `Item` request body:
 
@@ -102,13 +101,12 @@ Replace `main.py` with the following version to accept an `Item` request body:
 include::src/main/docs/examples/gettingStarted/fastapi/upgraded/main.py[]
 ----
 
-`Item` is a standard Python dataclass.
-`@Serdeable` enables compile-time JSON serialization, while `Valid`, `NotBlank`, and `Positive` apply Micronaut Validation to the request body.
-As with the initial example, the HTTP operations are defined as classless module-level functions. The presence of `Valid` implicitly enables validation, so an explicit `@Validated` declaration is not needed.
-No reflection or Pydantic model is required.
+`Item` is a standard Python dataclass. `@Serdeable` enables generated JSON serialization, while `Valid`, `NotBlank`, and
+`Positive` apply Micronaut Validation to the request body.
+The HTTP operations remain module-level functions. `Valid` enables validation for the request body, so an explicit
+`@Validated` declaration is not needed. This example does not require reflection or a Pydantic model.
 
-The development server reloads the application automatically.
-Try the new `PUT` operation:
+The development server reloads the application automatically. Verify the new `PUT` operation:
 
 [source,bash]
 ----
@@ -124,8 +122,8 @@ The response is:
 {"item_name":"Foo","item_id":5}
 ----
 
-The upgraded Swagger UI and ReDoc pages include the request body and its validation constraints.
-An invalid body produces `400 Bad Request`:
+The Swagger UI and ReDoc pages now include the request body and its validation constraints. Verify validation with an
+invalid body:
 
 [source,bash]
 ----
@@ -141,7 +139,7 @@ The response begins:
 HTTP/1.1 400 Bad Request
 ----
 
-== Test It
+== Test the application
 
 Create `test_main.py` next to `main.py`:
 
@@ -150,7 +148,7 @@ Create `test_main.py` next to `main.py`:
 include::src/main/docs/examples/gettingStarted/fastapi/upgraded/test_main.py[]
 ----
 
-Run the application source and test source together:
+Run the application and test sources together:
 
 [source,bash]
 ----
@@ -158,30 +156,40 @@ pyronaut test main.py -- test_main.py
 ----
 
 `MicronautTest()` starts and stops an embedded server for the generated JUnit 5 test module.
-`requests.with_context` accepts the injected `ApplicationContext` and provides a `requests`-compatible client backed by the Micronaut HTTP client, covering the root response, path and query binding, a valid request body, and a validation failure.
-Functions whose names start with `test` are exposed as JUnit 5 test methods automatically, so no top-level test class, `@Test` decorator, `self` parameter, or return annotation is needed. Injected values are available directly through module-level attributes.
-The development server does not need to be running separately.
+`requests.with_context` accepts the injected `ApplicationContext` and provides a `requests`-compatible client backed by
+the Micronaut HTTP client. The test covers the root response, path and query binding, a valid request body, and a
+validation failure.
+Functions whose names start with `test` become JUnit 5 test methods automatically. You do not need a top-level test
+class, an `@Test` decorator, a `self` parameter, or a return annotation. Injected values are available through
+module-level attributes. The development server does not need to run separately.
 
-== Deploy It
+== Run the application
 
-Deploy the application by running the same source file with `pyronaut run`:
+Run the same source file with `pyronaut run`:
 
 [source,bash]
 ----
 pyronaut run main.py
 ----
 
-Pyronaut compiles and runs the application directly. No separate application server, runtime, or other infrastructure needs to be installed; Pyronaut is the only required installation.
+Pyronaut processes and runs the source directly. This direct-source workflow does not require a separate application
+server.
 
-== Recap
+== Summary
 
-With standard Python type hints and a small set of Pyronaut decorators, the application provides:
+With standard Python type hints and Pyronaut decorators, the application provides:
 
-* Editor completion and type checking for parameters and dataclasses.
+* Request definitions that use standard Python type hints and dataclasses.
 * Conversion and validation of path, query, and JSON body values.
-* Compile-time JSON serialization without reflection.
+* Generated JSON serialization without runtime reflection.
 * Automatic OpenAPI generation with Swagger UI and ReDoc.
 * Development-time reloads with `pyronaut dev`.
-* Standalone HTTP integration tests with `@MicronautTest` and `pyronaut test`.
+* Standalone HTTP integration tests with `MicronautTest()` and `pyronaut test`.
 
-The types are declared once and reused for HTTP binding, validation, serialization, documentation, and tests.
+Declare the types once and reuse them for HTTP binding, validation, serialization, documentation, and tests.
+
+== Next steps
+
+* Use <<gettingStarted,Getting Started>> for a project-based workflow.
+* Read <<concepts,Micronaut Concepts for Python Developers>> to understand the framework model.
+* See <<packaging,Packaging and Deployment>> when you are ready to distribute the application.
