@@ -30,7 +30,7 @@ def nativeImageJdkVersion = graalVmDevTag.map { tag ->
     def matcher = tag.trim() =~ /(\d+)/
     matcher.find() ? matcher.group(1) : buildJdkVersion.get()
 }.orElse(buildJdkVersion)
-def pyenvVersion = providers.gradleProperty("pyronautPyenvVersion").orElse("graalpy3.13-25.4.4.1")
+def pyenvVersion = providers.gradleProperty("pyronautPyenvVersion").orElse("graalpy3.13-25.4.4.1.1")
 def pyenvExecutable = providers.provider {
     def pyenvRoot = System.getenv("PYENV_ROOT")
     def configured = pyenvRoot == null || pyenvRoot.isBlank()

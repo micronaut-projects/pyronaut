@@ -6273,7 +6273,7 @@ def _detect_graalvm_distribution(version_output: str, java_home: Path, version: 
     if version is not None and "dev" in version.lower():
         return "dev"
     # Development archives identify themselves in the build string and/or
-    # installation directory (for example, graalvm-community-25.4.4.1-dev).
+    # installation directory (for example, graalvm-community-25.4.4.1.1-dev).
     # Check this before the generic "graalvm community" marker so CE dev
     # builds can satisfy an explicitly requested `distribution = "dev"`.
     if "dev" in lowered:

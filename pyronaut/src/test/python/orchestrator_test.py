@@ -6515,8 +6515,8 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
 
     def test_detect_graalvm_distribution_recognizes_community_dev_build(self):
         metadata = cli._detect_graalvm_distribution(
-            'openjdk version "25.0.4.1"\nOpenJDK Runtime Environment GraalVM CE 25.4.4.1-dev+0.1',
-            Path("/tmp/graalvm-community-25.4.4.1-dev+0.1"),
+            'openjdk version "25.0.4.1"\nOpenJDK Runtime Environment GraalVM CE 25.4.4.1.1-dev+0.1',
+            Path("/tmp/graalvm-community-25.4.4.1.1-dev+0.1"),
             "25.0.4.1",
         )
         self.assertEqual("dev", metadata)
