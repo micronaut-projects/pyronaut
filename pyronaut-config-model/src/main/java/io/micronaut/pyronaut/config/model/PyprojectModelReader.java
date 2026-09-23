@@ -127,7 +127,9 @@ public final class PyprojectModelReader {
                 resolveProcessorMode(parsed),
                 readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_INCREMENTAL),
                 readEnum(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_PYTHON_INCREMENTAL_MODE),
-                readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_DAEMON)
+                readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_DAEMON),
+                new PyprojectModel.TypeCheck(readEnum(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_TYPE_CHECK_MODE)),
+                resolveStaticCompilation(parsed)
             ),
             new PyprojectModel.Test(resolveTestMode(parsed), resolveTestEngine(parsed), readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_TEST_VERBOSE)),
             sources,
@@ -305,6 +307,16 @@ public final class PyprojectModelReader {
             readInteger(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_JAVA_VERSION),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_RELEASE_TAG),
             readString(parsed, PyprojectConfigSpec.PYRONAUT_TOOLCHAIN_DOWNLOAD_URL)
+        );
+    }
+
+    private static PyprojectModel.StaticCompilation resolveStaticCompilation(JsonNode parsed) {
+        String report = readString(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_STATIC_COMPILATION_REPORT);
+        Boolean strict = readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_STATIC_COMPILATION_STRICT);
+        return new PyprojectModel.StaticCompilation(
+            readEnum(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_STATIC_COMPILATION_MODE),
+            report == null || report.isBlank() ? (String) PyprojectConfigSpec.PYRONAUT_PROCESSOR_STATIC_COMPILATION_REPORT.defaultValue() : report,
+            strict == null ? (Boolean) PyprojectConfigSpec.PYRONAUT_PROCESSOR_STATIC_COMPILATION_STRICT.defaultValue() : strict
         );
     }
 

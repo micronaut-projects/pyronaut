@@ -208,6 +208,38 @@ public final class PyprojectConfigSpec {
         "Whether processor invocations should use a persistent compiler daemon.",
         false
     );
+    public static final SectionSpec PYRONAUT_PROCESSOR_TYPE_CHECK_SECTION = section(
+        "tool.pyronaut.processor.type-check",
+        true
+    );
+    public static final FieldSpec PYRONAUT_PROCESSOR_TYPE_CHECK_MODE = enumString(
+        "tool.pyronaut.processor.type-check.mode",
+        "How Python sources are checked against the Java types they use: off, warn (problems are reported as warnings) or error (problems fail the build).",
+        "off",
+        List.of("off", "warn", "error")
+    );
+    public static final SectionSpec PYRONAUT_PROCESSOR_STATIC_COMPILATION_SECTION = section(
+        "tool.pyronaut.processor.static-compilation",
+        true
+    );
+    public static final FieldSpec PYRONAUT_PROCESSOR_STATIC_COMPILATION_MODE = enumString(
+        "tool.pyronaut.processor.static-compilation.mode",
+        "Which Python method bodies are compiled to Java: off, annotated (the scopes carrying CompileStatic) or all (every eligible method).",
+        "off",
+        List.of("off", "annotated", "all")
+    );
+    public static final FieldSpec PYRONAUT_PROCESSOR_STATIC_COMPILATION_REPORT = string(
+        "tool.pyronaut.processor.static-compilation.report",
+        "Directory the static compilation report (decisions.jsonl and summary.txt, one sub-directory per pass) is written to, relative to the project.",
+        "__pyronaut__/reports/static-compilation",
+        List.of(),
+        List.of()
+    );
+    public static final FieldSpec PYRONAUT_PROCESSOR_STATIC_COMPILATION_STRICT = bool(
+        "tool.pyronaut.processor.static-compilation.strict",
+        "Whether an explicit CompileStatic that cannot be honoured fails the build instead of warning.",
+        false
+    );
     public static final FieldSpec PYRONAUT_TEST_MODE = enumString(
         "tool.pyronaut.test.mode",
         "Test execution mode.",
@@ -820,6 +852,10 @@ public final class PyprojectConfigSpec {
         PYRONAUT_PROCESSOR_INCREMENTAL,
         PYRONAUT_PROCESSOR_PYTHON_INCREMENTAL_MODE,
         PYRONAUT_PROCESSOR_DAEMON,
+        PYRONAUT_PROCESSOR_TYPE_CHECK_MODE,
+        PYRONAUT_PROCESSOR_STATIC_COMPILATION_MODE,
+        PYRONAUT_PROCESSOR_STATIC_COMPILATION_REPORT,
+        PYRONAUT_PROCESSOR_STATIC_COMPILATION_STRICT,
         PYRONAUT_TEST_MODE,
         PYRONAUT_TEST_ENGINE,
         PYRONAUT_TEST_VERBOSE,
@@ -920,6 +956,8 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.packaging", true),
         section("tool.pyronaut.build", true),
         section("tool.pyronaut.processor", true),
+        PYRONAUT_PROCESSOR_TYPE_CHECK_SECTION,
+        PYRONAUT_PROCESSOR_STATIC_COMPILATION_SECTION,
         section("tool.pyronaut.test", true),
         section("tool.pyronaut.run", true),
         section("tool.pyronaut.control-panel", true, "tool.pyronaut.controlPanel"),

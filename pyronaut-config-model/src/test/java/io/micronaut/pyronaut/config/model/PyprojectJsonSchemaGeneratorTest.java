@@ -19,6 +19,9 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"incremental\""));
         assertTrue(schema.contains("\"python-incremental-mode\""));
         assertTrue(schema.contains("\"daemon\""));
+        assertTrue(schema.contains("\"type-check\""));
+        assertTrue(schema.contains("\"static-compilation\""));
+        assertTrue(schema.contains("\"enum\": [\"off\", \"annotated\", \"all\"]"));
         assertTrue(schema.contains("\"engine\""));
         assertTrue(schema.contains("\"enum\": [\"junit\", \"pytest\", \"both\"]"));
         assertTrue(schema.contains("\"sources\""));

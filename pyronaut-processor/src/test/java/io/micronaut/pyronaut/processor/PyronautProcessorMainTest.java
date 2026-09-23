@@ -107,6 +107,79 @@ class PyronautProcessorMainTest {
     }
 
     @Test
+    void resolvesTypeCheckingAndStaticCompilationFromConfigurationAndFlags() throws Exception {
+        Path project = tempDir.resolve("project-static");
+        prepareCachedProject(project);
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject());
+        CapturingExecutor defaultExecutor = new CapturingExecutor();
+        PyronautProcessorMain defaults = new PyronautProcessorMain(new PyprojectModelReader(), defaultExecutor);
+        defaults.projectDir = project;
+        defaults.pass = "main";
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), defaults.call());
+        List<String> defaultOptions = defaultExecutor.requests.getFirst().options();
+        assertTrue(defaultOptions.stream().noneMatch(option -> option.startsWith("-Amicronaut.python.")), defaultOptions.toString());
+
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            minimalPyproject()
+                + "\n[tool.pyronaut.processor.type-check]\n"
+                + "mode = \"warn\"\n"
+                + "\n[tool.pyronaut.processor.static-compilation]\n"
+                + "mode = \"annotated\"\n"
+                + "strict = true\n"
+        );
+        Files.deleteIfExists(project.resolve("__pyronaut__/processor-main.sha256"));
+        CapturingExecutor configuredExecutor = new CapturingExecutor();
+        PyronautProcessorMain configured = new PyronautProcessorMain(new PyprojectModelReader(), configuredExecutor);
+        configured.projectDir = project;
+        configured.pass = "all";
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), configured.call());
+        List<String> mainOptions = configuredExecutor.requests.getFirst().options();
+        assertTrue(mainOptions.contains("-Amicronaut.python.typecheck=warn"), mainOptions.toString());
+        assertTrue(mainOptions.contains("-Amicronaut.python.compile.static=annotated"), mainOptions.toString());
+        assertTrue(mainOptions.contains("-Amicronaut.python.compile.static.strict=true"), mainOptions.toString());
+        String expectedReport = project.resolve("__pyronaut__/reports/static-compilation/main").toAbsolutePath().normalize().toString();
+        assertTrue(mainOptions.contains("-Amicronaut.python.compile.static.report=" + expectedReport), mainOptions.toString());
+        if (configuredExecutor.requests.size() > 1) {
+            List<String> testOptions = configuredExecutor.requests.get(1).options();
+            String expectedTestReport = project.resolve("__pyronaut__/reports/static-compilation/test").toAbsolutePath().normalize().toString();
+            assertTrue(testOptions.contains("-Amicronaut.python.compile.static.report=" + expectedTestReport), testOptions.toString());
+        }
+
+        Files.deleteIfExists(project.resolve("__pyronaut__/processor-main.sha256"));
+        CapturingExecutor overriddenExecutor = new CapturingExecutor();
+        PyronautProcessorMain overridden = new PyronautProcessorMain(new PyprojectModelReader(), overriddenExecutor);
+        int exitCode = new CommandLine(overridden).execute(
+            "--project-dir", project.toString(),
+            "--pass", "main",
+            "--progress", "off",
+            "--no-type-check",
+            "--compile-static=all",
+            "--compile-static-report", "reports/static"
+        );
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), exitCode);
+        List<String> overriddenOptions = overriddenExecutor.requests.getFirst().options();
+        assertTrue(overriddenOptions.stream().noneMatch(option -> option.startsWith("-Amicronaut.python.typecheck=")), overriddenOptions.toString());
+        assertTrue(overriddenOptions.contains("-Amicronaut.python.compile.static=all"), overriddenOptions.toString());
+        assertTrue(overriddenOptions.contains("-Amicronaut.python.compile.static.report=" + project.resolve("reports/static/main").toAbsolutePath().normalize()), overriddenOptions.toString());
+
+        Files.deleteIfExists(project.resolve("__pyronaut__/processor-main.sha256"));
+        CapturingExecutor bareExecutor = new CapturingExecutor();
+        PyronautProcessorMain bare = new PyronautProcessorMain(new PyprojectModelReader(), bareExecutor);
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), new CommandLine(bare).execute(
+            "--project-dir", project.toString(), "--pass", "main", "--progress", "off", "--type-check", "--no-compile-static"
+        ));
+        List<String> bareOptions = bareExecutor.requests.getFirst().options();
+        assertTrue(bareOptions.contains("-Amicronaut.python.typecheck=warn"), bareOptions.toString());
+        assertTrue(bareOptions.stream().noneMatch(option -> option.startsWith("-Amicronaut.python.compile.static")), bareOptions.toString());
+
+        PyronautProcessorMain contradictory = new PyronautProcessorMain(new PyprojectModelReader(), new CapturingExecutor());
+        assertEquals(PyronautProcessorExitCode.USAGE_ERROR.code(), new CommandLine(contradictory).execute(
+            "--project-dir", project.toString(), "--pass", "main", "--progress", "off", "--type-check=error", "--no-type-check"
+        ));
+    }
+
+    @Test
     void enablesIncrementalCompilationFromConfigurationAndAllowsCliOverride() throws Exception {
         Path project = tempDir.resolve("project-incremental");
         prepareCachedProject(project);
