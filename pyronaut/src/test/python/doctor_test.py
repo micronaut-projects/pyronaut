@@ -425,7 +425,7 @@ class DoctorChecksTest(unittest.TestCase):
 
     # -- graalpy -------------------------------------------------------------
 
-    def _install_pyenv_graalpy(self, name="graalpy3.13-25.3.4.1", root=None):
+    def _install_pyenv_graalpy(self, name="graalpy3.13-25.4.4.1", root=None):
         pyenv_root = root or (self.home / ".pyenv")
         return _write_executable(pyenv_root / "versions" / name / "bin" / "graalpy")
 
@@ -433,16 +433,16 @@ class DoctorChecksTest(unittest.TestCase):
         # Issue #62: the global selection lives in ~/.pyenv/version when
         # PYENV_VERSION is not exported.
         executable = self._install_pyenv_graalpy()
-        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.3.4.1\n", encoding="utf-8")
+        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4.1\n", encoding="utf-8")
         probes = []
 
         def capture(command_line, timeout=None):
             probes.append(command_line)
-            return 0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1)\n", ""
+            return 0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1)\n", ""
 
         with (
             patch.object(cli, "_doctor_capture", side_effect=capture),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.3.4.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1"}),
             patch.object(shutil, "which", return_value=None),
         ):
             result = cli._doctor_check_graalpy(None)
@@ -460,19 +460,19 @@ class DoctorChecksTest(unittest.TestCase):
         os.environ["PYENV_VERSION"] = "graalpy3.12-25.1.3"
         with (
             patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.12.8 (Oracle GraalVM Native 25.1.3)\n", "")),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.3.4.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1"}),
             patch.object(shutil, "which", return_value=None),
         ):
             result = cli._doctor_check_graalpy(None)
         self.assertEqual(doctor.WARN, result.status)
         self.assertIn("selected by PYENV_VERSION", result.detail)
-        self.assertIn("this Pyronaut bundles GraalPy 25.3.4.1", result.detail)
-        self.assertIn("pyenv install graalpy3.13-25.3.4.1", result.fix)
+        self.assertIn("this Pyronaut bundles GraalPy 25.4.4.1", result.detail)
+        self.assertIn("pyenv install graalpy3.13-25.4.4.1", result.fix)
         self.assertEqual(str(executable), result.data["executable"])
 
     def test_graalpy_check_reports_selected_but_uninstalled_pyenv_version(self):
         (self.home / ".pyenv").mkdir()
-        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.3.4.1\n", encoding="utf-8")
+        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4.1\n", encoding="utf-8")
         with (
             patch.object(cli, "_read_version_properties", return_value={}),
             patch.object(shutil, "which", return_value=None),
@@ -485,8 +485,8 @@ class DoctorChecksTest(unittest.TestCase):
     def test_graalpy_check_falls_back_to_path_and_warns_when_absent(self):
         on_path = _write_executable(self.root / "bin" / "graalpy")
         with (
-            patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1)\n", "")),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.3.4.1"}),
+            patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1)\n", "")),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1"}),
             patch.object(shutil, "which", return_value=str(on_path)),
         ):
             found = cli._doctor_check_graalpy(None)
@@ -494,7 +494,7 @@ class DoctorChecksTest(unittest.TestCase):
         self.assertIn("via PATH", found.detail)
 
         with (
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.3.4.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1"}),
             patch.object(shutil, "which", return_value=None),
         ):
             absent = cli._doctor_check_graalpy(None)
@@ -503,7 +503,7 @@ class DoctorChecksTest(unittest.TestCase):
             absent_in_project = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.WARN, absent.status)
         self.assertIn("no GraalPy found on PATH, PYENV_VERSION or ~/.pyenv/version", absent.detail)
-        self.assertIn("pyenv install graalpy3.13-25.3.4.1 && pyenv global graalpy3.13-25.3.4.1", absent.fix)
+        self.assertIn("pyenv install graalpy3.13-25.4.4.1 && pyenv global graalpy3.13-25.4.4.1", absent.fix)
         self.assertEqual(doctor.FAIL, absent_in_project.status)
         self.assertIn("no project .venv and", absent_in_project.detail)
         self.assertIn("graalpy -m venv .venv", absent_in_project.fix)
@@ -513,12 +513,12 @@ class DoctorChecksTest(unittest.TestCase):
         venv_python = _write_executable(project / ".venv" / "bin" / "python")
         (project / ".venv" / "pyvenv.cfg").write_text("home = /opt/graalpy/bin\nversion = 3.13.14\n", encoding="utf-8")
         with (
-            patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1)\n", "")),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.3.4.1"}),
+            patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1)\n", "")),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1"}),
         ):
             result = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.PASS, result.status, result.detail)
-        self.assertEqual(f"project .venv uses GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1) ({venv_python})", result.detail)
+        self.assertEqual(f"project .venv uses GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1) ({venv_python})", result.detail)
 
         (project / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\nversion = 3.12.4\n", encoding="utf-8")
         with patch.object(cli, "_read_version_properties", return_value={}):
@@ -531,10 +531,10 @@ class DoctorChecksTest(unittest.TestCase):
         project = self.root / "app"
         project.mkdir()
         self._install_pyenv_graalpy()
-        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.3.4.1\n", encoding="utf-8")
+        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4.1\n", encoding="utf-8")
         with (
-            patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1)\n", "")),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.3.4.1"}),
+            patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1)\n", "")),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1"}),
         ):
             result = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.WARN, result.status)
@@ -1005,7 +1005,7 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         self.assertIn("is not a GraalPy interpreter", not_graalpy.detail)
         os.environ.pop("PYRONAUT_PYTHON_EXECUTABLE")
 
-        graalpy_home = self.root / "graalpy-25.3" / "bin"
+        graalpy_home = self.root / "graalpy-25.4" / "bin"
         _write_executable(graalpy_home / "graalpy")
         _write_executable(self.project / ".venv" / "bin" / "python")
         (self.project / ".venv" / "pyvenv.cfg").write_text(f"home = {graalpy_home}\n", encoding="utf-8")
@@ -1018,7 +1018,7 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         os.environ.pop("VIRTUAL_ENV")
 
     def test_interpreter_check_compares_venv_base_with_selected_graalpy(self):
-        graalpy_home = self.root / "graalpy-25.3" / "bin"
+        graalpy_home = self.root / "graalpy-25.4" / "bin"
         _write_executable(graalpy_home / "graalpy")
         _write_executable(self.project / ".venv" / "bin" / "python")
         (self.project / ".venv" / "pyvenv.cfg").write_text(f"home = {graalpy_home}\n", encoding="utf-8")
@@ -1165,7 +1165,7 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
     # -- GraalPy compatibility ------------------------------------------------
 
     def test_graalpy_release_tag_is_derived_from_the_interpreter_or_bundled_version(self):
-        self.assertEqual("v253", cli._graalpy_release_tag("GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1)", None))
+        self.assertEqual("v254", cli._graalpy_release_tag("GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1)", None))
         self.assertEqual("v250", cli._graalpy_release_tag(None, "25.0.1"))
         self.assertEqual("v242", cli._graalpy_release_tag("Python 3.12.4", "24.2.0"))
         self.assertIsNone(cli._graalpy_release_tag("Python 3.12.4", None))
@@ -1179,16 +1179,16 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
             Path(destination).write_text(csv, encoding="utf-8")
 
         with patch.object(cli, "_download_url_with_progress", side_effect=fake_download):
-            table, note = cli._load_graalpy_compatibility("v253", offline=False)
-            again, _ = cli._load_graalpy_compatibility("v253", offline=False)
-        self.assertEqual(["https://graalpy.org/module_results/python-module-testing-v253.csv"], downloads)
+            table, note = cli._load_graalpy_compatibility("v254", offline=False)
+            again, _ = cli._load_graalpy_compatibility("v254", offline=False)
+        self.assertEqual(["https://graalpy.org/module_results/python-module-testing-v254.csv"], downloads)
         self.assertEqual("", note)
         self.assertEqual(("uvloop" in table, table["uvloop"], table["aiohttp"]), (True, ("0.21.0", 2, 0.0), ("3.11.18", 0, 83.99)))
         self.assertEqual(table, again)
-        self.assertTrue(cli._graalpy_compatibility_cache("v253").is_file())
+        self.assertTrue(cli._graalpy_compatibility_cache("v254").is_file())
 
         with patch.object(cli, "_download_url_with_progress", side_effect=OSError("no network")):
-            offline_table, _ = cli._load_graalpy_compatibility("v253", offline=True)
+            offline_table, _ = cli._load_graalpy_compatibility("v254", offline=True)
             missing, reason = cli._load_graalpy_compatibility("v250", offline=True)
             failed, failure = cli._load_graalpy_compatibility("v250", offline=False)
         self.assertEqual(table, offline_table)
@@ -1199,16 +1199,16 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
 
     def test_compatibility_check_flags_packages_known_to_fail_on_graalpy(self):
         self._fake_venv()
-        cache = cli._graalpy_compatibility_cache("v253")
+        cache = cli._graalpy_compatibility_cache("v254")
         cache.parent.mkdir(parents=True)
         cache.write_text("requests,2.32.3,0,98.51\nattrs,25.1.0,0,100.00\nuvloop,0.21.0,2,0.00\naiohttp,3.11.18,0,83.99\n", encoding="utf-8")
         (self.project / "pyproject.toml").write_text(
             "[project]\nname = 'demo'\ndependencies = ['Requests', 'attrs', 'uvloop', 'aiohttp', 'mystery']\n", encoding="utf-8"
         )
-        with patch.object(cli, "_probe_python_version", return_value="GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1)"):
+        with patch.object(cli, "_probe_python_version", return_value="GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1)"):
             result = cli._doctor_check_graalpy_compatibility(self.project, offline=True)
         self.assertEqual(doctor.WARN, result.status)
-        self.assertIn("GraalPy 25.3: 2 of 5 declared packages compatible", result.detail)
+        self.assertIn("GraalPy 25.4: 2 of 5 declared packages compatible", result.detail)
         self.assertIn("untested: mystery", result.detail)
         self.assertIn("fail to install: uvloop 0.21.0", result.detail)
         self.assertIn("partially compatible: aiohttp 3.11.18 (84% tests pass)", result.detail)
@@ -1216,13 +1216,13 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         self.assertEqual("compatible", result.data["packages"]["Requests"]["status"])
 
         (self.project / "pyproject.toml").write_text("[project]\nname = 'demo'\ndependencies = ['requests', 'attrs']\n", encoding="utf-8")
-        with patch.object(cli, "_probe_python_version", return_value="GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1)"):
+        with patch.object(cli, "_probe_python_version", return_value="GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1)"):
             ok = cli._doctor_check_graalpy_compatibility(self.project, offline=True)
         self.assertEqual(doctor.PASS, ok.status, ok.detail)
-        self.assertEqual("GraalPy 25.3: 2 of 2 declared packages compatible per graalpy.org", ok.detail)
+        self.assertEqual("GraalPy 25.4: 2 of 2 declared packages compatible per graalpy.org", ok.detail)
 
         cache.unlink()
-        with patch.object(cli, "_probe_python_version", return_value="GraalPy 3.13.14 (Oracle GraalVM Native 25.3.4.1)"):
+        with patch.object(cli, "_probe_python_version", return_value="GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1)"):
             unavailable = cli._doctor_check_graalpy_compatibility(self.project, offline=True)
         self.assertEqual(doctor.WARN, unavailable.status)
         self.assertIn("package data unavailable", unavailable.detail)

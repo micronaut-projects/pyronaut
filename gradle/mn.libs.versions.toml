@@ -1,5 +1,5 @@
 [versions]
-graalpy = "25.3.4.1"
+graalpy = "25.4.4.1"
 
 [libraries]
 micronaut-context = { module = "io.micronaut:micronaut-context", version.ref = "micronaut" }

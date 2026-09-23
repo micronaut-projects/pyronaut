@@ -825,10 +825,10 @@ class PyprojectModelReaderTest {
             image-name = "example/demo"
             dockerfile = "docker/Dockerfile.jvm"
             dockerfile-native = "docker/Dockerfile.native"
-            jvm-base-image = "container-registry.oracle.com/graalvm/jdk:25"
-            native-builder-image = "container-registry.oracle.com/graalvm/native-image:25"
+            jvm-base-image = "container-registry.oracle.com/graalvm/jdk:25i4"
+            native-builder-image = "container-registry.oracle.com/graalvm/native-image:25i4"
             native-base-image = "gcr.io/distroless/base"
-            static-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25-muslib"
+            static-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25i4-muslib-ol8"
             static-native-base-image = "scratch"
             base-image = "registry.example.com/acme/pyronaut-runtime:1"
             """);
@@ -838,10 +838,10 @@ class PyprojectModelReaderTest {
         assertEquals("example/demo", model.pyronaut().build().docker().imageName());
         assertEquals("docker/Dockerfile.jvm", model.pyronaut().build().docker().dockerfile());
         assertEquals("docker/Dockerfile.native", model.pyronaut().build().docker().dockerfileNative());
-        assertEquals("container-registry.oracle.com/graalvm/jdk:25", model.pyronaut().build().docker().jvmBaseImage());
-        assertEquals("container-registry.oracle.com/graalvm/native-image:25", model.pyronaut().build().docker().nativeBuilderImage());
+        assertEquals("container-registry.oracle.com/graalvm/jdk:25i4", model.pyronaut().build().docker().jvmBaseImage());
+        assertEquals("container-registry.oracle.com/graalvm/native-image:25i4", model.pyronaut().build().docker().nativeBuilderImage());
         assertEquals("gcr.io/distroless/base", model.pyronaut().build().docker().nativeBaseImage());
-        assertEquals("container-registry.oracle.com/graalvm/native-image:25-muslib", model.pyronaut().build().docker().staticNativeBuilderImage());
+        assertEquals("container-registry.oracle.com/graalvm/native-image:25i4-muslib-ol8", model.pyronaut().build().docker().staticNativeBuilderImage());
         assertEquals("scratch", model.pyronaut().build().docker().staticNativeBaseImage());
         assertEquals("registry.example.com/acme/pyronaut-runtime:1", model.pyronaut().build().docker().baseImage());
     }
