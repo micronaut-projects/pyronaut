@@ -78,6 +78,55 @@ final class PyronautProcessorNoCacheTest {
     }
 
     @Test
+    void doesNotReuseCachedPythonSourcesWithoutBytecode(@TempDir Path tempDir) throws Exception {
+        Path cacheDir = Files.createDirectories(tempDir.resolve("__pyronaut__"));
+        Path output = Files.createDirectories(tempDir.resolve("classes"));
+        Path vfs = Files.createDirectories(output.resolve("META-INF/GRAALPY-VFS/micronaut-application"));
+        Path source = Files.createDirectories(vfs.resolve("src")).resolve("main.py");
+        Files.writeString(source, "answer = 42\n");
+        Path filesList = vfs.resolve("fileslist.txt");
+        Files.writeString(filesList, "/META-INF/GRAALPY-VFS/micronaut-application/src/main.py\n");
+
+        ProcessorSourceCache.writeHash(cacheDir, ProcessorSourceCache.MAIN_HASH_FILE, "fingerprint", output);
+        assertFalse(ProcessorSourceCache.cacheHit(
+            cacheDir,
+            ProcessorSourceCache.MAIN_HASH_FILE,
+            "fingerprint",
+            output,
+            true,
+            true
+        ));
+
+        Path bytecode = Files.createDirectories(source.getParent().resolve("__pycache__"))
+            .resolve("main.graalpy253-313.pyc");
+        Files.write(bytecode, new byte[]{1, 2, 3});
+        Files.writeString(
+            filesList,
+            "/META-INF/GRAALPY-VFS/micronaut-application/src/main.py\n"
+                + "/META-INF/GRAALPY-VFS/micronaut-application/src/__pycache__/main.graalpy253-313.pyc\n"
+        );
+        ProcessorSourceCache.writeHash(cacheDir, ProcessorSourceCache.MAIN_HASH_FILE, "fingerprint", output);
+        assertTrue(ProcessorSourceCache.cacheHit(
+            cacheDir,
+            ProcessorSourceCache.MAIN_HASH_FILE,
+            "fingerprint",
+            output,
+            true,
+            true
+        ));
+
+        Files.delete(bytecode);
+        assertFalse(ProcessorSourceCache.cacheHit(
+            cacheDir,
+            ProcessorSourceCache.MAIN_HASH_FILE,
+            "fingerprint",
+            output,
+            true,
+            true
+        ));
+    }
+
+    @Test
     void incrementalModeAndDependencyContentsParticipateInCacheFingerprint(
         @TempDir Path tempDir
     ) throws Exception {
