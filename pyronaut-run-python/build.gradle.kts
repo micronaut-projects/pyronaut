@@ -170,6 +170,26 @@ tasks {
         inputs.property("pyronautNativeImageCiArgs", nativeImageCiArgs)
         outputs.file(cremaOutput)
         doFirst {
+            // The native build runs in its own process, so it takes JAVA_HOME from the daemon's
+            // environment rather than from the JVM Gradle is running on. A daemon started from an older
+            // shell hands it a different GraalVM, and the failure arrives twelve minutes later as
+            //   Could not find required field Lcom/oracle/truffle/runtime/OptimizedDirectCallNode;.callCount
+            // which says nothing about the JDK. Pin it to the build JVM and check it up front.
+            val buildJdk = File(System.getProperty("java.home"))
+            val nativeImageLauncher = File(buildJdk, if (isWindows) "bin/native-image.cmd" else "bin/native-image")
+            if (!nativeImageLauncher.exists()) {
+                throw GradleException(
+                    "Gradle is running on $buildJdk, which has no native-image launcher, so the Crema " +
+                        "runtime cannot be built. Point JAVA_HOME (or org.gradle.java.home) at a GraalVM " +
+                        "JDK and run ./gradlew --stop first: a running daemon keeps the environment it " +
+                        "was started with."
+                )
+            }
+            environment("JAVA_HOME", buildJdk.absolutePath)
+            environment(
+                "PATH",
+                File(buildJdk, "bin").absolutePath + File.pathSeparator + (System.getenv("PATH") ?: "")
+            )
             val projectDirectory = cremaProjectDirectory.get().asFile.toPath()
             Files.createDirectories(projectDirectory.resolve("__pyronaut__/classes"))
             Files.writeString(
