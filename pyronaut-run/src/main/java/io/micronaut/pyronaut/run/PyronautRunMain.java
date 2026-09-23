@@ -26,6 +26,7 @@ import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
 import io.micronaut.pyronaut.config.terminal.PhaseReporter;
 import io.micronaut.pyronaut.config.terminal.Terminal;
+import io.micronaut.pyronaut.config.testresources.TestResourcesLogMirror;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
@@ -238,22 +239,46 @@ public class PyronautRunMain implements Callable<Integer> {
      * Start the application. On a terminal a {@code Starting application} row
      * spins until the context is up, with the banner and startup logging
      * flowing above it; elsewhere nothing is added to the application's output.
+     *
+     * <p>Resolving a Test Resources property can block on an image pull that
+     * only the server's own log file records, so that log is mirrored for as
+     * long as startup lasts. The mirror belongs here rather than in the CLI
+     * that started the server: this process owns the terminal, and a line
+     * written from outside the live region is repainted away.
      */
     private boolean startApplication(ResolvedProjectLayout layout, ApplicationArgs applicationArgs) throws Exception {
         if (!Terminal.isInteractive() || verboseLogger != null) {
-            return applicationStarter.start(layout.processedClassesRoot(), applicationArgs);
+            try (TestResourcesLogMirror mirror = TestResourcesLogMirror.start(PyronautRunMain::printTestResourcesLine)) {
+                return applicationStarter.start(layout.processedClassesRoot(), applicationArgs);
+            }
         }
         try (PhaseReporter progress = PhaseReporter.create()) {
             PhaseReporter.Phase starting = progress.start("Starting application");
-            try {
-                boolean started = applicationStarter.start(layout.processedClassesRoot(), applicationArgs);
-                starting.done("Application started");
-                return started;
+            boolean started;
+            // The mirror is drained as it closes, which happens before either
+            // line below, so a container's last word lands above the line that
+            // ends the phase rather than after it.
+            try (TestResourcesLogMirror mirror = TestResourcesLogMirror.start(entry -> report(progress, entry))) {
+                started = applicationStarter.start(layout.processedClassesRoot(), applicationArgs);
             } catch (Exception e) {
                 starting.fail("Application failed to start");
                 throw e;
             }
+            starting.done("Application started");
+            return started;
         }
+    }
+
+    private static void report(PhaseReporter progress, TestResourcesLogMirror.Entry entry) {
+        if (entry.error()) {
+            progress.error(entry.message());
+        } else {
+            progress.note(entry.message());
+        }
+    }
+
+    private static void printTestResourcesLine(TestResourcesLogMirror.Entry entry) {
+        System.err.println(entry.message());
     }
 
     protected void configureEnv(Map<String, String> env) {

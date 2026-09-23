@@ -117,11 +117,11 @@ _TEST_RESOURCES_ENV_TO_PROPERTY = {
     "MICRONAUT_TEST_RESOURCES_SERVER_CLIENT_READ_TIMEOUT": "micronaut.test.resources.server.client.read.timeout",
     "MICRONAUT_TEST_RESOURCES_PROJECT_PATH_URI": "micronaut.test.resources.project-path-uri",
 }
-_TEST_RESOURCES_LOG_FILE = "test-resources.log"
-_TEST_RESOURCES_STDIO_LOG_FILE = "launcher-stdio.log"
-_TEST_RESOURCES_IMAGE_PULL_MARKER = "Pulling docker image:"
-_TEST_RESOURCES_CONTAINER_CREATE_MARKER = "Creating container for image:"
-_TEST_RESOURCES_CONTAINER_STARTED_MARKER = " started in PT"
+# Names the server's log directory for the launcher we delegate to. Container
+# pulls happen while the launcher owns the terminal, so the launcher mirrors
+# that log itself: a line written here would be repainted away by its live
+# progress region, taking a row of that region with it.
+_TEST_RESOURCES_LOGS_DIR_ENV = "PYRONAUT_TEST_RESOURCES_LOGS_DIR"
 _DEFAULT_PYTHON_SOURCE_DIR = "src"
 _DEFAULT_PYTHON_TEST_DIR = "tests"
 _DEFAULT_JAVA_SOURCE_DIR = "src-java"
@@ -4993,10 +4993,16 @@ def _read_pyproject_test_resources_shared(project_dir: Path) -> bool:
 def _resolve_test_resources_logs_dir(project_dir: Path, settings_file: Path) -> Path:
     test_resources = _read_pyproject_test_resources_table(project_dir)
     if isinstance(test_resources, dict):
-        configured = _read_pyproject_string(test_resources, "logs-dir", "logsDir")
-        if configured is not None:
-            configured_path = Path(configured)
-            return (configured_path if configured_path.is_absolute() else project_dir / configured_path).resolve()
+        # "logs-dir" is the spelling the pyproject schema documents; the
+        # camel-cased form is accepted as well.
+        configured = test_resources.get("logs-dir")
+        if not isinstance(configured, str):
+            configured = test_resources.get("logsDir")
+        if isinstance(configured, str):
+            stripped = configured.strip()
+            if stripped:
+                configured_path = Path(stripped)
+                return (configured_path if configured_path.is_absolute() else project_dir / configured_path).resolve()
     return (settings_file.parent / "logs").resolve()
 
 
@@ -5118,6 +5124,7 @@ def _strip_test_resources_java_tool_options(env: dict[str, str] | None) -> dict[
         sanitized.pop("JAVA_TOOL_OPTIONS", None)
     for env_name in _TEST_RESOURCES_ENV_TO_PROPERTY:
         sanitized.pop(env_name, None)
+    sanitized.pop(_TEST_RESOURCES_LOGS_DIR_ENV, None)
     return sanitized
 
 
@@ -10374,8 +10381,6 @@ class _OwnedTestResourcesSession:
         self._started = False
         self._shutdown_registered = False
         self._client_env_overrides: dict[str, str] | None = None
-        self._log_mirror_stop: threading.Event | None = None
-        self._log_mirror_thread: threading.Thread | None = None
 
     @staticmethod
     def _new_owner_token() -> str:
@@ -10415,7 +10420,6 @@ class _OwnedTestResourcesSession:
         if exit_code != SUCCESS:
             raise RuntimeError(f"Test resources server failed to start (exit code {exit_code})")
         self._report_started_server()
-        self._start_log_mirror()
 
         if self._shared_server:
             self._emit_status("[test-resources] shared-server mode: will not stop server on session exit")
@@ -10432,7 +10436,6 @@ class _OwnedTestResourcesSession:
         resolver: Callable[[str], str | None],
         java_home_provider: JavaHomeProvider | None = None,
     ) -> None:
-        self._stop_log_mirror()
         if not self._started:
             return
 
@@ -10468,7 +10471,13 @@ class _OwnedTestResourcesSession:
     def client_env_overrides(self) -> dict[str, str] | None:
         if self._client_env_overrides is None:
             return None
-        return dict(self._client_env_overrides)
+        overrides = dict(self._client_env_overrides)
+        # The delegated launcher blocks on the server while it owns the
+        # terminal, so it is the one that reports the containers being pulled.
+        overrides[_TEST_RESOURCES_LOGS_DIR_ENV] = str(
+            _resolve_test_resources_logs_dir(self._project_dir, self._settings_file)
+        )
+        return overrides
 
     def _report_started_server(self) -> None:
         settings = _parse_properties_file(self._settings_file)
@@ -10506,82 +10515,6 @@ class _OwnedTestResourcesSession:
         atexit.register(_shutdown)
         self._shutdown_registered = True
 
-    def _start_log_mirror(self) -> None:
-        logs_dir = _resolve_test_resources_logs_dir(self._project_dir, self._settings_file)
-        log_files = [
-            logs_dir / _TEST_RESOURCES_LOG_FILE,
-            logs_dir / _TEST_RESOURCES_STDIO_LOG_FILE,
-        ]
-        initial_positions: dict[Path, int] = {}
-        for candidate in log_files:
-            try:
-                initial_positions[candidate] = candidate.stat().st_size
-            except OSError:
-                initial_positions[candidate] = 0
-        if self._log_mirror_thread is not None and self._log_mirror_thread.is_alive():
-            return
-        stop_event = threading.Event()
-        self._log_mirror_stop = stop_event
-
-        def _tail() -> None:
-            position = 0
-            active_log_file: Path | None = None
-
-            def _resolve_active_log_file() -> Path | None:
-                for candidate in log_files:
-                    if candidate.exists():
-                        return candidate
-                return None
-
-            while not stop_event.is_set() and active_log_file is None:
-                active_log_file = _resolve_active_log_file()
-                stop_event.wait(0.1)
-            if active_log_file is None:
-                return
-            position = initial_positions.get(active_log_file, 0)
-            while not stop_event.is_set():
-                try:
-                    candidate = _resolve_active_log_file()
-                    if candidate is None:
-                        stop_event.wait(0.1)
-                        continue
-                    if active_log_file != candidate:
-                        active_log_file = candidate
-                        position = initial_positions.get(active_log_file, 0)
-                    current_size = active_log_file.stat().st_size
-                    if current_size < position:
-                        position = 0
-                    if current_size > position:
-                        with active_log_file.open("r", encoding="utf-8") as handle:
-                            handle.seek(position)
-                            chunk = handle.read()
-                            position = handle.tell()
-                        for line in chunk.splitlines():
-                            stripped = line.strip()
-                            if stripped and _should_mirror_test_resources_log_line(stripped):
-                                self._emit_status(stripped)
-                    stop_event.wait(0.1)
-                except OSError:
-                    stop_event.wait(0.1)
-
-        self._log_mirror_thread = threading.Thread(
-            target=_tail,
-            name="pyronaut-test-resources-log-mirror",
-            daemon=True,
-        )
-        self._log_mirror_thread.start()
-
-    def _stop_log_mirror(self) -> None:
-        stop_event = self._log_mirror_stop
-        thread = self._log_mirror_thread
-        self._log_mirror_stop = None
-        self._log_mirror_thread = None
-        if stop_event is None:
-            return
-        stop_event.set()
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=1.0)
-
     def _persist_session(self, *, started_at: float) -> None:
         data = {
             "ownerToken": self._owner_token,
@@ -10613,8 +10546,7 @@ class _OwnedTestResourcesSession:
     def _emit_status(self, line: str) -> None:
         if self._quiet:
             return
-        sys.stderr.write(line + "\n")
-        sys.stderr.flush()
+        _progress_console().note(line)
 
     def _should_attach_to_external_server(self) -> bool:
         if self._shared_server:
@@ -10697,15 +10629,6 @@ def _test_resources_server_available(settings_path: Path) -> bool:
             return True
     except OSError:
         return False
-
-
-def _should_mirror_test_resources_log_line(line: str) -> bool:
-    return (
-        " ERROR " in line
-        or _TEST_RESOURCES_IMAGE_PULL_MARKER in line
-        or _TEST_RESOURCES_CONTAINER_CREATE_MARKER in line
-        or _TEST_RESOURCES_CONTAINER_STARTED_MARKER in line
-    )
 
 
 def _split_tui_mode_token(args: Sequence[str]) -> tuple[str | None, list[str]]:

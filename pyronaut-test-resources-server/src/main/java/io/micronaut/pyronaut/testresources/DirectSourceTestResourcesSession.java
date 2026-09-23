@@ -17,16 +17,14 @@ package io.micronaut.pyronaut.testresources;
 
 import io.micronaut.core.annotation.Internal;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.testresources.TestResourcesLogMirror;
 import io.micronaut.testresources.buildtools.ServerSettings;
 import io.micronaut.testresources.buildtools.ServerUtils;
 
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.net.ConnectException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -42,8 +40,6 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
     private static final int DEFAULT_CLIENT_TIMEOUT_SECONDS = 60;
     private static final String SETTINGS_DIRECTORY = ".micronaut/test-resources";
     private static final String LOGS_DIRECTORY = "logs";
-    private static final String SERVER_LOG_FILE = "test-resources.log";
-    private static final String STDIO_LOG_FILE = "launcher-stdio.log";
     private static final String RESTARTABLE_PROPERTY = "pyronaut.dev.direct.restartable";
     private static final String SERVER_CLASSPATH_MANIFEST =
         "__pyronaut__/resolved-test-resources-server-dependencies";
@@ -53,7 +49,7 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
     private final boolean owned;
     private final Map<String, String> clientProperties;
     private final Consumer<String> statusSink;
-    private final LogMirror logMirror;
+    private final TestResourcesLogMirror logMirror;
     private final Thread shutdownHook;
     private boolean closed;
 
@@ -62,7 +58,7 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
                                              boolean owned,
                                              Map<String, String> clientProperties,
                                              Consumer<String> statusSink,
-                                             LogMirror logMirror) {
+                                             TestResourcesLogMirror logMirror) {
         this.serverManager = serverManager;
         this.settingsDirectory = settingsDirectory;
         this.owned = owned;
@@ -88,13 +84,16 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
         return open(
             projectRoot,
             new PyronautTestResourcesServerMain.DefaultServerManager(),
-            System.err::println
+            // Resolved per line, not captured: a launcher's live progress
+            // region replaces System.err after the session is opened, and a
+            // line written to the old stream tears the region.
+            line -> System.err.println(line)
         );
     }
 
     static DirectSourceTestResourcesSession open(Path projectRoot,
                                                  PyronautTestResourcesServerMain.ServerManager serverManager) throws IOException {
-        return open(projectRoot, serverManager, System.err::println);
+        return open(projectRoot, serverManager, line -> System.err.println(line));
     }
 
     static DirectSourceTestResourcesSession open(Path projectRoot,
@@ -118,7 +117,10 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
 
         String requestedToken = UUID.randomUUID().toString();
         Path logsDirectory = settingsDirectory.resolve(LOGS_DIRECTORY);
-        LogMirror logMirror = new LogMirror(logsDirectory, statusSink);
+        // Watch before the server starts so a failure it logs on the way up is
+        // reported rather than skipped.
+        TestResourcesLogMirror logMirror =
+            TestResourcesLogMirror.watch(logsDirectory, entry -> statusSink.accept(entry.message()));
         PyronautTestResourcesServerMain.ServerStartRequest request =
             new PyronautTestResourcesServerMain.ServerStartRequest(
                 settingsDirectory,
@@ -296,122 +298,5 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
             current = current.getCause();
         }
         return false;
-    }
-
-    private static final class LogMirror implements AutoCloseable {
-        private static final long POLL_INTERVAL_MILLIS = 100;
-        private static final String IMAGE_PULL_MARKER = "Pulling docker image:";
-        private static final String CONTAINER_CREATE_MARKER = "Creating container for image:";
-        private static final String CONTAINER_STARTED_MARKER = " started in PT";
-
-        private final List<Path> logFiles;
-        private final Map<Path, Long> initialPositions;
-        private final Consumer<String> statusSink;
-        private final Thread thread;
-        private volatile boolean closed;
-        private Path activeLogFile;
-        private long position;
-
-        private LogMirror(Path logsDirectory, Consumer<String> statusSink) {
-            this.logFiles = List.of(
-                logsDirectory.resolve(SERVER_LOG_FILE),
-                logsDirectory.resolve(STDIO_LOG_FILE)
-            );
-            this.initialPositions = new LinkedHashMap<>();
-            for (Path logFile : logFiles) {
-                initialPositions.put(logFile, fileSize(logFile));
-            }
-            this.statusSink = statusSink;
-            this.thread = new Thread(this::run, "pyronaut-direct-test-resources-log-mirror");
-            this.thread.setDaemon(true);
-        }
-
-        private void start() {
-            thread.start();
-        }
-
-        private void run() {
-            while (!closed) {
-                mirrorAvailable();
-                try {
-                    Thread.sleep(POLL_INTERVAL_MILLIS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }
-
-        private synchronized void mirrorAvailable() {
-            Path candidate = activeLogFile();
-            if (candidate == null) {
-                return;
-            }
-            if (!candidate.equals(activeLogFile)) {
-                activeLogFile = candidate;
-                position = initialPositions.getOrDefault(candidate, 0L);
-            }
-            long currentSize = fileSize(activeLogFile);
-            if (currentSize < position) {
-                position = 0;
-            }
-            if (currentSize <= position) {
-                return;
-            }
-            try (RandomAccessFile log = new RandomAccessFile(activeLogFile.toFile(), "r")) {
-                log.seek(position);
-                String line;
-                while ((line = log.readLine()) != null) {
-                    String decoded = new String(
-                        line.getBytes(StandardCharsets.ISO_8859_1),
-                        StandardCharsets.UTF_8
-                    ).strip();
-                    if (!decoded.isEmpty() && shouldMirror(decoded)) {
-                        statusSink.accept(decoded);
-                    }
-                }
-                position = log.getFilePointer();
-            } catch (IOException ignored) {
-                // The server owns log rotation; retry on the next poll.
-            }
-        }
-
-        private Path activeLogFile() {
-            for (Path logFile : logFiles) {
-                if (Files.exists(logFile)) {
-                    return logFile;
-                }
-            }
-            return null;
-        }
-
-        private static long fileSize(Path path) {
-            try {
-                return Files.exists(path) ? Files.size(path) : 0;
-            } catch (IOException ignored) {
-                return 0;
-            }
-        }
-
-        private static boolean shouldMirror(String line) {
-            return line.contains(" ERROR ")
-                || line.contains(IMAGE_PULL_MARKER)
-                || line.contains(CONTAINER_CREATE_MARKER)
-                || line.contains(CONTAINER_STARTED_MARKER);
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-            thread.interrupt();
-            if (thread.isAlive() && Thread.currentThread() != thread) {
-                try {
-                    thread.join(1_000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            mirrorAvailable();
-        }
     }
 }
