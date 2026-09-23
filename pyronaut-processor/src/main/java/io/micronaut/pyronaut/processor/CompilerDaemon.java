@@ -569,7 +569,12 @@ final class CompilerDaemon {
         }
     }
 
-    private static final class SessionCompilerExecutor implements PyronautCompilerExecutor, AutoCloseable {
+    /**
+     * The executor of the daemon: one {@link PythonProcessingSession} per distinct class path, kept
+     * between requests so a compilation after the first finds the GraalPy context warm, which is
+     * half the cost of a cold compilation. Package-private for the tests of that reuse.
+     */
+    static final class SessionCompilerExecutor implements PyronautCompilerExecutor, AutoCloseable {
         private final Map<String, PythonProcessingSession> sessions =
             new LinkedHashMap<>(MAX_PROCESSING_SESSIONS, 0.75f, true);
 
@@ -594,6 +599,13 @@ final class CompilerDaemon {
         public synchronized void close() {
             sessions.values().forEach(PythonProcessingSession::close);
             sessions.clear();
+        }
+
+        /**
+         * @return The sessions kept, by the signature of the requests they serve
+         */
+        synchronized Map<String, PythonProcessingSession> sessions() {
+            return Map.copyOf(sessions);
         }
 
         private void evictSessions() {
