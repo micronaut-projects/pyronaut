@@ -4900,7 +4900,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("PYRONAUT_BUILD_MODE=jvm", docker_command)
         self.assertIn("PYRONAUT_PROJECT_NAME=demo-app", docker_command)
         self.assertIn("PYRONAUT_PROJECT_VERSION=1.2.3", docker_command)
-        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i3", docker_command)
+        self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i4", docker_command)
         self.assertIn("-t", docker_command)
         self.assertIn("demo-app:1.2.3", docker_command)
         self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
@@ -5143,7 +5143,7 @@ additional-test-resources = ["test-fixtures"]
             self.assertEqual(0, exit_code_jvm)
             self.assertEqual("Dockerfile.jvm", captured["dockerfile_name"])
             self.assertIn("ARG PYRONAUT_PROJECT_NAME", captured["dockerfile"])
-            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i3", captured["docker_command"])
+            self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i4", captured["docker_command"])
 
             captured.clear()
             executed.clear()
@@ -5157,7 +5157,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code_native)
         self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
         self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
-        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i3", captured["docker_command"])
+        self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i4", captured["docker_command"])
 
     def test_build_docker_reuses_configured_base_with_custom_runtime_dockerfile(self):
         captured: dict[str, object] = {}
@@ -6515,8 +6515,8 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
 
     def test_detect_graalvm_distribution_recognizes_community_dev_build(self):
         metadata = cli._detect_graalvm_distribution(
-            'openjdk version "25.0.4.1"\nOpenJDK Runtime Environment GraalVM CE 25.3.4.1-dev+0.1',
-            Path("/tmp/graalvm-community-25.3.4.1-dev+0.1"),
+            'openjdk version "25.0.4.1"\nOpenJDK Runtime Environment GraalVM CE 25.4.4.1-dev+0.1',
+            Path("/tmp/graalvm-community-25.4.4.1-dev+0.1"),
             "25.0.4.1",
         )
         self.assertEqual("dev", metadata)
@@ -6526,8 +6526,8 @@ download-url = "https://example.invalid/graalvm-dev.tar.gz"
         with patch.object(cli.platform, "system", return_value="Linux"), \
                 patch.object(cli.platform, "machine", return_value="aarch64"):
             url = cli._resolve_graalvm_archive_url(spec)
-        self.assertIn("gds.oracle.com/download/graal/25i3/latest/", url)
-        self.assertIn("graalvm-jdk-25i3-25_linux-aarch64_bin.tar.gz", url)
+        self.assertIn("gds.oracle.com/download/graal/25i4/latest/", url)
+        self.assertIn("graalvm-jdk-25i4-25_linux-aarch64_bin.tar.gz", url)
 
     def test_read_pyproject_toolchain_spec_uses_packaged_default_when_not_explicit(self):
         packaged = cli._ToolchainSpec("ee", None, 25, "jdk-25e1-25.0.3-ea.32", None, True)
