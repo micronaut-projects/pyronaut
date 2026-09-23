@@ -85,7 +85,7 @@ PACKAGING_FORMATS = {
 }
 DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
-_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i3"
+_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i4"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
 _SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
@@ -6273,7 +6273,7 @@ def _detect_graalvm_distribution(version_output: str, java_home: Path, version: 
     if version is not None and "dev" in version.lower():
         return "dev"
     # Development archives identify themselves in the build string and/or
-    # installation directory (for example, graalvm-community-25.3.4.1-dev).
+    # installation directory (for example, graalvm-community-25.4.4.1.1-dev).
     # Check this before the generic "graalvm community" marker so CE dev
     # builds can satisfy an explicitly requested `distribution = "dev"`.
     if "dev" in lowered:
@@ -9119,10 +9119,21 @@ def _probe_python_version(python: Path) -> str | None:
     return _last_line(out) or _last_line(err) or None
 
 
+def _graalpy_versions_match(version_line: str, expected: str | None, expected_pyenv: str | None) -> bool:
+    if expected and expected in version_line:
+        return True
+    if expected_pyenv:
+        runtime_version = expected_pyenv.rsplit("-", 1)[-1]
+        return bool(runtime_version and runtime_version in version_line)
+    return False
+
+
 def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
-    expected = _read_version_properties().get("graalpy")
-    data: dict[str, object] = {"expectedVersion": expected}
-    suggested = f"graalpy3.13-{expected}" if expected else "graalpy3.13-<version>"
+    version_properties = _read_version_properties()
+    expected = version_properties.get("graalpy")
+    expected_pyenv = version_properties.get("graalpy.pyenv")
+    data: dict[str, object] = {"expectedVersion": expected, "expectedPyenvVersion": expected_pyenv}
+    suggested = expected_pyenv or (f"graalpy3.13-{expected}" if expected else "graalpy3.13-<version>")
     install_fix = f"Install GraalPy with pyenv: pyenv install {suggested} && pyenv global {suggested}"
     venv_fix = "Create the project environment with GraalPy: graalpy -m venv .venv && .venv/bin/python -m pip install pytest"
 
@@ -9150,7 +9161,7 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
                     "graalpy", "GraalPy", _doctor.FAIL, f"{venv_python} does not start",
                     f"Recreate it: rm -rf {venv_dir} && graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
                 )
-            if expected and expected not in version_line:
+            if expected and not _graalpy_versions_match(version_line, expected, expected_pyenv):
                 return _doctor.CheckResult(
                     "graalpy", "GraalPy", _doctor.WARN,
                     f"project .venv uses {version_line} but this Pyronaut bundles GraalPy {expected}",
@@ -9189,7 +9200,7 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
         return _doctor.CheckResult(
             "graalpy", "GraalPy", _doctor.WARN, f"no project .venv; {detail}", venv_fix, data
         )
-    if expected and expected not in version_line:
+    if expected and not _graalpy_versions_match(version_line, expected, expected_pyenv):
         return _doctor.CheckResult(
             "graalpy", "GraalPy", _doctor.WARN, f"{detail}; this Pyronaut bundles GraalPy {expected}", install_fix, data
         )

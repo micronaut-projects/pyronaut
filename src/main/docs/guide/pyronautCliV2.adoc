@@ -582,7 +582,7 @@ JVM Docker mode (`pyronaut build --docker`):
 - Stages a compact build context under a temporary `app/` root containing the configured resources directory, any `additional-resources` directories, `pyproject.toml`, processed classes, the project-local Maven cache, and the delegated `pyronaut-run` distribution.
 - Generates a default Dockerfile when `Dockerfile` is not present.
 - Builds an image tagged `<image-name>:<project-version>`.
-- Uses `tool.pyronaut.build.docker.jvm-base-image` when configured, otherwise defaults to `container-registry.oracle.com/graalvm/jdk:25i3`.
+- Uses `tool.pyronaut.build.docker.jvm-base-image` when configured, otherwise defaults to `container-registry.oracle.com/graalvm/jdk:25i4`.
 
 Native mode:
 
@@ -744,10 +744,10 @@ Example `pyproject.toml` Docker settings:
 ----
 [tool.pyronaut.build.docker]
 image-name = "acme/demo"
-jvm-base-image = "container-registry.oracle.com/graalvm/jdk:25i3"
-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25"
+jvm-base-image = "container-registry.oracle.com/graalvm/jdk:25i4"
+native-builder-image = "container-registry.oracle.com/graalvm/native-image:25i4"
 native-base-image = "gcr.io/distroless/base"
-static-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25-muslib"
+static-native-builder-image = "container-registry.oracle.com/graalvm/native-image:25i4-muslib-ol8"
 static-native-base-image = "scratch"
 dockerfile = "docker/Dockerfile.jvm"
 dockerfile-native = "docker/Dockerfile.native"
