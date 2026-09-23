@@ -20,7 +20,10 @@ import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.AnnotationMemberDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
+import com.github.javaparser.ast.body.EnumConstantDeclaration;
+import com.github.javaparser.ast.body.EnumDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
@@ -123,6 +126,26 @@ final class SourceDocumentationParser {
                     parameterNames(method)
                 )
             );
+        }
+        for (AnnotationMemberDeclaration annotationMember : typeDeclaration.getMembers().stream()
+            .filter(AnnotationMemberDeclaration.class::isInstance)
+            .map(AnnotationMemberDeclaration.class::cast)
+            .toList()) {
+            members.putIfAbsent(
+                new MemberKey(MemberKind.METHOD, annotationMember.getNameAsString(), 0, List.of()),
+                new MemberMetadata(extractDocumentation(annotationMember.getJavadocComment()), List.of())
+            );
+        }
+        if (typeDeclaration instanceof EnumDeclaration enumDeclaration) {
+            for (EnumConstantDeclaration constant : enumDeclaration.getEntries()) {
+                String documentation = extractDocumentation(constant.getJavadocComment());
+                if (documentation != null) {
+                    members.putIfAbsent(
+                        new MemberKey(MemberKind.FIELD, constant.getNameAsString(), 0, List.of()),
+                        new MemberMetadata(documentation, List.of())
+                    );
+                }
+            }
         }
         for (FieldDeclaration field : typeDeclaration.getFields()) {
             String documentation = extractDocumentation(field.getJavadocComment());
