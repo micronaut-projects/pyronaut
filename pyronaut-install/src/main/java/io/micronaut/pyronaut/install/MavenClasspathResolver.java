@@ -914,8 +914,14 @@ final class MavenClasspathResolver {
         }
         String coreVersion = normalizedVersion(model.pyronaut().coreVersion());
         String platformVersion = normalizedVersion(model.pyronaut().platformVersion());
+        PyprojectModel.TestResources testResources = model.pyronaut().testResources();
+        String testResourcesVersion = !isTestResourcesDisabledViaEnvironment()
+            && testResources != null && Boolean.TRUE.equals(testResources.enabled())
+            ? normalizedVersion(testResources.version())
+            : null;
         PyprojectModel.Dependencies configured = model.pyronaut().dependencies();
-        if (coreVersion == null && platformVersion == null && (configured == null || configured.boms() == null || configured.boms().isEmpty())) {
+        if (coreVersion == null && platformVersion == null && testResourcesVersion == null
+            && (configured == null || configured.boms() == null || configured.boms().isEmpty())) {
             return List.of();
         }
         if (platformVersion == null) {
@@ -931,6 +937,12 @@ final class MavenClasspathResolver {
                     repositories, session, visitedBoms, managed
                 );
             }
+        }
+        if (testResourcesVersion != null) {
+            addManagedDependenciesFromBom(
+                new DefaultArtifact("io.micronaut.testresources", "micronaut-test-resources-bom", "", "pom", testResourcesVersion),
+                repositories, session, visitedBoms, managed
+            );
         }
         if (coreVersion != null) {
             addManagedDependenciesFromBom(
