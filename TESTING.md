@@ -484,7 +484,7 @@ mv /work/pyenv-master "$PYENV_ROOT"
 export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
 eval "$(pyenv init -)"
 for pyenv_attempt in 1 2 3; do
-  if pyenv install --skip-existing graalpy3.13-25.4.4.1.1; then
+  if pyenv install --skip-existing graalpy3.13-25.4.4; then
     break
   fi
   if [ "$pyenv_attempt" = 3 ]; then
@@ -493,7 +493,7 @@ for pyenv_attempt in 1 2 3; do
   fi
   sleep "$((pyenv_attempt * 2))"
 done
-GRAALPY_EXECUTABLE=$(PYENV_VERSION=graalpy3.13-25.4.4.1.1 pyenv which python)
+GRAALPY_EXECUTABLE=$(PYENV_VERSION=graalpy3.13-25.4.4 pyenv which python)
 "$GRAALPY_EXECUTABLE" -m venv /work/projects/simple-python/.venv || true
 for launcher in graalpy python python3 python3.13; do
   ln -sf "$GRAALPY_EXECUTABLE" "/work/projects/simple-python/.venv/bin/$launcher"
