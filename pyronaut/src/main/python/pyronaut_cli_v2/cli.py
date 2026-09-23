@@ -5796,8 +5796,52 @@ def _stop_managed_process(process: ManagedProcess) -> bool:
             return False
 
 
+def _read_dev_restart_excludes(project_dir: Path) -> tuple[str, ...]:
+    """
+    Paths dev mode watches but must not restart for.
+
+    A directory a build tool writes into, whose contents the running application reloads by itself,
+    should not cost a restart: micronaut-views-react watches its JavaScript bundle and swaps it in
+    process, and restarting first makes that unreachable while discarding every connection pool and
+    container the run had warmed up.
+    """
+    data = _read_pyproject_data(project_dir)
+    if not isinstance(data, dict):
+        return ()
+    section = data.get("tool", {})
+    for key in ("pyronaut", "dev"):
+        if not isinstance(section, dict):
+            return ()
+        section = section.get(key, {})
+    if not isinstance(section, dict):
+        return ()
+    configured = section.get("restart-excludes", section.get("restartExcludes", ()))
+    if isinstance(configured, str):
+        configured = (configured,)
+    if not isinstance(configured, (list, tuple)):
+        return ()
+    excludes: list[str] = []
+    for entry in configured:
+        if not isinstance(entry, str):
+            continue
+        normalized = entry.strip().strip("/")
+        if normalized:
+            excludes.append(normalized)
+    return tuple(excludes)
+
+
+def _is_restart_excluded(relative_path: str, excludes: Sequence[str]) -> bool:
+    for exclude in excludes:
+        if relative_path == exclude or relative_path.startswith(exclude + "/"):
+            return True
+        if fnmatch.fnmatch(relative_path, exclude):
+            return True
+    return False
+
+
 def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ...]:
     layout = _read_pyproject_sources(project_dir)
+    restart_excludes = _read_dev_restart_excludes(project_dir)
     watched_roots = (
         layout.python_source_dir,
         layout.python_test_dir,
@@ -5836,6 +5880,8 @@ def _snapshot_watched_files(project_dir: Path) -> tuple[tuple[str, int, int], ..
                     relative = file_path.relative_to(project_dir).as_posix()
                 except ValueError:
                     relative = file_path.as_posix()
+                if _is_restart_excluded(relative, restart_excludes):
+                    continue
                 entries.append((relative, int(stat.st_mtime_ns), int(stat.st_size)))
 
     if project_manifest.exists():
