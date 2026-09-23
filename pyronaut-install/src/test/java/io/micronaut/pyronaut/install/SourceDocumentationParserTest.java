@@ -231,4 +231,29 @@ class SourceDocumentationParserTest {
             documentation.methodDocumentation("ok", 1, java.util.List.of("T"))
         );
     }
+
+    @Test
+    void parsesAnnotationMemberAndEnumConstantDocumentation() {
+        SourceDocumentationParser.ParsedSourceDocumentation annotation = SourceDocumentationParser.parse("""
+            package io.micronaut.http.annotation;
+
+            public @interface Get {
+                /**
+                 * @return The URI of the GET route
+                 */
+                String value() default "";
+            }
+            """, "Get");
+        SourceDocumentationParser.ParsedSourceDocumentation enumeration = SourceDocumentationParser.parse("""
+            package io.micronaut.http;
+
+            public enum HttpMethod {
+                /** The GET method. */
+                GET
+            }
+            """, "HttpMethod");
+
+        assertEquals(":return: The URI of the GET route", annotation.methodDocumentation("value", 0, java.util.List.of()));
+        assertEquals("The GET method.", enumeration.fieldDocumentation("GET"));
+    }
 }

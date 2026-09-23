@@ -74,7 +74,7 @@ final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
     static final String GENERATED_MARKER_FILE_NAME = ".generated";
-    private static final String GENERATOR_VERSION = "9";
+    private static final String GENERATOR_VERSION = "10";
     private static final String SHARED_CACHE_DIR_PROPERTY = "pyronaut.ide-stubs.cache-dir";
     private static final String SHARED_CACHE_DIR_NAME = "ide-stubs";
     private static final String VFS_PYTHON_SOURCE_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/src/";
@@ -556,22 +556,25 @@ final class PythonIdeStubGenerator {
         String simpleName = simpleName(className);
         if (model.flags().has(AccessFlag.ANNOTATION)) {
             String invocation = renderAnnotationInvocation(model);
-            String overload = invocation.isEmpty()
-                ? "@overload\ndef " + simpleName + "() -> Callable[[_T], _T]: ...\n"
-                : "@overload\ndef " + simpleName + "(" + invocation + ") -> Callable[[_T], _T]: ...\n";
-            StringBuilder annotationStub = new StringBuilder(overload)
-                .append("@overload\ndef ").append(simpleName).append("(target: _T, /) -> _T: ...\n")
-                .append("def ").append(simpleName).append("(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n");
-            appendDocstring(annotationStub, documentation.classDocumentation(), "    ");
-            annotationStub.append("    ...\n");
+            // IDEs resolve hover documentation against the matched overload, so every signature carries the docstring.
+            String annotationDocumentation = annotationDocumentation(model, documentation);
+            StringBuilder annotationStub = new StringBuilder("@overload\ndef ").append(simpleName)
+                .append("(").append(invocation).append(") -> Callable[[_T], _T]");
+            appendCallableBody(annotationStub, annotationDocumentation, "");
+            annotationStub.append("@overload\ndef ").append(simpleName).append("(target: _T, /) -> _T");
+            appendCallableBody(annotationStub, annotationDocumentation, "");
+            annotationStub.append("def ").append(simpleName).append("(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T");
+            appendCallableBody(annotationStub, annotationDocumentation, "");
             return new TypeDescriptor(module, simpleName, annotationStub.toString(),
                 Set.of(), Set.of(), true, false);
         }
         if (model.flags().has(AccessFlag.ENUM)) {
             StringBuilder enumStub = new StringBuilder("class ").append(simpleName).append("(Enum):\n");
             appendDocstring(enumStub, documentation.classDocumentation(), "    ");
-            model.fields().stream().filter(field -> field.flags().has(AccessFlag.ENUM)).forEach(field ->
-                enumStub.append("    ").append(field.fieldName().stringValue()).append(" = ...\n"));
+            model.fields().stream().filter(field -> field.flags().has(AccessFlag.ENUM)).forEach(field -> {
+                enumStub.append("    ").append(field.fieldName().stringValue()).append(" = ...\n");
+                appendDocstring(enumStub, documentation.fieldDocumentation(field.fieldName().stringValue()), "    ");
+            });
             if (model.fields().stream().noneMatch(field -> field.flags().has(AccessFlag.ENUM))) {
                 enumStub.append("    ...\n");
             }
@@ -605,7 +608,6 @@ final class PythonIdeStubGenerator {
             if (!field.flags().has(AccessFlag.PUBLIC) || field.flags().has(AccessFlag.SYNTHETIC)) {
                 continue;
             }
-            appendIndentedComment(stub, documentation.fieldDocumentation(field.fieldName().stringValue()), "    ");
             stub.append("    ").append(field.fieldName().stringValue()).append(": ");
             if (field.flags().has(AccessFlag.STATIC)) {
                 stub.append("ClassVar[");
@@ -616,6 +618,8 @@ final class PythonIdeStubGenerator {
                 stub.append("]");
             }
             stub.append("\n");
+            // PEP 257 attribute docstring, which IDEs show on hover (unlike comments).
+            appendDocstring(stub, documentation.fieldDocumentation(field.fieldName().stringValue()), "    ");
             members = true;
         }
         List<MethodModel> constructors = model.methods().stream()
@@ -802,6 +806,61 @@ final class PythonIdeStubGenerator {
         }
         invocation.append(String.join(", ", keywordMembers));
         return invocation.toString();
+    }
+
+    private static String annotationDocumentation(ClassModel model,
+                                                  SourceDocumentationParser.ParsedSourceDocumentation documentation) {
+        StringBuilder text = new StringBuilder();
+        if (documentation.classDocumentation() != null) {
+            text.append(documentation.classDocumentation());
+        }
+        List<MethodModel> annotationMembers = model.methods().stream()
+            .filter(candidate -> candidate.flags().has(AccessFlag.PUBLIC))
+            .filter(candidate -> candidate.methodTypeSymbol().parameterCount() == 0)
+            .filter(candidate -> !candidate.methodName().equalsString("<init>") && !candidate.methodName().equalsString("<clinit>"))
+            .sorted(Comparator
+                .comparing((MethodModel candidate) -> !candidate.methodName().equalsString("value"))
+                .thenComparing(candidate -> candidate.methodName().stringValue()))
+            .toList();
+        for (int index = 0; index < annotationMembers.size(); index++) {
+            String memberName = annotationMembers.get(index).methodName().stringValue();
+            String memberDocumentation = annotationMemberDocumentation(
+                documentation.methodDocumentation(memberName, 0, List.of()));
+            if (memberDocumentation == null) {
+                continue;
+            }
+            String parameterName = sanitizeParameterName(memberName, index);
+            if (text.indexOf(":param " + parameterName + ":") >= 0) {
+                continue;
+            }
+            if (!text.isEmpty()) {
+                text.append("\n");
+            }
+            text.append(":param ").append(parameterName).append(": ").append(memberDocumentation);
+        }
+        return text.isEmpty() ? null : text.toString();
+    }
+
+    /**
+     * Collapses an annotation member's Javadoc into a single {@code :param:} description, falling back to
+     * its {@code @return} text when the member has no description (a common Javadoc style for members).
+     */
+    private static String annotationMemberDocumentation(String documentation) {
+        if (documentation == null || documentation.isBlank()) {
+            return null;
+        }
+        List<String> description = new ArrayList<>();
+        String returnDescription = null;
+        for (String line : documentation.split("\n")) {
+            String stripped = line.strip();
+            if (stripped.startsWith(":return:")) {
+                returnDescription = stripped.substring(":return:".length()).strip();
+            } else if (!stripped.isEmpty()) {
+                description.add(stripped);
+            }
+        }
+        String rendered = description.isEmpty() ? returnDescription : String.join(" ", description);
+        return rendered == null || rendered.isBlank() ? null : rendered;
     }
 
     private static String renderAnnotationMemberSignature(Signature signature) {
