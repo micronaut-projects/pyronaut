@@ -425,7 +425,7 @@ class DoctorChecksTest(unittest.TestCase):
 
     # -- graalpy -------------------------------------------------------------
 
-    def _install_pyenv_graalpy(self, name="graalpy3.13-25.4.4.1.1", root=None):
+    def _install_pyenv_graalpy(self, name="graalpy3.13-25.4.4", root=None):
         pyenv_root = root or (self.home / ".pyenv")
         return _write_executable(pyenv_root / "versions" / name / "bin" / "graalpy")
 
@@ -433,7 +433,7 @@ class DoctorChecksTest(unittest.TestCase):
         # Issue #62: the global selection lives in ~/.pyenv/version when
         # PYENV_VERSION is not exported.
         executable = self._install_pyenv_graalpy()
-        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4.1.1\n", encoding="utf-8")
+        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4\n", encoding="utf-8")
         probes = []
 
         def capture(command_line, timeout=None):
@@ -442,7 +442,7 @@ class DoctorChecksTest(unittest.TestCase):
 
         with (
             patch.object(cli, "_doctor_capture", side_effect=capture),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1", "graalpy.pyenv": "graalpy3.13-25.4.4"}),
             patch.object(shutil, "which", return_value=None),
         ):
             result = cli._doctor_check_graalpy(None)
@@ -460,19 +460,19 @@ class DoctorChecksTest(unittest.TestCase):
         os.environ["PYENV_VERSION"] = "graalpy3.12-25.1.3"
         with (
             patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.12.8 (Oracle GraalVM Native 25.1.3)\n", "")),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1", "graalpy.pyenv": "graalpy3.13-25.4.4"}),
             patch.object(shutil, "which", return_value=None),
         ):
             result = cli._doctor_check_graalpy(None)
         self.assertEqual(doctor.WARN, result.status)
         self.assertIn("selected by PYENV_VERSION", result.detail)
         self.assertIn("this Pyronaut bundles GraalPy 25.4.4.1.1", result.detail)
-        self.assertIn("pyenv install graalpy3.13-25.4.4.1.1", result.fix)
+        self.assertIn("pyenv install graalpy3.13-25.4.4", result.fix)
         self.assertEqual(str(executable), result.data["executable"])
 
     def test_graalpy_check_reports_selected_but_uninstalled_pyenv_version(self):
         (self.home / ".pyenv").mkdir()
-        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4.1.1\n", encoding="utf-8")
+        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4\n", encoding="utf-8")
         with (
             patch.object(cli, "_read_version_properties", return_value={}),
             patch.object(shutil, "which", return_value=None),
@@ -486,7 +486,7 @@ class DoctorChecksTest(unittest.TestCase):
         on_path = _write_executable(self.root / "bin" / "graalpy")
         with (
             patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1.1)\n", "")),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1", "graalpy.pyenv": "graalpy3.13-25.4.4"}),
             patch.object(shutil, "which", return_value=str(on_path)),
         ):
             found = cli._doctor_check_graalpy(None)
@@ -494,7 +494,7 @@ class DoctorChecksTest(unittest.TestCase):
         self.assertIn("via PATH", found.detail)
 
         with (
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1", "graalpy.pyenv": "graalpy3.13-25.4.4"}),
             patch.object(shutil, "which", return_value=None),
         ):
             absent = cli._doctor_check_graalpy(None)
@@ -503,7 +503,7 @@ class DoctorChecksTest(unittest.TestCase):
             absent_in_project = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.WARN, absent.status)
         self.assertIn("no GraalPy found on PATH, PYENV_VERSION or ~/.pyenv/version", absent.detail)
-        self.assertIn("pyenv install graalpy3.13-25.4.4.1.1 && pyenv global graalpy3.13-25.4.4.1.1", absent.fix)
+        self.assertIn("pyenv install graalpy3.13-25.4.4 && pyenv global graalpy3.13-25.4.4", absent.fix)
         self.assertEqual(doctor.FAIL, absent_in_project.status)
         self.assertIn("no project .venv and", absent_in_project.detail)
         self.assertIn("graalpy -m venv .venv", absent_in_project.fix)
@@ -514,7 +514,7 @@ class DoctorChecksTest(unittest.TestCase):
         (project / ".venv" / "pyvenv.cfg").write_text("home = /opt/graalpy/bin\nversion = 3.13.14\n", encoding="utf-8")
         with (
             patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1.1)\n", "")),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1", "graalpy.pyenv": "graalpy3.13-25.4.4"}),
         ):
             result = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.PASS, result.status, result.detail)
@@ -531,10 +531,10 @@ class DoctorChecksTest(unittest.TestCase):
         project = self.root / "app"
         project.mkdir()
         self._install_pyenv_graalpy()
-        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4.1.1\n", encoding="utf-8")
+        (self.home / ".pyenv" / "version").write_text("graalpy3.13-25.4.4\n", encoding="utf-8")
         with (
             patch.object(cli, "_doctor_capture", return_value=(0, "GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1.1)\n", "")),
-            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1"}),
+            patch.object(cli, "_read_version_properties", return_value={"graalpy": "25.4.4.1.1", "graalpy.pyenv": "graalpy3.13-25.4.4"}),
         ):
             result = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.WARN, result.status)

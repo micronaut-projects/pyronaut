@@ -5,8 +5,8 @@ Install and select the GraalPy version currently used by Pyronaut with https://g
 
 [source,bash]
 ----
-pyenv install --skip-existing graalpy3.13-25.4.4.1.1
-pyenv shell graalpy3.13-25.4.4.1.1
+pyenv install --skip-existing graalpy3.13-25.4.4
+pyenv shell graalpy3.13-25.4.4
 python --version
 ----
 
