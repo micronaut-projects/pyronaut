@@ -80,7 +80,7 @@ final class PyronautDevMainTest {
 
     @Test
     void retainsNativeProvidedPolyglotApiForDirectCompilation(@TempDir Path tempDir) throws IOException {
-        Path polyglot = tempDir.resolve("polyglot-25.4.4.1.jar");
+        Path polyglot = tempDir.resolve("polyglot-25.4.4.1.1.jar");
         Path application = tempDir.resolve("application-1.0.jar");
         Files.createFile(polyglot);
         Files.createFile(application);
