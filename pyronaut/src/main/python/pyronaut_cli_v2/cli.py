@@ -4986,19 +4986,17 @@ def _read_pyproject_test_resources_shared(project_dir: Path) -> bool:
     test_resources = _read_pyproject_test_resources_table(project_dir)
     if not isinstance(test_resources, dict):
         return False
-    shared_server = test_resources.get("sharedServer")
+    shared_server = test_resources.get("shared-server", test_resources.get("sharedServer"))
     return isinstance(shared_server, bool) and shared_server
 
 
 def _resolve_test_resources_logs_dir(project_dir: Path, settings_file: Path) -> Path:
     test_resources = _read_pyproject_test_resources_table(project_dir)
     if isinstance(test_resources, dict):
-        configured = test_resources.get("logsDir")
-        if isinstance(configured, str):
-            stripped = configured.strip()
-            if stripped:
-                configured_path = Path(stripped)
-                return (configured_path if configured_path.is_absolute() else project_dir / configured_path).resolve()
+        configured = _read_pyproject_string(test_resources, "logs-dir", "logsDir")
+        if configured is not None:
+            configured_path = Path(configured)
+            return (configured_path if configured_path.is_absolute() else project_dir / configured_path).resolve()
     return (settings_file.parent / "logs").resolve()
 
 
