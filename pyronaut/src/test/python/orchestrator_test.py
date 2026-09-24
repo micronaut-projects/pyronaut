@@ -678,7 +678,17 @@ class OrchestratorTest(unittest.TestCase):
 
             with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
                 exit_code = cli.run(
-                    ["test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)],
+                    [
+                        "test",
+                        "--port",
+                        "8181",
+                        "--property",
+                        "a.b=c",
+                        "--disable-test-resources",
+                        str(source),
+                        "--",
+                        str(source),
+                    ],
                     runner=runner,
                     resolver=self._resolver(),
                     platform_name="linux",
@@ -687,7 +697,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=test", "-Dmicronaut.graalvm.imagesingletons.enabled=false", "-Dpyronaut.dev.direct.restartable=true", "test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=test", "-Dmicronaut.graalvm.imagesingletons.enabled=false", "-Dpyronaut.dev.direct.restartable=true", "test", "--port", "8181", "--property", "a.b=c", "--disable-test-resources", str(source), "--", str(source)]],
             executed,
         )
 
@@ -8271,6 +8281,36 @@ java-version = 25
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "all"], executed[2])
         self._assert_test_delegate(executed[3], "/tmp/demo")
         self._assert_test_resources_stop(executed[4], "/tmp/demo")
+
+    def test_disable_test_resources_flag_skips_server_and_delegate_forwarding(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+
+            exit_code = cli.run(
+                ["test", "--project-dir", str(project_dir), "--disable-test-resources"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(3, len(executed))
+        self.assertEqual(
+            ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"],
+            executed[0],
+        )
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "all"], executed[1])
+        self._assert_test_delegate(executed[2], str(project_dir))
+        self.assertNotIn("--disable-test-resources", executed[2])
+        self.assertFalse(any("pyronaut-test-resources-server" in command[0] for command in executed))
 
     def test_build_validates_production_scenario(self):
         executed = []
