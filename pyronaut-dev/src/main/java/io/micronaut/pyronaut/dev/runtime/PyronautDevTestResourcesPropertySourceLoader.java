@@ -36,6 +36,7 @@ import java.util.concurrent.ConcurrentMap;
 @Internal
 public final class PyronautDevTestResourcesPropertySourceLoader implements PropertySourceLoader {
     public static final String ENABLED_PROPERTY = "pyronaut.dev.test.resources.bridge.enabled";
+    private static final String MICRONAUT_TEST_RESOURCES_ENABLED = "micronaut.test.resources.enabled";
     private static final String DELEGATE_CLASS = "io.micronaut.testresources.client.TestResourcesClientPropertySourceLoader";
 
     private final ConcurrentMap<ClassLoader, Optional<PropertySourceLoader>> delegates = new ConcurrentHashMap<>();
@@ -108,7 +109,15 @@ public final class PyronautDevTestResourcesPropertySourceLoader implements Prope
         }
     }
 
-    private static boolean enabled() {
-        return Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"));
+    /**
+     * The bridge is disabled either explicitly or when Test Resources are disabled for the application.
+     * Loading the client would otherwise let it read settings files such as
+     * {@code ~/.micronaut/test-resources/test-resources.properties}.
+     *
+     * @return whether the bridge may load the test-resources client
+     */
+    static boolean enabled() {
+        return Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))
+            && Boolean.parseBoolean(System.getProperty(MICRONAUT_TEST_RESOURCES_ENABLED, "true"));
     }
 }

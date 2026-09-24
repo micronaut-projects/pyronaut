@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ServiceLoader;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautDevRuntimeServiceBridgeTest {
@@ -54,5 +55,25 @@ class PyronautDevRuntimeServiceBridgeTest {
             "value-from-delegate",
             loader.load("application", null).orElseThrow().get("datasources.default.url")
         );
+    }
+
+    @Test
+    void disabledTestResourcesDoNotLoadTheClient() {
+        String previous = System.getProperty("micronaut.test.resources.enabled");
+        System.setProperty("micronaut.test.resources.enabled", "false");
+        try {
+            // A stale ~/.micronaut settings file must not be read by the client.
+            assertFalse(PyronautDevTestResourcesPropertySourceLoader.enabled());
+            assertTrue(new PyronautDevTestResourcesPropertySourceLoader().load("application", null).isEmpty());
+            assertTrue(new PyronautDevTestResourcesPropertyExpressionResolver()
+                .resolve(null, ConversionService.SHARED, "auto.test.resources.datasources.default.url", String.class)
+                .isEmpty());
+        } finally {
+            if (previous == null) {
+                System.clearProperty("micronaut.test.resources.enabled");
+            } else {
+                System.setProperty("micronaut.test.resources.enabled", previous);
+            }
+        }
     }
 }
