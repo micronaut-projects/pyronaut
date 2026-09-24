@@ -348,6 +348,14 @@ public final class PyronautTestMain implements Callable<Integer> {
                         // The pytest engine publishes each test's captured
                         // stdout/stderr/log as report entries keyed by stream.
                         private final Map<TestIdentifier, Map<String, StringBuilder>> published = new ConcurrentHashMap<>();
+                        private final Map<TestIdentifier, Long> started = new ConcurrentHashMap<>();
+
+                        @Override
+                        public void executionStarted(TestIdentifier identifier) {
+                            if (identifier.isTest()) {
+                                started.put(identifier, System.nanoTime());
+                            }
+                        }
 
                         @Override
                         public void reportingEntryPublished(TestIdentifier identifier, ReportEntry entry) {
@@ -380,9 +388,11 @@ public final class PyronautTestMain implements Callable<Integer> {
                                 stdout.append(capture.drain("stdout"));
                                 stderr.append(capture.drain("stderr"));
                             }
+                            Long startNanos = started.remove(identifier);
                             testResults.add(new JUnitReportWriter.TestResult(
                                 TestProgressReporter.name(identifier), reportStatus,
-                                result.getThrowable().map(Throwable::toString).orElse(""), stdout.toString(), stderr.toString()));
+                                result.getThrowable().map(Throwable::toString).orElse(""), stdout.toString(), stderr.toString(),
+                                startNanos == null ? -1 : System.nanoTime() - startNanos));
                         }
                     });
                 }
