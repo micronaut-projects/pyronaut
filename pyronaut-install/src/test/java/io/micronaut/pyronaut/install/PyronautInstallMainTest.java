@@ -771,6 +771,7 @@ class PyronautInstallMainTest {
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
         writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-control-panel", "2.9.0");
+        writeBom(repository, "io.micronaut.testresources", "micronaut-test-resources-bom", "2.9.0", List.of());
         writeTestResourcesServerDefaultsBom(repository);
 
         Path project = tempDir.resolve("project-test-resources-enabled");
@@ -818,6 +819,7 @@ class PyronautInstallMainTest {
             "2.9.0",
             List.of(new DependencyCoordinate("org.openjdk.nashorn", "nashorn-core", "15.4"))
         );
+        writeBom(repository, "io.micronaut.testresources", "micronaut-test-resources-bom", "2.9.0", List.of());
         writeTestResourcesServerDefaultsBom(repository);
 
         Path project = tempDir.resolve("project-test-resources-server-manifest");
@@ -2126,6 +2128,77 @@ class PyronautInstallMainTest {
         assertFalse(runtimeEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("2.9.0")));
         assertTrue(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("4.0.0-M1")));
         assertFalse(testEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-client") && entry.contains("2.9.0")));
+    }
+
+    @Test
+    void alignsTransitiveDependenciesWithConfiguredTestResourcesVersion() throws Exception {
+        Path repository = tempDir.resolve("repo-configured-test-resources-version");
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "5.1.0",
+            List.of(
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "4.1.0"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-core", "4.1.0"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-codec", "4.1.0")
+            )
+        );
+        writeBom(
+            repository,
+            "io.micronaut.testresources",
+            "micronaut-test-resources-bom",
+            "4.3.0",
+            List.of(
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-client", "4.3.0"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-core", "4.3.0"),
+                new ManagedDependency("io.micronaut.testresources", "micronaut-test-resources-codec", "4.3.0")
+            )
+        );
+        writeArtifactWithDependencies(
+            repository,
+            "io.micronaut.testresources",
+            "micronaut-test-resources-client",
+            "4.3.0",
+            List.of(
+                new DependencyCoordinate("io.micronaut.testresources", "micronaut-test-resources-core", "4.3.0"),
+                new DependencyCoordinate("io.micronaut.testresources", "micronaut-test-resources-codec", "4.3.0")
+            )
+        );
+        for (String artifact : List.of("micronaut-test-resources-core", "micronaut-test-resources-codec")) {
+            writeArtifact(repository, "io.micronaut.testresources", artifact, "4.1.0");
+            writeArtifact(repository, "io.micronaut.testresources", artifact, "4.3.0");
+        }
+
+        Path project = tempDir.resolve("project-configured-test-resources-version");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "configured-test-resources-version"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.platform]
+            version = "5.1.0"
+
+            [tool.pyronaut.test-resources]
+            enabled = true
+            version = "4.3.0"
+            """.formatted(repository.toUri()));
+
+        PyprojectModel model = new PyprojectModelReader().readProjectDirectory(project);
+        MavenClasspathResolver.ResolvedScopeDetails result = new MavenClasspathResolver().resolveScopeDetails(
+            model,
+            InstallScope.RUNTIME,
+            tempDir.resolve("m2-configured-test-resources-version"),
+            false
+        );
+
+        assertTrue(result.classpath().stream().anyMatch(path -> path.getFileName().toString().equals("micronaut-test-resources-client-4.3.0.jar")));
+        assertTrue(result.classpath().stream().anyMatch(path -> path.getFileName().toString().equals("micronaut-test-resources-core-4.3.0.jar")));
+        assertTrue(result.classpath().stream().anyMatch(path -> path.getFileName().toString().equals("micronaut-test-resources-codec-4.3.0.jar")));
+        assertFalse(result.classpath().stream().anyMatch(path -> path.getFileName().toString().contains("4.1.0")));
     }
 
     @Test
