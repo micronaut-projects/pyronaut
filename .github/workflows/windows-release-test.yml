@@ -1,0 +1,84 @@
+# Smoke-tests a published Pyronaut release on Windows.
+name: Windows release test
+on:
+  push:
+    branches: [claude/pyronaut-windows-release-test-whigtj]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag to test, for example v0.0.4
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag || 'v0.0.4' }}
+      PYTHONUTF8: "1"
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: List release assets
+        run: gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
+      - name: Install the CLI with the documented pip command
+        run: |
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          python -m pip install --upgrade --no-index `
+            --find-links "https://github.com/$env:GITHUB_REPOSITORY/releases/expanded_assets/$env:RELEASE_TAG" `
+            "pyronaut==$version"
+      - name: pyronaut --version
+        run: pyronaut --version
+      - name: pyronaut setup
+        run: pyronaut setup
+      - name: pyronaut doctor
+        if: always()
+        run: pyronaut doctor
+      - name: pyronaut create demo
+        if: always()
+        working-directory: ${{ runner.temp }}
+        run: pyronaut create demo
+      - name: pyronaut install
+        if: always()
+        working-directory: ${{ runner.temp }}/demo
+        run: pyronaut install
+      - name: pyronaut process
+        if: always()
+        working-directory: ${{ runner.temp }}/demo
+        run: pyronaut process
+      - name: pyronaut doctor (project)
+        if: always()
+        working-directory: ${{ runner.temp }}/demo
+        run: pyronaut doctor
+      - name: pyronaut test
+        if: always()
+        working-directory: ${{ runner.temp }}/demo
+        run: pyronaut test
+      - name: pyronaut dev + HTTP request
+        if: always()
+        working-directory: ${{ runner.temp }}/demo
+        run: |
+          $p = Start-Process pyronaut -ArgumentList 'dev' -PassThru -NoNewWindow `
+            -RedirectStandardOutput dev.out -RedirectStandardError dev.err
+          $ok = $false
+          for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
+            Start-Sleep 5
+            try { $r = Invoke-WebRequest http://localhost:8080/ -UseBasicParsing; "HTTP $($r.StatusCode): $($r.Content)"; $ok = $true } catch {}
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Get-Content dev.out, dev.err -ErrorAction SilentlyContinue
+          if (-not $ok) { throw 'dev server never answered' }
+      - name: Upload project state
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-demo
+          path: ${{ runner.temp }}/demo
+          if-no-files-found: ignore
