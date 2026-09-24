@@ -218,7 +218,7 @@ class PytestFunctionInvokerTest {
     }
 
     @Test
-    void pytestRunnerDisablesPytestCacheProvider() throws Exception {
+    void pytestRunnerUsesProcessedBytecodeAndDisablesPytestCacheProvider() throws Exception {
         try (Context context = Context.newBuilder("python")
             .allowAllAccess(true)
             .build()) {
@@ -259,9 +259,10 @@ class PytestFunctionInvokerTest {
                 """);
 
             Value recordedArgs = context.getBindings("python").getMember("recorded_args");
-            assertEquals("-p", recordedArgs.getArrayElement(0).asString());
-            assertEquals("no:cacheprovider", recordedArgs.getArrayElement(1).asString());
-            assertEquals("tests/test_demo.py", recordedArgs.getArrayElement(2).asString());
+            assertEquals("--assert=plain", recordedArgs.getArrayElement(0).asString());
+            assertEquals("-p", recordedArgs.getArrayElement(1).asString());
+            assertEquals("no:cacheprovider", recordedArgs.getArrayElement(2).asString());
+            assertEquals("tests/test_demo.py", recordedArgs.getArrayElement(3).asString());
         }
     }
 

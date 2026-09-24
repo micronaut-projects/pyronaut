@@ -62,7 +62,7 @@ def run_pytest(test_files: List[str], listener: Any, junit_xml: Optional[str] = 
         # Create the plugin with the Java listener
         plugin = create_plugin(listener)
 
-        pytest_args = ["-p", "no:cacheprovider", *test_files]
+        pytest_args = ["--assert=plain", "-p", "no:cacheprovider", *test_files]
         if junit_xml:
             junit_path = Path(junit_xml)
             junit_path.parent.mkdir(parents=True, exist_ok=True)

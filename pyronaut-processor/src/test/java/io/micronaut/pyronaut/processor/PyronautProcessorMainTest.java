@@ -232,6 +232,10 @@ class PyronautProcessorMainTest {
                     .resolve("META-INF/GRAALPY-VFS/micronaut-application/src/sample_test.py");
                 Files.createDirectories(outputFile.getParent());
                 Files.writeString(outputFile, "TRANSFORMED = True\n", StandardCharsets.UTF_8);
+                Files.setLastModifiedTime(outputFile, java.nio.file.attribute.FileTime.fromMillis(1_700_000_000_000L));
+                Path bytecode = outputFile.resolveSibling("__pycache__/sample_test.graalpy253-313.pyc");
+                Files.createDirectories(bytecode.getParent());
+                Files.write(bytecode, new byte[]{1, 2, 3});
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -240,8 +244,11 @@ class PyronautProcessorMainTest {
 
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
         Path mirrored = project.resolve("__pyronaut__/test-sources/sample_test.py");
+        Path processed = project.resolve("__pyronaut__/test-classes/META-INF/GRAALPY-VFS/micronaut-application/src/sample_test.py");
         assertTrue(Files.isRegularFile(mirrored));
         assertEquals("TRANSFORMED = True\n", Files.readString(mirrored));
+        assertEquals(Files.getLastModifiedTime(processed), Files.getLastModifiedTime(mirrored));
+        assertTrue(Files.isRegularFile(mirrored.resolveSibling("__pycache__/sample_test.graalpy253-313.pyc")));
     }
 
     @Test
