@@ -500,6 +500,11 @@ def run(
         return _usage_error(str(exc))
     delegated_args = _strip_no_cache_flag(forwarded_args) if command in {"dev", "run", "test"} else forwarded_args
     delegated_args = _strip_local_repository_args(delegated_args) if command in {"dev", "run", "test"} else delegated_args
+    delegated_args = (
+        _strip_disable_test_resources_flag(delegated_args)
+        if command in {"dev", "run", "test"}
+        else delegated_args
+    )
     # Keep the dev process under the Python auto-restart loop for both managed
     # and external builds. The native pyronaut-dev launcher runs one
     # application instance; it does not watch Gradle/Maven source trees.
@@ -560,7 +565,10 @@ def run(
             if install_code != SUCCESS:
                 return install_code
             external_install_done = True
-        test_resources_enabled = _test_resources_enabled(Path(project_dir))
+        test_resources_enabled = (
+            not _extract_flag(forwarded_args, "--disable-test-resources")
+            and _test_resources_enabled(Path(project_dir))
+        )
         if command in {"dev", "test"} and test_resources_enabled:
             tr_session = _OwnedTestResourcesSession(
                 project_dir=Path(project_dir).resolve(),
@@ -7350,6 +7358,15 @@ def _strip_orchestrator_only_args(args: Sequence[str]) -> list[str]:
             continue
         filtered.append(token)
     return filtered + application_args
+
+
+def _strip_disable_test_resources_flag(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
+    return [
+        token
+        for token in option_args
+        if token != "--disable-test-resources" and not token.startswith("--disable-test-resources=")
+    ] + application_args
 
 
 def _split_application_args(args: Sequence[str]) -> tuple[list[str], list[str]]:
