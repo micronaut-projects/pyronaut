@@ -678,7 +678,17 @@ class OrchestratorTest(unittest.TestCase):
 
             with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
                 exit_code = cli.run(
-                    ["test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)],
+                    [
+                        "test",
+                        "--port",
+                        "8181",
+                        "--property",
+                        "a.b=c",
+                        "--disable-test-resources",
+                        str(source),
+                        "--",
+                        str(source),
+                    ],
                     runner=runner,
                     resolver=self._resolver(),
                     platform_name="linux",
@@ -687,7 +697,7 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=test", "-Dmicronaut.graalvm.imagesingletons.enabled=false", "-Dpyronaut.dev.direct.restartable=true", "test", "--port", "8181", "--property", "a.b=c", str(source), "--", str(source)]],
+            [[str(native_dev), "-Djava.home=/tmp/java-home", f"-Dpyronaut.dev.project.dir={Path.cwd().resolve()}", "-Dmicronaut.environments=test", "-Dmicronaut.graalvm.imagesingletons.enabled=false", "-Dpyronaut.dev.direct.restartable=true", "test", "--port", "8181", "--property", "a.b=c", "--disable-test-resources", str(source), "--", str(source)]],
             executed,
         )
 
@@ -2493,6 +2503,188 @@ mode = "jvm"
         self.assertEqual(0, exit_code)
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "start"] for cmd in executed))
         self.assertFalse(any(cmd[:2] == ["/tmp/pyronaut-test-resources-server", "stop"] for cmd in executed))
+
+    _TEST_RESOURCES_CLIENT_JARS = (
+        "micronaut-test-resources-client-4.1.0.jar",
+        "micronaut-test-resources-core-4.1.0.jar",
+        "micronaut-test-resources-codec-4.1.0.jar",
+    )
+
+    def _write_disabled_test_resources_project(self, root: Path, *, toolchain: str) -> Path:
+        project_dir = root / "disabled-test-resources"
+        cache_dir = project_dir / "__pyronaut__"
+        (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+        (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
+        client_jars = [str(root / name) for name in self._TEST_RESOURCES_CLIENT_JARS]
+        for scope in ("runtime", "development-runtime", "test", "build"):
+            (cache_dir / f"resolved-{scope}-dependencies").write_text(
+                "\n".join([f"/tmp/{scope}.jar", *client_jars]) + "\n",
+                encoding="utf-8",
+            )
+        (project_dir / "pyproject.toml").write_text(
+            "[tool.pyronaut.toolchain]\n"
+            f"type = \"{toolchain}\"\n\n"
+            "[tool.pyronaut.test-resources]\n"
+            "enabled = false\n",
+            encoding="utf-8",
+        )
+        return project_dir
+
+    def _resolver_with_test_resources_client(self, root: Path):
+        base = self._resolver()
+        test_launcher = self._write_fake_install_dist(root, "pyronaut-test")
+        for name in self._TEST_RESOURCES_CLIENT_JARS:
+            (Path(test_launcher).parent.parent / "lib" / name).write_text("", encoding="utf-8")
+
+        def resolve(command_name):
+            if command_name == "pyronaut-test":
+                return test_launcher
+            return base(command_name)
+
+        return resolve
+
+    def _assert_test_resources_client_disabled(self, command_line) -> None:
+        # A disabled client must not fall back to a stale
+        # ~/.micronaut/test-resources/test-resources.properties.
+        self.assertIn("-Dmicronaut.test.resources.enabled=false", command_line)
+        self.assertIn("-Dpyronaut.dev.test.resources.bridge.enabled=false", command_line)
+        self.assertFalse(
+            any(value.startswith("-Dpyronaut.dev.test.resources.client.classpath=") for value in command_line),
+            command_line,
+        )
+        self.assertFalse(any(value.startswith("-Dmicronaut.test.resources.server.uri=") for value in command_line))
+
+    def test_jvm_test_disables_test_resources_client_when_test_resources_are_disabled(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = self._write_disabled_test_resources_project(root, toolchain="jvm")
+
+            def runner_with_env(command_line, env):
+                executed.append((command_line, env))
+                return 0
+
+            exit_code = cli.run(
+                ["test", "--project-dir", str(project_dir)],
+                runner_with_env=runner_with_env,
+                resolver=self._resolver_with_test_resources_client(root),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertFalse(any(cmd[0] == "/tmp/pyronaut-test-resources-server" for cmd, _ in executed))
+        test_command = executed[-1][0]
+        self.assertIn(self._TEST_MAIN, test_command)
+        self._assert_test_resources_client_disabled(test_command)
+        classpath = test_command[test_command.index("-cp") + 1].split(os.pathsep)
+        # The pyronaut-test launcher's own copy of the client stays off the
+        # classpath; the explicit property covers a declared dependency.
+        self.assertFalse(
+            any(
+                Path(entry).name in self._TEST_RESOURCES_CLIENT_JARS
+                and "pyronaut-test-install" in entry
+                for entry in classpath
+            ),
+            classpath,
+        )
+
+    def test_jvm_dev_disables_test_resources_client_when_test_resources_are_disabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = self._write_disabled_test_resources_project(root, toolchain="jvm")
+            command_line, _ = cli._build_dev_delegate_invocation(  # noqa: SLF001
+                ["--project-dir", str(project_dir)],
+                self._resolver(),
+                debug_vm=False,
+                env_overrides=None,
+                java_home_provider=None,
+            )
+
+        self.assertIn(self._RUN_MAIN, command_line)
+        self._assert_test_resources_client_disabled(command_line)
+        self.assertEqual(1, command_line.count("-Dmicronaut.test.resources.enabled=false"))
+        self.assertLess(
+            command_line.index("-Dmicronaut.test.resources.enabled=false"),
+            command_line.index("-cp"),
+        )
+
+    def test_native_dev_and_test_disable_test_resources_client_when_test_resources_are_disabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dev = root / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            project_dir = self._write_disabled_test_resources_project(root, toolchain="native")
+            with patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None,
+            ):
+                dev_command, _ = cli._build_dev_delegate_invocation(  # noqa: SLF001
+                    ["--project-dir", str(project_dir)],
+                    self._resolver(),
+                    debug_vm=False,
+                    env_overrides=None,
+                    java_home_provider=None,
+                )
+                test_command = cli._pyronaut_dev_native_command_line(  # noqa: SLF001
+                    "test",
+                    ["--project-dir", str(project_dir)],
+                    self._resolver(),
+                )
+
+        assert test_command is not None
+        for command_line in (dev_command, test_command):
+            self.assertEqual(str(native_dev), command_line[0])
+            self._assert_test_resources_client_disabled(command_line)
+
+    def test_native_run_disables_test_resources_client_when_test_resources_are_disabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dev = root / "pyronaut-dev"
+            native_run = root / "pyronaut-run"
+            for executable in (native_dev, native_run):
+                executable.write_text("", encoding="utf-8")
+                executable.chmod(0o755)
+            project_dir = self._write_disabled_test_resources_project(root, toolchain="native")
+            with patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: {"pyronaut-dev": native_dev, "pyronaut-run": native_run}.get(command_name),
+            ):
+                run_command = cli._pyronaut_run_native_command_line(  # noqa: SLF001
+                    "run",
+                    ["--project-dir", str(project_dir)],
+                    self._resolver(),
+                )
+
+        assert run_command is not None
+        self.assertEqual(str(native_run), run_command[0])
+        self.assertIn("-Dmicronaut.test.resources.enabled=false", run_command)
+
+    def test_test_resources_client_stays_enabled_for_owned_server_and_direct_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "enabled"
+            project_dir.mkdir()
+            self._write_test_resources_enabled(project_dir, enabled=True)
+            self.assertEqual([], cli._test_resources_disabled_jvm_args(project_dir))  # noqa: SLF001
+            # An owned server supplies the URI explicitly.
+            disabled_project = self._write_disabled_test_resources_project(Path(temp_dir), toolchain="jvm")
+            self.assertEqual(
+                [],
+                cli._test_resources_disabled_jvm_args(  # noqa: SLF001
+                    disabled_project,
+                    env_overrides={"MICRONAUT_TEST_RESOURCES_SERVER_URI": "http://localhost:1234"},
+                ),
+            )
+            # Direct-source launches infer Test Resources in pyronaut-dev.
+            direct_source = Path(temp_dir) / "direct"
+            direct_source.mkdir()
+            self.assertEqual([], cli._test_resources_disabled_jvm_args(direct_source))  # noqa: SLF001
+            self.assertIn(
+                "-Dmicronaut.test.resources.enabled=false",
+                cli._test_resources_disabled_jvm_args(direct_source, ["--disable-test-resources"]),  # noqa: SLF001
+            )
 
     def test_test_processes_all_passes_even_when_output_dirs_exist(self):
         executed = []
@@ -8271,6 +8463,74 @@ java-version = 25
         self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", "/tmp/demo", "--pass", "all"], executed[2])
         self._assert_test_delegate(executed[3], "/tmp/demo")
         self._assert_test_resources_stop(executed[4], "/tmp/demo")
+
+    def test_disable_test_resources_flag_skips_server_and_delegate_forwarding(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "demo"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+
+            exit_code = cli.run(
+                ["test", "--project-dir", str(project_dir), "--disable-test-resources"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(3, len(executed))
+        self.assertEqual(
+            ["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"],
+            executed[0],
+        )
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "all"], executed[1])
+        self._assert_test_delegate(executed[2], str(project_dir))
+        self.assertNotIn("--disable-test-resources", executed[2])
+        self.assertFalse(any("pyronaut-test-resources-server" in command[0] for command in executed))
+        # The stripped flag still disables the client explicitly, even though
+        # pyproject.toml enables Test Resources.
+        self._assert_test_resources_client_disabled(executed[2])
+
+    def test_disable_test_resources_flag_disables_client_for_project_dev(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = root / "demo"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                "\n".join(["/tmp/runtime.jar", *(str(root / name) for name in self._TEST_RESOURCES_CLIENT_JARS)]) + "\n",
+                encoding="utf-8",
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"jvm\"\n\n[tool.pyronaut.test-resources]\nenabled = true\n",
+                encoding="utf-8",
+            )
+
+            exit_code = cli.run(
+                ["dev", "--project-dir", str(project_dir), "--disable-test-resources"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertFalse(any("pyronaut-test-resources-server" in command[0] for command in executed))
+        dev_command = executed[-1]
+        self.assertIn(self._RUN_MAIN, dev_command)
+        self.assertNotIn("--disable-test-resources", dev_command)
+        self._assert_test_resources_client_disabled(dev_command)
 
     def test_build_validates_production_scenario(self):
         executed = []
