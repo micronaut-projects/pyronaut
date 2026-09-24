@@ -52,6 +52,7 @@ val collectPyronautDevPgoProfile = providers
     .gradleProperty("pyronautDevPgoCollect")
     .map(String::toBoolean)
     .orElse(false)
+val pgoProfileCounter = java.util.concurrent.atomic.AtomicInteger()
 val pyronautDevPgoProfileFile = providers
     .gradleProperty("pyronautDevPgoProfileFile")
     .orElse(layout.buildDirectory.file("pgo/pyronaut-dev.iprof").map { it.asFile.absolutePath })
@@ -512,8 +513,12 @@ fun nativeJavaHomeJvmArgs(): List<String> {
     return buildList {
         add("-Djava.home=${resolveProvisionedGraalVmDevBuildHome().absolutePath}")
         if (collectPyronautDevPgoProfile.get()) {
-            val profileFile = java.io.File(pyronautDevPgoProfileFile.get())
-            profileFile.parentFile.mkdirs()
+            // One file per launcher process: a shared file keeps only the last command's profile.
+            val baseFile = java.io.File(pyronautDevPgoProfileFile.get())
+            baseFile.parentFile.mkdirs()
+            val profileFile = baseFile.resolveSibling(
+                "${baseFile.nameWithoutExtension}-${pgoProfileCounter.incrementAndGet()}.iprof"
+            )
             add("-XX:ProfilesDumpFile=${profileFile.absolutePath}")
         }
     }

@@ -1,3 +1,4 @@
+import io.micronaut.pyronaut.gradle.PyronautPgo
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.Sync
@@ -188,6 +189,11 @@ tasks {
         dependsOn(writeNativeClasspathManifest)
         inputs.files(configurations.runtimeClasspath)
         inputs.property("pyronautNativeImageCiArgs", nativeImageCiArgs)
+        inputs.property("pyronautPgoMode", PyronautPgo.mode(project).name)
+        inputs.property("pyronautCodeCompression", PyronautPgo.codeCompression(project))
+        inputs.files(providers.provider {
+            if (PyronautPgo.mode(project) == PyronautPgo.Mode.OPTIMIZE) PyronautPgo.profiles(project, "pyronaut-run") else emptyList()
+        }).withPropertyName("pyronautPgoProfiles")
         outputs.file(cremaOutput)
         doFirst {
             // The native build runs in its own process, so it takes JAVA_HOME from the daemon's
@@ -205,6 +211,7 @@ tasks {
                         "was started with."
                 )
             }
+            PyronautPgo.prepareBuild(project, "pyronaut-run", buildJdk)
             environment("JAVA_HOME", buildJdk.absolutePath)
             environment(
                 "PATH",
@@ -233,8 +240,12 @@ tasks {
                 "--output", cremaOutputArgument.get().asFile.absolutePath,
                 "--native-base"
             ))
+            nativeBuildArgs.addAll(PyronautPgo.nativeBuildArgs(project, "pyronaut-run"))
             nativeBuildArgs.addAll(nativeImageCiArgs)
             commandLine(nativeBuildArgs)
+        }
+        doLast {
+            PyronautPgo.verifyAndReport(project, "pyronaut-run", cremaOutput.get().asFile)
         }
     }
     val nativeCompileTask = named("nativeCompile") {
@@ -291,6 +302,9 @@ tasks {
         dependsOn(writeNativeClasspathManifest)
         destinationDirectory.set(layout.buildDirectory.dir("distributions"))
         archiveFileName.set("pyronaut-run-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
+        doFirst {
+            PyronautPgo.rejectInstrumentedBundle(project, "pyronaut-run")
+        }
         compression = Compression.GZIP
         from(cremaOutput)
         // Crema/native-image emits platform libraries beside the executable;

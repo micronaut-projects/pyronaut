@@ -60,6 +60,8 @@ include("functional-test")
 project(":functional-test").name = "functional-test"
 include("functional-test-docker")
 project(":functional-test-docker").name = "functional-test-docker"
+include("pgo-training")
+project(":pgo-training").name = "pgo-training"
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 

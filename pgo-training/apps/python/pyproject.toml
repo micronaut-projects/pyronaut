@@ -1,0 +1,53 @@
+# PGO training workload for pyronaut-run-python and pyronaut-dev.
+# @REPOSITORY@ is replaced by the training driver with the staged Pyronaut artifact repository.
+
+[project]
+name = 'pyronaut-pgo-training'
+version = '1.0.0'
+
+[build-system]
+requires = ['setuptools', 'wheel', 'tomli']
+build-backend = 'setuptools.build_meta'
+
+[tool.setuptools]
+package-dir.'' = 'src'
+packages.find.where = ['src']
+
+[tool.pyronaut]
+repositories = ['@REPOSITORY@', 'mavenCentral']
+
+[tool.pyronaut.processor]
+incremental = true
+# Every processing run must be its own launcher process so that it writes its own profile.
+daemon = false
+
+[tool.pyronaut.test-resources]
+enabled = false
+
+[tool.pyronaut.sources]
+python = 'src'
+python-test = 'tests'
+resources = 'config'
+test-resources = 'tests-config'
+
+[tool.pyronaut.dependencies]
+runtime = [
+  'io.micronaut:micronaut-http-server-netty',
+  'io.micronaut.serde:micronaut-serde-jackson',
+  'io.micronaut.validation:micronaut-validation',
+  'io.micronaut.data:micronaut-data-jdbc',
+  'io.micronaut.sql:micronaut-jdbc-hikari',
+  'jakarta.data:jakarta.data-api',
+  # Loaded at runtime through Crema; never part of a native image.
+  'com.h2database:h2',
+]
+build = [
+  'io.micronaut.data:micronaut-data-processor',
+  'io.micronaut.serde:micronaut-serde-processor',
+  'io.micronaut.validation:micronaut-validation-processor',
+]
+test = [
+  'io.micronaut.pyronaut:micronaut-pyronaut-pytest',
+  'io.micronaut.test:micronaut-test-junit5',
+  'io.micronaut.pyronaut:micronaut-pyronaut-requests',
+]

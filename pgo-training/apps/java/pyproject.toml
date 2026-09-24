@@ -1,0 +1,36 @@
+# PGO training workload for pyronaut-run (applications without Python).
+# @REPOSITORY@ is replaced by the training driver with the staged Pyronaut artifact repository.
+
+[project]
+name = 'pyronaut-pgo-training-java'
+version = '1.0.0'
+
+[tool.pyronaut]
+repositories = ['@REPOSITORY@', 'mavenCentral']
+
+[tool.pyronaut.processor]
+incremental = true
+daemon = false
+
+[tool.pyronaut.test-resources]
+enabled = false
+
+[tool.pyronaut.sources]
+java = 'src-java'
+resources = 'config'
+
+[tool.pyronaut.dependencies]
+runtime = [
+  'io.micronaut:micronaut-http-server-netty',
+  'io.micronaut.serde:micronaut-serde-jackson',
+  'io.micronaut.validation:micronaut-validation',
+  'io.micronaut.data:micronaut-data-jdbc',
+  'io.micronaut.sql:micronaut-jdbc-hikari',
+  # Loaded at runtime through Crema; never part of a native image.
+  'com.h2database:h2',
+]
+build = [
+  'io.micronaut.data:micronaut-data-processor',
+  'io.micronaut.serde:micronaut-serde-processor',
+  'io.micronaut.validation:micronaut-validation-processor',
+]
