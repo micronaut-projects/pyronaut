@@ -188,6 +188,14 @@ tasks {
         dependsOn(writeNativeClasspathManifest)
         inputs.files(configurations.runtimeClasspath)
         inputs.property("pyronautNativeImageCiArgs", nativeImageCiArgs)
+        // The image is produced by PyronautNativeImageBuilder, so a change to the builder (its preserve
+        // list, for one) must invalidate the image even when the runtime classpath is unchanged.
+        inputs.files(nativeBuildInstallDirectory.map { it.dir("lib").asFileTree })
+            .withPropertyName("nativeBuildClasspath")
+            .withNormalizer(ClasspathNormalizer::class)
+        inputs.files(nativeBuildInstallDirectory.map { it.dir("bin").asFileTree })
+            .withPropertyName("nativeBuildLaunchers")
+            .withPathSensitivity(PathSensitivity.RELATIVE)
         outputs.file(cremaOutput)
         doFirst {
             // The native build runs in its own process, so it takes JAVA_HOME from the daemon's
