@@ -94,9 +94,11 @@ jobs:
           [[ "${version}" =~ ^[0-9]+([.][0-9]+)*$ ]]
           mkdir -p context/bundles/amd64 context/bundles/arm64
           gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --pattern "pyronaut-${BUNDLE}-linux-amd64-${version}.tar.gz" \
             --output context/bundles/amd64/bundle.tar.gz
           gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --pattern "pyronaut-${BUNDLE}-linux-aarch64-${version}.tar.gz" \
             --output context/bundles/arm64/bundle.tar.gz
           tar -tzf context/bundles/amd64/bundle.tar.gz > /dev/null
