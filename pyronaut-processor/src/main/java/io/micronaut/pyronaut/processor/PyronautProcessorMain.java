@@ -710,11 +710,32 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                     Path relative = originalTestSourceDir.relativize(path);
                     Path generatedPath = generatedSources.resolve(relative).normalize();
                     if (Files.isRegularFile(generatedPath)) {
-                        copyFile(generatedPath, testSourcesDir.resolve(relative));
+                        copyProcessedTestModule(generatedPath, testSourcesDir.resolve(relative));
                     }
                 });
         } catch (Exception e) {
             throw new PyronautProcessorException("Failed to mirror processed test sources from: " + generatedSources, e);
+        }
+    }
+
+    private static void copyProcessedTestModule(Path source, Path target) {
+        try {
+            Files.createDirectories(target.getParent());
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+            Path cacheDirectory = source.resolveSibling("__pycache__");
+            if (!Files.isDirectory(cacheDirectory)) {
+                return;
+            }
+            String fileName = source.getFileName().toString();
+            String prefix = fileName.substring(0, fileName.length() - 3) + ".";
+            try (Stream<Path> paths = Files.list(cacheDirectory)) {
+                paths.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().startsWith(prefix))
+                    .filter(path -> path.getFileName().toString().endsWith(".pyc"))
+                    .forEach(path -> copyFile(path, target.resolveSibling("__pycache__").resolve(path.getFileName())));
+            }
+        } catch (Exception e) {
+            throw new PyronautProcessorException("Failed copying processed test module " + source + " to " + target, e);
         }
     }
 

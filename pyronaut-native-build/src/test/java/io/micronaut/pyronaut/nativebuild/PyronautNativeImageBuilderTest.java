@@ -100,6 +100,28 @@ class PyronautNativeImageBuilderTest {
     }
 
     @Test
+    void preservesMicronautPackagesInstantiatedByRuntimeLoadedBeanDefinitions() throws Exception {
+        Path classpathEntry = tempDir.resolve("micronaut-runtime.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {
+            for (String entry : List.of(
+                "io/micronaut/logging/impl/LogbackLoggingSystem.class",
+                "io/micronaut/retry/intercept/DefaultRetryInterceptor.class",
+                "io/micronaut/health/HeartbeatTask.class"
+            )) {
+                output.putNextEntry(new ZipEntry(entry));
+                output.write(0);
+                output.closeEntry();
+            }
+        }
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.logging.*"));
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.retry.*"));
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.health.*"));
+    }
+
+    @Test
     void addsPythonClasspathAndTruffleAccessOnlyWhenPythonIsEnabled() throws Exception {
         Path javaClasspathEntry = tempDir.resolve("runtime.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(javaClasspathEntry))) {

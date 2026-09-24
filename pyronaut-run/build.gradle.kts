@@ -194,6 +194,14 @@ tasks {
         inputs.files(providers.provider {
             if (PyronautPgo.mode(project) == PyronautPgo.Mode.OPTIMIZE) PyronautPgo.profiles(project, "pyronaut-run") else emptyList()
         }).withPropertyName("pyronautPgoProfiles")
+        // The image is produced by PyronautNativeImageBuilder, so a change to the builder (its preserve
+        // list, for one) must invalidate the image even when the runtime classpath is unchanged.
+        inputs.files(nativeBuildInstallDirectory.map { it.dir("lib").asFileTree })
+            .withPropertyName("nativeBuildClasspath")
+            .withNormalizer(ClasspathNormalizer::class)
+        inputs.files(nativeBuildInstallDirectory.map { it.dir("bin").asFileTree })
+            .withPropertyName("nativeBuildLaunchers")
+            .withPathSensitivity(PathSensitivity.RELATIVE)
         outputs.file(cremaOutput)
         doFirst {
             // The native build runs in its own process, so it takes JAVA_HOME from the daemon's

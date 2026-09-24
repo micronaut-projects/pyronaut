@@ -103,6 +103,6 @@ public final class PyronautDevTestResourcesPropertyExpressionResolver implements
     }
 
     private static boolean enabled() {
-        return Boolean.parseBoolean(System.getProperty(PyronautDevTestResourcesPropertySourceLoader.ENABLED_PROPERTY, "true"));
+        return PyronautDevTestResourcesPropertySourceLoader.enabled();
     }
 }

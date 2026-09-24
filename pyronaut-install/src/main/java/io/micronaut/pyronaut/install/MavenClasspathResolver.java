@@ -92,6 +92,7 @@ final class MavenClasspathResolver {
     private static final String MICRONAUT_CONTEXT_PYTHON_MODULE = "io.micronaut:micronaut-context-python";
     private static final String MICRONAUT_INJECT_PYTHON_MODULE = "io.micronaut:micronaut-inject-python";
     private static final String MICRONAUT_MANAGEMENT_MODULE = "io.micronaut:micronaut-management";
+    private static final String MICRONAUT_RUNTIME_OSX_MODULE = "io.micronaut:micronaut-runtime-osx";
     private static final String MICRONAUT_CACHE_CAFFEINE_MODULE = "io.micronaut.cache:micronaut-cache-caffeine";
     private static final String CONTROL_PANEL_MANAGEMENT_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-management";
     private static final String CONTROL_PANEL_UI_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-ui";
@@ -500,9 +501,17 @@ final class MavenClasspathResolver {
         return deleted;
     }
 
-    private List<String> coordinatesForScope(PyprojectModel model,
-                                             InstallScope scope,
-                                             Map<String, String> managedVersions) {
+    /**
+     * The coordinates a scope installs, including the ones added by default.
+     *
+     * @param model           the parsed pyproject.toml
+     * @param scope           the scope being installed
+     * @param managedVersions the versions the platform BOM manages
+     * @return the coordinates, in the order they are added
+     */
+    List<String> coordinatesForScope(PyprojectModel model,
+                                     InstallScope scope,
+                                     Map<String, String> managedVersions) {
         return coordinatesForScope(model, scope, managedVersions, true);
     }
 
@@ -556,6 +565,9 @@ final class MavenClasspathResolver {
                 runtime.addAll(dependencies.developmentRuntime());
             }
             addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+            if (isMacOs()) {
+                addDefaultCoordinate(runtime, MICRONAUT_RUNTIME_OSX_MODULE, managedVersions);
+            }
             addDefaultCacheImplementationIfMissing(runtime, managedVersions);
             if (!model.pyronaut().controlPanelConfigured() || controlPanelEnabled(model)) {
                 runtime.add(controlPanelManagementCoordinate());
@@ -860,6 +872,20 @@ final class MavenClasspathResolver {
             return managedClient;
         }
         return normalizedVersion(VersionInfo.getVersion());
+    }
+
+    /**
+     * Whether this is macOS, where file watching needs a native watch service.
+     *
+     * <p>Without {@code micronaut-runtime-osx} the JDK falls back to {@code PollingWatchService} and
+     * nothing arrives in any useful time, so a development feature that waits on a file change simply
+     * never fires. Only added to the development runtime: a production artifact built on a Mac should
+     * not carry a macOS-specific module.
+     *
+     * @return whether the current operating system is macOS
+     */
+    private static boolean isMacOs() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ENGLISH).contains("mac");
     }
 
     private static void addDefaultCoordinate(Set<String> coordinates, String module, Map<String, String> managedVersions) {
