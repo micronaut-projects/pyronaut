@@ -146,6 +146,12 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=io.micronaut.scheduling.*",
             "-H:Preserve=package=io.micronaut.security.annotation.*",
             "-H:Preserve=package=io.micronaut.runtime.*",
+            // Runtime-loaded bean definitions instantiate these types (for
+            // example LogbackLoggingSystem during eager bean initialization),
+            // so they must be allocatable rather than merely reachable.
+            "-H:Preserve=package=io.micronaut.logging.*",
+            "-H:Preserve=package=io.micronaut.retry.*",
+            "-H:Preserve=package=io.micronaut.health.*",
             "-H:Preserve=package=io.micronaut.http.*",
             "-H:Preserve=package=io.micronaut.websocket.*",
             "-H:Preserve=package=io.micronaut.http.netty.*",
