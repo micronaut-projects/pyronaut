@@ -4,13 +4,22 @@ Install the Pyronaut CLI, then run `pyronaut setup` to provision the SDK that ru
 
 == Install the Pyronaut CLI
 
-The CLI requires Python 3.10 or later. Install or upgrade it with `pip`:
+The CLI requires Python 3.10 or later.
+
+Pyronaut is not published to PyPI yet. Every https://github.com/{githubSlug}/releases[GitHub release] attaches the
+Pyronaut wheel and opens with the `pip` command that installs it, so copy the command from the release notes of the
+version you want. The command has this form:
 
 [source,bash]
 ----
-python3 -m pip install --upgrade pyronaut
+python3 -m pip install --upgrade --no-index \
+  --find-links https://github.com/micronaut-projects/pyronaut/releases/expanded_assets/v0.0.4 \
+  'pyronaut==0.0.4'
 pyronaut --version
 ----
+
+The `--find-links` option reads the wheel from the release page, and `--no-index` keeps `pip` off PyPI. Both the tag in
+the URL and the pinned version change with each release.
 
 The Python installation used by `pip` only installs the CLI. Pyronaut applications run with the embedded GraalPy
 runtime supplied by the Pyronaut SDK. If your application or tests use Python packages, set up a GraalPy virtual
