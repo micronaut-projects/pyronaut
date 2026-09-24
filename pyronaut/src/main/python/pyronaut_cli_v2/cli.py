@@ -123,6 +123,9 @@ _TEST_RESOURCES_DISABLED_JVM_ARGS = (
     "-Dmicronaut.test.resources.enabled=false",
     "-Dpyronaut.dev.test.resources.bridge.enabled=false",
 )
+_TEST_RESOURCES_DISABLED_ENV = "PYRONAUT_TEST_RESOURCES_DISABLED"
+# Env overrides recording `--disable-test-resources` for the launch builders.
+_TEST_RESOURCES_DISABLED_OVERRIDES = {_TEST_RESOURCES_DISABLED_ENV: "true"}
 # Names the server's log directory for the launcher we delegate to. Container
 # pulls happen while the launcher owns the terminal, so the launcher mirrors
 # that log itself: a line written here would be repainted away by its live
@@ -565,10 +568,15 @@ def run(
             if install_code != SUCCESS:
                 return install_code
             external_install_done = True
+        disable_test_resources_requested = _extract_flag(forwarded_args, "--disable-test-resources")
         test_resources_enabled = (
-            not _extract_flag(forwarded_args, "--disable-test-resources")
+            not disable_test_resources_requested
             and _test_resources_enabled(Path(project_dir))
         )
+        if command in {"dev", "run", "test"} and disable_test_resources_requested:
+            # The flag is stripped from delegated_args; carry it to the
+            # launch builders so they disable the client explicitly.
+            test_resources_env_overrides = dict(_TEST_RESOURCES_DISABLED_OVERRIDES)
         if command in {"dev", "test"} and test_resources_enabled:
             tr_session = _OwnedTestResourcesSession(
                 project_dir=Path(project_dir).resolve(),
@@ -681,7 +689,7 @@ def run(
                 execute,
                 locate,
                 debug_vm=debug_vm,
-                env_overrides=test_resources_env_overrides if command == "dev" else None,
+                env_overrides=test_resources_env_overrides,
                 java_home_provider=effective_java_home_provider,
             )
 
@@ -847,6 +855,7 @@ def _delegate(
             args,
             resolver,
             debug_vm=debug_vm,
+            env_overrides=env_overrides,
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
@@ -1399,7 +1408,7 @@ def _build_java_delegate_invocation(
     env = _merge_env_overrides(env, env_overrides)
     env = _apply_project_virtualenv(env, project_dir)
     java_exec = _resolve_java_executable(env)
-    classpath = _build_delegate_classpath(command, project_dir, resolver)
+    classpath = _build_delegate_classpath(command, project_dir, resolver, env_overrides)
     jvm_args = _build_delegate_jvm_args(debug_vm)
     if (environment := _default_environment(command, args)) is not None:
         jvm_args.append(f"-Dmicronaut.environments={environment}")
@@ -1495,13 +1504,19 @@ def _delegate_lib_entries(executable_path: str, *, include_control_panel: bool =
     raise RuntimeError(f"Unable to resolve delegate jars for {command_name} from the packaged wheel")
 
 
-def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callable[[str], str | None]) -> str:
+def _build_delegate_classpath(
+    command: str,
+    project_dir: Path,
+    resolver: Callable[[str], str | None],
+    env_overrides: dict[str, str] | None = None,
+) -> str:
+    client_disabled = _test_resources_client_disabled(project_dir, env_overrides=env_overrides)
     cache_dir = _pyronaut_output_dir(project_dir)
     external = _read_external_layout(project_dir)
     if external is not None:
         key = "developmentRuntimeClasspath" if command == "dev" else "runtimeClasspath" if command == "run" else "testClasspath"
         entries = list(external.get(key, []))
-        if command in {"dev", "test"} and not _test_resources_client_disabled(project_dir):
+        if command in {"dev", "test"} and not client_disabled:
             entries.extend(
                 entry for entry in external.get("testClasspath", [])
                 if _is_native_test_resources_client_artifact(Path(entry).name)
@@ -1534,7 +1549,7 @@ def _build_delegate_classpath(command: str, project_dir: Path, resolver: Callabl
             delegate_executable,
             include_control_panel=_control_panel_dependency_declared(project_dir) if command == "run" else True,
         ))
-    if _test_resources_client_disabled(project_dir):
+    if client_disabled:
         # The pyronaut-test launcher ships the Test Resources client for
         # projects that use it. Keep it off the classpath when disabled.
         delegate_entries = [
@@ -2190,8 +2205,11 @@ def _is_test_launcher_provided_artifact(entry: str) -> bool:
     )
 
 
-def _build_native_test_resources_client_classpath(project_dir: Path) -> str:
-    if _test_resources_client_disabled(project_dir):
+def _build_native_test_resources_client_classpath(
+    project_dir: Path,
+    env_overrides: dict[str, str] | None = None,
+) -> str:
+    if _test_resources_client_disabled(project_dir, env_overrides=env_overrides):
         return ""
     cache_dir = project_dir / "__pyronaut__"
     external = _read_external_layout(project_dir)
@@ -5707,7 +5725,7 @@ def _build_dev_delegate_invocation(
         java_home_provider=java_home_provider,
     )
     classpath_index = command_line.index("-cp") + 1
-    classpath = _build_delegate_classpath("dev", project_dir, resolver)
+    classpath = _build_delegate_classpath("dev", project_dir, resolver, env_overrides)
     # The JVM fallback is executed by the production runner. Do not append the
     # pyronaut-dev distribution: it contains compiler, test, GraalPy and
     # tooling artifacts which can make the application classpath enormous and
@@ -5717,7 +5735,7 @@ def _build_dev_delegate_invocation(
     if runner_executable is not None:
         classpath = os.pathsep.join([classpath, *_delegate_lib_entries(runner_executable)])
     command_line[classpath_index] = classpath
-    test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
+    test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir, env_overrides)
     if test_resources_client_classpath:
         command_line.insert(classpath_index - 1, f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
     for jvm_arg in reversed([
@@ -8072,7 +8090,7 @@ def _pyronaut_dev_native_command_line(
         elif effective_classpath_command == "run":
             jvm_args.append("-Dmicronaut.control-panel.enabled=false")
         jvm_args = [*jvm_args, f"-Djava.class.path={classpath}"]
-        test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir)
+        test_resources_client_classpath = _build_native_test_resources_client_classpath(project_dir, env_overrides)
         if test_resources_client_classpath:
             jvm_args.append(f"-Dpyronaut.dev.test.resources.client.classpath={test_resources_client_classpath}")
         jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
@@ -8128,6 +8146,7 @@ def _pyronaut_run_native_command_line(
     resolver: Callable[[str], str | None],
     *,
     debug_vm: bool = False,
+    env_overrides: dict[str, str] | None = None,
 ) -> list[str] | None:
     """Build a production Crema launch command for a native-toolchain project."""
     if command != "run" or debug_vm:
@@ -8158,7 +8177,7 @@ def _pyronaut_run_native_command_line(
     command_line = [
         executable_path,
         control_panel_property,
-        *_test_resources_disabled_jvm_args(project_dir, args),
+        *_test_resources_disabled_jvm_args(project_dir, args, env_overrides),
         f"-Djava.class.path={classpath}",
         *_strip_orchestrator_only_args([value for value in args if value not in {"--jvm", "--native"}]),
     ]
@@ -8412,6 +8431,8 @@ def _test_resources_client_disabled(
     if env_overrides and (env_overrides.get("MICRONAUT_TEST_RESOURCES_SERVER_URI") or "").strip():
         return False
     if "--disable-test-resources" in args:
+        return True
+    if env_overrides and (env_overrides.get(_TEST_RESOURCES_DISABLED_ENV) or "").lower() in {"1", "true", "yes", "on"}:
         return True
     if not (project_dir / "pyproject.toml").is_file() and not _is_external_build_project(project_dir):
         # Direct-source invocations infer Test Resources in the launcher.

@@ -8493,6 +8493,44 @@ java-version = 25
         self._assert_test_delegate(executed[2], str(project_dir))
         self.assertNotIn("--disable-test-resources", executed[2])
         self.assertFalse(any("pyronaut-test-resources-server" in command[0] for command in executed))
+        # The stripped flag still disables the client explicitly, even though
+        # pyproject.toml enables Test Resources.
+        self._assert_test_resources_client_disabled(executed[2])
+
+    def test_disable_test_resources_flag_disables_client_for_project_dev(self):
+        executed = []
+
+        def runner(command_line):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = root / "demo"
+            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text(
+                "\n".join(["/tmp/runtime.jar", *(str(root / name) for name in self._TEST_RESOURCES_CLIENT_JARS)]) + "\n",
+                encoding="utf-8",
+            )
+            (project_dir / "pyproject.toml").write_text(
+                "[tool.pyronaut.toolchain]\ntype = \"jvm\"\n\n[tool.pyronaut.test-resources]\nenabled = true\n",
+                encoding="utf-8",
+            )
+
+            exit_code = cli.run(
+                ["dev", "--project-dir", str(project_dir), "--disable-test-resources"],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertFalse(any("pyronaut-test-resources-server" in command[0] for command in executed))
+        dev_command = executed[-1]
+        self.assertIn(self._RUN_MAIN, dev_command)
+        self.assertNotIn("--disable-test-resources", dev_command)
+        self._assert_test_resources_client_disabled(dev_command)
 
     def test_build_validates_production_scenario(self):
         executed = []
