@@ -1,30 +1,29 @@
-Micronaut is a reactive framework. Its APIs and many Java libraries used from Python return asynchronous types rather than plain values:
+Pyronaut uses Micronaut's reactive model. Its APIs and many Java libraries used from Python return asynchronous types rather than plain values:
 
-[cols="1,2", options="header"]
+[cols="1,2,2", options="header"]
 |===
-|Java type |Meaning
+|Java type |Await inside `async def` |Return from a route
 
 |`java.util.concurrent.CompletionStage` and `CompletableFuture`
-|A single value that will be available later. The closest analogue is an `asyncio.Future`.
+|The single result.
+|A single asynchronous response.
 
 |`org.reactivestreams.Publisher`
-|A stream of zero or more values with back-pressure. Micronaut's HTTP client and server use this type for streaming.
+|The first item; an empty publisher returns `None` and errors raise an exception.
+|Streams values with back-pressure.
 
 |`reactor.core.publisher.Mono`
-|A Project Reactor `Publisher` that emits at most one value.
+|The single item, or `None` when empty.
+|A single response.
 
 |`reactor.core.publisher.Flux`
-|A Project Reactor `Publisher` that emits any number of values.
+|The first item only; use `collectList()` to await all items.
+|Streams its values to the client.
 |===
-
-From Python, you can either await these types inside a coroutine or return them from a route and let Micronaut subscribe.
 
 == Awaiting Java async values
 
-Inside an `async def` function, `await` accepts Java async values directly:
-
-* A `CompletionStage` awaits to its result.
-* Micronaut treats a `Publisher` or `Mono` as a single value. It requests one item, completes the await with it and cancels the subscription. An empty publisher awaits to `None`; an error fails the await with an exception.
+Use the await behavior shown in the table. For example, an async client returning `Mono` can be awaited directly:
 
 [source,python]
 ----
@@ -37,7 +36,7 @@ async def first_headline() -> str:
     return headline.title
 ----
 
-A `Flux` that emits several items is *not* collected into a list automatically; awaiting it returns only the first item. Use a reactive operator to collect the stream first:
+To await every item from a `Flux`, collect the stream first:
 
 [source,python]
 ----
@@ -49,7 +48,7 @@ async def all_headlines() -> list[str]:
 
 == Returning reactive types from synchronous code
 
-You can also return a reactive value from a plain `def` route. Micronaut subscribes on the event loop and writes the response when the value arrives, which lets Python code participate in reactive pipelines without a coroutine. Because Java generic types are not visible to Python, declare the element type with `@SingleResult` for single values:
+Return a reactive value from a plain `def` route to let Micronaut subscribe on the event loop. Because Java generic types are not visible to Python, declare single values with `@SingleResult`:
 
 [source,python]
 ----
@@ -70,11 +69,11 @@ class ReactiveController:
         return Mono.just("hello")
 ----
 
-This example obtains `Mono` and `Publisher` with `java.type(...)`, as in the Micronaut examples; `from reactor.core.publisher import Mono` is equivalent. Note the module name `micronaut.core.async_`: `async` is a Python keyword, so Pyronaut imports the Java package `io.micronaut.core.async` with a trailing underscore. The same rule renames Java methods, for example `Flux.from_(publisher)` calls `Flux.from`.
+This example obtains `Mono` and `Publisher` with `java.type(...)`; `from reactor.core.publisher import Mono` is equivalent. The trailing underscore in `micronaut.core.async_` and `Flux.from_` avoids Python keyword collisions.
 
 == Streaming responses
 
-A route that returns a `Publisher` of several items streams them to the client. With `MediaType.APPLICATION_JSON_STREAM`, the Micronaut HTTP server writes each item as a JSON document as it becomes available. With `MediaType.TEXT_EVENT_STREAM`, it sends the response as a server-sent event stream:
+Return a `Publisher` to stream items. Use `MediaType.APPLICATION_JSON_STREAM` for JSON documents or `MediaType.TEXT_EVENT_STREAM` for server-sent events:
 
 [source,python]
 ----
@@ -100,7 +99,7 @@ class HeadlineController:
         return Flux.fromIterable([Event.of(Headline("one")), Event.of(Headline("two"))])
 ----
 
-Reactive operators run on Reactor's schedulers or on the event loop, not on Python threads, so a generator-style approach that produces items from blocking Python code should use `Flux.fromCallable(...)` combined with `subscribeOn(Schedulers.fromExecutorService(executor))`, where the executor is Micronaut's `io` executor injected with `Annotated[ExecutorService, Named(TaskExecutors.IO)]`. The https://docs.micronaut.io/latest/guide/#reactiveServer[Reactive HTTP Request Processing] section shows this pattern.
+Reactive operators run on Reactor schedulers or the event loop, not Python threads. For blocking Python producers, wrap the call with `Flux.fromCallable(...)` and schedule it on the injected `io` executor with `subscribeOn(...)`; see the https://docs.micronaut.io/latest/guide/#reactiveServer[Reactive HTTP Request Processing] section.
 
 == Python coroutines seen from Java
 

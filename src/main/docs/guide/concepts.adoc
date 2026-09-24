@@ -28,7 +28,7 @@ Micronaut has its own vocabulary. Words such as _bean_, _dependency injection_, 
 |Behaviour that wraps a method call, such as retrying on failure, validating arguments or running the method on another thread. Pyronaut expresses this behaviour with decorators like `@Retryable`, `@Validated` and `@ExecuteOn`.
 
 |Executor
-|A named thread pool. Micronaut decides which executor runs each request based on whether your function is `def` or `async def` and on decorators such as `@ExecuteOn`.
+|A named thread pool. Pyronaut decides which executor runs each request based on whether your function is `def` or `async def` and on decorators such as `@ExecuteOn`.
 
 |Publisher, Mono, Flux, CompletionStage
 |Java's asynchronous result types. You can `await` them from `async def` Python code; see <<threading,Threading, blocking work, and asyncio>>.

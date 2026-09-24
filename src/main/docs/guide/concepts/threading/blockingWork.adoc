@@ -1,8 +1,33 @@
 Blocking code is any code that makes the current thread wait: a database query, a synchronous HTTP call, reading a large file, `time.sleep()` or CPU-heavy computation. The rules for handling it depend on the kind of function you are in.
 
+[cols="1,2,2", options="header"]
+|===
+|Situation |Choose |Why
+
+|Blocking work in a `def` route or bean method
+|Keep it synchronous
+|It already runs on the `io` executor.
+
+|Slow work that needs its own pool
+|`@ExecuteOn(TaskExecutors.BLOCKING)` or `@ExecuteOn("my-pool")`
+|Isolates the work from the shared `io` executor.
+
+|Blocking work in an `async def` route
+|`await loop.run_in_executor(None, ...)`
+|Moves the call off the event loop and uses Micronaut's blocking executor.
+
+|Work that should start and return immediately
+|`@Async`
+|Submits the method to the `scheduled` executor.
+
+|Manually created threads
+|Prefer Micronaut executors
+|They are configured, shut down, and monitored with the application.
+|===
+
 == In a `def` route
 
-Synchronous Python routes already run on the `io` executor, so they can perform blocking work. This is the usual choice for CRUD endpoints:
+Synchronous Python routes already run on the `io` executor, so this is the usual choice for CRUD endpoints:
 
 [source,python]
 ----
@@ -21,7 +46,7 @@ class BookController:
 
 == Choosing a different pool with `@ExecuteOn`
 
-`@ExecuteOn` from `micronaut.scheduling.annotation` moves a method (or every method of a controller) to a named executor. Use it to isolate slow work on its own pool so that it cannot starve the `io` executor used by everything else:
+Use `@ExecuteOn` from `micronaut.scheduling.annotation` to isolate slow work on the blocking executor or a custom pool:
 
 [source,python]
 ----
@@ -54,11 +79,11 @@ def yearly(self, year: int) -> Report:
     ...
 ----
 
-Micronaut Data repositories and other Java libraries that perform blocking I/O are commonly combined with `@ExecuteOn(TaskExecutors.BLOCKING)` in Java code. In Python code this is optional, because synchronous Python methods already avoid the event loop, but it remains useful for separating pools.
+In Python code this is optional for synchronous methods, but useful for separating pools.
 
 == In an `async def` route: use `run_in_executor`
 
-A coroutine runs on the event loop, so blocking inside it blocks Netty. Hand the blocking call to Micronaut's blocking executor with `loop.run_in_executor(None, ...)` and await the result:
+A coroutine runs on the event loop. Hand blocking calls to Micronaut's blocking executor with `loop.run_in_executor(None, ...)` and await the result:
 
 [source,python]
 ----
@@ -84,7 +109,7 @@ result = await loop.run_in_executor(None, partial(build_report, year=2026))
 
 == Background work with `@Async`
 
-To start work and return immediately, decorate a bean method with `@Async`. The caller returns as soon as the runtime submits the task to the `scheduled` executor:
+Decorate a bean method with `@Async` to start work and return immediately:
 
 [source,python]
 ----

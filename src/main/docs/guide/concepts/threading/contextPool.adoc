@@ -1,6 +1,6 @@
 GraalPy, like CPython, has a global interpreter lock (GIL). Only one thread can execute Python code in a given GraalPy _context_ at a time. GraalPy releases the lock while calling Java or performing I/O, so a Python route that mostly waits on a JDBC query or HTTP call scales well. Two requests that both run Python bytecode in the same context take turns.
 
-Unlike CPython, Micronaut can create several GraalPy contexts inside one JVM, each with its own lock. Pooling contexts therefore gives true parallelism for Python code, at the cost of memory and of separate module state per context.
+Unlike CPython, Pyronaut can create several GraalPy contexts inside one JVM, each with its own lock. Pooling contexts therefore gives true parallelism for Python code, at the cost of memory and of separate module state per context.
 
 == What the pool changes
 

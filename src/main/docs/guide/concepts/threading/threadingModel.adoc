@@ -1,48 +1,37 @@
 Micronaut's HTTP server is built on https://netty.io[Netty]. Netty uses a small number of _event loop_ threads, typically two per CPU core, and each thread serves many connections by reacting to I/O events. Blocking one of these threads stalls every connection assigned to it, so the whole design revolves around one question: where does application code run?
 
-== The three kinds of threads
+== The thread and executor model
 
-[cols="1,3", options="header"]
+Pyronaut selects where Python code runs from the function signature and any executor annotation:
+
+[cols="1,2,3", options="header"]
 |===
-|Thread |Purpose
+|Thread, executor, or function |Runs on or uses |Behavior
 
 |Netty event loop
-|Reads requests, writes responses and runs non-blocking code. There are few of them and they must never block.
-
-|`io` executor
-|An unbounded pool of ordinary platform threads for code that may block, such as a database query or a call to a slow service. Micronaut creates threads on demand and reuses idle ones.
-
-|`blocking` executor
-|A second pool for work explicitly marked with `@ExecuteOn(TaskExecutors.BLOCKING)`. In Java applications this pool uses virtual threads; Pyronaut configures it to use platform threads because GraalPy cannot run Python code on virtual threads.
-|===
-
-== Where Python code runs
-
-Micronaut decides where to run a route from its signature, the same way FastAPI decides between the event loop and its thread pool:
-
-[cols="2,2", options="header"]
-|===
-|Function |Runs on
+|The request's event loop thread
+|Reads requests, writes responses, and runs non-blocking code. There are few event loop threads, so they must never block.
 
 |`def` route or bean method
-|The `io` executor. Micronaut routes every synchronous Python method there automatically, so ordinary Python code cannot block the event loop even if it performs I/O.
+|The `io` executor
+|Pyronaut routes every synchronous Python method here automatically. The executor uses an unbounded pool of platform threads, creating them on demand and reusing idle ones.
 
 |`async def` route or bean method
-|The Netty event loop that received the request. The coroutine is bound to a Micronaut-managed asyncio loop on that thread; `await` suspends it and frees the thread for other connections.
+|The Netty event loop
+|The coroutine runs on a Micronaut-managed asyncio loop; `await` suspends it and frees the thread. Await non-blocking operations or move blocking work to `run_in_executor` (see <<blockingWork,Running Blocking Code>>).
 
 |Method decorated with `@ExecuteOn(TaskExecutors.BLOCKING)`
-|The `blocking` executor.
+|The `blocking` executor
+|Runs explicitly selected work on a separate platform-thread pool. Pyronaut uses platform threads because GraalPy cannot run Python code on virtual threads.
 
 |Method decorated with `@ExecuteOn("my-pool")`
-|A custom executor named `my-pool` under `micronaut.executors`.
+|The custom executor `my-pool`
+|Uses the executor configured under `micronaut.executors`.
 
 |Method returning a `Publisher`, `Mono` or `CompletionStage`
-|Micronaut subscribes on the event loop and writes the response when the value arrives. The code that produces the value decides which thread does the work.
+|The event loop subscribes; the producer chooses its thread
+|Micronaut writes the response when the value arrives. The code that produces the value decides which thread does the work.
 |===
-
-In practice, a plain `def` route can call a JDBC repository, read a file, or use the `requests` shim without an extra decorator because it already runs off the event loop. An `async def` route must await non-blocking operations; move blocking work to `run_in_executor` (see <<blockingWork,Running Blocking Code>>).
-
-NOTE: This is different from Micronaut in Java, where controller methods run on the event loop unless you annotate them. The Python-specific selector exists because Python code usually has no way to signal that it is non-blocking.
 
 == Pyronaut executor defaults
 

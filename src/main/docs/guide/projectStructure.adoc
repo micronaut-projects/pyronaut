@@ -1,100 +1,12 @@
-== Pyronaut toolchain
-
-Pyronaut requires a GraalVM toolchain. You can install GraalVM in several ways; see the https://www.graalvm.org/downloads/[GraalVM download page] for options.
-
-If you do not want to install GraalVM manually, Pyronaut can provision it from the configured toolchain settings and install it under `~/.pyronaut/sdks`.
-
-[source,toml]
-----
-[tool.pyronaut.toolchain]
-type = "jvm" # jvm|native
-distribution = "ee"
-java-version = 25
-version = "25i4"
-----
-
-Pyronaut supports two toolchains, `native` and `jvm`, with different trade-offs.
-
-The `jvm` toolchain runs on a GraalVM Java runtime. It typically takes longer to start and uses more memory, but JIT compilation can improve throughput after warm-up.
-
-The `native` toolchain typically starts faster and uses less memory, so it is often useful for development with frequent restarts and test runs. Some Java libraries need reachability metadata in a native image, and profile-guided optimization can improve native peak performance. You can use the native toolchain locally and still deploy a JVM application, or use the JVM toolchain locally and deploy a native application.
-
-The following table summarizes the trade-offs.
-
-|===
-|Characteristic |JVM |Native
-
-|Startup time
-|Slower
-|Faster
-
-|Memory consumption
-|Greater
-|Lower
-
-|Compatibility
-|Broad Java library compatibility
-|Some libraries require metadata
-
-|Peak performance
-|Benefits from JIT warm-up
-|Can benefit from PGO
-|===
-
-NOTE: Direct-source execution (`pyronaut run App.py`) always selects the `native` toolchain by default.
-
-Native images are not included in the SDK wheel. When the native toolchain is
-selected, Pyronaut downloads the matching `pyronaut-dev`, `pyronaut-run`, or
-`pyronaut-run-python` bundle for the current operating system and architecture.
-The default source is `https://github.com/micronaut-projects/pyronaut/releases`
-and the default version is the installed Pyronaut version. The `version` selects
-the asset suffix. If you omit `release-tag`, GitHub release lookup uses
-`v<version>`; use `release-tag` to select an exact tag, including private or
-draft releases:
-
-[source,toml]
-----
-[native-images]
-base-url = "https://github.com/micronaut-projects/pyronaut/releases"
-version = "<version>"
-release-tag = "v<version>"
-----
-
-Pass `--allow-draft-release` when using a draft release and provide a read-only
-`PYRONAUT_RELEASE_TOKEN` (or one of the supported GitHub token variables).
-The Oracle GDS bundle source remains available as an explicit override.
-
-When Pyronaut provisions a GraalVM SDK automatically, the default distribution
-is Oracle GraalVM Enterprise Edition (EE). Select `ce` or `dev` explicitly in
-`[tool.pyronaut.toolchain]` when you need a different SDK.
-
-[source,toml]
-----
-[native-images]
-base-url = "https://gds.oracle.com/download/pyronaut/bundles/"
-version = "<version>"
-----
-
-For local development, `base-url` may be an absolute checkout directory (or a
-`file://` URL). Build the launcher archives first and select their Gradle
-version, for example:
-
-[source,toml]
-----
-[native-images]
-base-url = "/path/to/pyronaut"
-version = "<version>"
-----
-
-The CLI then finds archives under the matching module's
-`build/distributions` directory, such as
-`pyronaut-dev/build/distributions/pyronaut-dev-macos-aarch64-<version>.tar.gz`
-(built with `./gradlew -PprojectVersion=<version> :micronaut-pyronaut-dev:assemble`).
-
-== Pyronaut project layout
+== Project layout
 
 Pyronaut reads project layout from `[tool.pyronaut.sources]` in `pyproject.toml`.
 All configured paths are relative to the project root.
+
+For SDK provisioning and GraalVM discovery, see <<installation,Installing Pyronaut>>.
+For toolchain settings, see <<pyproject,Configuring pyproject.toml>>. Native-image
+sources and proxy behavior are covered in <<proxyConfig,Proxy Configuration>>;
+advanced CLI toolchain behavior is in <<pyronautCliV2,Pyronaut CLI Reference>>.
 
 The default layout is:
 
