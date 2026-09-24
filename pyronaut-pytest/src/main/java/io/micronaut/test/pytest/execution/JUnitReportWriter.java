@@ -23,9 +23,11 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 /** Writes the common Pyronaut JUnit report artifacts. */
 public final class JUnitReportWriter {
@@ -84,32 +86,23 @@ public final class JUnitReportWriter {
         }
         xml += "</testsuite>\n";
         Files.writeString(directory.resolve("junit.xml"), xml, StandardCharsets.UTF_8);
-        StringBuilder html = new StringBuilder("<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Pyronaut Test Report</title><style>body{margin:24px;background:#f8f9fa;font-family:system-ui}.report-shell{max-width:1100px;margin:auto}.card{background:white;border:1px solid #ddd;border-radius:6px;padding:20px}.badge{display:inline-block;padding:6px 10px;margin:4px;border-radius:12px;background:#6c757d;color:white;cursor:pointer}.passed{background:#198754}.failed{background:#dc3545}details{border:1px solid #ddd;border-radius:6px;margin-top:10px;padding:10px}pre{white-space:pre-wrap;background:#f8f9fa;padding:10px}</style></head><body><main class=\"report-shell\"><div class=\"card\"><h1>Pyronaut Test Report</h1>")
-            .append("<span class=\"badge\" onclick=\"filterReports('total')\">Total: ").append(tests).append("</span><span class=\"badge passed\" onclick=\"filterReports('passed')\">Passed: ").append(successful)
-            .append("</span><span class=\"badge failed\" onclick=\"filterReports('failed')\">Failed: ").append(failed)
-            .append("</span><span class=\"badge failed\" onclick=\"filterReports('failed')\">Errors: ").append(errors)
-            .append("</span><span class=\"badge\" onclick=\"filterReports('skipped')\">Skipped: ").append(skipped).append("</span>");
-        if (!results.isEmpty()) {
-            for (TestResult result : results) {
-                String status = result.status().name().toLowerCase(Locale.ROOT);
-                String badge = result.status() == Status.PASSED ? "passed" : result.status() == Status.FAILED ? "failed" : "";
-                html.append("<details data-status=\"").append(status).append("\"><summary><strong>")
-                    .append(escapeHtml(result.name())).append("</strong> <span class=\"badge ").append(badge).append("\">")
-                    .append(escapeHtml(result.status().name())).append("</span></summary>");
-                appendSection(html, "Failure", result.details());
-                appendSection(html, "System Out", result.stdout());
-                appendSection(html, "System Err", result.stderr());
-                html.append("</details>");
-            }
+        List<HtmlTestReport.Entry> entries = new ArrayList<>(results.size() + additionalFailures.size());
+        for (TestResult result : results) {
+            entries.add(new HtmlTestReport.Entry(result.name(), result.status(), false, result.durationNanos(),
+                result.status() == Status.PASSED ? "" : result.details(), "", result.stdout(), result.stderr()));
         }
         for (TestExecutionSummary.Failure failure : additionalFailures) {
-            String details = failureDetails(failure.getException());
-            html.append("<details data-status=\"failed\"><summary><strong>").append(escapeHtml(failure.getTestIdentifier().getDisplayName()))
-                .append("</strong> <span class=\"badge failed\">FAILED</span></summary><pre>")
-                .append(escapeHtml(details)).append("</pre></details>");
+            entries.add(new HtmlTestReport.Entry(failure.getTestIdentifier().getDisplayName(), Status.FAILED,
+                !failure.getTestIdentifier().isTest(), -1, failureDetails(failure.getException()), "", "", ""));
         }
-        html.append("</div></main><script>function filterReports(status){document.querySelectorAll('[data-status]').forEach(function(e){e.hidden=status!=='total'&&e.dataset.status!==status;});}</script></body></html>\n");
-        Files.writeString(directory.resolve("index.html"), html.toString(), StandardCharsets.UTF_8);
+        long startedAt = summary.getTimeStarted();
+        long finishedAt = summary.getTimeFinished();
+        String html = HtmlTestReport.render(
+            entries,
+            startedAt > 0 ? Instant.ofEpochMilli(startedAt) : Instant.now(),
+            startedAt > 0 && finishedAt >= startedAt ? TimeUnit.MILLISECONDS.toNanos(finishedAt - startedAt) : 0
+        );
+        Files.writeString(directory.resolve("index.html"), html, StandardCharsets.UTF_8);
     }
 
     private static String failureDetails(Throwable failure) {
@@ -125,16 +118,6 @@ public final class JUnitReportWriter {
             .replace("\"", "&quot;").replace("'", "&apos;");
     }
 
-    private static String escapeHtml(String value) {
-        return escapeXml(value);
-    }
-
-    private static void appendSection(StringBuilder html, String title, String content) {
-        if (content != null && !content.isBlank()) {
-            html.append("<h3>").append(title).append("</h3><pre>").append(escapeHtml(content)).append("</pre>");
-        }
-    }
-
     /** Result status rendered in the report. */
     public enum Status { PASSED, FAILED, SKIPPED }
 
@@ -145,8 +128,13 @@ public final class JUnitReportWriter {
      * @param details diagnostic details
      * @param stdout captured standard output
      * @param stderr captured standard error
+     * @param durationNanos the test duration in nanoseconds, or a negative value when unknown
      */
-    public record TestResult(String name, Status status, String details, String stdout, String stderr) {
+    public record TestResult(String name, Status status, String details, String stdout, String stderr, long durationNanos) {
+        public TestResult(String name, Status status, String details, String stdout, String stderr) {
+            this(name, status, details, stdout, stderr, -1);
+        }
+
         public TestResult {
             Objects.requireNonNull(name);
             Objects.requireNonNull(status);

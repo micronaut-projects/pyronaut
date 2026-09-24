@@ -938,10 +938,12 @@ public final class PyronautDevMain implements Callable<Integer> {
                 launcher.registerTestExecutionListeners(new TestExecutionListener() {
                     private ByteArrayOutputStream out;
                     private ByteArrayOutputStream err;
+                    private long startNanos;
 
                     @Override
                     public void executionStarted(TestIdentifier identifier) {
                         if (identifier.isTest()) {
+                            startNanos = System.nanoTime();
                             out = new ByteArrayOutputStream();
                             err = new ByteArrayOutputStream();
                             System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
@@ -963,7 +965,8 @@ public final class PyronautDevMain implements Callable<Integer> {
                                 identifier.getDisplayName(), status,
                                 result.getThrowable().map(Throwable::toString).orElse(""),
                                 out == null ? "" : out.toString(StandardCharsets.UTF_8),
-                                err == null ? "" : err.toString(StandardCharsets.UTF_8)));
+                                err == null ? "" : err.toString(StandardCharsets.UTF_8),
+                                System.nanoTime() - startNanos));
                         }
                     }
                 });

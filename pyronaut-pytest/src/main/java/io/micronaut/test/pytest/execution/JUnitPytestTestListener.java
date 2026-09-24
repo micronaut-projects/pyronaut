@@ -34,6 +34,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,25 +52,6 @@ public class JUnitPytestTestListener implements PytestTestListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(JUnitPytestTestListener.class);
     private static final String FAILURE_OUTPUT_PROPERTY = "pyronaut.test.render-failure-output";
-    private static final String MICRONAUT_LOGO_URL =
-        "https://micronaut.io/wp-content/uploads/2020/11/MIcronautLogo_Horizontal.svg";
-    private static final String MICRONAUT_LOGO_MARKUP = """
-        <div class="micronaut-brand" aria-label="Micronaut">
-          <img
-            class="micronaut-logo"
-            src="%s"
-            alt="Micronaut"
-            loading="lazy"
-            referrerpolicy="no-referrer"
-            onerror="this.style.display='none';this.parentElement?.classList.add('micronaut-logo--failed');"
-          >
-          <div class="micronaut-logo-fallback" data-pyronaut-logo-fallback>
-            Micronaut
-            <span class="text-body-secondary">(logo unavailable — offline-safe fallback)</span>
-            <span class="visually-hidden">Official logo source: https://micronaut.io</span>
-          </div>
-        </div>
-        """.formatted(MICRONAUT_LOGO_URL);
     private final EngineExecutionListener junitListener;
     private final Set<? extends TestDescriptor> children;
     private final List<TestDescriptor> allDescriptors;
@@ -82,6 +64,9 @@ public class JUnitPytestTestListener implements PytestTestListener {
     private final Set<String> writtenNodeIds = new HashSet<>();
     private final Map<String, TestStreamOutput> outputByTest = new LinkedHashMap<>();
     private final Map<String, TestExecutionResult> lifecycleFailures = new LinkedHashMap<>();
+    private final Map<String, Long> testStartNanos = new HashMap<>();
+    private final Instant sessionStartedAt = Instant.now();
+    private final long sessionStartNanos = System.nanoTime();
     private TestExecutionResult sessionResult = TestExecutionResult.successful();
     private boolean failedTestReported;
     private boolean nonTestFailureReported;
@@ -148,7 +133,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
         if (result.getStatus() != TestExecutionResult.Status.SUCCESSFUL) {
             nonTestFailureReported = true;
             recordSessionResult(result);
-            outcomes.add(new TestOutcome(file, result));
+            outcomes.add(new TestOutcome(file, result, -1));
             var payload = new LinkedHashMap<String, String>();
             result.getThrowable().ifPresent(throwable -> payload.put("failure", FailureDiagnostics.render(throwable)));
             writeEvent("file_finished", file, result.getStatus().name(), payload);
@@ -160,6 +145,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
         LOG.debug("Pytest starting test: {}", testId);
         writeNodeId(testId);
         writeEvent("test_started", testId, null, Map.of());
+        testStartNanos.put(testId, System.nanoTime());
 
         PytestTestDescriptor testDescriptor = findDescriptor(testId);
         if (testDescriptor != null) {
@@ -178,7 +164,8 @@ public class JUnitPytestTestListener implements PytestTestListener {
         }
         finalResult = mergeLifecycleFailure(testId, finalResult);
         writeNodeId(testId);
-        outcomes.add(new TestOutcome(testId, finalResult));
+        Long startNanos = testStartNanos.remove(testId);
+        outcomes.add(new TestOutcome(testId, finalResult, startNanos == null ? -1 : System.nanoTime() - startNanos));
         var payload = new LinkedHashMap<String, String>();
         if (finalResult.getStatus() == TestExecutionResult.Status.FAILED) {
             if (testDescriptor != null) {
@@ -522,68 +509,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-
-            long total = outcomes.size();
-            long passed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.SUCCESSFUL).count();
-            long failed = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.FAILED).count();
-            long skipped = outcomes.stream().filter(outcome -> outcome.result().getStatus() == TestExecutionResult.Status.ABORTED).count();
-
-            StringBuilder html = new StringBuilder(4096);
-            html.append("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n");
-            html.append("<title>Pyronaut Test Report</title>\n");
-            html.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
-            html.append("<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\" crossorigin=\"anonymous\">\n");
-            html.append("<style>")
-                .append("body{margin:24px;background:#f8f9fa;} ")
-                .append(".report-shell{max-width:1100px;margin:0 auto;} ")
-                .append(".micronaut-logo{width:320px;max-width:100%;height:auto;display:block;margin:0 auto 1rem auto;} ")
-                .append(".micronaut-logo-fallback{display:none;text-align:center;font-weight:800;font-size:1.75rem;letter-spacing:.02em;color:#ff4500;margin:0 auto 1rem auto;} ")
-                .append(".micronaut-logo--failed .micronaut-logo-fallback{display:block;} ")
-                .append("details>summary{cursor:pointer;list-style:none;} ")
-                .append("details>summary::-webkit-details-marker{display:none;} ")
-                .append("pre{white-space:pre-wrap;word-break:break-word;} ")
-                .append(".status-badge{font-size:.85rem;} ")
-                .append("</style>\n");
-            html.append("</head><body>\n");
-            html.append("<main class=\"report-shell\">\n")
-                .append("<div class=\"card shadow-sm\"><div class=\"card-body\">\n")
-                .append(MICRONAUT_LOGO_MARKUP)
-                .append("<h1 class=\"h3 text-center mb-3\">Pyronaut Test Report</h1>\n")
-                .append("<div class=\"d-flex flex-wrap justify-content-center gap-2 mb-4\">\n")
-                .append("<span class=\"badge text-bg-secondary\">Total: ").append(total).append("</span>")
-                .append("<span class=\"badge text-bg-success\">Passed: ").append(passed).append("</span>")
-                .append("<span class=\"badge text-bg-danger\">Failed: ").append(failed).append("</span>")
-                .append("<span class=\"badge text-bg-warning\">Skipped: ").append(skipped).append("</span>")
-                .append("</div>\n");
-
-            for (TestOutcome outcome : outcomes) {
-                String status = displayStatus(outcome.result().getStatus());
-                TestStreamOutput details = outputByTest.getOrDefault(outcome.testId(), new TestStreamOutput());
-                String failure = outcome.result().getThrowable().map(FailureDiagnostics::render).orElse("");
-                String badgeClass = badgeClass(outcome.result().getStatus());
-
-                html.append("<details class=\"card mb-2\">\n")
-                    .append("<summary class=\"card-header d-flex justify-content-between align-items-center\">\n")
-                    .append("<span class=\"fw-semibold text-break\">").append(escapeHtml(outcome.testId())).append("</span>")
-                    .append("<span class=\"badge status-badge ").append(badgeClass).append("\">")
-                    .append(status)
-                    .append("</span></summary>\n")
-                    .append("<div class=\"card-body\">\n");
-
-                appendDetailsSection(html, "Failure", failure, "danger");
-                appendDetailsSection(html, "Framework Log", details.log(), "warning");
-                appendDetailsSection(html, "System Out", details.stdout(), "primary");
-                appendDetailsSection(html, "System Err", details.stderr(), "secondary");
-
-                if (failure.isBlank() && details.log().isBlank() && details.stdout().isBlank() && details.stderr().isBlank()) {
-                    html.append("<p class=\"text-body-secondary mb-0\">No additional diagnostics captured for this test.</p>\n");
-                }
-
-                html.append("</div></details>\n");
-            }
-
-            html.append("</div></div></main>\n</body></html>\n");
-            Files.writeString(htmlReportPath, html.toString(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.writeString(htmlReportPath, renderHtmlReport(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         } catch (Exception e) {
             LOG.debug("Unable to write HTML report: {}", htmlReportPath, e);
         } finally {
@@ -591,18 +517,27 @@ public class JUnitPytestTestListener implements PytestTestListener {
         }
     }
 
-    private static void appendDetailsSection(StringBuilder html, String title, String content, String color) {
-        if (content == null || content.isBlank()) {
-            return;
+    private String renderHtmlReport() {
+        List<HtmlTestReport.Entry> entries = new ArrayList<>(outcomes.size());
+        for (TestOutcome outcome : outcomes) {
+            TestStreamOutput details = outputByTest.getOrDefault(outcome.testId(), new TestStreamOutput());
+            JUnitReportWriter.Status status = switch (outcome.result().getStatus()) {
+                case SUCCESSFUL -> JUnitReportWriter.Status.PASSED;
+                case ABORTED -> JUnitReportWriter.Status.SKIPPED;
+                case FAILED -> JUnitReportWriter.Status.FAILED;
+            };
+            entries.add(new HtmlTestReport.Entry(
+                outcome.testId(),
+                status,
+                false,
+                outcome.durationNanos(),
+                outcome.result().getThrowable().map(FailureDiagnostics::render).orElse(""),
+                details.log(),
+                details.stdout(),
+                details.stderr()
+            ));
         }
-        html.append("<section class=\"mb-3\">\n")
-            .append("<h2 class=\"h6 text-").append(color).append("\">")
-            .append(escapeHtml(title))
-            .append("</h2>\n")
-            .append("<pre class=\"bg-light border rounded p-2\"><code>")
-            .append(escapeHtml(content))
-            .append("</code></pre>\n")
-            .append("</section>\n");
+        return HtmlTestReport.render(entries, sessionStartedAt, System.nanoTime() - sessionStartNanos);
     }
 
     private static void appendConsoleSection(StringBuilder message, String title, String content) {
@@ -615,22 +550,6 @@ public class JUnitPytestTestListener implements PytestTestListener {
         if (!content.endsWith("\n")) {
             message.append('\n');
         }
-    }
-
-    private static String displayStatus(TestExecutionResult.Status status) {
-        return switch (status) {
-            case SUCCESSFUL -> "PASSED";
-            case ABORTED -> "SKIPPED";
-            case FAILED -> "FAILED";
-        };
-    }
-
-    private static String badgeClass(TestExecutionResult.Status status) {
-        return switch (status) {
-            case SUCCESSFUL -> "text-bg-success";
-            case ABORTED -> "text-bg-warning";
-            case FAILED -> "text-bg-danger";
-        };
     }
 
     private void ensureNodeIdFileExists() {
@@ -648,16 +567,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
         }
     }
 
-    private static String escapeHtml(String text) {
-        return text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\"", "&quot;")
-            .replace("'", "&#39;");
-    }
-
-    private record TestOutcome(String testId, TestExecutionResult result) {
+    private record TestOutcome(String testId, TestExecutionResult result, long durationNanos) {
     }
 
     private static final class TestStreamOutput {
