@@ -1,6 +1,7 @@
 import importlib.util
 import hashlib
 import io
+import json
 import os
 import subprocess
 import shutil
@@ -5933,6 +5934,206 @@ additional-test-resources = ["test-fixtures"]
                 "micronaut-context-python-5.2.3.jar",
                 cli._build_native_application_classpath_entries("run", project_dir),  # noqa: SLF001
             )
+
+    # The GraalPy tree micronaut-context-python adds to every project's runtime
+    # scope, as resolved for a Java-only application.
+    _GRAALPY_RUNTIME_TREE = (
+        "io.micronaut:micronaut-context-python:5.2.5",
+        "org.graalvm.polyglot:polyglot:25.0.1",
+        "org.graalvm.python:python-embedding:25.0.1",
+        "org.graalvm.python:python-language:25.0.1",
+        "org.graalvm.python:python-resources:25.0.1",
+        "org.graalvm.regex:regex:25.0.1",
+        "org.graalvm.sdk:collections:25.0.1",
+        "org.graalvm.sdk:jniutils:25.0.1",
+        "org.graalvm.sdk:nativeimage:25.0.1",
+        "org.graalvm.sdk:word:25.0.1",
+        "org.graalvm.shadowed:icu4j:25.0.1",
+        "org.graalvm.shadowed:json:25.0.1",
+        "org.graalvm.shadowed:xz:25.0.1",
+        "org.graalvm.tools:chromeinspector-tool:25.0.1",
+        "org.graalvm.tools:coverage-tool:25.0.1",
+        "org.graalvm.tools:dap-tool:25.0.1",
+        "org.graalvm.tools:insight-heap-tool:25.0.1",
+        "org.graalvm.tools:insight-tool:25.0.1",
+        "org.graalvm.tools:lsp-tool:25.0.1",
+        "org.graalvm.tools:lsp_api:25.0.1",
+        "org.graalvm.tools:profiler-tool:25.0.1",
+        "org.graalvm.truffle:truffle-api:25.0.1",
+        "org.graalvm.truffle:truffle-compiler:25.0.1",
+        "org.graalvm.truffle:truffle-runtime:25.0.1",
+    )
+    _JAVA_APPLICATION_RUNTIME = (
+        "com.h2database:h2:2.4.240",
+        "com.zaxxer:HikariCP:7.1.0",
+        "io.micronaut:micronaut-context:5.2.5",
+        "io.micronaut:micronaut-http-server-netty:5.2.5",
+        "io.micronaut.data:micronaut-data-jdbc:5.1.1",
+        "io.micronaut.serde:micronaut-serde-jackson:3.1.0",
+        "io.netty:netty-codec-http:4.2.18.Final",
+        "tools.jackson.core:jackson-core:3.2.2",
+    )
+
+    @staticmethod
+    def _jar_name(coordinate: str) -> str:
+        _, artifact, version = coordinate.split(":")
+        return f"{artifact}-{version}.jar"
+
+    def _write_java_app(self, root: Path, runtime_dependencies: str = "'com.h2database:h2'") -> Path:
+        project_dir = root / "java-app"
+        (project_dir / "src").mkdir(parents=True)
+        (project_dir / "src-java" / "example").mkdir(parents=True)
+        (project_dir / "src-java" / "example" / "Application.java").write_text(
+            "package example; class Application {}", encoding="utf-8"
+        )
+        (project_dir / "pyproject.toml").write_text(
+            "[project]\nname = \"java-app\"\n\n"
+            "[tool.pyronaut.sources]\njava = \"src-java\"\n\n"
+            f"[tool.pyronaut.dependencies]\nruntime = [{runtime_dependencies}]\n",
+            encoding="utf-8",
+        )
+        (project_dir / "__pyronaut__" / "classes").mkdir(parents=True)
+        return project_dir
+
+    def _fake_install(self, root: Path, project_dir: Path) -> None:
+        """Write the manifests and editor artifacts pyronaut-install produces."""
+        artifacts = []
+        for coordinate in self._GRAALPY_RUNTIME_TREE + self._JAVA_APPLICATION_RUNTIME:
+            group, artifact, version = coordinate.split(":")
+            jar = root / "jars" / self._jar_name(coordinate)
+            jar.parent.mkdir(parents=True, exist_ok=True)
+            jar.write_bytes(b"")
+            artifacts.append({
+                "scope": "runtime", "groupId": group, "artifactId": artifact, "version": version,
+                "binaryJar": str(jar), "sourceJar": None,
+            })
+        cache_dir = project_dir / "__pyronaut__"
+        manifest = "".join(f"{artifact['binaryJar']}\n" for artifact in artifacts)
+        (cache_dir / "resolved-runtime-dependencies").write_text(manifest, encoding="utf-8")
+        (cache_dir / "resolved-development-runtime-dependencies").write_text(manifest, encoding="utf-8")
+        (cache_dir / "resolved-test-dependencies").write_text(manifest, encoding="utf-8")
+        (cache_dir / "resolved-editor-artifacts.json").write_text(
+            json.dumps({"artifacts": artifacts}), encoding="utf-8"
+        )
+        (cache_dir / "pyproject.sha256").write_text("hash", encoding="utf-8")
+
+    def _run_install(self, root: Path, project_dir: Path) -> int:
+        def runner(command_line, env=None):
+            self._fake_install(root, project_dir)
+            return 0
+
+        return cli.run(
+            ["install", "--project-dir", str(project_dir)],
+            runner=runner,
+            resolver=self._resolver(),
+            platform_name="linux",
+        )
+
+    def test_install_removes_graalpy_runtime_from_java_project_manifests(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = self._write_java_app(root)
+
+            self.assertEqual(0, self._run_install(root, project_dir))
+
+            cache_dir = project_dir / "__pyronaut__"
+            expected = [self._jar_name(coordinate) for coordinate in self._JAVA_APPLICATION_RUNTIME]
+            for manifest in ("resolved-runtime-dependencies", "resolved-development-runtime-dependencies"):
+                self.assertEqual(
+                    expected,
+                    [Path(entry).name for entry in cli._read_manifest_entries(cache_dir / manifest)],  # noqa: SLF001
+                )
+            # Test dependencies are resolved for the JVM test launcher, which hosts GraalPy.
+            self.assertEqual(
+                len(self._GRAALPY_RUNTIME_TREE) + len(self._JAVA_APPLICATION_RUNTIME),
+                len(cli._read_manifest_entries(cache_dir / "resolved-test-dependencies")),  # noqa: SLF001
+            )
+            self.assertFalse(cli._is_python_runtime_project(project_dir))  # noqa: SLF001
+            native_run = root / "pyronaut-run"
+            native_run.write_text("", encoding="utf-8")
+            classpath = cli._build_native_application_classpath(  # noqa: SLF001
+                "run", project_dir, str(native_run)
+            ).split(os.pathsep)
+
+        names = [Path(entry).name for entry in classpath]
+        for coordinate in self._GRAALPY_RUNTIME_TREE:
+            self.assertNotIn(self._jar_name(coordinate), names)
+        for coordinate in self._JAVA_APPLICATION_RUNTIME:
+            self.assertIn(self._jar_name(coordinate), names)
+
+    def test_install_keeps_declared_polyglot_runtime_for_java_project(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = self._write_java_app(root, "'org.graalvm.polyglot:polyglot', 'org.graalvm.polyglot:js'")
+
+            self.assertEqual(0, self._run_install(root, project_dir))
+
+            names = [
+                Path(entry).name
+                for entry in cli._read_manifest_entries(  # noqa: SLF001
+                    project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+                )
+            ]
+
+        self.assertNotIn("micronaut-context-python-5.2.5.jar", names)
+        self.assertIn("polyglot-25.0.1.jar", names)
+        self.assertIn("truffle-api-25.0.1.jar", names)
+        self.assertIn("profiler-tool-25.0.1.jar", names)
+
+    def test_install_keeps_graalpy_runtime_for_python_project(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = root / "python-app"
+            (project_dir / "src").mkdir(parents=True)
+            (project_dir / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
+            (project_dir / "pyproject.toml").write_text("[project]\nname = \"python-app\"\n", encoding="utf-8")
+            (project_dir / "__pyronaut__").mkdir()
+
+            self.assertEqual(0, self._run_install(root, project_dir))
+
+            entries = cli._read_manifest_entries(  # noqa: SLF001
+                project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
+            )
+            marker_written = (project_dir / "__pyronaut__" / "python-runtime-excluded").exists()
+
+        self.assertEqual(len(self._GRAALPY_RUNTIME_TREE) + len(self._JAVA_APPLICATION_RUNTIME), len(entries))
+        self.assertFalse(marker_written)
+
+    def test_install_re_resolves_filtered_manifests_once_project_gains_python_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = self._write_java_app(root)
+            self.assertEqual(0, self._run_install(root, project_dir))
+            cache_dir = project_dir / "__pyronaut__"
+            self.assertTrue((cache_dir / "python-runtime-excluded").exists())
+
+            # The project becomes a Python application: the filtered manifests
+            # must not survive an install cache hit.
+            shutil.rmtree(project_dir / "src-java")
+            (project_dir / "src" / "main.py").write_text("print('hello')\n", encoding="utf-8")
+            hash_removed = []
+
+            def runner(command_line, env=None):
+                hash_removed.append(not (cache_dir / "pyproject.sha256").exists())
+                self._fake_install(root, project_dir)
+                return 0
+
+            exit_code = cli.run(
+                ["install", "--project-dir", str(project_dir)],
+                runner=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+            )
+            names = [
+                Path(entry).name
+                for entry in cli._read_manifest_entries(cache_dir / "resolved-runtime-dependencies")  # noqa: SLF001
+            ]
+            marker_exists = (cache_dir / "python-runtime-excluded").exists()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual([True], hash_removed)
+        self.assertIn("micronaut-context-python-5.2.5.jar", names)
+        self.assertFalse(marker_exists)
 
     def test_native_wheel_reuses_configured_local_native_base(self):
         executed = []

@@ -752,6 +752,7 @@ def _delegate(
             configured_local_repository,
             resolver("pyronaut-install"),
         )
+        _restore_python_runtime_manifests_if_needed(project_dir)
 
     if command == "test-resources-server":
         try:
@@ -941,7 +942,10 @@ def _delegate(
         if direct_classpath:
             env = dict(env or os.environ)
             env["PYRONAUT_DIRECT_CLASSPATH"] = os.pathsep.join(direct_classpath)
-    return runner(command_line, env)
+    exit_code = runner(command_line, env)
+    if command == "install" and not exit_code and not _has_direct_install_sources(args):
+        _exclude_python_runtime_from_manifests(Path(_extract_project_dir(args)).resolve())
+    return exit_code
 
 
 def _delegate_direct_source(
@@ -3375,6 +3379,108 @@ def _stage_manifest_artifacts(
             continue
         rewritten.append(entry)
     target.write_text("".join(f"{entry}\n" for entry in rewritten), encoding="utf-8")
+
+
+# Maven groups making up GraalPy's polyglot runtime: Truffle, its
+# instruments (org.graalvm.tools) and the shaded/SDK libraries they depend on.
+_POLYGLOT_RUNTIME_GROUPS = frozenset({
+    "org.graalvm.espresso",
+    "org.graalvm.js",
+    "org.graalvm.llvm",
+    "org.graalvm.polyglot",
+    "org.graalvm.python",
+    "org.graalvm.regex",
+    "org.graalvm.sdk",
+    "org.graalvm.shadowed",
+    "org.graalvm.tools",
+    "org.graalvm.truffle",
+    "org.graalvm.wasm",
+})
+_PYTHON_RUNTIME_MANIFESTS = (
+    "resolved-runtime-dependencies",
+    "resolved-development-runtime-dependencies",
+)
+_PYTHON_RUNTIME_EXCLUDED_MARKER = "python-runtime-excluded"
+
+
+def _exclude_python_runtime_from_manifests(project_dir: Path) -> None:
+    """Remove the GraalPy runtime from a Java runtime project's manifests.
+
+    pyronaut install adds micronaut-context-python, and with it GraalPy,
+    Truffle and its instruments, to every project's runtime scope. A Java
+    application runs on pyronaut-run, whose native image contains no Truffle:
+    loading that tree (the launcher reads the manifest itself) aborts startup.
+    The coordinates come from the resolver's resolved-editor-artifacts.json.
+    """
+    if not _uses_pyronaut_manifests(project_dir) or _is_python_runtime_project(project_dir):
+        return
+    cache_dir = project_dir / "__pyronaut__"
+    python_runtime_jars = _python_runtime_artifact_jars(cache_dir, project_dir)
+    if not python_runtime_jars:
+        return
+    for manifest_name in _PYTHON_RUNTIME_MANIFESTS:
+        manifest = cache_dir / manifest_name
+        if not manifest.is_file():
+            continue
+        entries = _read_manifest_entries(manifest)
+        kept = [entry for entry in entries if os.path.normpath(entry) not in python_runtime_jars]
+        if len(kept) != len(entries):
+            manifest.write_text("".join(f"{entry}\n" for entry in kept), encoding="utf-8")
+    (cache_dir / _PYTHON_RUNTIME_EXCLUDED_MARKER).write_text("", encoding="utf-8")
+
+
+def _restore_python_runtime_manifests_if_needed(project_dir: Path) -> None:
+    """Force re-resolution when a filtered project has since gained Python sources.
+
+    The install cache is keyed on pyproject.toml, so a cache hit would keep the
+    manifests written by _exclude_python_runtime_from_manifests.
+    """
+    cache_dir = project_dir / "__pyronaut__"
+    marker = cache_dir / _PYTHON_RUNTIME_EXCLUDED_MARKER
+    if marker.is_file() and _is_python_runtime_project(project_dir):
+        with contextlib.suppress(OSError):
+            (cache_dir / "pyproject.sha256").unlink()
+        marker.unlink()
+
+
+def _uses_pyronaut_manifests(project_dir: Path) -> bool:
+    return (project_dir / "pyproject.toml").is_file() and not _is_external_build_project(project_dir)
+
+
+def _python_runtime_artifact_jars(cache_dir: Path, project_dir: Path) -> set[str]:
+    try:
+        artifacts = json.loads((cache_dir / "resolved-editor-artifacts.json").read_text(encoding="utf-8"))["artifacts"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return set()
+    # A project that declares a polyglot artifact itself keeps the polyglot
+    # tree; only Micronaut's Python integration is removed.
+    keep_polyglot_runtime = not _declared_dependency_groups(project_dir).isdisjoint(_POLYGLOT_RUNTIME_GROUPS)
+    jars: set[str] = set()
+    for artifact in artifacts if isinstance(artifacts, list) else ():
+        if not isinstance(artifact, dict) or not isinstance(artifact.get("binaryJar"), str):
+            continue
+        group = artifact.get("groupId")
+        artifact_id = str(artifact.get("artifactId", ""))
+        micronaut_python = group == "io.micronaut" and artifact_id.startswith(
+            ("micronaut-context-python", "micronaut-inject-python")
+        )
+        if micronaut_python or (not keep_polyglot_runtime and group in _POLYGLOT_RUNTIME_GROUPS):
+            jars.add(os.path.normpath(artifact["binaryJar"]))
+    return jars
+
+
+def _declared_dependency_groups(project_dir: Path) -> set[str]:
+    table = _read_pyproject_pyronaut_table(project_dir)
+    dependencies = table.get("dependencies") if isinstance(table, dict) else None
+    if not isinstance(dependencies, dict):
+        return set()
+    return {
+        dependency.split(":", 1)[0].strip()
+        for values in dependencies.values()
+        if isinstance(values, list)
+        for dependency in values
+        if isinstance(dependency, str) and ":" in dependency
+    }
 
 
 def _is_python_runtime_artifact(file_name: str) -> bool:
