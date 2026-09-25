@@ -41,6 +41,7 @@ import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactDescriptorException;
+import org.eclipse.aether.resolution.ArtifactDescriptorPolicy;
 import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
 import org.eclipse.aether.resolution.ArtifactDescriptorResult;
 import org.eclipse.aether.resolution.DependencyRequest;
@@ -75,6 +76,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * Resolves classpaths using Apache Maven Resolver.
@@ -443,12 +445,59 @@ final class MavenClasspathResolver {
             validateProductionControlPanelSecurity(model, scope, result);
             return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
         } catch (DependencyResolutionException | DependencyCollectionException e) {
-            String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage();
+            String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage()
+                + missingDescriptorDetails(e, localRepositoryPath, offline);
             if (proxyConfiguration != null) {
                 message = message + " (proxy " + proxyConfiguration.summary() + ")";
             }
             throw new PyprojectModelException(message, e);
         }
+    }
+
+    private static String missingDescriptorDetails(Exception failure, Path localRepositoryPath, boolean offline) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ArtifactDescriptorException descriptorFailure) {
+                Throwable reason = descriptorFailure.getCause() == null ? descriptorFailure : descriptorFailure.getCause();
+                return " (" + descriptorFailure.getMessage() + ": " + reason.getMessage()
+                    + "). Each dependency's POM is required to resolve its transitive dependencies. "
+                    + missingDescriptorRemedy(descriptorFailure, localRepositoryPath, offline);
+            }
+        }
+        return "";
+    }
+
+    private static String missingDescriptorRemedy(ArtifactDescriptorException failure,
+                                                  Path localRepositoryPath,
+                                                  boolean offline) {
+        String rerun = offline ? "rerun without --offline" : "rerun";
+        Artifact artifact = failure.getResult() == null || failure.getResult().getRequest() == null
+            ? null
+            : failure.getResult().getRequest().getArtifact();
+        if (artifact != null) {
+            // A partial cache entry (typically a JAR copied into the repository
+            // without its POM) is never repaired by Maven Resolver, which
+            // considers the artifact present. Deleting the entry makes the next
+            // online resolution download the JAR and POM together.
+            List<Path> entries = new ArrayList<>();
+            for (Path repository : List.of(localRepositoryPath, resolveLocalMavenRepository())) {
+                Path entry = repository.toAbsolutePath().normalize()
+                    .resolve(artifact.getGroupId().replace('.', '/'))
+                    .resolve(artifact.getArtifactId())
+                    .resolve(artifact.getBaseVersion());
+                if (Files.isDirectory(entry) && !entries.contains(entry)) {
+                    entries.add(entry);
+                }
+            }
+            if (!entries.isEmpty()) {
+                return "The local Maven repository holds an incomplete entry for " + artifact.getGroupId() + ":"
+                    + artifact.getArtifactId() + ":" + artifact.getBaseVersion() + ". Delete "
+                    + entries.stream().map(Path::toString).collect(Collectors.joining(" and "))
+                    + " and " + rerun + " to download the artifact together with its POM.";
+            }
+        }
+        return offline
+            ? "Rerun without --offline to download the missing POM."
+            : "Make sure a configured repository provides the artifact and its POM.";
     }
 
     private static boolean evictResolvedArtifacts(Path localRepositoryPath, DependencyResult result) {
@@ -1177,6 +1226,17 @@ final class MavenClasspathResolver {
                                         DependencyProgressListener progressListener) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
+        // The supplier's default policy treats a missing POM as an empty
+        // descriptor, so a JAR cached without its POM (or one whose POM cannot
+        // be fetched, for example offline) silently loses every transitive
+        // dependency. Fail instead: a classpath missing transitives only
+        // surfaces later as NoClassDefFoundError at application runtime.
+        // Missing BOM and other POM-only descriptors remain optional.
+        sessionBuilder.setArtifactDescriptorPolicy((session, request) -> {
+            Artifact artifact = request.getArtifact();
+            boolean pomOnly = artifact != null && POM_EXTENSION.equals(artifact.getExtension());
+            return pomOnly ? ArtifactDescriptorPolicy.IGNORE_ERRORS : ArtifactDescriptorPolicy.IGNORE_INVALID;
+        });
         if (forceUpdates) {
             sessionBuilder.setUpdatePolicy(RepositoryPolicy.UPDATE_POLICY_ALWAYS);
         }

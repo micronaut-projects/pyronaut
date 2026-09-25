@@ -37,6 +37,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
+import org.eclipse.aether.collection.DependencyCollectionException;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 
 /**
@@ -385,6 +386,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
         } catch (PyprojectModelException e) {
             System.err.println(e.getMessage());
             if (e.getCause() instanceof org.eclipse.aether.resolution.DependencyResolutionException
+                || e.getCause() instanceof org.eclipse.aether.collection.DependencyCollectionException
                 || e.getCause() instanceof org.eclipse.aether.resolution.ArtifactResolutionException) {
                 return InstallExitCode.RESOLUTION_ERROR.code();
             }
@@ -542,6 +544,13 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 renderer.renderResolutionError(
                     installScope,
                     DependencyTreeRenderer.ResolutionFailure.fromException(e.getMessage(), dependencyResolutionException)
+                );
+            } else if (failure instanceof PyprojectModelException e
+                && e.getCause() instanceof DependencyCollectionException dependencyCollectionException) {
+                resolutionFailure = true;
+                renderer.renderResolutionError(
+                    installScope,
+                    DependencyTreeRenderer.ResolutionFailure.fromException(e.getMessage(), dependencyCollectionException)
                 );
             } else {
                 throw failure;
