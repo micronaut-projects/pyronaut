@@ -706,3 +706,270 @@ wheel-resolved `~/.pyronaut/bin/<version>/linux-amd64` directory. The resolved
 version is recorded in `native-version.txt`. The setup log must retain visible
 0% and 100% download progress, while the second setup and every execution
 command reuse those cached assets.
+
+## PGO release builds
+
+Release bundles of `pyronaut-dev`, `pyronaut-run` and `pyronaut-run-python` are
+built with profile-guided optimization (PGO). On Linux, `pyronaut-run` also
+uses code compression (`-H:+EnableCodeCompression`). native-image does not
+support code compression on macOS, or together with runtime compilation, which
+the two images that embed GraalPy need. Profiles are never committed: every release
+regenerates them on every platform, because a profile only matches the image
+it was collected from. The bundles are built in GitLab CI, because GitHub-hosted
+runners are too small; see [GitLab CI](#gitlab-ci) for the pipeline.
+
+### Host requirements
+
+- Oracle GraalVM 25.4 as `JAVA_HOME`. Community Edition cannot build with
+  `--pgo` or code compression, and the build stops with an error if it detects
+  one.
+- The target platform's own hardware. Training runs the instrumented image, so
+  an `aarch64` bundle is trained on an `aarch64` host. Do not train under
+  emulation: it skews the profile and is very slow.
+- A GraalPy installation matching `pyronautPyenvVersion` in `gradle.properties`
+  (`~/.pyenv/versions/<version>/bin/graalpy`), or pass
+  `-Ppyronaut.pgo.graalpy=/path/to/graalpy`. It runs the Pyronaut CLI during
+  training.
+- No Docker and no Test Resources containers. Training uses an in-memory H2
+  database.
+- `GRAALVM_QUICK_BUILD` must not be set. It adds `-Ob`, and the PGO build
+  refuses to run with it.
+- Budget about twice the usual native build time per image, plus the training
+  time. Build one native image at a time unless the host has the memory for
+  more: each native-image process is capped at 30 GiB.
+- The instrumented `pyronaut-run-python` and `pyronaut-dev` builds need more
+  than native-image's default 30 GiB heap. Pass
+  `-Ppyronaut.pgo.builderMaxHeap=52g` (or what the host allows) to raise it.
+- On a shared host, pass `--no-daemon`. A `./gradlew --stop` from another job
+  otherwise stops the daemon and kills a long native build with exit code 143.
+
+### Build
+
+Each image takes three Gradle invocations. The instrumented and optimized
+images are built from the same inputs; only `-Ppyronaut.pgo` differs.
+
+```bash
+IMAGE=pyronaut-run            # or pyronaut-run-python, pyronaut-dev
+TASK=PyronautRun              # or PyronautRunPython, PyronautDev
+VERSION=0.0.4
+
+./gradlew --no-daemon -PprojectVersion=$VERSION -Ppyronaut.pgo=instrument :micronaut-$IMAGE:nativeCompile
+./gradlew --no-daemon -PprojectVersion=$VERSION :micronaut-pgo-training:train$TASK
+./gradlew --no-daemon -PprojectVersion=$VERSION -Ppyronaut.pgo=optimize :micronaut-$IMAGE:nativeBundle
+```
+
+`ci/build-pgo-bundle.sh <image> <version>` runs the three steps, checks
+`pgo-report.txt`, and collects the bundle and its evidence in
+`build/pgo-output/<image>/`. CI calls this script; you can also run it on a
+build host by hand.
+
+- The instrumented build writes `build/pgo/<image>/instrumented-executable.txt`.
+  Training refuses to run an image that does not match it.
+- Training writes one profile per launcher process to
+  `build/pgo/<image>/profiles/<scenario>-<pid>.iprof` and fails if any
+  scenario or launcher process produced no profile.
+- The optimized build passes every profile to `--pgo`, enables code
+  compression where it is supported, and fails unless native-image reports
+  that PGO was applied. It writes `build/pgo/<image>/pgo-report.txt`.
+- `nativeBundle` refuses to package an instrumented image.
+
+If training fails, the build fails and no bundle is produced. For an emergency
+release without PGO, leave out `-Ppyronaut.pgo`, which builds the same bundles
+as before, and say so in the release notes. Do not reuse profiles from an
+earlier release through `-Ppyronaut.pgo.profiles`: stale profiles do not fail
+the build, but they quietly lose most of the benefit.
+
+### Archive as CI artifacts
+
+Keep these with the CI run. They are not release assets.
+
+- `build/pgo/<image>/pgo-report.txt`, the proof that the profiles were applied
+- `build/pgo/<image>/profiles/*.iprof`
+- `pgo-training/build/training/<image>/training-summary.json` and
+  `pgo-training/build/training/<image>/logs/`
+- the native-image build output of each optimized build
+
+Before uploading a bundle, check that its `pgo-report.txt` contains
+`pgo: applied` (and, for `pyronaut-run` on Linux, `code-compression: enabled`), then run the clean Linux
+release validation above against the optimized bundles.
+
+### GitLab CI
+
+The release bundles are built by a GitLab project that pull-mirrors
+`micronaut-projects/pyronaut`. Pushing a `v*` tag to GitHub starts its pipeline,
+which runs one job per image and platform. Each job calls
+`ci/build-pgo-bundle.sh`, and a manual job uploads the bundles to the GitHub
+release.
+
+#### Runners
+
+Register one runner per release platform on dedicated hosts that meet the host
+requirements above. Use the shell executor (or a Docker executor with an image
+that already contains Oracle GraalVM and GraalPy). Tag each runner so jobs only
+run on matching hardware:
+
+| Platform | Runner tags | Notes |
+| --- | --- | --- |
+| Linux amd64 | `pyronaut-native`, `linux-amd64` | 64 GB RAM or more |
+| Linux aarch64 | `pyronaut-native`, `linux-aarch64` | Native arm64 hardware, not emulation |
+| macOS arm64 | `pyronaut-native`, `macos-arm64` | Shell executor; code compression is not available on macOS |
+
+On each runner host:
+
+- Install Oracle GraalVM 25.4 and set `JAVA_HOME` for the runner user (for
+  example in `~/.bashrc` or the runner's `environment` setting in
+  `config.toml`).
+- Install GraalPy with pyenv at the version in `pyronautPyenvVersion`, or set
+  `PYRONAUT_GRAALPY` to its executable.
+- Do not set `GRAALVM_QUICK_BUILD`.
+- Give each runner `concurrent = 1`, or rely on the per-platform
+  `resource_group` below, so that only one native-image build runs on a host.
+
+#### Pipeline
+
+Add this `.gitlab-ci.yml` to the GitLab project:
+
+```yaml
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+    - if: $CI_PIPELINE_SOURCE == "web"    # manual runs: set PYRONAUT_VERSION
+
+stages:
+  - build
+  - publish
+
+variables:
+  GIT_STRATEGY: clone                     # fresh build directories and profiles for every run
+  GRADLE_USER_HOME: $CI_PROJECT_DIR/.gradle-home
+  PYRONAUT_BUILDER_MAX_HEAP: 48g          # instrumented GraalPy images outgrow the default 30 GiB
+  PYRONAUT_PGO: "true"                    # "false" only for an emergency release without PGO
+
+.pgo-bundle:
+  stage: build
+  timeout: 4h
+  resource_group: native-image-$PLATFORM  # one native-image build per platform at a time
+  cache:
+    key: gradle-$PLATFORM
+    paths:
+      - .gradle-home/caches/modules-2
+      - .gradle-home/wrapper
+  script:
+    - VERSION="${PYRONAUT_VERSION:-${CI_COMMIT_TAG#v}}"
+    - test -n "$VERSION"
+    - ci/build-pgo-bundle.sh "$IMAGE" "$VERSION"
+  artifacts:
+    when: always                          # keep the logs of failed builds
+    expire_in: 90 days
+    paths:
+      - build/pgo-output/$IMAGE/
+
+pgo:linux-amd64:
+  extends: .pgo-bundle
+  tags: [pyronaut-native, linux-amd64]
+  variables:
+    PLATFORM: linux-amd64
+  parallel:
+    matrix:
+      - IMAGE: [pyronaut-dev, pyronaut-run, pyronaut-run-python]
+
+pgo:linux-aarch64:
+  extends: .pgo-bundle
+  tags: [pyronaut-native, linux-aarch64]
+  variables:
+    PLATFORM: linux-aarch64
+  parallel:
+    matrix:
+      - IMAGE: [pyronaut-dev, pyronaut-run, pyronaut-run-python]
+
+pgo:macos-arm64:
+  extends: .pgo-bundle
+  tags: [pyronaut-native, macos-arm64]
+  variables:
+    PLATFORM: macos-arm64
+  parallel:
+    matrix:
+      - IMAGE: [pyronaut-dev, pyronaut-run, pyronaut-run-python]
+
+publish:github-release:
+  stage: publish
+  tags: [pyronaut-native, linux-amd64]
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual                        # run after the clean Linux release validation
+  script:
+    - |
+      for report in build/pgo-output/*/pgo-report.txt; do
+        grep -q '^pgo: applied' "$report" || { echo "PGO was not applied: $report"; exit 1; }
+      done
+    - gh release upload "$CI_COMMIT_TAG" build/pgo-output/*/*.tar.gz --repo micronaut-projects/pyronaut --clobber
+```
+
+- `GH_TOKEN` must be a masked, protected CI/CD variable with permission to
+  upload release assets to `micronaut-projects/pyronaut`. The `publish` job
+  needs the `gh` CLI on its runner.
+- Each build job's artifacts contain the bundle, `pgo-report.txt`, the
+  profiles, and the training summary and logs. That is the evidence listed
+  under [Archive as CI artifacts](#archive-as-ci-artifacts). Profiles are about
+  70 MB per launcher process, so expect several hundred MB per job.
+- With one runner per platform, the `resource_group` runs the three images of
+  a platform one after another. On a 12-core host, `pyronaut-run-python` took about
+  30 minutes (13 minutes instrumented build, 4 minutes training, 8 minutes optimized build).
+- The `publish` job refuses to upload a bundle whose report does not say
+  `pgo: applied`. For an emergency release without PGO, run the pipeline with
+  `PYRONAUT_PGO=false`; the script then builds plain bundles and skips the
+  reports, so upload those bundles by hand after the release validation and say
+  so in the release notes.
+- Windows bundles are not built by this pipeline yet.
+
+### Training workload
+
+The workload lives in `pgo-training`. It drives the real `pyronaut` CLI, so
+training follows the same command lines as users. Every launcher process for
+the image under training writes its own profile, and servers are stopped with
+`SIGTERM`, which runs the shutdown hooks and writes the profile.
+
+| Image | Scenarios |
+| --- | --- |
+| `pyronaut-run` | A Java application (`apps/java`): 5 cold starts, then the runtime workload |
+| `pyronaut-run-python` | A Python application (`apps/python`): 5 cold starts, then the runtime workload |
+| `pyronaut-dev` | `install`; clean, incremental and new-route `process`; `test`; `dev` with the runtime workload; `install` and `process` of the Java application; direct-source `run app.py` and `run App.java` with the runtime workload |
+
+The runtime workload runs each step at concurrency 1 and then 8:
+
+- `GET /hello` over keep-alive connections
+- JSON `POST`, `GET`, `PUT` and `DELETE` of pets through Micronaut Data JDBC,
+  including finders and counts
+- validation failures, missing records and malformed JSON
+- a Python-heavy (or Java) summary endpoint with small and 250 KB bodies
+
+H2, Micronaut Data JDBC and Hikari are application dependencies loaded at
+runtime through Crema. `:micronaut-pgo-training:checkRuntimeLoadedDependencies`
+fails the training if any of them is baked into an image.
+
+Use `-Ppyronaut.pgo.trainingScale=<factor>` to scale the number of requests.
+`-Ppyronaut.pgo.trainingSkip=<scenario,...>` exists for local debugging only:
+a release profile must cover every scenario.
+
+To change the workload without building native images, run the same scenarios
+on the JVM launchers. No profiles are collected:
+
+```bash
+./gradlew :micronaut-pgo-training:trainJvm -Ppyronaut.pgo.trainingScale=0.1
+```
+
+### Measure the result
+
+`benchmark<Image>` compares a baseline image with the one currently built:
+
+```bash
+./gradlew :micronaut-pgo-training:benchmarkPyronautRunPython \
+  -Ppyronaut.pgo.baseline=/path/to/pyronaut-run-python-without-pgo
+```
+
+For the runtime images it reports executable size, median time from launch to
+first response, requests per second and p50/p99 latency at concurrency 8 for
+the mixed and Python-heavy endpoints, and peak RSS. For `pyronaut-dev` it
+reports incremental `process` time and direct-source `app.py` time to first
+response. The report is written to
+`pgo-training/build/benchmark/<image>/benchmark.md`.

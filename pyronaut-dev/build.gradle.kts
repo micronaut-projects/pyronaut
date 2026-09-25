@@ -1,3 +1,4 @@
+import io.micronaut.pyronaut.gradle.PyronautPgo
 import org.graalvm.buildtools.gradle.tasks.BuildNativeImageTask
 import org.gradle.api.tasks.bundling.Compression
 import org.gradle.api.tasks.bundling.Tar
@@ -756,7 +757,12 @@ val nativeImageRuntimeArgs = listOf(
     "-H:-UnlockExperimentalVMOptions"
 )
 
+// -Ppyronaut.pgo=instrument|optimize drives the release PGO pipeline shared with the Crema
+// images (see PyronautPgo). The pyronautDevPgo* properties remain for ad-hoc builds.
 val nativeImagePgoArgs = providers.provider {
+    if (PyronautPgo.mode(project) != PyronautPgo.Mode.OFF) {
+        return@provider PyronautPgo.nativeImageArgs(project, "pyronaut-dev")
+    }
     val instrument = providers.gradleProperty("pyronautDevPgoInstrument")
         .map(String::toBoolean)
         .orElse(false)
@@ -791,7 +797,18 @@ tasks {
     val nativeCompileTask = named<BuildNativeImageTask>("nativeCompile")
     nativeCompileTask.configure {
         dependsOn(writeNativeClasspathManifests)
+        inputs.files(providers.provider {
+            if (PyronautPgo.mode(project) == PyronautPgo.Mode.OPTIMIZE) PyronautPgo.profiles(project, "pyronaut-dev") else emptyList()
+        }).withPropertyName("pyronautPgoProfiles")
+        doFirst {
+            PyronautPgo.prepareBuild(
+                project,
+                "pyronaut-dev",
+                options.get().javaLauncher.get().metadata.installationPath.asFile
+            )
+        }
         doLast {
+            PyronautPgo.verifyAndReport(project, "pyronaut-dev", outputFile.get().asFile)
             val resourcesDirectory = nativeImageOutputDirectory.get().dir("resources").asFile
             check(resourcesDirectory.isDirectory) {
                 "pyronaut-dev native image did not copy language resources beside the executable: $resourcesDirectory"
@@ -806,6 +823,9 @@ tasks {
         dependsOn(copyNativeProvidedSources)
         destinationDirectory.set(layout.buildDirectory.dir("distributions"))
         archiveFileName.set("pyronaut-dev-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
+        doFirst {
+            PyronautPgo.rejectInstrumentedBundle(project, "pyronaut-dev")
+        }
         compression = Compression.GZIP
         from(nativeCompileTask.flatMap { it.outputFile }) {
             filePermissions {
@@ -854,6 +874,7 @@ graalvmNative {
             buildArgs.addAll(nativeImageBuildReportArgs)
             buildArgs.addAll(nativeImagePgoArgs)
             buildArgs.addAll(runtimeMetadataExclusion)
+            buildArgs.add("-H:-PreserveIncludesJNI")
         }
         all {
             resources.autodetect()

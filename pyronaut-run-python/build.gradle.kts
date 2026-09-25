@@ -1,3 +1,4 @@
+import io.micronaut.pyronaut.gradle.PyronautPgo
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.Sync
@@ -168,6 +169,12 @@ tasks {
         dependsOn(writeNativeClasspathManifest)
         inputs.files(configurations.runtimeClasspath)
         inputs.property("pyronautNativeImageCiArgs", nativeImageCiArgs)
+        inputs.property("pyronautPgoMode", PyronautPgo.mode(project).name)
+        inputs.property("pyronautCodeCompression", PyronautPgo.codeCompression(project, "pyronaut-run-python"))
+        inputs.property("pyronautPgoSampling", PyronautPgo.sampling(project))
+        inputs.files(providers.provider {
+            if (PyronautPgo.mode(project) == PyronautPgo.Mode.OPTIMIZE) PyronautPgo.profiles(project, "pyronaut-run-python") else emptyList()
+        }).withPropertyName("pyronautPgoProfiles")
         // The image is produced by PyronautNativeImageBuilder, so a change to the builder (its preserve
         // list, for one) must invalidate the image even when the runtime classpath is unchanged.
         inputs.files(nativeBuildInstallDirectory.map { it.dir("lib").asFileTree })
@@ -193,6 +200,7 @@ tasks {
                         "was started with."
                 )
             }
+            PyronautPgo.prepareBuild(project, "pyronaut-run-python", buildJdk)
             environment("JAVA_HOME", buildJdk.absolutePath)
             environment(
                 "PATH",
@@ -222,8 +230,12 @@ tasks {
                 "--native-base",
                 "--include-python"
             ))
+            nativeBuildArgs.addAll(PyronautPgo.nativeBuildArgs(project, "pyronaut-run-python"))
             nativeBuildArgs.addAll(nativeImageCiArgs)
             commandLine(nativeBuildArgs)
+        }
+        doLast {
+            PyronautPgo.verifyAndReport(project, "pyronaut-run-python", cremaOutput.get().asFile)
         }
     }
     val nativeCompileTask = named("nativeCompile") {
@@ -289,6 +301,9 @@ tasks {
         dependsOn(writeNativeClasspathManifest)
         destinationDirectory.set(layout.buildDirectory.dir("distributions"))
         archiveFileName.set("pyronaut-run-python-${nativeBundleOs}-${nativeBundleArch}-${project.version}.tar.gz")
+        doFirst {
+            PyronautPgo.rejectInstrumentedBundle(project, "pyronaut-run-python")
+        }
         compression = Compression.GZIP
         from(cremaOutput) {
             filePermissions {

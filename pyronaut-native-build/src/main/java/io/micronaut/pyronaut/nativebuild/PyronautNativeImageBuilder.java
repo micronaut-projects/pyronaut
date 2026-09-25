@@ -51,6 +51,7 @@ public final class PyronautNativeImageBuilder {
             "-H:+AllowJRTFileSystem",
             "-H:+SharedArenaSupport",
             "-H:-SupportCompileInIsolates",
+            "-H:-PreserveIncludesJNI",
             "-Dmicronaut.graalvm.imagesingletons.enabled=false",
             "--enable-http",
             "--enable-https",
@@ -330,6 +331,9 @@ public final class PyronautNativeImageBuilder {
     private boolean emitBuildReport;
     private boolean includeSbom;
     private boolean verbose;
+    private boolean pgoInstrument;
+    private final List<Path> pgoProfiles = new ArrayList<>();
+    private boolean codeCompression;
 
     /**
      * @param output native executable output path
@@ -456,6 +460,42 @@ public final class PyronautNativeImageBuilder {
     }
 
     /**
+     * Configure whether the image is instrumented to collect profile-guided optimization data.
+     * An instrumented executable writes its profile on exit, to {@code default.iprof} or the file
+     * named by {@code -XX:ProfilesDumpFile}.
+     *
+     * @param enabled whether to pass {@code --pgo-instrument}
+     * @return this builder
+     */
+    public PyronautNativeImageBuilder pgoInstrument(boolean enabled) {
+        pgoInstrument = enabled;
+        return this;
+    }
+
+    /**
+     * Optimize the image with previously collected profiles. Every profile is passed to a single
+     * {@code --pgo} option, so profiles from separate training processes are merged.
+     *
+     * @param profiles the {@code .iprof} files collected from an instrumented image
+     * @return this builder
+     */
+    public PyronautNativeImageBuilder pgoProfiles(Collection<Path> profiles) {
+        Objects.requireNonNull(profiles, "profiles").forEach(profile -> pgoProfiles.add(normalizeExisting(profile)));
+        return this;
+    }
+
+    /**
+     * Configure whether cold code is stored in the compressed code section.
+     *
+     * @param enabled whether to pass {@code -H:+EnableCodeCompression}
+     * @return this builder
+     */
+    public PyronautNativeImageBuilder codeCompression(boolean enabled) {
+        codeCompression = enabled;
+        return this;
+    }
+
+    /**
      * Add a native-image argument after the curated production arguments.
      *
      * @param argument native-image argument
@@ -561,6 +601,7 @@ public final class PyronautNativeImageBuilder {
         if (includePython) {
             command.addAll(PYTHON_ARGUMENTS);
         }
+        command.addAll(optimizationArguments());
         command.addAll(nativeImageArguments);
         command.add(mainClass);
         command.add(normalizedOutput.toString());
@@ -575,6 +616,26 @@ public final class PyronautNativeImageBuilder {
             }
         }
         return new BuildResult(exitCode, normalizedOutput, normalizedWorkingDirectory);
+    }
+
+    private List<String> optimizationArguments() {
+        if (pgoInstrument && !pgoProfiles.isEmpty()) {
+            throw new IllegalStateException("An image cannot be instrumented for PGO and optimized with PGO profiles at the same time");
+        }
+        List<String> arguments = new ArrayList<>();
+        if (pgoInstrument) {
+            arguments.add("--pgo-instrument");
+        }
+        if (!pgoProfiles.isEmpty()) {
+            arguments.add("--pgo=" + pgoProfiles.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(",")));
+        }
+        if (codeCompression) {
+            // COMMON_ARGUMENTS ends by locking experimental options again.
+            arguments.add("-H:+UnlockExperimentalVMOptions");
+            arguments.add("-H:+EnableCodeCompression");
+            arguments.add("-H:-UnlockExperimentalVMOptions");
+        }
+        return arguments;
     }
 
     private static Path normalizeExisting(Path entry) {

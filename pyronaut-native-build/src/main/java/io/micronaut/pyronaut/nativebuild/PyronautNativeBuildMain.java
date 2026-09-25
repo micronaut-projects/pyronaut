@@ -135,6 +135,15 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     @CommandLine.Option(names = "--user-package", description = "Application package to preserve in a closed-world native image")
     List<String> userPackages = new ArrayList<>();
 
+    @CommandLine.Option(names = "--pgo-instrument", description = "Instrument the image to collect profile-guided optimization data")
+    boolean pgoInstrument;
+
+    @CommandLine.Option(names = "--pgo", split = ",", paramLabel = "<profile>", description = "Optimize the image with the given comma-separated .iprof profiles")
+    List<Path> pgoProfiles = new ArrayList<>();
+
+    @CommandLine.Option(names = "--code-compression", description = "Store cold code in the compressed code section (-H:+EnableCodeCompression)")
+    boolean codeCompression;
+
     @CommandLine.Unmatched
     List<String> passthroughNativeImageArgs = new ArrayList<>();
 
@@ -253,6 +262,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
                 .includePython(includePython)
                 .emitBuildReport(false)
                 .includeSbom(!noSbom)
+                .pgoInstrument(pgoInstrument)
+                .pgoProfiles(pgoProfiles)
+                .codeCompression(codeCompression)
                 .addClasspath(nativeClasspath)
             .mainClass(APPLICATION_MAIN_CLASS)
             .preservePackages(userPackages);
@@ -404,6 +416,9 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .workingDirectory(root)
             .includePython(includePython)
             .includeSbom(!noSbom)
+            .pgoInstrument(pgoInstrument)
+            .pgoProfiles(pgoProfiles)
+            .codeCompression(codeCompression)
             .addClasspath(baseClasspath)
             .addNativeImageArguments(configurationArguments);
         if (!configurationDirs.isEmpty()) {

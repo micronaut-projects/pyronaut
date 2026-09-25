@@ -22,9 +22,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -43,7 +45,7 @@ class PyronautNativeImageBuilderTest {
         assertFalse(defaultCommand.contains("--emit"));
         assertFalse(defaultCommand.contains("-H:IncludeSBOM=embed,export"));
         assertFalse(defaultCommand.contains("--no-fallback"));
-        assertFalse(defaultCommand.contains("-H:-PreserveIncludesJNI"));
+        assertTrue(defaultCommand.contains("-H:-PreserveIncludesJNI"));
         assertFalse(defaultCommand.contains("-H:Preserve=package=org.graalvm.*"));
         assertTrue(defaultCommand.contains("-H:Preserve=module=java.base,module=java.sql,module=java.xml,module=java.management,module=java.naming,module=java.rmi,module=java.logging"));
         assertTrue(defaultCommand.contains("-H:Preserve=package=java.util.*"));
@@ -147,7 +149,7 @@ class PyronautNativeImageBuilderTest {
         assertTrue(classpath.contains(pythonClasspathEntry.toString()));
         assertTrue(command.contains("--enable-native-access=org.graalvm.truffle"));
         assertTrue(command.contains("-H:+CopyLanguageResources"));
-        assertFalse(command.contains("-H:-PreserveIncludesJNI"));
+        assertTrue(command.contains("-H:-PreserveIncludesJNI"));
         assertFalse(command.contains("--initialize-at-run-time=jdk.internal.org.jline.terminal.impl.ffm.CLibrary"));
         assertFalse(command.contains("--initialize-at-build-time=com.sun.tools.javac.api.JavacTool"));
         assertTrue(command.contains("-H:Preserve=package=ch.qos.logback.*"));
@@ -170,6 +172,68 @@ class PyronautNativeImageBuilderTest {
         );
 
         assertTrue(exception.getMessage().contains(tempDir.resolve("resources").toString()));
+    }
+
+    @Test
+    void addsNoOptimizationArgumentsByDefault() throws Exception {
+        Path classpathEntry = Files.createFile(tempDir.resolve("runtime.jar"));
+        List<String> command = build(classpathEntry, false, false);
+
+        assertFalse(command.stream().anyMatch(argument -> argument.startsWith("--pgo")));
+        assertFalse(command.contains("-H:+EnableCodeCompression"));
+    }
+
+    @Test
+    void instrumentsForProfileGuidedOptimization() throws Exception {
+        Path classpathEntry = Files.createFile(tempDir.resolve("runtime.jar"));
+        List<String> command = build(classpathEntry, builder -> builder.pgoInstrument(true));
+
+        assertTrue(command.contains("--pgo-instrument"));
+        assertFalse(command.stream().anyMatch(argument -> argument.startsWith("--pgo=")));
+    }
+
+    @Test
+    void mergesEveryProfileIntoOnePgoOptionWithCodeCompression() throws Exception {
+        Path classpathEntry = Files.createFile(tempDir.resolve("runtime.jar"));
+        Path startup = tempDir.resolve("startup.iprof");
+        Path requests = tempDir.resolve("requests.iprof");
+        List<String> command = build(classpathEntry, builder -> builder
+            .pgoProfiles(List.of(startup, requests))
+            .codeCompression(true)
+            .addNativeImageArgument("--parallelism=1"));
+
+        assertTrue(command.contains("--pgo=" + startup + "," + requests));
+        assertFalse(command.contains("--pgo-instrument"));
+        int compression = command.indexOf("-H:+EnableCodeCompression");
+        int lastLock = command.lastIndexOf("-H:-UnlockExperimentalVMOptions");
+        assertTrue(compression > 0);
+        assertEquals("-H:+UnlockExperimentalVMOptions", command.get(compression - 1));
+        assertEquals(compression + 1, lastLock);
+        assertTrue(command.indexOf("--parallelism=1") > compression);
+    }
+
+    @Test
+    void rejectsInstrumentingAndOptimizingTogether() throws Exception {
+        Path classpathEntry = Files.createFile(tempDir.resolve("runtime.jar"));
+
+        assertThrows(IllegalStateException.class, () -> build(classpathEntry, builder -> builder
+            .pgoInstrument(true)
+            .pgoProfiles(List.of(tempDir.resolve("default.iprof")))));
+    }
+
+    private List<String> build(Path classpathEntry, Consumer<PyronautNativeImageBuilder> customizer) throws Exception {
+        List<String> command = new ArrayList<>();
+        PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
+            tempDir.resolve("image"),
+            (nativeImageCommand, workingDirectory) -> {
+                command.addAll(nativeImageCommand);
+                return 0;
+            }
+        );
+        builder.addClasspath(classpathEntry);
+        customizer.accept(builder);
+        builder.build();
+        return command;
     }
 
     private List<String> build(Path classpathEntry, boolean emitBuildReport, boolean includeSbom) throws Exception {
