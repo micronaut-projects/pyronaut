@@ -16,8 +16,15 @@ dependencies = [
 ]
 ----
 
-Pyronaut does not resolve Python packages during `pyronaut install`.
-The command expects the Python environment used to run Pyronaut and pytest to already contain the Python packages your tests or application import.
+`pyronaut install` installs Python dependencies into a GraalPy virtual environment in the project `.venv` directory.
+It creates `.venv` with the GraalPy interpreter provisioned by `pyronaut setup` and runs `pip install` for:
+
+- the requirements in `[project].dependencies`
+- every group in PEP 735 `[dependency-groups]`, following `include-group` entries
+- `requirements.txt` in the project directory
+- `pytest`, when the project has Python tests and does not declare it
+
+Pyronaut skips `pip` while these declarations are unchanged. Use `pyronaut install --refresh` to reinstall them.
 
 == Java dependencies
 
