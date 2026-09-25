@@ -1,0 +1,41 @@
+# Tells setup-pyronaut about a new release.
+#
+# micronaut-projects/setup-pyronaut keeps the default of its `pyronaut-version`
+# input on the newest Pyronaut release. Its update workflow opens the pull
+# request; this only sends it the `pyronaut-release` repository dispatch that
+# starts it. It lives outside release.yml because that file is synced from the
+# Micronaut project template.
+name: Release setup-pyronaut
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag to announce, for example v0.0.4
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  dispatch:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.draft
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+    steps:
+      - name: Send the pyronaut-release dispatch
+        env:
+          # The default job token cannot reach another repository.
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ ! "${version}" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+            echo "Not a release version: ${RELEASE_TAG}"
+            exit 1
+          fi
+          gh api --method POST /repos/micronaut-projects/setup-pyronaut/dispatches \
+            -f event_type=pyronaut-release \
+            -f "client_payload[version]=${version}"
+          echo "Sent pyronaut-release ${version} to micronaut-projects/setup-pyronaut" >> "${GITHUB_STEP_SUMMARY}"
