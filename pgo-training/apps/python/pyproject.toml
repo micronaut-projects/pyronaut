@@ -35,14 +35,8 @@ runtime = [
   'io.micronaut:micronaut-http-server-netty',
   'io.micronaut.serde:micronaut-serde-jackson',
   'io.micronaut.validation:micronaut-validation',
-  'io.micronaut.data:micronaut-data-jdbc',
-  'io.micronaut.sql:micronaut-jdbc-hikari',
-  'jakarta.data:jakarta.data-api',
-  # Loaded at runtime through Crema; never part of a native image.
-  'com.h2database:h2',
 ]
 build = [
-  'io.micronaut.data:micronaut-data-processor',
   'io.micronaut.serde:micronaut-serde-processor',
   'io.micronaut.validation:micronaut-validation-processor',
 ]

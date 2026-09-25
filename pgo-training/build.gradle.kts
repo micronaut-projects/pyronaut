@@ -34,31 +34,11 @@ fun toolProject(tool: String) = project(":micronaut-pyronaut-$tool")
 fun toolExecutable(tool: String): File = toolProject(tool).layout.buildDirectory
     .file("install/micronaut-pyronaut-$tool/bin/pyronaut-$tool").get().asFile
 
-// The training workload loads these at runtime through Crema. They must never be baked into an image.
-val runtimeLoadedArtifacts = listOf("com.h2database:h2", "io.micronaut.data:micronaut-data-jdbc", "io.micronaut.sql:micronaut-jdbc-hikari")
 val imageManifestTasks = mapOf(
     "pyronaut-dev" to ":micronaut-pyronaut-dev:writeNativeClasspathManifests",
     "pyronaut-run" to ":micronaut-pyronaut-run:writeNativeClasspathManifest",
     "pyronaut-run-python" to ":micronaut-pyronaut-run-python:writeNativeClasspathManifest",
 )
-val checkRuntimeLoadedDependencies = tasks.register("checkRuntimeLoadedDependencies") {
-    group = "pgo"
-    description = "Checks that H2, Micronaut Data JDBC and Hikari are not baked into any native image"
-    dependsOn(imageManifestTasks.values)
-    val manifests = imageManifestTasks.keys.map { image ->
-        project(":micronaut-$image").layout.buildDirectory.file("generated/native-classpaths/native-provided-classpath.txt")
-    }
-    inputs.files(manifests)
-    doLast {
-        manifests.forEach { manifest ->
-            val provided = manifest.get().asFile.readLines().map(String::trim).toSet()
-            val baked = runtimeLoadedArtifacts.filter { it in provided }
-            if (baked.isNotEmpty()) {
-                throw GradleException("${manifest.get().asFile} bakes $baked into the image; the PGO workload must load them at runtime")
-            }
-        }
-    }
-}
 
 fun registerTraining(taskName: String, image: String, jvm: Boolean) = tasks.register<Exec>(taskName) {
     group = "pgo"
@@ -70,7 +50,7 @@ fun registerTraining(taskName: String, image: String, jvm: Boolean) = tasks.regi
     val imageProject = project(":micronaut-$image")
     jvmTools.forEach { dependsOn(":micronaut-pyronaut-$it:installDist") }
     dependsOn(":micronaut-functional-test:publishFixtureArtifactsToMavenLocal")
-    dependsOn(imageManifestTasks.getValue(image), checkRuntimeLoadedDependencies)
+    dependsOn(imageManifestTasks.getValue(image))
     // Training always runs: its output is profiles for whichever image was just built.
     outputs.upToDateWhen { false }
     val workDirectory = layout.buildDirectory.dir(if (jvm) "jvm-training/$image" else "training/$image")

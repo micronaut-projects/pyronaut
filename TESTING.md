@@ -730,8 +730,7 @@ runners are too small; see [GitLab CI](#gitlab-ci) for the pipeline.
   (`~/.pyenv/versions/<version>/bin/graalpy`), or pass
   `-Ppyronaut.pgo.graalpy=/path/to/graalpy`. It runs the Pyronaut CLI during
   training.
-- No Docker and no Test Resources containers. Training uses an in-memory H2
-  database.
+- No Docker, database or Test Resources containers.
 - `GRAALVM_QUICK_BUILD` must not be set. It adds `-Ob`, and the PGO build
   refuses to run with it.
 - Budget about twice the usual native build time per image, plus the training
@@ -938,14 +937,14 @@ the image under training writes its own profile, and servers are stopped with
 The runtime workload runs each step at concurrency 1 and then 8:
 
 - `GET /hello` over keep-alive connections
-- JSON `POST`, `GET`, `PUT` and `DELETE` of pets through Micronaut Data JDBC,
-  including finders and counts
+- JSON `POST`, `GET`, `PUT` and `DELETE` of pets in an in-memory store,
+  including searches and counts
 - validation failures, missing records and malformed JSON
 - a Python-heavy (or Java) summary endpoint with small and 250 KB bodies
 
-H2, Micronaut Data JDBC and Hikari are application dependencies loaded at
-runtime through Crema. `:micronaut-pgo-training:checkRuntimeLoadedDependencies`
-fails the training if any of them is baked into an image.
+The workload does not use a database. Instrumented images crash when
+Crema-interpreted JDBC code (H2 through Hikari and Micronaut Data) calls
+instrumented AOT code (#203).
 
 Use `-Ppyronaut.pgo.trainingScale=<factor>` to scale the number of requests.
 `-Ppyronaut.pgo.trainingSkip=<scenario,...>` exists for local debugging only:

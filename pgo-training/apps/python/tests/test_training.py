@@ -19,14 +19,14 @@ def base_url(context):
     return f"http://localhost:{context[EmbeddedServer].getPort()}"
 
 
-def test_repository_crud(context):
-    repository = context["training.PetRepository"]
-    saved = repository.save(Pet(None, "Repo Rex", "dog", 3, True))
+def test_store_crud(context):
+    store = context["training.PetStore"]
+    saved = store.save(Pet(None, "Store Rex", "dog", 3, True))
     assert saved.id > 0
-    assert repository.findById(saved.id).get().name == "Repo Rex"
-    assert repository.countBySpecies("dog") >= 1
-    repository.deleteById(saved.id)
-    assert not repository.existsById(saved.id)
+    assert store.find(saved.id).name == "Store Rex"
+    assert store.count_species("dog") >= 1
+    store.delete(saved.id)
+    assert not store.exists(saved.id)
 
 
 def test_http_crud(base_url):

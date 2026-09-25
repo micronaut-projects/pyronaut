@@ -5,46 +5,46 @@ from micronaut.http.annotation import Body, Controller, Delete, Get, Post, Put
 from micronaut.validation.validator import Validator
 
 from .model import Pet, PetCommand
-from .repository import PetRepository
+from .store import PetStore
 from .transform import summarize
 
 
 @Controller("/pets")
 class PetController:
 
-    def __init__(self, repository: PetRepository, validator: Validator):
-        self.repository = repository
+    def __init__(self, store: PetStore, validator: Validator):
+        self.store = store
         self.validator = validator
 
     @Get("/")
     def list(self) -> List[Pet]:
-        return self.repository.findAll()
+        return self.store.all()
 
     @Get("/species/{species}")
     def by_species(self, species: str) -> List[Pet]:
-        return self.repository.findBySpecies(species)
+        return self.store.by_species(species)
 
     @Get("/search/{fragment}")
     def search(self, fragment: str) -> List[Pet]:
-        return self.repository.findByNameContains(fragment)
+        return self.store.name_contains(fragment)
 
     @Get("/count/{species}")
     def count(self, species: str) -> dict:
-        return {"species": species, "count": self.repository.countBySpecies(species)}
+        return {"species": species, "count": self.store.count_species(species)}
 
     @Get("/{id}")
     def show(self, id: int) -> HttpResponse:
-        found = self.repository.findById(id)
-        if not found.isPresent():
+        found = self.store.find(id)
+        if found is None:
             return HttpResponse.notFound({"message": f"No pet {id}"})
-        return HttpResponse.ok(found.get())
+        return HttpResponse.ok(found)
 
     @Post("/")
     def create(self, command: Annotated[PetCommand, Body]) -> HttpResponse:
         errors = self._errors(command)
         if errors:
             return HttpResponse.badRequest({"errors": errors})
-        pet = self.repository.save(Pet(None, command.name, command.species, command.age, command.vaccinated))
+        pet = self.store.save(Pet(None, command.name, command.species, command.age, command.vaccinated))
         return HttpResponse.created(pet)
 
     @Put("/{id}")
@@ -52,15 +52,15 @@ class PetController:
         errors = self._errors(command)
         if errors:
             return HttpResponse.badRequest({"errors": errors})
-        if not self.repository.existsById(id):
+        if not self.store.exists(id):
             return HttpResponse.notFound({"message": f"No pet {id}"})
-        return HttpResponse.ok(self.repository.update(Pet(id, command.name, command.species, command.age, command.vaccinated)))
+        return HttpResponse.ok(self.store.save(Pet(id, command.name, command.species, command.age, command.vaccinated)))
 
     @Delete("/{id}")
     def delete(self, id: int) -> HttpResponse:
-        if not self.repository.existsById(id):
+        if not self.store.exists(id):
             return HttpResponse.notFound({"message": f"No pet {id}"})
-        self.repository.deleteById(id)
+        self.store.delete(id)
         return HttpResponse.noContent()
 
     @Post(value="/summary", consumes="text/plain")
