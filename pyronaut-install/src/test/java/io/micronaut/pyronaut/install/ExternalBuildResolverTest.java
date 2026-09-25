@@ -9,6 +9,8 @@ import io.micronaut.pyronaut.config.model.ExternalProjectLayout.ProjectKind;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -74,7 +76,7 @@ class ExternalBuildResolverTest {
 
     @Test
     void detectsGradleTestResourcesPlugin() throws Exception {
-        var root = Files.createTempDirectory("pyronaut-gradle-test-resources");
+        var root = gradleProject("pyronaut-gradle-test-resources");
         Files.writeString(root.resolve("build.gradle.kts"), "plugins { id(\"io.micronaut.test-resources\") version \"5.0.0\" }");
 
         assertTrue(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.GRADLE, null));
@@ -82,7 +84,7 @@ class ExternalBuildResolverTest {
 
     @Test
     void doesNotEnableGradleTestResourcesWhenPluginIsAbsent() throws Exception {
-        var root = Files.createTempDirectory("pyronaut-gradle-no-test-resources");
+        var root = gradleProject("pyronaut-gradle-no-test-resources");
         Files.writeString(root.resolve("build.gradle"), "plugins { id 'java' }");
 
         assertFalse(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.GRADLE, null));
@@ -90,7 +92,7 @@ class ExternalBuildResolverTest {
 
     @Test
     void doesNotEnableGradleTestResourcesForAnUnappliedPluginReference() throws Exception {
-        var root = Files.createTempDirectory("pyronaut-gradle-unapplied-test-resources");
+        var root = gradleProject("pyronaut-gradle-unapplied-test-resources");
         Files.writeString(root.resolve("build.gradle.kts"), "// id(\"io.micronaut.test-resources\") version \"5.0.0\"");
 
         assertFalse(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.GRADLE, null));
@@ -98,7 +100,7 @@ class ExternalBuildResolverTest {
 
     @Test
     void doesNotEnableGradleTestResourcesWhenThePluginIsAppliedFalse() throws Exception {
-        var root = Files.createTempDirectory("pyronaut-gradle-test-resources-apply-false");
+        var root = gradleProject("pyronaut-gradle-test-resources-apply-false");
         Files.writeString(root.resolve("build.gradle.kts"), "plugins { id(\"io.micronaut.test-resources\") version \"5.0.0\" apply false }");
 
         assertFalse(ExternalBuildResolver.testResourcesEnabled(root, ProjectKind.GRADLE, null));
@@ -151,4 +153,22 @@ class ExternalBuildResolverTest {
         assertTrue(generated.contains("nashorn-core"));
     }
 
+    /**
+     * Creates a Gradle project that runs this repository's Gradle wrapper, so the
+     * result does not depend on whichever Gradle version is installed on the PATH.
+     */
+    private static Path gradleProject(String prefix) throws Exception {
+        Path repositoryRoot = Path.of("").toAbsolutePath();
+        while (repositoryRoot != null && !Files.isRegularFile(repositoryRoot.resolve("gradlew"))) {
+            repositoryRoot = repositoryRoot.getParent();
+        }
+        assertTrue(repositoryRoot != null, "Could not locate the repository Gradle wrapper");
+        Path root = Files.createTempDirectory(prefix);
+        Files.copy(repositoryRoot.resolve("gradlew"), root.resolve("gradlew"), StandardCopyOption.COPY_ATTRIBUTES);
+        Path wrapper = Files.createDirectories(root.resolve("gradle/wrapper"));
+        for (String file : new String[] {"gradle-wrapper.jar", "gradle-wrapper.properties"}) {
+            Files.copy(repositoryRoot.resolve("gradle/wrapper").resolve(file), wrapper.resolve(file));
+        }
+        return root;
+    }
 }
