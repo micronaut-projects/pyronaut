@@ -65,6 +65,13 @@ final class PyronautPgo {
             return false
         }
         Boolean requested = project.providers.gradleProperty(CODE_COMPRESSION_PROPERTY).map { it.toBoolean() }.getOrNull()
+        // native-image rejects -H:+EnableCodeCompression on macOS ("not supported on darwin platform").
+        if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("mac")) {
+            if (requested) {
+                throw new GradleException("-P${CODE_COMPRESSION_PROPERTY}=true is not supported on macOS: native-image does not support code compression on darwin.")
+            }
+            return false
+        }
         if (imageName in RUNTIME_COMPILATION_IMAGES) {
             if (requested) {
                 throw new GradleException("-P${CODE_COMPRESSION_PROPERTY}=true is not supported for $imageName: " +
