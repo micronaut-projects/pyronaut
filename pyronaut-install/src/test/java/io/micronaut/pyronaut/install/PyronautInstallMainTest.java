@@ -1743,7 +1743,9 @@ class PyronautInstallMainTest {
                 binaryOnlyRootModel(repository), InstallScope.RUNTIME, localRepository, true));
 
         assertTrue(failure.getMessage().contains("com.example:root:pom:1.0.0"), failure.getMessage());
-        assertTrue(failure.getMessage().contains("run without --offline"), failure.getMessage());
+        assertTrue(failure.getMessage().contains(
+            "Delete " + localRepository.toAbsolutePath().normalize().resolve("com/example/root/1.0.0")
+                + " and rerun without --offline"), failure.getMessage());
     }
 
     private static PyprojectModel binaryOnlyRootModel(Path repository) {
