@@ -269,6 +269,8 @@ class Trainer:
         shim.write_text(INSTRUMENTED_SHIM.replace("@EXECUTABLE@", str(Path(self.options.executable).resolve())))
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         self._link_manifests(directory, Path(self.options.manifests_dir))
+        if self.image == "pyronaut-dev":
+            os.symlink(Path(self.options.dev_install_dir).resolve() / "lib", directory / "lib")
         self.instrumented_shim = shim
 
     def _write_jvm_dev_shim(self) -> None:
