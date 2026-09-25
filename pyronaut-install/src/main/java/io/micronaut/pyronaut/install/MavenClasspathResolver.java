@@ -763,7 +763,18 @@ final class MavenClasspathResolver {
         if (parts.length == 3) {
             return new MavenDependency(parts[0], parts[1], parts[2]);
         }
-        throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate + "'. Expected group:artifact[:version]");
+        if (parts.length == 4 || parts.length == 5) {
+            // group:artifact:extension:version, optionally with a classifier before the version --
+            // the form a POM-only aggregator has to be declared in, which toDependency accepts.
+            // This is only used to infer which Test Resources modules the server needs, and that
+            // inference is by module identity, so the extension and any classifier are irrelevant
+            // here. Rejecting the coordinate outright meant a single valid POM-only dependency
+            // anywhere in runtime or test failed the whole test-resources-server scope.
+            return new MavenDependency(parts[0], parts[1], parts[parts.length - 1]);
+        }
+        throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate
+            + "'. Expected group:artifact[:version], group:artifact:extension:version"
+            + " or group:artifact:extension:classifier:version");
     }
 
     private static String moduleKey(MavenDependency dependency) {
