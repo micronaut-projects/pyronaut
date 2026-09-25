@@ -1,34 +1,29 @@
 = Prerequisites
 
 Pyronaut runs Python application code and Python tests on GraalPy, not on CPython.
-Install and select the GraalPy version used by Pyronaut with https://github.com/pyenv/pyenv#installation[pyenv]:
+`pyronaut setup` provisions the GraalPy version used by Pyronaut, and `pyronaut --version` shows it:
 
 [source,bash]
 ----
-pyenv install --skip-existing graalpy3.13-25.4.4
-pyenv shell graalpy3.13-25.4.4
-python --version
+pyronaut setup
+pyronaut --version
 ----
 
-Change to your project directory:
+If https://github.com/pyenv/pyenv#installation[pyenv] is installed, setup installs GraalPy with pyenv; otherwise it
+downloads GraalPy into `~/.pyronaut/sdks`.
+
+Change to your project directory and install the project:
 
 [source,bash]
 ----
 cd <project-dir>
+pyronaut install
 ----
 
-Create and activate a GraalPy virtual environment. Then install `pytest` with the `pip` bundled in that environment:
-
-[source,bash]
-----
-graalpy -m venv .venv
-source .venv/bin/activate
-python -m pip install pytest
-python -m pytest --version
-----
-
-Create `.venv` with GraalPy. Pyronaut uses this environment for application and test launches. A CPython-created
-environment cannot provide packages to the embedded GraalPy runtime.
+`pyronaut install` creates a GraalPy virtual environment in `.venv` and uses `pip` to install the Python dependencies
+declared in `pyproject.toml` or `requirements.txt`, plus `pytest` when the project has Python tests.
+Pyronaut uses this environment for application and test launches. A CPython-created environment cannot provide
+packages to the embedded GraalPy runtime.
 
 See <<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>> for Python package compatibility and Java
 library guidance.

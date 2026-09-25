@@ -9124,14 +9124,27 @@ java-version = 25
                     "version": "1.2.3",
                     "releaseTag": None,
                 },
+                "graalpyVersion": "graalpy3.13-25.4.4",
             }
             commands = []
             provisioning_order = []
+            graalpy_home = home / ".pyronaut" / "sdks" / "graalpy3.13-25.4.4"
+            graalpy = cli._GraalPyInstallation(
+                executable=graalpy_home / "bin" / "graalpy",
+                home=graalpy_home,
+                site_packages=str(graalpy_home / "lib" / "python3.13" / "site-packages"),
+                version_line="GraalPy 3.13.14 (Oracle GraalVM Native 25.4.4.1.1)",
+            )
 
             def provision_jdk(_project_dir, *, offline=False):
                 provisioning_order.append("graalvm")
                 self.assertFalse(offline)
                 return str(java_home)
+
+            def provision_graalpy(_runner, *, offline=False):
+                provisioning_order.append("graalpy")
+                self.assertFalse(offline)
+                return graalpy
 
             def provision_image(name):
                 provisioning_order.append(name)
@@ -9154,6 +9167,8 @@ java-version = 25
                 patch.object(cli, "_setup_expectation", return_value=expectation),
                 patch.object(cli, "_read_valid_setup_manifest", side_effect=RuntimeError("missing")),
                 patch.object(cli, "_ensure_graalvm_java_home", side_effect=provision_jdk),
+                patch.object(cli, "_required_graalpy", return_value=cli._GraalPySpec("graalpy3.13-25.4.4", "25.4.4.1.1", "graal-25.4.4")),
+                patch.object(cli, "_ensure_graalpy", side_effect=provision_graalpy),
                 patch.object(cli, "_ensure_native_image", side_effect=provision_image),
                 patch.object(cli, "_bundled_executable", return_value=installer),
                 patch.object(cli, "_seed_bundled_pyronaut_maven_repository") as seed_repository,
@@ -9171,7 +9186,8 @@ java-version = 25
             self.assertIn("Resolving SDK dependencies...", stderr.getvalue())
             self.assertNotIn("\r", stderr.getvalue())
             self.assertNotIn("\x1b", stderr.getvalue())
-            self.assertEqual(["graalvm", *cli._SETUP_IMAGE_COMMANDS], provisioning_order)
+            self.assertIn("Locating GraalPy graalpy3.13-25.4.4...", stderr.getvalue())
+            self.assertEqual(["graalvm", "graalpy", *cli._SETUP_IMAGE_COMMANDS], provisioning_order)
             seed_repository.assert_called_once()
             self.assertEqual(1, len(commands))
             command_line, environment = commands[0]
@@ -9183,6 +9199,16 @@ java-version = 25
 
             state = cli.json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(expectation["repositories"], state["repositories"])
+            self.assertEqual("graalpy3.13-25.4.4", state["graalpyVersion"])
+            self.assertEqual(
+                {
+                    "executable": str(graalpy.executable),
+                    "home": str(graalpy_home),
+                    "sitePackages": graalpy.site_packages,
+                    "version": graalpy.version_line,
+                },
+                state["graalpy"],
+            )
             self.assertEqual(str(tool_executable.resolve()), state["executables"]["pyronaut-run"])
             self.assertEqual(set(cli._SETUP_IMAGE_COMMANDS), set(state["images"]))
             for image_name in cli._SETUP_IMAGE_COMMANDS:

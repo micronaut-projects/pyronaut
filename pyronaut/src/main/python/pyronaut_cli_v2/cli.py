@@ -193,6 +193,7 @@ def _print_version() -> None:
     print(f"Micronaut Core: {values.get('micronaut.core', 'unknown')}")
     print(f"Micronaut Platform: {values.get('micronaut.platform', 'unknown')}")
     print(f"GraalPy: {values.get('graalpy', 'unknown')}")
+    print(f"GraalPy Interpreter: {values.get('graalpy.pyenv', 'unknown')}")
     print(f"Native Image JDK: {values.get('native-image.jdk', 'unknown')}")
 
 Runner = Callable[[list[str]], int]
@@ -732,6 +733,17 @@ def run(
             )
             return test_exit_code
 
+        if command == "install" and not _has_direct_install_sources(forwarded_args):
+            install_project_dir = Path(project_dir).resolve()
+            if (install_project_dir / "pyproject.toml").is_file() or (install_project_dir / "requirements.txt").is_file():
+                venv_code = _ensure_project_virtualenv(
+                    install_project_dir,
+                    execute,
+                    refresh=_extract_flag(forwarded_args, "--refresh"),
+                    offline=_extract_offline(forwarded_args),
+                )
+                if venv_code != SUCCESS:
+                    return venv_code
         if command in {"install", "process", "validate-config"}:
             return _delegate(
                 command,
@@ -6110,7 +6122,7 @@ def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | No
         "test-resources-server",
     }:
         return None
-    env = _terminal_environment(dict(os.environ))
+    env = _apply_configured_graalpy(_terminal_environment(dict(os.environ)))
     if java_home_provider is None:
         return env
 
@@ -8508,7 +8520,7 @@ def _print_setup_usage(stream=None) -> None:
         "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] "
         "[--progress <auto|on|off>] [--allow-draft-release]\n"
     )
-    stream.write("Provision the global Pyronaut SDK toolchain, launchers, and native compiler classpaths.\n")
+    stream.write("Provision the global Pyronaut SDK toolchain, GraalPy interpreter, launchers, and native compiler classpaths.\n")
 
 
 def _setup_local_repository(args: Sequence[str]) -> Path:
@@ -8650,6 +8662,7 @@ def _setup_expectation(args: Sequence[str]) -> dict[str, object]:
             "version": native_version,
             "releaseTag": release_tag,
         },
+        "graalpyVersion": graalpy.name if (graalpy := _required_graalpy()) is not None else None,
     }
 
 
@@ -8671,8 +8684,14 @@ def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
         "sdkDescriptorSha256",
         "toolDescriptorSha256",
         "nativeImages",
+        "graalpyVersion",
     ):
-        if manifest.get(key) != expected[key]:
+        if manifest.get(key) != expected.get(key):
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    if expected.get("graalpyVersion") is not None:
+        graalpy = manifest.get("graalpy")
+        executable = graalpy.get("executable") if isinstance(graalpy, dict) else None
+        if not isinstance(executable, str) or not _is_executable_file(Path(executable)):
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
     java_home = manifest.get("javaHome")
     if not isinstance(java_home, str) or not _is_executable_file(Path(java_home) / "bin" / "java"):
@@ -8820,6 +8839,18 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                         f"Unable to locate or provision a{qualifier} compatible GraalVM JDK (requires JDK 25+)"
                     )
                 jdk_step.done_label = f"GraalVM JDK ready: {java_home}"
+            graalpy_spec = _required_graalpy()
+            graalpy: _GraalPyInstallation | None = None
+            if graalpy_spec is not None:
+                with progress.step(f"Locating GraalPy {graalpy_spec.name}") as graalpy_step:
+                    graalpy = _ensure_graalpy(runner, offline=offline)
+                    if graalpy is None:
+                        qualifier = " an installed" if offline else ""
+                        raise RuntimeError(
+                            f"Unable to locate or provision{qualifier} GraalPy {graalpy_spec.name}. "
+                            f"Install it with: pyenv install {graalpy_spec.name}"
+                        )
+                    graalpy_step.done_label = f"GraalPy ready: {graalpy.executable}"
             with progress.step("Provisioning native launchers", done="Native launchers ready"):
                 images: dict[str, Path] = {}
                 for image_name in _SETUP_IMAGE_COMMANDS:
@@ -8919,6 +8950,13 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     "executables": executables,
                     "images": image_state,
                 }
+                if graalpy is not None:
+                    state["graalpy"] = {
+                        "executable": str(graalpy.executable),
+                        "home": str(graalpy.home),
+                        "sitePackages": graalpy.site_packages,
+                        "version": graalpy.version_line,
+                    }
                 temporary_manifest = Path(temp_dir) / "setup.json"
                 temporary_manifest.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                 os.replace(temporary_manifest, manifest_path)
@@ -8927,6 +8965,447 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+
+
+# -- GraalPy interpreter -----------------------------------------------------
+#
+# Python application code and tests run on the GraalPy runtime embedded in the
+# SDK, and packages come from a project virtualenv created by the matching
+# standalone GraalPy. Setup locates that interpreter (the running Python, the
+# Pyronaut SDK cache, or pyenv) and otherwise installs it through pyenv or
+# downloads the release into ~/.pyronaut/sdks, the same place as the JDK.
+
+_GRAALPY_RELEASES_URL = "https://github.com/oracle/graalpython/releases/download"
+_GRAALPY_PROBE_TIMEOUT = 60.0
+_GRAALPY_PROBE = (
+    "import json, sys, sysconfig; print(json.dumps({"
+    "'implementation': sys.implementation.name, "
+    "'basePrefix': sys.base_prefix, "
+    "'prefix': sys.prefix, "
+    "'sitePackages': sysconfig.get_paths().get('purelib')}))"
+)
+
+
+class _GraalPySpec(NamedTuple):
+    # Standalone distribution name, which is also the pyenv version name,
+    # for example graalpy3.13-25.4.4.
+    name: str
+    # Exact runtime version reported by `graalpy --version`, for example
+    # 25.4.4.1.1. This is the GraalPy Maven version the SDK is built with.
+    version: str | None
+    release_tag: str
+
+
+class _GraalPyInstallation(NamedTuple):
+    executable: Path
+    home: Path
+    site_packages: str | None
+    version_line: str
+
+
+def _required_graalpy() -> _GraalPySpec | None:
+    """Return the GraalPy interpreter this Pyronaut build requires.
+
+    A source checkout has no ``version.properties`` and no requirement.
+    """
+    values = _read_version_properties()
+    name = values.get("graalpy.pyenv", "").strip()
+    if not name:
+        return None
+    version = values.get("graalpy", "").strip() or None
+    release_tag = values.get("graalpy.release-tag", "").strip() or _graalpy_default_release_tag(name)
+    return _GraalPySpec(name, version, release_tag)
+
+
+def _graalpy_default_release_tag(name: str) -> str:
+    # GraalPy releases are tagged by the first three version components:
+    # graalpy3.13-25.3.4.1 is published under graal-25.3.4.
+    runtime_version = name.rsplit("-", 1)[-1]
+    return "graal-" + ".".join(runtime_version.split(".")[:3])
+
+
+def _graalpy_display_version(spec: _GraalPySpec | None = None) -> str:
+    spec = spec or _required_graalpy()
+    if spec is None:
+        return "unknown"
+    return f"{spec.name} ({spec.version})" if spec.version else spec.name
+
+
+def _graalpy_sdk_home(spec: _GraalPySpec) -> Path:
+    return _graalvm_jdks_root() / spec.name
+
+
+def _graalpy_executable_in(home: Path) -> Path | None:
+    for name in ("graalpy", "python3", "python"):
+        candidate = home / "bin" / name
+        if _is_executable_file(candidate):
+            return candidate
+    return None
+
+
+def _probe_graalpy(executable: Path, spec: _GraalPySpec) -> _GraalPyInstallation | None:
+    """Return the installation when ``executable`` is the required GraalPy."""
+    try:
+        version = subprocess.run(
+            [str(executable), "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GRAALPY_PROBE_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    version_line = _last_line(version.stdout) or _last_line(version.stderr)
+    if version.returncode != 0 or "graalpy" not in version_line.lower():
+        return None
+    if not _graalpy_versions_match(version_line, spec.version, spec.name):
+        return None
+    try:
+        probe = subprocess.run(
+            [str(executable), "-c", _GRAALPY_PROBE],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GRAALPY_PROBE_TIMEOUT,
+        )
+        details = json.loads(_last_line(probe.stdout)) if probe.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        details = None
+    if not isinstance(details, dict) or details.get("implementation") != "graalpy":
+        return None
+    home = Path(str(details.get("basePrefix") or executable.parent.parent))
+    # A virtualenv interpreter is not a base installation: use the base one
+    # so project environments are not created from another environment.
+    base_executable = _graalpy_executable_in(home) if details.get("prefix") != details.get("basePrefix") else executable
+    if base_executable is None:
+        return None
+    site_packages = details.get("sitePackages")
+    if base_executable != executable:
+        return _probe_graalpy(base_executable, spec)
+    return _GraalPyInstallation(
+        executable=executable.absolute(),
+        home=home,
+        site_packages=site_packages if isinstance(site_packages, str) else None,
+        version_line=version_line,
+    )
+
+
+def _running_graalpy() -> Path | None:
+    """The base GraalPy running the CLI, when the CLI was installed into GraalPy."""
+    if getattr(sys.implementation, "name", "") != "graalpy":
+        return None
+    return _graalpy_executable_in(Path(sys.base_prefix))
+
+
+def _graalpy_candidates(spec: _GraalPySpec) -> list[Path]:
+    """Interpreters that may already be the required GraalPy, in priority order."""
+    candidates: list[Path] = []
+    running = _running_graalpy()
+    if running is not None:
+        candidates.append(running)
+    sdk_executable = _graalpy_executable_in(_graalpy_sdk_home(spec))
+    if sdk_executable is not None:
+        candidates.append(sdk_executable)
+    pyenv_executable = _graalpy_executable_in(_pyenv_root() / "versions" / spec.name)
+    if pyenv_executable is not None:
+        candidates.append(pyenv_executable)
+    on_path = shutil.which("graalpy")
+    if on_path:
+        candidates.append(Path(on_path))
+    unique: list[Path] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
+
+
+def _find_graalpy(spec: _GraalPySpec) -> _GraalPyInstallation | None:
+    for candidate in _graalpy_candidates(spec):
+        installation = _probe_graalpy(candidate, spec)
+        if installation is not None:
+            return installation
+    return None
+
+
+def _pyenv_executable() -> str | None:
+    root_executable = _pyenv_root() / "bin" / "pyenv"
+    if _is_executable_file(root_executable):
+        return str(root_executable)
+    return shutil.which("pyenv")
+
+
+def _install_graalpy_with_pyenv(spec: _GraalPySpec, runner: RunnerWithEnv) -> _GraalPyInstallation | None:
+    pyenv = _pyenv_executable()
+    if pyenv is None:
+        return None
+    progress = _progress_console()
+    with progress.step(f"Installing {spec.name} with pyenv", done=f"Installed {spec.name} with pyenv") as step:
+        # pyenv renders its own download output.
+        with progress.suspend():
+            exit_code = runner([pyenv, "install", "--skip-existing", spec.name], None)
+        step.failed = exit_code != SUCCESS
+    if exit_code != SUCCESS:
+        progress.warn(f"pyenv could not install {spec.name}; downloading it into {_graalvm_jdks_root()} instead")
+        return None
+    executable = _graalpy_executable_in(_pyenv_root() / "versions" / spec.name)
+    return _probe_graalpy(executable, spec) if executable is not None else None
+
+
+def _graalpy_archive_name(spec: _GraalPySpec) -> str:
+    os_segment, arch = _native_image_platform()
+    if os_segment == "macos" and arch != "aarch64":
+        raise RuntimeError(f"GraalPy {spec.name} is not published for Intel macOS")
+    return f"{spec.name}-{os_segment}-{arch}.tar.gz"
+
+
+def _download_and_install_graalpy(spec: _GraalPySpec) -> _GraalPyInstallation | None:
+    archive_name = _graalpy_archive_name(spec)
+    archive_url = f"{_GRAALPY_RELEASES_URL}/{spec.release_tag}/{archive_name}"
+    destination = _graalpy_sdk_home(spec)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".graalpy-", dir=destination.parent) as temp_dir:
+        temp_path = Path(temp_dir)
+        archive = temp_path / archive_name
+        checksum_file = temp_path / (archive_name + ".sha256")
+        _download_url_with_progress(archive_url, archive, f"Downloading GraalPy {spec.name}")
+        _download_url_with_progress(archive_url + ".sha256", checksum_file, f"Downloading GraalPy {spec.name} checksum")
+        expected_checksum = checksum_file.read_text(encoding="utf-8").split()[0].strip().lower()
+        digest = hashlib.sha256()
+        with archive.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_checksum:
+            raise RuntimeError(f"Checksum mismatch for {archive_url}")
+        extract_dir = temp_path / "extract"
+        with _progress_console().step("Unpacking GraalPy", done="Unpacked GraalPy"):
+            with tarfile.open(archive, "r:gz") as archive_file:
+                try:
+                    archive_file.extractall(extract_dir, filter="tar")
+                except TypeError:
+                    # Python without extraction filters (before 3.10.12).
+                    archive_file.extractall(extract_dir)
+        homes = [child for child in extract_dir.iterdir() if _graalpy_executable_in(child) is not None]
+        if len(homes) != 1:
+            raise RuntimeError(f"Unexpected GraalPy archive layout in {archive_name}")
+        if destination.exists():
+            shutil.rmtree(destination)
+        os.replace(homes[0], destination)
+    executable = _graalpy_executable_in(destination)
+    return _probe_graalpy(executable, spec) if executable is not None else None
+
+
+def _ensure_graalpy(runner: RunnerWithEnv, *, offline: bool = False) -> _GraalPyInstallation | None:
+    """Locate or provision the GraalPy interpreter this Pyronaut requires."""
+    spec = _required_graalpy()
+    if spec is None:
+        return None
+    found = _find_graalpy(spec)
+    if found is not None or offline:
+        return found
+    installed = _install_graalpy_with_pyenv(spec, runner)
+    if installed is not None:
+        return installed
+    return _download_and_install_graalpy(spec)
+
+
+def _configured_graalpy() -> dict[str, str] | None:
+    """The GraalPy recorded by the validated setup manifest, if any."""
+    manifest = _validated_setup_manifest
+    graalpy = manifest.get("graalpy") if isinstance(manifest, dict) else None
+    if not isinstance(graalpy, dict) or not isinstance(graalpy.get("executable"), str):
+        return None
+    return graalpy
+
+
+def _apply_configured_graalpy(env: dict[str, str]) -> dict[str, str]:
+    """Point delegated commands at the configured GraalPy interpreter.
+
+    An explicit ``PYRONAUT_PYTHON_EXECUTABLE`` wins, and a project ``.venv``
+    is applied afterwards by :func:`_apply_project_virtualenv`.
+    """
+    graalpy = _configured_graalpy()
+    if graalpy is None or env.get("PYRONAUT_PYTHON_EXECUTABLE"):
+        return env
+    executable = Path(graalpy["executable"])
+    env["PYRONAUT_PYTHON_EXECUTABLE"] = str(executable)
+    site_packages = graalpy.get("sitePackages")
+    if isinstance(site_packages, str) and site_packages:
+        env["PYRONAUT_PYTHON_SITE_PACKAGES"] = site_packages
+    env["PATH"] = _prepend_path_entry(env.get("PATH", ""), str(executable.parent))
+    return env
+
+
+def _graalpy_for_project_environment() -> Path | None:
+    """The interpreter used to create a project ``.venv``."""
+    graalpy = _configured_graalpy()
+    if graalpy is not None:
+        return Path(graalpy["executable"])
+    spec = _required_graalpy()
+    if spec is not None:
+        found = _find_graalpy(spec)
+        return found.executable if found is not None else None
+    # Source checkout: no pinned version, so accept the running GraalPy or
+    # the one selected by pyenv / PATH.
+    running = _running_graalpy()
+    if running is not None:
+        return running
+    selected = _find_global_graalpy()
+    if selected is not None and _is_executable_file(selected[0]):
+        return selected[0]
+    return None
+
+
+# -- Project Python environment -----------------------------------------------
+#
+# `pyronaut install` creates the project `.venv` with the configured GraalPy and
+# installs the Python dependencies declared in pyproject.toml and
+# requirements.txt, so the embedded runtime and pytest can import them.
+
+_PROJECT_VENV_STATE = ".pyronaut-requirements.json"
+
+
+def _project_python_requirements(project_dir: Path) -> tuple[list[str], list[Path]]:
+    """Return declared requirement specifiers and requirements files."""
+    requirements: list[str] = []
+    data = _read_pyproject_data(project_dir)
+    project = data.get("project") if isinstance(data, dict) else None
+    declared = project.get("dependencies") if isinstance(project, dict) else None
+    if isinstance(declared, list):
+        requirements.extend(value.strip() for value in declared if isinstance(value, str) and value.strip())
+    groups = data.get("dependency-groups") if isinstance(data, dict) else None
+    if isinstance(groups, dict):
+        requirements.extend(_expand_dependency_groups(groups))
+    requirement_files = [project_dir / "requirements.txt"] if (project_dir / "requirements.txt").is_file() else []
+    declared_names = {
+        _canonical_package_name(match.group(1))
+        for value in requirements
+        if (match := re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", value)) is not None
+    }
+    declares_pytest = "pytest" in declared_names or any(
+        re.search(r"(?im)^\s*pytest\b", path.read_text(encoding="utf-8")) for path in requirement_files
+    )
+    has_tests = (project_dir / _read_pyproject_sources(project_dir).python_test_dir).is_dir()
+    if has_tests and not declares_pytest:
+        # `pyronaut test` imports pytest from the project environment.
+        requirements.append("pytest")
+    unique: list[str] = []
+    for requirement in requirements:
+        if requirement not in unique:
+            unique.append(requirement)
+    return unique, requirement_files
+
+
+def _expand_dependency_groups(groups: dict[str, object]) -> list[str]:
+    """Flatten PEP 735 ``[dependency-groups]``, following ``include-group``."""
+    requirements: list[str] = []
+
+    def visit(name: str, seen: tuple[str, ...]) -> None:
+        if name in seen:
+            return
+        entries = groups.get(name)
+        if not isinstance(entries, list):
+            return
+        for entry in entries:
+            if isinstance(entry, str) and entry.strip():
+                requirements.append(entry.strip())
+            elif isinstance(entry, dict) and isinstance(entry.get("include-group"), str):
+                visit(entry["include-group"], (*seen, name))
+
+    for group_name in groups:
+        visit(group_name, ())
+    return requirements
+
+
+def _project_venv_state(graalpy: Path, requirements: Sequence[str], requirement_files: Sequence[Path]) -> dict[str, object]:
+    digest = hashlib.sha256()
+    for path in requirement_files:
+        digest.update(path.name.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
+    return {
+        "graalpy": str(graalpy),
+        "requirements": list(requirements),
+        "requirementFilesSha256": digest.hexdigest(),
+    }
+
+
+def _ensure_project_virtualenv(
+    project_dir: Path,
+    runner: RunnerWithEnv,
+    *,
+    refresh: bool = False,
+    offline: bool = False,
+) -> int:
+    """Create ``.venv`` with GraalPy and install declared Python dependencies."""
+    requirements, requirement_files = _project_python_requirements(project_dir)
+    if not requirements and not requirement_files:
+        return SUCCESS
+    progress = _progress_console()
+    venv_dir = project_dir / ".venv"
+    venv_python = _resolve_virtualenv_python(venv_dir / "bin") if venv_dir.is_dir() else None
+    if venv_dir.is_dir():
+        if venv_python is None or not _virtualenv_is_graalpy(venv_python):
+            print(
+                f"{venv_dir} was not created with GraalPy, so the embedded runtime cannot use its packages. "
+                f"Remove it (rm -rf {venv_dir}) and run pyronaut install again.",
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
+        base_home = _virtualenv_base_home(venv_dir)
+        if base_home is not None and not base_home.is_dir():
+            print(
+                f"{venv_dir} was created from {base_home}, which no longer exists. "
+                f"Remove it (rm -rf {venv_dir}) and run pyronaut install again.",
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
+        graalpy = venv_python
+    else:
+        graalpy = _graalpy_for_project_environment()
+        if graalpy is None:
+            spec = _required_graalpy()
+            wanted = f"GraalPy {spec.name}" if spec is not None else "a GraalPy interpreter"
+            print(f"Unable to locate {wanted} to create {venv_dir}. Run pyronaut setup.", file=sys.stderr)
+            return PRECONDITION_FAILED
+        with progress.step(f"Creating {_display_path(venv_dir)} with GraalPy", done=f"Created {_display_path(venv_dir)} with GraalPy"):
+            exit_code = _run_showing_output_on_failure(runner, [str(graalpy), "-m", "venv", str(venv_dir)], None)
+        if exit_code != SUCCESS:
+            return exit_code
+        venv_python = _resolve_virtualenv_python(venv_dir / "bin")
+        if venv_python is None:
+            print(f"GraalPy did not create an interpreter in {venv_dir}", file=sys.stderr)
+            return PRECONDITION_FAILED
+
+    state_file = venv_dir / _PROJECT_VENV_STATE
+    state = _project_venv_state(graalpy, requirements, requirement_files)
+    if not refresh:
+        try:
+            recorded = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            recorded = None
+        if isinstance(recorded, dict) and recorded.get("requirements") == state["requirements"] and recorded.get(
+            "requirementFilesSha256"
+        ) == state["requirementFilesSha256"]:
+            return SUCCESS
+    if offline:
+        progress.warn("Python dependencies are not installed in .venv; skipped pip install (--offline)")
+        return SUCCESS
+
+    command_line = [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check"]
+    for path in requirement_files:
+        command_line.extend(["-r", str(path)])
+    command_line.extend(requirements)
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    env = dict(os.environ)
+    env["VIRTUAL_ENV"] = str(venv_dir)
+    env.pop("PYTHONHOME", None)
+    env["PATH"] = _prepend_path_entry(env.get("PATH", ""), str(venv_dir / "bin"))
+    with progress.step("Installing Python dependencies into .venv", done="Python dependencies installed into .venv") as step:
+        exit_code = _run_showing_output_on_failure(runner, command_line, env)
+        step.failed = exit_code != SUCCESS
+    if exit_code != SUCCESS:
+        return exit_code
+    state_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    return SUCCESS
 
 
 # -- pyronaut doctor ---------------------------------------------------------
@@ -9242,8 +9721,22 @@ def _pyenv_selected_versions() -> tuple[list[str], str | None]:
     return names, str(version_file)
 
 
+def _setup_recorded_graalpy() -> Path | None:
+    """The GraalPy executable recorded by ``pyronaut setup``, if any."""
+    try:
+        manifest = json.loads(_setup_manifest_path().read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    graalpy = manifest.get("graalpy") if isinstance(manifest, dict) else None
+    executable = graalpy.get("executable") if isinstance(graalpy, dict) else None
+    return Path(executable) if isinstance(executable, str) and executable else None
+
+
 def _find_global_graalpy() -> tuple[Path, str] | None:
     """Locate a GraalPy interpreter outside any project virtualenv."""
+    recorded = _setup_recorded_graalpy()
+    if recorded is not None:
+        return recorded, "pyronaut setup"
     names, source = _pyenv_selected_versions()
     for name in names:
         if not name.lower().startswith("graalpy"):
@@ -9296,8 +9789,11 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
     expected_pyenv = version_properties.get("graalpy.pyenv")
     data: dict[str, object] = {"expectedVersion": expected, "expectedPyenvVersion": expected_pyenv}
     suggested = expected_pyenv or (f"graalpy3.13-{expected}" if expected else "graalpy3.13-<version>")
-    install_fix = f"Install GraalPy with pyenv: pyenv install {suggested} && pyenv global {suggested}"
-    venv_fix = "Create the project environment with GraalPy: graalpy -m venv .venv && .venv/bin/python -m pip install pytest"
+    install_fix = (
+        f"Run pyronaut setup to provision GraalPy {suggested}, "
+        f"or install it with pyenv: pyenv install {suggested} && pyenv global {suggested}"
+    )
+    venv_fix = "Run pyronaut install to create .venv with GraalPy and install the project's Python dependencies"
 
     if project_dir is not None:
         venv_dir = project_dir / ".venv"
@@ -9307,13 +9803,13 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
             if venv_python is None:
                 return _doctor.CheckResult(
                     "graalpy", "GraalPy", _doctor.FAIL, f"{venv_dir} has no bin/python (broken virtualenv)",
-                    f"Recreate it: rm -rf {venv_dir} && graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
+                    f"Recreate it: rm -rf {venv_dir} && pyronaut install", data,
                 )
             if not _virtualenv_is_graalpy(venv_python):
                 return _doctor.CheckResult(
                     "graalpy", "GraalPy", _doctor.FAIL,
                     f"{venv_dir} was not created with GraalPy, so its packages cannot be used by the embedded runtime",
-                    f"Recreate it: rm -rf {venv_dir} && graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
+                    f"Recreate it: rm -rf {venv_dir} && pyronaut install", data,
                 )
             version_line = _probe_python_version(venv_python)
             data["executable"] = str(venv_python)
@@ -9321,7 +9817,7 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
             if version_line is None:
                 return _doctor.CheckResult(
                     "graalpy", "GraalPy", _doctor.FAIL, f"{venv_python} does not start",
-                    f"Recreate it: rm -rf {venv_dir} && graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
+                    f"Recreate it: rm -rf {venv_dir} && pyronaut install", data,
                 )
             if expected and not _graalpy_versions_match(version_line, expected, expected_pyenv):
                 return _doctor.CheckResult(
@@ -9485,7 +9981,7 @@ def _doctor_check_pytest(project_dir: Path) -> _doctor.CheckResult:
     if venv_python is None:
         return _doctor.CheckResult(
             "pytest", "pytest", _doctor.FAIL, f"no project virtualenv at {venv_dir} to import pytest from",
-            "graalpy -m venv .venv && .venv/bin/python -m pip install pytest", data,
+            "Run pyronaut install to create .venv with GraalPy and install pytest", data,
         )
     data["executable"] = str(venv_python)
     code, out, err = _doctor_capture([str(venv_python), "-c", "import pytest; print(pytest.__version__)"])
@@ -9984,9 +10480,9 @@ def _doctor_check_interpreter(project_dir: Path | None) -> _doctor.CheckResult:
         base_home = _virtualenv_base_home(venv_dir)
         data["virtualenvBase"] = str(base_home) if base_home else None
         if base_home is None:
-            problems.append((_doctor.WARN, f"{venv_dir}/pyvenv.cfg has no home entry", "Recreate the environment: rm -rf .venv && graalpy -m venv .venv"))
+            problems.append((_doctor.WARN, f"{venv_dir}/pyvenv.cfg has no home entry", "Recreate the environment: rm -rf .venv && pyronaut install"))
         elif not base_home.is_dir():
-            problems.append((_doctor.FAIL, f"{venv_dir} was created from {base_home}, which no longer exists (the base interpreter was removed)", "Recreate the environment: rm -rf .venv && graalpy -m venv .venv && .venv/bin/python -m pip install -e ."))
+            problems.append((_doctor.FAIL, f"{venv_dir} was created from {base_home}, which no longer exists (the base interpreter was removed)", "Recreate the environment: rm -rf .venv && pyronaut install"))
         else:
             selected = _find_global_graalpy()
             if selected is not None and _is_executable_file(selected[0]):
@@ -10107,14 +10603,14 @@ def _doctor_check_packages(project_dir: Path, config: _DoctorRuntimeConfig) -> _
         return _doctor.CheckResult(
             "packages", "Python packages", _doctor.FAIL,
             f"{len(packages)} declared package{'s' if len(packages) != 1 else ''} but no project virtualenv at {venv_dir}",
-            "graalpy -m venv .venv && .venv/bin/python -m pip install -e .", data,
+            "Run pyronaut install to create .venv with GraalPy and install the project's Python dependencies", data,
         )
     data["executable"] = str(venv_python)
     report, error = _doctor_probe_packages(venv_python, packages, config.probe_threads)
     if report is None:
         return _doctor.CheckResult(
             "packages", "Python packages", _doctor.FAIL, f"package probe failed in {venv_python}: {error}",
-            "Recreate the environment: rm -rf .venv && graalpy -m venv .venv && .venv/bin/python -m pip install -e .", data,
+            "Recreate the environment: rm -rf .venv && pyronaut install", data,
         )
     results = report.get("packages") if isinstance(report.get("packages"), dict) else {}
     data["packages"] = results
@@ -10216,7 +10712,7 @@ def _doctor_check_graalpy_compatibility(project_dir: Path, *, offline: bool) -> 
     if release is None:
         return _doctor.CheckResult(
             "compat", "GraalPy compatibility", _doctor.WARN, "cannot determine the GraalPy release to look up (no .venv and no bundled version)",
-            "Create the project .venv with GraalPy: graalpy -m venv .venv", data,
+            "Run pyronaut install to create the project .venv with GraalPy", data,
         )
     table, note = _load_graalpy_compatibility(release, offline=offline)
     data["dataFile"] = str(_graalpy_compatibility_cache(release))

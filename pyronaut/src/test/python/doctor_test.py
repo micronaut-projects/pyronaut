@@ -506,7 +506,8 @@ class DoctorChecksTest(unittest.TestCase):
         self.assertIn("pyenv install graalpy3.13-25.4.4 && pyenv global graalpy3.13-25.4.4", absent.fix)
         self.assertEqual(doctor.FAIL, absent_in_project.status)
         self.assertIn("no project .venv and", absent_in_project.detail)
-        self.assertIn("graalpy -m venv .venv", absent_in_project.fix)
+        self.assertIn("pyronaut install", absent_in_project.fix)
+        self.assertIn("Run pyronaut setup to provision GraalPy graalpy3.13-25.4.4", absent.fix)
 
     def test_graalpy_check_inspects_the_project_virtualenv(self):
         project = self.root / "app"
@@ -525,7 +526,7 @@ class DoctorChecksTest(unittest.TestCase):
             cpython = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.FAIL, cpython.status)
         self.assertIn("was not created with GraalPy", cpython.detail)
-        self.assertIn(f"rm -rf {project / '.venv'} && graalpy -m venv .venv", cpython.fix)
+        self.assertIn(f"rm -rf {project / '.venv'} && pyronaut install", cpython.fix)
 
     def test_graalpy_check_warns_when_project_has_no_virtualenv_but_graalpy_exists(self):
         project = self.root / "app"
@@ -539,7 +540,7 @@ class DoctorChecksTest(unittest.TestCase):
             result = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.WARN, result.status)
         self.assertTrue(result.detail.startswith("no project .venv; GraalPy 3.13.14"))
-        self.assertIn("graalpy -m venv .venv && .venv/bin/python -m pip install pytest", result.fix)
+        self.assertIn("Run pyronaut install to create .venv with GraalPy", result.fix)
 
     # -- native launchers ----------------------------------------------------
 
@@ -676,7 +677,7 @@ class DoctorChecksTest(unittest.TestCase):
         no_venv = cli._doctor_check_pytest(project)
         self.assertEqual(doctor.FAIL, no_venv.status)
         self.assertIn("no project virtualenv", no_venv.detail)
-        self.assertEqual("graalpy -m venv .venv && .venv/bin/python -m pip install pytest", no_venv.fix)
+        self.assertEqual("Run pyronaut install to create .venv with GraalPy and install pytest", no_venv.fix)
 
         venv_python = _write_executable(project / ".venv" / "bin" / "python")
         probes = []
