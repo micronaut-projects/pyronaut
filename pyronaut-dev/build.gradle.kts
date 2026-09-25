@@ -205,6 +205,7 @@ val nativeCompileClasspath by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true
     extendsFrom(configurations.api.get())
+    shouldResolveConsistentlyWith(configurations.runtimeClasspath.get())
 }
 
 val nativeProvidedSourcesDirectory = layout.buildDirectory.dir("generated/native-provided-sources")
