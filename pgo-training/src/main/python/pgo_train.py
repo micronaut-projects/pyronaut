@@ -322,6 +322,7 @@ class Trainer:
     def env(self, scenario: str) -> dict:
         env = os.environ.copy()
         env.pop("GRAALVM_QUICK_BUILD", None)
+        env.pop("MICRONAUT_GHT", None)
         env.update({
             "JAVA_HOME": self.options.java_home,
             "PYTHONPATH": self.options.cli_source,
