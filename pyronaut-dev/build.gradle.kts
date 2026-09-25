@@ -28,6 +28,28 @@ val nativeBundleArch = when (System.getProperty("os.arch").lowercase()) {
 }
 val nativeImageOutputDirectory = layout.buildDirectory.dir("native/nativeCompile")
 
+// micronaut-inject-python generates Java through the sourcegen release Micronaut
+// core was built against. micronaut-serde-processor pulls in sourcegen 2.2.x,
+// which renders List.of(...) with more than ten arguments as
+// List.of(new Object[]{...}) and breaks the generated functional interface
+// provider, so keep sourcegen on the version from micronaut-core-bom.
+val micronautCoreBomPom = configurations.detachedConfiguration(
+    dependencies.create("io.micronaut:micronaut-core-bom:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}@pom")
+).apply { isTransitive = false }
+val coreSourcegenVersion = Regex("""<micronaut\.sourcegen\.version>([^<]+)</micronaut\.sourcegen\.version>""")
+    .find(micronautCoreBomPom.singleFile.readText())
+    ?.groupValues
+    ?.get(1)
+    ?: throw GradleException("Unable to find micronaut.sourcegen.version in micronaut-core-bom")
+configurations.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "io.micronaut.sourcegen") {
+            useVersion(coreSourcegenVersion)
+            because("micronaut-inject-python is built against this sourcegen version")
+        }
+    }
+}
+
 dependencies {
     implementation(project(":micronaut-pyronaut-build-annotations"))
     api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))
