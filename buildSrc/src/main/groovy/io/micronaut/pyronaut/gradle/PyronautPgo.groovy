@@ -26,6 +26,10 @@ final class PyronautPgo {
     // Instrumented images are compiled at -O2 with profiling code and can outgrow native-image's
     // default heap (47% of RAM, capped at 30 GiB), for example -Ppyronaut.pgo.builderMaxHeap=52g.
     static final String BUILDER_MAX_HEAP_PROPERTY = "pyronaut.pgo.builderMaxHeap"
+    // --pgo-instrument also collects call-stack samples by default. Sampling crashes instrumented
+    // Crema images when interpreted code calls instrumented AOT code (pyronaut#203), and the
+    // instrumentation counters provide most of the benefit, so it is off unless requested.
+    static final String SAMPLING_PROPERTY = "pyronaut.pgo.sampling"
 
     enum Mode {
         OFF, INSTRUMENT, OPTIMIZE
@@ -102,10 +106,20 @@ final class PyronautPgo {
         if (codeCompression(project)) {
             args << "-H:+EnableCodeCompression"
         }
+        args.addAll(samplingArgs(project))
         args << "-H:BuildOutputJSONFile=" + buildOutputJson(project, imageName).absolutePath
         args << "-H:-UnlockExperimentalVMOptions"
         args.addAll(builderHeapArgs(project))
         args
+    }
+
+    static boolean sampling(Project project) {
+        project.providers.gradleProperty(SAMPLING_PROPERTY).map { it.toBoolean() }.getOrElse(false)
+    }
+
+    // Must be added between -H:+UnlockExperimentalVMOptions and -H:-UnlockExperimentalVMOptions.
+    private static List<String> samplingArgs(Project project) {
+        mode(project) == Mode.INSTRUMENT && !sampling(project) ? ["-H:-SamplingCollect"] : []
     }
 
     private static List<String> builderHeapArgs(Project project) {
@@ -131,6 +145,7 @@ final class PyronautPgo {
             args << "--code-compression"
         }
         args << "-H:+UnlockExperimentalVMOptions"
+        args.addAll(samplingArgs(project))
         args << "-H:BuildOutputJSONFile=" + buildOutputJson(project, imageName).absolutePath
         args << "-H:-UnlockExperimentalVMOptions"
         args.addAll(builderHeapArgs(project))
