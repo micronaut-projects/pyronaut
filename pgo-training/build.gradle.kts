@@ -25,6 +25,7 @@ val graalPy = providers.gradleProperty("pyronaut.pgo.graalpy")
     .orElse(providers.gradleProperty("pyronautPyenvVersion").map {
         "${System.getProperty("user.home")}/.pyenv/versions/$it/bin/graalpy"
     })
+val nativeExecutableSuffix = if (System.getProperty("os.name").lowercase().contains("windows")) ".exe" else ""
 val trainingScale = providers.gradleProperty("pyronaut.pgo.trainingScale").orElse("1.0")
 // Comma-separated scenarios to leave out, for local debugging only: a release profile must cover every scenario.
 val trainingSkip = providers.gradleProperty("pyronaut.pgo.trainingSkip").orElse("")
@@ -76,7 +77,7 @@ fun registerTraining(taskName: String, image: String, jvm: Boolean) = tasks.regi
             arguments += "--jvm"
         } else {
             arguments += listOf(
-                "--executable", imageProject.layout.buildDirectory.file("native/nativeCompile/$image").get().asFile.absolutePath,
+                "--executable", imageProject.layout.buildDirectory.file("native/nativeCompile/$image$nativeExecutableSuffix").get().asFile.absolutePath,
                 "--instrumented-marker", File(PyronautPgo.imageDirectory(project, image), "instrumented-executable.txt").absolutePath,
                 "--manifests-dir", imageProject.layout.buildDirectory.dir("generated/native-classpaths").get().asFile.absolutePath,
             )
@@ -105,7 +106,7 @@ fun registerBenchmark(taskName: String, image: String) = tasks.register<Exec>(ta
     doFirst {
         val baseline = providers.gradleProperty("pyronaut.pgo.baseline").orNull
             ?: throw GradleException("Set -Ppyronaut.pgo.baseline=/path/to/$image built without PGO")
-        val built = imageProject.layout.buildDirectory.file("native/nativeCompile/$image").get().asFile
+        val built = imageProject.layout.buildDirectory.file("native/nativeCompile/$image$nativeExecutableSuffix").get().asFile
         val arguments = mutableListOf(
             graalPy.get(),
             layout.projectDirectory.file("src/main/python/pgo_benchmark.py").asFile.absolutePath,
