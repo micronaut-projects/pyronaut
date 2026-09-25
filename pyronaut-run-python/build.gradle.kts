@@ -170,7 +170,7 @@ tasks {
         inputs.files(configurations.runtimeClasspath)
         inputs.property("pyronautNativeImageCiArgs", nativeImageCiArgs)
         inputs.property("pyronautPgoMode", PyronautPgo.mode(project).name)
-        inputs.property("pyronautCodeCompression", PyronautPgo.codeCompression(project))
+        inputs.property("pyronautCodeCompression", PyronautPgo.codeCompression(project, "pyronaut-run-python"))
         inputs.property("pyronautPgoSampling", PyronautPgo.sampling(project))
         inputs.files(providers.provider {
             if (PyronautPgo.mode(project) == PyronautPgo.Mode.OPTIMIZE) PyronautPgo.profiles(project, "pyronaut-run-python") else emptyList()

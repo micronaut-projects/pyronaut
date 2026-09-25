@@ -55,10 +55,24 @@ final class PyronautPgo {
         }
     }
 
-    static boolean codeCompression(Project project) {
-        mode(project) == Mode.OPTIMIZE && project.providers.gradleProperty(CODE_COMPRESSION_PROPERTY)
-            .map { it.toBoolean() }
-            .getOrElse(true)
+    // Code compression needs PLT/GOT, which native-image rejects alongside Truffle runtime
+    // compilation ("PLT and GOT is currently not supported with runtime compilation"). The images
+    // that embed GraalPy compile Python at runtime, so only pyronaut-run can be compressed.
+    static final Set<String> RUNTIME_COMPILATION_IMAGES = ["pyronaut-dev", "pyronaut-run-python"] as Set<String>
+
+    static boolean codeCompression(Project project, String imageName) {
+        if (mode(project) != Mode.OPTIMIZE) {
+            return false
+        }
+        Boolean requested = project.providers.gradleProperty(CODE_COMPRESSION_PROPERTY).map { it.toBoolean() }.getOrNull()
+        if (imageName in RUNTIME_COMPILATION_IMAGES) {
+            if (requested) {
+                throw new GradleException("-P${CODE_COMPRESSION_PROPERTY}=true is not supported for $imageName: " +
+                    "code compression needs PLT/GOT, which native-image does not support with Truffle runtime compilation.")
+            }
+            return false
+        }
+        requested == null || requested
     }
 
     /**
@@ -103,7 +117,7 @@ final class PyronautPgo {
             args << "--pgo=" + requireProfiles(project, imageName).collect { it.absolutePath }.join(",")
         }
         args << "-H:+UnlockExperimentalVMOptions"
-        if (codeCompression(project)) {
+        if (codeCompression(project, imageName)) {
             args << "-H:+EnableCodeCompression"
         }
         args.addAll(samplingArgs(project))
@@ -141,7 +155,7 @@ final class PyronautPgo {
         } else {
             args << "--pgo=" + requireProfiles(project, imageName).collect { it.absolutePath }.join(",")
         }
-        if (codeCompression(project)) {
+        if (codeCompression(project, imageName)) {
             args << "--code-compression"
         }
         args << "-H:+UnlockExperimentalVMOptions"
@@ -201,7 +215,7 @@ final class PyronautPgo {
             "image: $imageName",
             "mode: ${mode.name().toLowerCase(Locale.ROOT)}",
             "pgo: ${mode == Mode.OPTIMIZE ? 'applied' : 'instrumented'} ($pgoValue)",
-            "code-compression: ${codeCompression(project) ? 'enabled' : 'disabled'}",
+            "code-compression: ${codeCompression(project, imageName) ? 'enabled' : 'disabled'}",
             "executable: ${executable.absolutePath}",
             "executable-bytes: ${executable.length()}",
         ]

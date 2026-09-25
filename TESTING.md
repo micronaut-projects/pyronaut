@@ -710,8 +710,10 @@ command reuse those cached assets.
 ## PGO release builds
 
 Release bundles of `pyronaut-dev`, `pyronaut-run` and `pyronaut-run-python` are
-built with profile-guided optimization (PGO) and code compression
-(`-H:+EnableCodeCompression`). Profiles are never committed: every release
+built with profile-guided optimization (PGO). `pyronaut-run` also uses code
+compression (`-H:+EnableCodeCompression`). The other two images embed GraalPy,
+which compiles Python at runtime, and native-image does not support code
+compression together with runtime compilation. Profiles are never committed: every release
 regenerates them on every platform, because a profile only matches the image
 it was collected from. The bundles are built outside GitHub Actions, so this
 section is the contract for that CI.
@@ -783,7 +785,7 @@ Keep these with the CI run. They are not release assets.
 - the native-image build output of each optimized build
 
 Before uploading a bundle, check that its `pgo-report.txt` contains
-`pgo: applied` and `code-compression: enabled`, then run the clean Linux
+`pgo: applied` (and, for `pyronaut-run`, `code-compression: enabled`), then run the clean Linux
 release validation above against the optimized bundles.
 
 ### Training workload
