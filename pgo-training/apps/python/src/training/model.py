@@ -2,15 +2,13 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from jakarta.validation.constraints import Min, NotBlank
-from micronaut.data.annotation import GeneratedValue, Id, MappedEntity
 from micronaut.serde.annotation import Serdeable
 
 
-@dataclass
-@MappedEntity
 @Serdeable
+@dataclass
 class Pet:
-    id: Annotated[int | None, Id, GeneratedValue]
+    id: int | None
     name: str
     species: str
     age: int
