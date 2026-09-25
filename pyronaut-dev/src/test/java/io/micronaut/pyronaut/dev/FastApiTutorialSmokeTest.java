@@ -36,6 +36,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -79,9 +80,8 @@ final class FastApiTutorialSmokeTest {
         String testOutput = Files.readString(outputFile);
         assertTrue(finished, testOutput);
         assertEquals(0, process.exitValue(), testOutput);
-        assertTrue(testOutput.contains("4 tests successful"), testOutput);
-        assertTrue(testOutput.contains("0 tests skipped"), testOutput);
-        assertTrue(testOutput.contains("0 tests failed"), testOutput);
+        // The summary lists skipped or failed counts before " in " only when non-zero.
+        assertTrue(Pattern.compile("(?m)^4 tests passed in \\d").matcher(testOutput).find(), testOutput);
     }
 
     private static void verifyDevelopmentDocumentation(Path projectDirectory, Path source) throws Exception {
