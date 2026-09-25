@@ -20,6 +20,7 @@ java = 'src-java'
 resources = 'config'
 
 [tool.pyronaut.dependencies]
+boms = ['io.micronaut.serde:micronaut-serde-bom:3.2.2']
 runtime = [
   'io.micronaut:micronaut-http-server-netty',
   'io.micronaut.serde:micronaut-serde-jackson',
