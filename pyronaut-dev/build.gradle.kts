@@ -29,6 +29,20 @@ val nativeBundleArch = when (System.getProperty("os.arch").lowercase()) {
 }
 val nativeImageOutputDirectory = layout.buildDirectory.dir("native/nativeCompile")
 
+// micronaut-serde-processor pulls in sourcegen 2.2.0, whose Java writer renders
+// List.of(...) with more than ten arguments as List.of(new Object[]{...}) and
+// breaks the functional interface provider micronaut-inject-python generates.
+// Align every sourcegen module on the fixed release from the version catalog.
+val sourcegenVersion = libs.versions.micronaut.sourcegen.get()
+configurations.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "io.micronaut.sourcegen") {
+            useVersion(sourcegenVersion)
+            because("sourcegen before 2.2.3 renders generic varargs calls as Object[]")
+        }
+    }
+}
+
 dependencies {
     implementation(project(":micronaut-pyronaut-build-annotations"))
     api(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))

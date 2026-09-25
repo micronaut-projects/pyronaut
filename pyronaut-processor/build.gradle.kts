@@ -25,6 +25,9 @@ dependencies {
     testImplementation(mn.micronaut.router)
     testRuntimeOnly(libs.micronaut.data.jdbc)
     testRuntimeOnly(libs.micronaut.data.processor)
+    // The Micronaut Data smoke fixture imports jakarta.data.repository.Save,
+    // which no Micronaut Data module exposes transitively.
+    testRuntimeOnly("jakarta.data:jakarta.data-api")
 }
 
 application {
