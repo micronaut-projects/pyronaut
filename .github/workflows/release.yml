@@ -297,3 +297,70 @@ jobs:
               "crema-context/${runtime}"
             echo "Published ${image}"
           done
+
+  update-setup-pyronaut:
+    # Points the `pyronaut-version` default of the setup-pyronaut action at the
+    # release just published, by sending a pull request to that repository.
+    # Runs once the release itself has been published; a manual dispatch
+    # re-sends the pull request for an existing release tag.
+    needs: [release]
+    if: >-
+      !cancelled()
+      && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch')
+      && !github.event.release.prerelease
+      && !github.event.release.draft
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+    steps:
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ ! "${version}" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+            echo "Not a final release version: ${RELEASE_TAG}"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - name: Checkout setup-pyronaut
+        uses: actions/checkout@v6
+        with:
+          repository: micronaut-projects/setup-pyronaut
+          token: ${{ secrets.GH_TOKEN }}
+          path: setup-pyronaut
+      - name: Update the default Pyronaut version
+        shell: bash
+        working-directory: setup-pyronaut
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Rewrite only the `default:` of the `pyronaut-version` input.
+          awk -v version="${VERSION}" '
+            /^  [a-z0-9-]+:[[:space:]]*$/ { in_input = ($1 == "pyronaut-version:") }
+            in_input && /^    default:/ { sub(/default:.*/, "default: '\''" version "'\''"); in_input = 0; updated = 1 }
+            { print }
+            END { if (!updated) exit 1 }
+          ' action.yml > action.yml.tmp
+          mv action.yml.tmp action.yml
+          # Keep the inputs table in the README in step with action.yml.
+          sed -E -i "s/^(\| \`pyronaut-version\` \| )\`[^\`]*\`/\1\`${VERSION}\`/" README.md
+          grep -q "default: '${VERSION}'" action.yml
+          grep -q "^| \`pyronaut-version\` | \`${VERSION}\` |" README.md
+          git diff
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: setup-pyronaut
+          token: ${{ secrets.GH_TOKEN }}
+          branch: pyronaut-${{ steps.release.outputs.version }}
+          base: main
+          commit-message: Default to Pyronaut ${{ steps.release.outputs.version }}
+          title: Default to Pyronaut ${{ steps.release.outputs.version }}
+          body: |
+            Updates the default `pyronaut-version` to [${{ steps.release.outputs.version }}](https://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}), the latest Pyronaut release.
+          committer: micronaut-build <${{ secrets.MICRONAUT_BUILD_EMAIL }}>
+          author: micronaut-build <${{ secrets.MICRONAUT_BUILD_EMAIL }}>
+          delete-branch: true
