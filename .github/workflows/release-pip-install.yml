@@ -1,0 +1,43 @@
+# Adds PyPI and GitHub-release installation choices to the release notes.
+name: Release pip install
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag to document, for example v0.0.4
+        required: true
+        type: string
+permissions:
+  contents: write
+jobs:
+  pip-install-notes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Document installation choices
+        run: |
+          python3 .github/scripts/pip_install_notes.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}"
+      - name: Verify installation from the GitHub release
+        run: |
+          set -euo pipefail
+          if [[ "$(gh api "/repos/${GITHUB_REPOSITORY}" --jq .private)" == "true" ]]; then
+            echo "Repository is private; direct unauthenticated pip download is not available." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          version="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            --jq '.assets[] | select(.name | startswith("pyronaut-") and endswith(".whl")) | .name' \
+            | sed -E 's/^pyronaut-([^-]+)-.*/\1/')"
+          python3 -m venv "${RUNNER_TEMP}/pip-check"
+          "${RUNNER_TEMP}/pip-check/bin/pip" download --no-deps --no-index \
+            --find-links "https://github.com/${GITHUB_REPOSITORY}/releases/expanded_assets/${RELEASE_TAG}" \
+            --dest "${RUNNER_TEMP}/pip-check/dist" \
+            "pyronaut==${version}"
+          echo "pip resolved pyronaut==${version} from the GitHub release." >> "${GITHUB_STEP_SUMMARY}"
