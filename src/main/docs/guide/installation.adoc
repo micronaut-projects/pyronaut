@@ -21,8 +21,8 @@ The `--find-links` option reads the wheel from the release page, and `--no-index
 different version, take the command from the release notes of that release.
 
 The Python installation used by `pip` only installs the CLI. Pyronaut applications run with the embedded GraalPy
-runtime supplied by the Pyronaut SDK. If your application or tests use Python packages, set up a GraalPy virtual
-environment as described in <<prerequisites,Prerequisites>>.
+runtime supplied by the Pyronaut SDK, and `pyronaut setup` provisions the matching GraalPy interpreter for project
+virtual environments. `pyronaut --version` shows the required version on the `GraalPy Interpreter` line.
 
 == Provision the Pyronaut SDK
 
@@ -33,9 +33,13 @@ Provision the SDK after installing or upgrading the Pyronaut CLI:
 pyronaut setup
 ----
 
-Setup locates or provisions a compatible GraalVM JDK, downloads the native Pyronaut launchers, resolves the SDK
-dependencies, and stores validated machine-local state under `~/.pyronaut`. You do not need to install GraalVM
-manually for the default setup.
+Setup locates or provisions a compatible GraalVM JDK and the exact GraalPy interpreter the SDK was built with, downloads
+the native Pyronaut launchers, resolves the SDK dependencies, and stores validated machine-local state under
+`~/.pyronaut`. You do not need to install GraalVM or GraalPy manually for the default setup.
+
+Setup reuses a matching GraalPy that is already installed with pyenv or under `~/.pyronaut/sdks`. When none is
+installed, setup runs `pyenv install` if pyenv is available, and otherwise downloads GraalPy into
+`~/.pyronaut/sdks`.
 
 Pyronaut records setup state in `setup.json` under the Pyronaut home directory:
 
@@ -92,7 +96,9 @@ After you create a project with `pyronaut create` or add a `pyproject.toml` as d
 pyronaut install
 ----
 
-`pyronaut install` resolves Java dependencies for the configured build, runtime, development-runtime, test, and test-resources-server scopes.
+`pyronaut install` creates the project `.venv` with GraalPy and installs the Python dependencies declared in
+`pyproject.toml` or `requirements.txt` into it. It then resolves Java dependencies for the configured build, runtime,
+development-runtime, test, and test-resources-server scopes.
 
 By default, Pyronaut installs dependency artifacts into Maven local:
 

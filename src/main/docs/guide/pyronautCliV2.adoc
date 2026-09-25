@@ -88,6 +88,10 @@ pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--progress <a
 ----
 
 Setup provisions the packaged/default GraalVM JDK first, so you do not need `JAVA_HOME` or a preinstalled Java runtime.
+It then locates the exact GraalPy interpreter the SDK was built with (shown by `pyronaut --version` as `GraalPy Interpreter`, for example `graalpy3.13-25.4.4`).
+Setup reuses a matching GraalPy when the CLI itself runs on one, when `~/.pyronaut/sdks/<version>` already contains one, or when pyenv already has that version installed.
+Otherwise it runs `pyenv install <version>` when pyenv is available, and falls back to downloading the checksum-verified GraalPy release from GitHub into `~/.pyronaut/sdks/<version>`.
+Delegated commands receive that interpreter through `PYRONAUT_PYTHON_EXECUTABLE` and `PATH`; a project `.venv` takes precedence.
 It then caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python`, seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel's portable dependency descriptors.
 Pyronaut writes validated state atomically below `~/.pyronaut/setup`.
 
@@ -100,8 +104,8 @@ Configure a replacement list in `~/.pyronaut/settings.toml`:
 repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]
 ----
 
-`--refresh` re-resolves and rewrites setup state while reusing healthy downloaded JDK and native images.
-`--offline` performs no JDK, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
+`--refresh` re-resolves and rewrites setup state while reusing healthy downloaded JDK, GraalPy, and native images.
+`--offline` performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
 When setup is missing, corrupt, or stale, execution commands exit with code `8` and print `Pyronaut setup is missing or stale. Run pyronaut setup.`
 
 === `pyronaut doctor`
@@ -121,7 +125,7 @@ The checks, in order:
 - Python: the interpreter running the CLI is 3.10 or newer.
 - Pyronaut SDK: the installed wheel version and whether the cached setup state below `~/.pyronaut/setup` is valid for it (suggests `pyronaut setup`, or `pyronaut setup --refresh` when stale state exists).
 - GraalVM JDK: the discovery used by `pyronaut setup --offline` (`JAVA_HOME`, `~/.pyronaut/sdks`, SDKMAN, jenv, Gradle JDKs) finds a GraalVM JDK 25+. The check reports a warning when it silently ignores `JAVA_HOME` because it does not point to a compatible GraalVM.
-- GraalPy: inside a project, the check verifies that `.venv` uses GraalPy; otherwise it checks a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
+- GraalPy: inside a project, the check verifies that `.venv` uses GraalPy; otherwise it checks the GraalPy recorded by `pyronaut setup`, or a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
 - Interpreter: the check verifies that the pieces agree. `PYRONAUT_PYTHON_EXECUTABLE` must point at an existing GraalPy, an activated `VIRTUAL_ENV` must be the project `.venv`, and the `.venv` must use the currently selected GraalPy (the check reports a `.venv` that remained after `pyenv global` moved to another version, or whose base interpreter someone removed).
 - Native launchers: Pyronaut caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` below `~/.pyronaut/bin` for the configured version and platform.
 
@@ -210,6 +214,15 @@ before using it.
 === `pyronaut install`
 
 Resolves dependencies into the configured local Maven repository and writes scoped manifests under `__pyronaut__/`.
+
+Before resolving Java dependencies, `pyronaut install` prepares the project Python environment when the project declares Python dependencies in `[project].dependencies`, PEP 735 `[dependency-groups]`, or a `requirements.txt` file, or has a Python test directory:
+
+- It creates `.venv` in the project directory with the GraalPy interpreter recorded by `pyronaut setup`, unless `.venv` already exists.
+- It runs `pip install` inside `.venv` for every declared requirement and `requirements.txt`. When the project has Python tests but does not declare `pytest`, Pyronaut adds `pytest` because `pyronaut test` imports it from `.venv`.
+- It records the installed declarations in `.venv/.pyronaut-requirements.json` and skips `pip` until they change. `--refresh` reinstalls; `--offline` skips `pip`.
+
+An existing `.venv` that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run `pyronaut install` again.
+
 By default, Pyronaut installs dependency artifacts into Maven local (`~/.m2/repository`, or the path configured by the `maven.repo.local` system property).
 
 Common options:
@@ -233,7 +246,7 @@ deterministic and uses plain summary lines without cursor-control sequences.
 
 Proxy configuration:
 
-`pyronaut setup` and `pyronaut install` use the configured proxy for Maven dependency resolution; setup also applies it to GraalVM and native-launcher downloads.
+`pyronaut setup` and `pyronaut install` use the configured proxy for Maven dependency resolution; setup also applies it to GraalVM, GraalPy, and native-launcher downloads.
 This includes dependencies resolved from the global `[maven].repositories` list and project `tool.pyronaut.repositories`.
 Pyronaut discovers proxy configuration in this order:
 
@@ -1022,7 +1035,7 @@ ASCII set for the Java tools.
 
 - `PYRONAUT_TRACE_DELEGATION=true`: prints delegated command lines.
 - `PYRONAUT_TEST_RESOURCES_DISABLED=true`: disables automatic test-resources orchestration for `dev` and `test`.
-- `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides Python executable used for wheel builds.
+- `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides the GraalPy interpreter that `pyronaut setup` recorded for delegated commands, and the Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.
 - `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_VALIDATE_CONFIG_EXECUTABLE`, `PYRONAUT_TEST_RESOURCES_SERVER_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.
 - `PYRONAUT_PROGRESS_EPOCH_MS` and `PYRONAUT_LAUNCH_HANDSHAKE` are set by the CLI for the tools it delegates to (the shared timeline epoch and the launch-indicator pipes described under <<progressOutput,Progress output>>); they are not meant to be set by hand.

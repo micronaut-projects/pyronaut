@@ -5,40 +5,26 @@ Install Python packages into a GraalPy virtual environment and declare Java libr
 
 == Create a GraalPy virtual environment
 
-Install https://github.com/pyenv/pyenv#installation[pyenv], then install and select the GraalPy version currently used by Pyronaut:
+Declare Python packages in the standard `[project].dependencies` table in `pyproject.toml` or in a `requirements.txt` file, then run:
 
 [source,bash]
 ----
-pyenv install --skip-existing graalpy3.13-25.4.4
-pyenv shell graalpy3.13-25.4.4
-python --version
+pyronaut install
 ----
 
-Change to your project directory:
+`pyronaut install` creates a GraalPy virtual environment in the project `.venv` directory with the GraalPy version provisioned by `pyronaut setup`, and installs the declared packages with the `pip` of that environment.
+That `pip` can apply GraalPy-specific package patches and select compatible distributions.
+See <<dependencies,Installing Python and Java Dependencies>> for the declarations Pyronaut reads.
 
-[source,bash]
-----
-cd <project-dir>
-----
-
-Create and activate a GraalPy virtual environment:
+To add a package without declaring it, use the environment's `pip` directly:
 
 [source,bash]
 ----
-graalpy -m venv .venv
-source .venv/bin/activate
-python -m pip install pytest
-python -m pytest --version
+.venv/bin/python -m pip install <package>
 ----
-
-Use the `pip` installed by the GraalPy virtual environment.
-It can apply GraalPy-specific package patches and select compatible distributions.
 
 When a project contains `.venv`, Pyronaut automatically uses its Python executable and installed packages when launching the application and tests.
 Create the virtual environment with GraalPy; Pyronaut cannot use packages from a CPython-created virtual environment in its embedded GraalPy runtime.
-
-Pyronaut does not install Python packages when you run `pyronaut install`.
-You can also record Python dependencies in the standard `[project].dependencies` table in `pyproject.toml`; see <<dependencies,Installing Python and Java Dependencies>>.
 
 == Python package compatibility
 
