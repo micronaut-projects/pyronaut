@@ -1,4 +1,4 @@
-Dependency injection is how Micronaut connects the pieces of your application. If you have used FastAPI's `Depends()` or kept a database connection in a Flask module-level global, you have already worked with the problem it solves. Micronaut uses metadata generated during processing to resolve dependencies for both Python and Java code.
+Dependency injection is how Pyronaut connects the pieces of your application through Micronaut's application model. If you have used FastAPI's `Depends()` or kept a database connection in a Flask module-level global, you have already worked with the problem it solves. The processor generates metadata that resolves dependencies for both Python and Java code.
 
 == The problem dependency injection solves
 
@@ -26,7 +26,7 @@ class BookService:
         self.db = db
 ----
 
-Micronaut creates `DatabaseClient` once, passes it to `BookService`, and passes `BookService` to any controller that asks for it. Nothing calls `BookService()` directly.
+The application context creates `DatabaseClient` once, passes it to `BookService`, and passes `BookService` to any controller that asks for it. Nothing calls `BookService()` directly.
 
 == Declaring a bean
 
@@ -43,7 +43,7 @@ class GreetingService:
         return f"Hello, {name}!"
 ----
 
-Beans are ordinary Python classes. You can write methods, keep state, use dataclasses and define properties as usual. The decorator only tells Micronaut that it should manage the instance.
+Beans are ordinary Python classes. You can write methods, keep state, use dataclasses and define properties as usual. The decorator only tells the application context that it should manage the instance.
 
 Controllers, HTTP clients, event listeners, and scheduled jobs are all beans. In most applications, `@Singleton` is the only scope you need for them.
 
@@ -52,9 +52,28 @@ Controllers, HTTP clients, event listeners, and scheduled jobs are all beans. In
 There are three ways to receive a dependency: constructor injection, attribute injection, and method injection. All of
 them rely on the type hint to decide what to inject, so the hint must be a class that Micronaut knows about.
 
+[cols="1,2,2", options="header"]
+|===
+|Injection mode |Use when |Trade-off
+
+|Constructor injection
+|Dependencies are required.
+|Explicit and easy to test.
+
+|Attribute injection
+|A module-level route has no constructor.
+|Convenient, but less visible.
+
+|Method injection
+|A dependency is optional or supplied after construction.
+|Flexible, but splits initialisation.
+|===
+
+The examples below show each mode.
+
 === Constructor injection (recommended)
 
-Declare the dependency as an `__init__` parameter. This is the clearest form and the easiest to test, because you can pass the dependency explicitly in a unit test:
+Pass required dependencies as `__init__` parameters:
 
 [source,python]
 ----
@@ -74,7 +93,7 @@ class GreetingController:
 
 === Attribute injection
 
-Declare a class attribute annotated with `Inject`. This is convenient for module-level (classless) routes, which have no constructor:
+Annotate a class attribute with `Inject`:
 
 [source,python]
 ----
@@ -91,7 +110,7 @@ def greet(name: str) -> str:
     return service.greet(name)
 ----
 
-The same form works inside a class:
+Class attributes work too:
 
 [source,python]
 ----
@@ -105,7 +124,7 @@ class Vehicle:
 
 === Method injection
 
-Decorate a method with `@Inject`. Micronaut calls it with the matching beans after it constructs the object. This is mainly useful when a dependency is optional or when the bean must finish other initialisation first:
+Use `@Inject` on a method for post-construction injection:
 
 [source,python]
 ----
@@ -235,7 +254,30 @@ The scope decorator controls how many instances exist and how long they live:
 
 Module-level route files that declare no scope receive an automatic pooled scope so that Python code can run on several GraalPy contexts; see <<contextPool,The GIL and the Context Pool>>.
 
-== Lifecycle hooks
+== Conditional beans
+
+`@Requires` from `micronaut.context.annotation` makes a bean exist only when a condition holds. Common conditions are the presence of a configuration property, of another bean or of a class on the classpath:
+
+[source,python]
+----
+from jakarta.inject import Singleton
+from micronaut.context.annotation import Requires
+from javax.sql import DataSource
+
+
+@Singleton
+@Requires(beans=DataSource)
+@Requires(property="datasource.url")
+class JdbcBookService(BookService):
+    def __init__(self, data_source: DataSource):
+        self.data_source = data_source
+----
+
+`@Requires(env="test")` restricts a bean to an environment; see <<configurationInjection,Configuration Injection>> for how Micronaut selects environments.
+
+== Reference material
+
+=== Lifecycle hooks
 
 Two decorators from `jakarta.annotation` let a bean run code after Micronaut constructs it and before Micronaut destroys it. They replace FastAPI's startup and shutdown events for resources that belong to one bean:
 
@@ -262,28 +304,7 @@ class ConnectionPool:
 
 `@PostConstruct` runs after Micronaut supplies every injected dependency. Use it instead of `__init__` for work that depends on injected beans.
 
-== Conditional beans
-
-`@Requires` from `micronaut.context.annotation` makes a bean exist only when a condition holds. Common conditions are the presence of a configuration property, of another bean or of a class on the classpath:
-
-[source,python]
-----
-from jakarta.inject import Singleton
-from micronaut.context.annotation import Requires
-from javax.sql import DataSource
-
-
-@Singleton
-@Requires(beans=DataSource)
-@Requires(property="datasource.url")
-class JdbcBookService(BookService):
-    def __init__(self, data_source: DataSource):
-        self.data_source = data_source
-----
-
-`@Requires(env="test")` restricts a bean to an environment; see <<configurationInjection,Configuration Injection>> for how Micronaut selects environments.
-
-== Replacing beans in tests
+=== Replacing beans in tests
 
 `@Replaces` swaps one bean for another. Combined with `@Requires(env="test")` it is the idiomatic way to substitute a fake implementation during tests without touching production code:
 
@@ -303,7 +324,7 @@ class InMemoryBookService(BookService):
         return self.books.get(title)
 ----
 
-== Application events
+=== Application events
 
 Beans can publish and listen to events. Micronaut publishes `StartupEvent` and `ShutdownEvent` itself, which replaces FastAPI's `@app.on_event("startup")` and Flask's `before_first_request`:
 
@@ -351,7 +372,7 @@ class OrderService:
 
 Add `@Async` from `micronaut.scheduling.annotation` to a listener method to run it on a background thread instead of blocking the publisher.
 
-== Looking beans up manually
+=== Looking beans up manually
 
 Prefer injection, but you can also ask the application context for a bean. In pytest this is what the `MicronautTest` fixture wrapper does when you index it:
 

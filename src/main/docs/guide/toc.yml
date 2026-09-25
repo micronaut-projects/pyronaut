@@ -4,7 +4,7 @@ releaseHistory: Release History
 installation: Installing Pyronaut
 gettingStarted:
   title: Getting Started
-  prerequisites: Prerequisites
+  project: Create a Pyronaut Project
   fastApiTutorial: The FastAPI Tutorial
 how: How Pyronaut Works
 concepts:
@@ -21,21 +21,21 @@ concepts:
     reactiveInterop: Awaiting Reactive and Java Async Types
     contextPool: The GIL and the Context Pool
 projectStructure:
-  title: Pyronaut Toolchain and Project Layout
+  title: Pyronaut Project Layout and Generated State
 usingPackagesJavaLibraries: Using Python Packages and Java Libraries
 configuration:
-  title: Configuration and Build Setup
-  mavenGradle: Using Maven and Gradle Projects
+  title: Configure a Pyronaut Project
   pyproject: Configuring pyproject.toml
-  incrementalProcessing: Incremental Processing
-  dependencies: Installing Python and Java Dependencies
+  dependencies: Installing Python and Micronaut Dependencies
+  appConfig: Application Configuration with application.toml
+  validateConfig: Configuration Validation
+  ideSetup: IDE Setup for VS Code and PyCharm
+  vscodeExtension: VS Code Test Explorer Extension
+  mavenGradle: Using Maven and Gradle Projects
   directSourceDeclarations: Declaring Direct Source Dependencies
   mavenRepositories: Configuring Maven Repositories
   proxyConfig: Proxy Configuration
-  ideSetup: IDE Setup for VS Code and PyCharm
-  vscodeExtension: VS Code Test Explorer Extension
-  appConfig: Application Configuration with application.toml
-  validateConfig: Configuration Validation
+  incrementalProcessing: Incremental Processing
 packaging:
   title: Packaging and Deployment
 logging:

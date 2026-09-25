@@ -27,6 +27,30 @@ documented.
 - Describe limitations plainly. Prefer headings such as **Supported behavior**, **Limits**, or **Troubleshooting**;
   do not call a page a **stub**.
 
+## Product voice and framework attribution
+
+Describe capabilities included in Pyronaut as Pyronaut behavior. Prefer Pyronaut or the concrete component as the
+active subject: **Pyronaut includes**, **The launcher provides**, **The processor generates**, and **The binder maps**.
+Use **we** only when no clearer active subject exists. Do not describe an included Pyronaut capability as if Micronaut
+provides it independently.
+
+| Prefer | Avoid |
+| --- | --- |
+| The launcher includes Micronaut's HTTP server and validation support. | Micronaut provides the HTTP server and validation support. |
+| The processor generates route and bean metadata before startup. | Micronaut generates route and bean metadata before startup. |
+| Pyronaut exposes Micronaut APIs through Python decorators. | Java APIs are available through Python decorators. |
+
+Use **Micronaut** when naming the framework model, an included Micronaut module, an API, a configuration property, or
+an external Micronaut reference. Prefer **Micronaut** or a concrete component over **Java** or **JVM** in general
+descriptions when the language or runtime does not affect the reader's decision. Keep Java/JVM terminology when it
+identifies a source language, API or package name, toolchain mode, package format, flag, or compatibility boundary.
+
+Do not remove or generalize a precise Java/JVM reference when it identifies a source language, library ecosystem, API,
+package, integration path, or compatibility boundary. For example, keep **Python and Java sources** and **Java library**
+when those distinctions matter; do not replace them with **application sources** or **library** solely to reduce Java/JVM
+mentions. Change the surrounding prose, not literal commands, identifiers, paths, package coordinates, source-language
+labels, or configuration values.
+
 ## Page boundaries and page types
 
 Give each page one primary reader goal and one primary surface. Do not combine CLI, Python API, Java API, IDE, and

@@ -190,6 +190,6 @@ Declare the types once and reuse them for HTTP binding, validation, serializatio
 
 == Next steps
 
-* Use <<gettingStarted,Getting Started>> for a project-based workflow.
+* Use <<project,Create a Pyronaut Project>> for a project-based workflow.
 * Read <<concepts,Micronaut Concepts for Python Developers>> to understand the framework model.
 * See <<packaging,Packaging and Deployment>> when you are ready to distribute the application.

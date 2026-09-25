@@ -23,6 +23,8 @@ different version, take the command from the release notes of that release.
 The Python installation used by `pip` only installs the CLI. Pyronaut applications run with the embedded GraalPy
 runtime supplied by the Pyronaut SDK, and `pyronaut setup` provisions the matching GraalPy interpreter for project
 virtual environments. `pyronaut --version` shows the required version on the `GraalPy Interpreter` line.
+If your application or tests use Python packages, see <<prerequisites,Getting Started Step 1>> for the project
+environment setup.
 
 == Provision the Pyronaut SDK
 
@@ -89,7 +91,7 @@ TIP: See
 
 == Project installation
 
-After you create a project with `pyronaut create` or add a `pyproject.toml` as described in <<gettingStarted,Getting Started>>, run:
+After you create a project with `pyronaut create` or add a `pyproject.toml` as described in <<project,Create a Pyronaut Project>>, run:
 
 [source,bash]
 ----

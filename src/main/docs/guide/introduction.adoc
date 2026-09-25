@@ -1,39 +1,22 @@
 Pyronaut is a framework for building Python applications on https://www.graalvm.org/python/[GraalPy] and https://micronaut.io[Micronaut]. It gives Python code access to Micronaut's HTTP server, dependency injection, configuration, validation, serialization, observability, and testing capabilities. Pyronaut processes Python and Java source before the application starts, preparing routes, beans, serializers, and validation metadata.
 
-Python developers can use type hints and decorators to build applications for development, direct execution, or deployment as JVM applications, native executables, or containers. You write ordinary Python while Pyronaut connects it to the Micronaut application model.
+Use type hints and decorators to build applications for development, direct
+execution, or deployment as JVM applications, native executables, or
+containers. You write ordinary Python while Pyronaut connects it to the
+Micronaut application model.
 
-Java developers can add Python code to a Micronaut application. Both languages share the application context, application configuration, and test lifecycle while retaining their own package and library dependencies.
-
-== Choose your path
-
-[#python-developers]
-=== Python developers
-
-Use this path when Python is the main application language:
+== Recommended path
 
 . Start with <<installation,Installing Pyronaut>>.
-. Follow <<gettingStarted,Getting Started>> to build a project in project mode; complete its <<prerequisites,Prerequisites>> before running pytest. Alternatively, follow <<fastApiTutorial,The FastAPI Tutorial>> to try direct-source mode without a project virtual environment.
+. Follow <<project,Create a Pyronaut Project>> to build a project in project mode; complete Step 1 before running pytest. Alternatively, follow <<fastApiTutorial,The FastAPI Tutorial>> to try direct-source mode without a project virtual environment.
 . After the tutorial, read <<concepts,Micronaut Concepts for Python Developers>>. The remaining chapters assume you
-understand these concepts. Then use <<configuration,Configuration and Build Setup>> as you add dependencies and
+understand these concepts. Then use <<configuration,Configure a Pyronaut Project>> as you add dependencies and
 application settings.
 . Use <<testing,Testing>> and <<packaging,Packaging and Deployment>> when you are ready to verify and distribute the application.
 
-You can skip <<mavenGradle,Using Maven and Gradle Projects>> unless an existing Java build manages your application. Read
-<<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>> only when you need Java libraries or Java source in the project.
-
-[#java-developers]
-=== Java developers
-
-Use this path when you are adding Python to an existing Micronaut application or using Java for part of the application:
-
-. Start with <<mavenGradle,Using Maven and Gradle Projects>> when the application already has a Maven or Gradle build.
-. Read <<projectStructure,Pyronaut Toolchain and Project Layout>> to understand the Python and Java source directories and generated state.
-. Use <<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>> to add Python packages, Java libraries, or Java beans that Python code can use.
-. Read <<configurationInjection,Configuration Injection>>, <<dependencyInjection,Dependency Injection>>, and <<testing,Testing>> to use the shared application context and test lifecycle.
-. Continue to <<packaging,Packaging and Deployment>> when you are ready to build or deploy the application.
-
-You can skip <<fastApiTutorial,The FastAPI Tutorial>> unless you are evaluating direct-source mode. The Python package guidance in
-<<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>> is relevant only when the application uses Python packages.
+If an existing Maven or Gradle build manages the project, or if Python code
+needs Java libraries, see <<mavenGradle,Using Maven and Gradle Projects>> and
+<<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>>.
 
 == A minimal application
 
@@ -58,36 +41,27 @@ pyronaut dev app.py
 
 Pyronaut processes the source, starts a server on port 8080, and reloads it when the file changes. The route returns JSON, Pyronaut generates an OpenAPI description, and it serves Swagger UI at `/swagger-ui/index.html`. This direct-source application does not need `pyproject.toml`, a GraalPy virtual environment, or a separate application server.
 
-== How Pyronaut differs from Flask and FastAPI
+== Why choose Pyronaut
+
+A typical production Python service combines a web framework, an application
+server, validation, serialization, testing, observability, packaging, and
+deployment tooling. Pyronaut connects these concerns through one application
+model on top of Micronaut.
+
+Compared with Flask and FastAPI:
 
 * *Decorators map to Micronaut annotations.* `@Get`, `@Singleton`, `@Value`, and the other decorators in this guide correspond to Micronaut annotations. Type hints on parameters and return values tell Micronaut how to bind requests, validate input, and serialize output.
 * *Processing happens before startup.* `pyronaut process` reads your decorators and type hints and generates route and bean metadata, serializers, and validation metadata before the application starts. Source and generated-metadata errors can therefore appear during processing instead of on the first request.
-* *Java libraries are available from Python.* Declare a Java library in `pyproject.toml`, resolve it with `pyronaut install`, and import its classes from Python.
-* *Threads and `asyncio` both work.* Plain `def` routes run on a thread pool, `async def` routes run on the Netty event loop, and Python coroutines can await Java asynchronous results directly.
+* *Java libraries are available from Python.* Declare a Java library in `pyproject.toml`, resolve it with `pyronaut install`, and import its classes from Python. See <<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>> for supported integration patterns.
+* *Threads and `asyncio` both work.* Plain `def` routes run on a thread pool, `async def` routes run on the Netty event loop, and Python coroutines can await Java asynchronous results directly. See <<threading,Threading, Blocking Work and asyncio>>.
 
-== Why choose Pyronaut
-
-A typical production Python service combines a web framework, an application server, validation, serialization, testing, observability, packaging, and deployment tooling. Pyronaut connects these concerns through one application model on top of Micronaut, so the same Python types and decorators drive HTTP, validation, serialization, OpenAPI, dependency injection, editor support, and tests.
-
-The following capabilities are available through this application model:
+The application model also provides:
 
 Observability and operations::
-Micronaut's management endpoints (health, info, environment, loggers, routes, and thread dumps) are part of the runtime. Add the Micronaut modules for https://micronaut-projects.github.io/micronaut-micrometer/latest/guide/[Micrometer] metrics with registries for Prometheus, Datadog, CloudWatch, and others, https://micronaut-projects.github.io/micronaut-tracing/latest/guide/[OpenTelemetry] distributed tracing, and https://micronaut-projects.github.io/micronaut-kubernetes/latest/guide/[Kubernetes] service discovery, configuration, and health probes through `[tool.pyronaut.dependencies]`. For JVM deployments, Java tooling such as Java Flight Recorder, heap and thread analysis, and JMX also applies to the Python service.
-
-Concurrency with the JVM and Netty::
-Netty's event loop and Micronaut's thread pools serve requests. Synchronous Python routes run on a thread pool, while `async def` routes run on the event loop, so you can choose the model that fits the work. GraalPy can run Python in several interpreter contexts inside one process, so Python code can execute in parallel; the trade-offs are memory use and separate module state per context. See <<threading,Threading, Blocking Work and asyncio>>.
+Pyronaut exposes Micronaut's management endpoints (health, info, environment, loggers, routes, and thread dumps) as part of the runtime. Add the Micronaut modules for https://micronaut-projects.github.io/micronaut-micrometer/latest/guide/[Micrometer] metrics with registries for Prometheus, Datadog, CloudWatch, and others, https://micronaut-projects.github.io/micronaut-tracing/latest/guide/[OpenTelemetry] distributed tracing, and https://micronaut-projects.github.io/micronaut-kubernetes/latest/guide/[Kubernetes] service discovery, configuration, and health probes through `[tool.pyronaut.dependencies]`. For JVM deployments, Java tooling such as Java Flight Recorder, heap and thread analysis, and JMX also applies to the Python service.
 
 Test Resources for local infrastructure::
 With `MicronautTest`, `pyronaut test` can run pytest against the application context and an embedded server. When the configured dependencies identify a supported service, https://micronaut-projects.github.io/micronaut-test-resources/latest/guide/[Micronaut Test Resources] can start the service, often in a Docker container through Testcontainers, and supply its connection settings. This can remove the need to hard-code local service URLs and credentials. The same mechanism supports `pyronaut dev`. See <<testResources,Test Resources and Docker>>.
-
-Errors before deployment::
-Pyronaut generates route and bean metadata, serializers, and validation metadata during processing, where it can report source and generated-metadata errors. `pyronaut validate-config` checks application configuration per environment; enable dependency injection validation when you also want it to check the bean graph. `pyronaut dev`, `pyronaut run`, `pyronaut test`, and native build flows run configuration validation automatically unless you disable it. See <<validateConfig,Configuration validation>>.
-
-Optimise hot paths in Java::
-When a code path needs more speed than Python offers, write it in Java in the same project (under `src-java` by default) and inject it into your Python code like any other bean. Both languages share one dependency injection container, application configuration, and test invocation. See <<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>>.
-
-Java libraries and Micronaut modules::
-Declare JDBC drivers, Kafka and RabbitMQ clients, cloud SDKs, PDF and document libraries, and other Java libraries in `pyproject.toml`, then import them from Python. Micronaut modules add https://micronaut-projects.github.io/micronaut-data/latest/guide/[Micronaut Data] repositories, https://micronaut-projects.github.io/micronaut-security/latest/guide/[Micronaut Security] (JWT, OAuth 2.0, and OpenID Connect), Kafka and RabbitMQ listeners, caching, scheduling, and views. Python code can use their Java APIs, including annotation-based APIs that Pyronaut exposes as decorators.
 
 One CLI for the application lifecycle::
 `pyronaut create`, `dev`, `test`, `validate-config`, and `build` cover the project lifecycle. The build command supports Python wheels, runnable JARs, container images, GraalVM native executables, and reusable Crema runtime images. See <<packaging,Packaging and Deployment>>.
@@ -113,5 +87,5 @@ The `pyronaut` command is the single entry point. It creates projects, resolves 
 == Next steps
 
 * Install with <<installation,Installing Pyronaut>>.
-* Choose <<gettingStarted,Getting Started>> for a project workflow or <<fastApiTutorial,The FastAPI Tutorial>> for direct-source mode.
-* If you are deciding which audience path applies to you, return to <<python-developers,Python developers>> or <<java-developers,Java developers>>.
+* Choose <<project,Create a Pyronaut Project>> for a project workflow or <<fastApiTutorial,The FastAPI Tutorial>> for direct-source mode.
+* Continue with <<configuration,Configure a Pyronaut Project>> to add dependencies, application settings, and editor support.

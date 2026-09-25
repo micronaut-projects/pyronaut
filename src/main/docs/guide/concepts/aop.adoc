@@ -1,4 +1,4 @@
-Aspect-oriented programming (AOP) describes a familiar Python pattern: a decorator wraps a function to add behaviour such as logging, retrying, caching, or timing. Micronaut provides many such decorators and lets you write your own so they work with dependency injection.
+Aspect-oriented programming (AOP) describes a familiar Python pattern: a decorator wraps a function to add behaviour such as logging, retrying, caching, or timing. Pyronaut exposes many of Micronaut's decorators and lets you write your own so they work with dependency injection.
 
 == AOP compared with Python decorators
 
@@ -17,7 +17,7 @@ def retry(func):
     return wrapper
 ----
 
-A Micronaut _advice_ decorator does not change the function. It records metadata that Micronaut uses to generate a proxy class during processing. At runtime, the application context creates the proxy bean; the proxy intercepts calls to the decorated method and hands them to an _interceptor_, an ordinary bean that can receive its own dependencies. The important consequences are:
+A Micronaut _advice_ decorator does not change the function. The processor records metadata that Micronaut uses to generate a proxy class during processing. At runtime, the application context creates the proxy bean; the proxy intercepts calls to the decorated method and hands them to an _interceptor_, an ordinary bean that can receive its own dependencies. The important consequences are:
 
 * Advice only applies to beans obtained through dependency injection. If you call `BookService()` yourself, none of the decorators below have any effect.
 * Configure interceptors through `application.toml`; they can use other beans, which is hard to do with a closure-based decorator.
@@ -164,4 +164,4 @@ The interceptor is a bean, so it can receive dependencies through its constructo
 
 == Introduction advice
 
-_Around_ advice wraps an existing implementation. _Introduction_ advice supplies the implementation of an abstract method. `@Client` is the best-known example: you declare an abstract class describing the remote API and Micronaut generates the code that performs the HTTP calls. Micronaut Data repositories work the same way. Writing your own introduction advice is rarely necessary; the https://docs.micronaut.io/latest/guide/#introductionAdvice[Micronaut guide] shows how.
+_Around_ advice wraps an existing implementation. _Introduction_ advice supplies the implementation of an abstract method. `@Client` is the best-known example: you declare an abstract class describing the remote API and the processor generates the code that performs the HTTP calls. Micronaut Data repositories work the same way. Writing your own introduction advice is rarely necessary; the https://docs.micronaut.io/latest/guide/#introductionAdvice[Micronaut guide] shows how.

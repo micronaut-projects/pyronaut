@@ -1,14 +1,71 @@
-= Configuration and Build Setup
+= Configure a Pyronaut Project
 
-Pyronaut project configuration is split between two TOML files:
+Use this section to configure a Pyronaut project in project mode. A standard
+project uses `pyproject.toml` for build-time settings and
+`config/application.toml` for Micronaut application configuration:
 
-- `pyproject.toml` describes the Python package, Pyronaut source layout, Java dependencies, repositories, build defaults, validation settings, IDE support, toolchains, and test resources.
+- `pyproject.toml` describes the Python package, Pyronaut source layout, dependencies, repositories, build defaults, validation settings, IDE support, toolchains, and test resources.
 - `config/application.toml` contains Micronaut application configuration loaded at runtime.
 
-Most build and lifecycle settings are under `[tool.pyronaut]`.
-Pyronaut's generated schema uses canonical kebab-case keys, while some older camelCase aliases are still accepted for compatibility.
+Most build and lifecycle settings are under `[tool.pyronaut]`. Pyronaut's
+generated schema uses canonical kebab-case keys, while some older camelCase
+aliases are still accepted for compatibility.
 
-Run `pyronaut install` after changing `pyproject.toml` to refresh dependency manifests, JSON schemas, and Python IDE stubs used by later commands.
+== Step 1: Configure a normal Pyronaut project
 
-Use `pyronaut validate-config` when changing application configuration or dependency sets.
-It validates Micronaut configuration for run, test, or production scenarios and writes reports under `__pyronaut__/reports/config-validation`.
+Start with <<projectStructure,Pyronaut Project Layout and Generated State>> and
+<<pyproject,Configuring `pyproject.toml`>> when Pyronaut owns the project model.
+These pages cover project metadata, source layout, packaging, toolchains,
+validation, and other project configuration.
+
+Run `pyronaut install` after changing `pyproject.toml` to refresh dependency
+manifests, JSON schemas, and Python IDE stubs used by later commands.
+
+If you already have a Maven or Gradle build, or if you want to run source
+files without a project manifest, skip to
+<<mavenGradle,Using Maven and Gradle Projects>> or
+<<directSourceDeclarations,Declaring Direct Source Dependencies>>.
+
+== Step 2: Add dependencies and application settings
+
+Add Python packages in the standard `[project].dependencies` table and
+application libraries under `[tool.pyronaut.dependencies]`. See
+<<dependencies,Installing Python and Micronaut Dependencies>> for dependency
+scopes, BOMs, exclusions, and install behavior.
+
+Put runtime Micronaut settings in `config/application.toml`. See
+<<appConfig,Application Configuration with `application.toml`>> for resource
+layouts, environment-specific files, schemas, and executor defaults.
+
+== Step 3: Validate and set up editor support
+
+Use <<validateConfig,Configuration Validation>> when you change application
+configuration, dependencies, environments, or source layout. The command
+validates the selected scenario and writes reports under
+`__pyronaut__/reports/config-validation`.
+
+Run `pyronaut install` to generate project and application schemas and Python
+stubs, then follow <<ideSetup,IDE Setup for VS Code and PyCharm>> to connect
+them to your editor. For tests that must run through `pyronaut test`, see the
+<<vscodeExtension,VS Code Test Explorer Extension>> page.
+
+== Step 4: Read alternate workflows for Maven/Gradle or direct-source projects
+
+Use <<mavenGradle,Using Maven and Gradle Projects>> when an existing build
+manages the source layout and dependencies. Use
+<<directSourceDeclarations,Declaring Direct Source Dependencies>> when you
+run source files without `pyproject.toml`.
+
+== Step 5: Configure repositories and proxies when needed
+
+Start with the default Maven Central repository. When dependencies require a
+custom repository, see <<mavenRepositories,Configuring Maven Repositories>>.
+When the network requires a proxy, see <<proxyConfig,Proxy Configuration>>
+for environment variables, Pyronaut settings, and Maven settings fallback.
+
+== Step 6: Finish with advanced incremental-processing behavior
+
+Incremental processing and the compiler daemon are advanced, opt-in
+optimizations. Read <<incrementalProcessing,Incremental Processing>> before
+enabling them so you understand cache invalidation, Python dependency modes,
+and the full-compilation fallbacks that protect correctness.
