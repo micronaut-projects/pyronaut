@@ -32,7 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          [[ "${version}" =~ ^[0-9]+([.][0-9]+)*$ ]]
+          if [[ ! "${version}" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+            echo "::error::Release tag ${RELEASE_TAG} has no PEP 440 wheel version; only final X.Y.Z releases are published to PyPI"
+            exit 1
+          fi
           ./gradlew -PprojectVersion="${version}" :micronaut-pyronaut:buildSdkWheel
       - name: Upload wheel to release
         env:
@@ -45,22 +48,6 @@ jobs:
           name: pyronaut-wheel
           path: pyronaut/build/wheel/dist/*.whl
           if-no-files-found: error
-
-  publish-pypi:
-    needs: build-wheel
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      actions: read
-      id-token: write
-    steps:
-      - name: Download wheel
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
-        with:
-          name: pyronaut-wheel
-          path: dist
-      - name: Publish wheel to PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
 
   publish-crema-images:
     runs-on: ubuntu-latest
@@ -93,7 +80,12 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          [[ "${version}" =~ ^[0-9]+([.][0-9]+)*$ ]]
+          # Image tags carry the release version verbatim, so milestones and
+          # release candidates (for example 1.0.0-M1) are published too.
+          if [[ ! "${version}" =~ ^[0-9]+([.][0-9]+)*(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::Unsupported release tag: ${RELEASE_TAG}"
+            exit 1
+          fi
           mkdir -p context/bundles/amd64 context/bundles/arm64
           gh release download "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
@@ -129,3 +121,40 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.release.outputs.version }}
+
+  release-notes:
+    needs: build-wheel
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-pip-install.yml
+    with:
+      release_tag: ${{ github.event.release.tag_name }}
+
+  # PyPI runs last so a failure there cannot hold back the GitHub release
+  # wheel, its install notes or the images.
+  publish-pypi:
+    needs: [build-wheel, release-notes, publish-crema-images]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - name: Download wheel
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: pyronaut-wheel
+          path: dist
+      - name: Publish wheel to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+
+  # The PyPI command is added to the notes only after the upload succeeds, so
+  # the notes never point at a version that cannot be installed.
+  release-notes-pypi:
+    needs: publish-pypi
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-pip-install.yml
+    with:
+      release_tag: ${{ github.event.release.tag_name }}
+      pypi: true

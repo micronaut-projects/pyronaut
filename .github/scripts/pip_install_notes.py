@@ -88,7 +88,23 @@ def github_install(repo: str, tag: str, version: str, private: bool) -> str:
     )
 
 
-def render_block(repo: str, tag: str, version: str, private: bool) -> str:
+def install_choices(repo: str, tag: str, version: str, private: bool, pypi: bool) -> list[str]:
+    if not pypi:
+        return ["Install the wheel from this GitHub release:", "", github_install(repo, tag, version, private)]
+    return [
+        "Install from PyPI:",
+        "",
+        "```bash",
+        f"python3 -m pip install --upgrade 'pyronaut=={version}'",
+        "```",
+        "",
+        "Or install the wheel directly from this GitHub release:",
+        "",
+        github_install(repo, tag, version, private),
+    ]
+
+
+def render_block(repo: str, tag: str, version: str, private: bool, pypi: bool) -> str:
     return "\n".join(
         [
             START_MARKER,
@@ -96,15 +112,7 @@ def render_block(repo: str, tag: str, version: str, private: bool) -> str:
             "",
             f"Pyronaut {version} needs Python 3.10 or later.",
             "",
-            "Install from PyPI:",
-            "",
-            "```bash",
-            f"python3 -m pip install --upgrade 'pyronaut=={version}'",
-            "```",
-            "",
-            "Or install the wheel directly from this GitHub release:",
-            "",
-            github_install(repo, tag, version, private),
+            *install_choices(repo, tag, version, private, pypi),
             "",
             "Then provision the SDK that runs Pyronaut applications:",
             "",
@@ -133,6 +141,11 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--interval", type=int, default=15)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--pypi",
+        action="store_true",
+        help="Also document the PyPI install; pass only once the wheel is on PyPI.",
+    )
     args = parser.parse_args()
 
     release, wheel = await_wheel(args.repo, args.tag, args.timeout, args.interval)
@@ -140,7 +153,7 @@ def main() -> int:
     private = json.loads(gh("api", f"/repos/{args.repo}", "--jq", ".private"))
     body = apply_block(
         release.get("body") or "",
-        render_block(args.repo, args.tag, version, private),
+        render_block(args.repo, args.tag, version, private, args.pypi),
     )
     if args.dry_run:
         print(body)
@@ -154,7 +167,7 @@ def main() -> int:
             "-",
             input_text=json.dumps({"body": body}),
         )
-        print(f"Updated release notes for {args.tag} with PyPI and GitHub install options.")
+        print(f"Updated the install instructions in the release notes for {args.tag}.")
     return 0
 
 
