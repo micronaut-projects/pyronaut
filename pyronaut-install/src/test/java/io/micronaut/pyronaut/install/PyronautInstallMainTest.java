@@ -1713,6 +1713,63 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void fetchesTheMissingPomOfABinaryOnlyLocalArtifact(@TempDir Path tempDir) throws Exception {
+        Path repository = tempDir.resolve("repo");
+        writeArtifactWithDependencies(repository, "com.example", "root", "1.0.0",
+            List.of(new DependencyCoordinate("com.example", "transitive", "1.0.0")));
+        writeArtifact(repository, "com.example", "transitive", "1.0.0");
+        Path localRepository = tempDir.resolve("m2");
+        writeBinaryOnlyLocalArtifact(localRepository, "com.example", "root", "1.0.0", "repo-0");
+
+        MavenClasspathResolver.ResolvedScopeDetails result = new MavenClasspathResolver().resolveScopeDetails(
+            binaryOnlyRootModel(repository), InstallScope.RUNTIME, localRepository, false);
+
+        assertTrue(result.classpath().stream()
+            .anyMatch(path -> path.getFileName().toString().equals("transitive-1.0.0.jar")));
+        assertTrue(Files.isRegularFile(localRepository.resolve("com/example/root/1.0.0/root-1.0.0.pom")));
+    }
+
+    @Test
+    void offlineResolutionFailsInsteadOfDroppingTransitivesOfABinaryOnlyLocalArtifact(@TempDir Path tempDir) throws Exception {
+        Path repository = tempDir.resolve("repo");
+        writeArtifactWithDependencies(repository, "com.example", "root", "1.0.0",
+            List.of(new DependencyCoordinate("com.example", "transitive", "1.0.0")));
+        writeArtifact(repository, "com.example", "transitive", "1.0.0");
+        Path localRepository = tempDir.resolve("m2");
+        writeBinaryOnlyLocalArtifact(localRepository, "com.example", "root", "1.0.0", "repo-0");
+
+        PyprojectModelException failure = assertThrows(PyprojectModelException.class, () ->
+            new MavenClasspathResolver().resolveScopeDetails(
+                binaryOnlyRootModel(repository), InstallScope.RUNTIME, localRepository, true));
+
+        assertTrue(failure.getMessage().contains("com.example:root:pom:1.0.0"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("run without --offline"), failure.getMessage());
+    }
+
+    private static PyprojectModel binaryOnlyRootModel(Path repository) {
+        return new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of("com.example:root:1.0.0"), List.of(), List.of(),
+                List.of(), List.of(), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+    }
+
+    private static void writeBinaryOnlyLocalArtifact(Path localRepository,
+                                                     String groupId,
+                                                     String artifactId,
+                                                     String version,
+                                                     String repositoryId) throws IOException {
+        Path artifactDir = localRepository
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version);
+        Files.createDirectories(artifactDir);
+        String jarName = artifactId + "-" + version + ".jar";
+        Files.write(artifactDir.resolve(jarName), new byte[]{0});
+        Files.writeString(artifactDir.resolve("_remote.repositories"), jarName + ">" + repositoryId + "=\n");
+    }
+
+    @Test
     void resolvesPomOnlyDependencyDeclaredWithAnExplicitExtension(@TempDir Path tempDir) throws Exception {
         Path repository = tempDir.resolve("repo");
         writePomOnlyArtifact(repository, "com.example", "aggregator", "1.0.0",

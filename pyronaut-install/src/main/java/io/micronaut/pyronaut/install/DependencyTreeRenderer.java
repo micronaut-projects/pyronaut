@@ -17,8 +17,11 @@ package io.micronaut.pyronaut.install;
 
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
+import org.eclipse.aether.collection.CollectResult;
+import org.eclipse.aether.collection.DependencyCollectionException;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
+import org.eclipse.aether.resolution.ArtifactDescriptorException;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.resolution.DependencyResult;
@@ -203,6 +206,33 @@ final class DependencyTreeRenderer {
                     if (unresolvedArtifact != null) {
                         unresolved.add(coordinate(unresolvedArtifact));
                         unresolved.add(unresolvedArtifact.getGroupId() + ":" + unresolvedArtifact.getArtifactId());
+                    }
+                }
+            }
+            if (unresolved.isEmpty()) {
+                DefaultArtifact parsed = parseFirstCoordinate(summaryMessage);
+                if (parsed != null) {
+                    unresolved.add(coordinate(parsed));
+                    unresolved.add(parsed.getGroupId() + ":" + parsed.getArtifactId());
+                }
+            }
+            return new ResolutionFailure(summaryMessage, root, Set.copyOf(unresolved));
+        }
+
+        static ResolutionFailure fromException(String summaryMessage, DependencyCollectionException exception) {
+            CollectResult result = exception.getResult();
+            DependencyNode root = result == null ? null : result.getRoot();
+            LinkedHashSet<String> unresolved = new LinkedHashSet<>();
+            if (result != null) {
+                for (Exception failure : result.getExceptions()) {
+                    if (failure instanceof ArtifactDescriptorException descriptorFailure
+                        && descriptorFailure.getResult() != null
+                        && descriptorFailure.getResult().getRequest() != null) {
+                        Artifact artifact = descriptorFailure.getResult().getRequest().getArtifact();
+                        if (artifact != null) {
+                            unresolved.add(coordinate(artifact));
+                            unresolved.add(artifact.getGroupId() + ":" + artifact.getArtifactId());
+                        }
                     }
                 }
             }

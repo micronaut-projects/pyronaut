@@ -41,6 +41,7 @@ import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.ArtifactDescriptorException;
+import org.eclipse.aether.resolution.ArtifactDescriptorPolicy;
 import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
 import org.eclipse.aether.resolution.ArtifactDescriptorResult;
 import org.eclipse.aether.resolution.DependencyRequest;
@@ -443,12 +444,27 @@ final class MavenClasspathResolver {
             validateProductionControlPanelSecurity(model, scope, result);
             return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
         } catch (DependencyResolutionException | DependencyCollectionException e) {
-            String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage();
+            String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage()
+                + missingDescriptorDetails(e, offline);
             if (proxyConfiguration != null) {
                 message = message + " (proxy " + proxyConfiguration.summary() + ")";
             }
             throw new PyprojectModelException(message, e);
         }
+    }
+
+    private static String missingDescriptorDetails(Exception failure, boolean offline) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ArtifactDescriptorException descriptorFailure) {
+                Throwable reason = descriptorFailure.getCause() == null ? descriptorFailure : descriptorFailure.getCause();
+                String remedy = offline
+                    ? "; run without --offline to download the missing POM"
+                    : "; make sure a configured repository provides the POM";
+                return " (" + descriptorFailure.getMessage() + ": " + reason.getMessage()
+                    + "). Each dependency's POM is required to resolve its transitive dependencies" + remedy;
+            }
+        }
+        return "";
     }
 
     private static boolean evictResolvedArtifacts(Path localRepositoryPath, DependencyResult result) {
@@ -1177,6 +1193,17 @@ final class MavenClasspathResolver {
                                         DependencyProgressListener progressListener) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
+        // The supplier's default policy treats a missing POM as an empty
+        // descriptor, so a JAR cached without its POM (or one whose POM cannot
+        // be fetched, for example offline) silently loses every transitive
+        // dependency. Fail instead: a classpath missing transitives only
+        // surfaces later as NoClassDefFoundError at application runtime.
+        // Missing BOM and other POM-only descriptors remain optional.
+        sessionBuilder.setArtifactDescriptorPolicy((session, request) -> {
+            Artifact artifact = request.getArtifact();
+            boolean pomOnly = artifact != null && POM_EXTENSION.equals(artifact.getExtension());
+            return pomOnly ? ArtifactDescriptorPolicy.IGNORE_ERRORS : ArtifactDescriptorPolicy.IGNORE_INVALID;
+        });
         if (forceUpdates) {
             sessionBuilder.setUpdatePolicy(RepositoryPolicy.UPDATE_POLICY_ALWAYS);
         }
