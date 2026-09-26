@@ -1,0 +1,13 @@
+# syntax=docker/dockerfile:1
+FROM debian:12-slim AS unpack
+ARG TARGETARCH
+COPY bundles/ /bundles/
+RUN mkdir -p /out/runtime /out/lib \
+    && tar -xzf "/bundles/${TARGETARCH}/bundle.tar.gz" -C /out/runtime \
+    && chmod +x /out/runtime/pyronaut-* \
+    && cp -L /lib/*-linux-gnu/libz.so.1 /out/lib/libz.so.1
+
+FROM gcr.io/distroless/base-debian12
+WORKDIR /opt/pyronaut
+COPY --from=unpack /out/lib/libz.so.1 /lib/libz.so.1
+COPY --from=unpack /out/runtime/ /opt/pyronaut/bin/

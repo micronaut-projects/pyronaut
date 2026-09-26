@@ -1,0 +1,160 @@
+name: Publish Python release
+
+# OraHub populates the draft release with platform bundles. Publishing that
+# draft builds the wheel and packages those bundles without rebuilding Crema.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build-wheel:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Set up JDK
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Set up GraalPy
+        uses: ./.github/actions/setup-graalpy-pyenv
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5
+      - name: Build wheel
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ ! "${version}" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+            echo "::error::Release tag ${RELEASE_TAG} has no PEP 440 wheel version; only final X.Y.Z releases are published to PyPI"
+            exit 1
+          fi
+          ./gradlew -PprojectVersion="${version}" :micronaut-pyronaut:buildSdkWheel
+      - name: Upload wheel to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "${RELEASE_TAG}" pyronaut/build/wheel/dist/*.whl --clobber
+      - name: Upload wheel for PyPI
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: pyronaut-wheel
+          path: pyronaut/build/wheel/dist/*.whl
+          if-no-files-found: error
+
+  publish-crema-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: pyronaut-run
+            bundle: run
+            dockerfile: .github/docker/crema/Dockerfile.distroless
+          - image: pyronaut-run-python
+            bundle: run-python
+            dockerfile: .github/docker/crema/Dockerfile.distroless
+          - image: pyronaut-run-graalvm
+            bundle: run
+            dockerfile: .github/docker/crema/Dockerfile.graalvm
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Prepare image context
+        id: release
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ matrix.image }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          # Image tags carry the release version verbatim, so milestones and
+          # release candidates (for example 1.0.0-M1) are published too.
+          if [[ ! "${version}" =~ ^[0-9]+([.][0-9]+)*(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::Unsupported release tag: ${RELEASE_TAG}"
+            exit 1
+          fi
+          mkdir -p context/bundles/amd64 context/bundles/arm64
+          gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "pyronaut-${BUNDLE}-linux-amd64-${version}.tar.gz" \
+            --output context/bundles/amd64/bundle.tar.gz
+          gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "pyronaut-${BUNDLE}-linux-aarch64-${version}.tar.gz" \
+            --output context/bundles/arm64/bundle.tar.gz
+          tar -tzf context/bundles/amd64/bundle.tar.gz > /dev/null
+          tar -tzf context/bundles/arm64/bundle.tar.gz > /dev/null
+          image_owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=ghcr.io/${image_owner}/${IMAGE}:${version}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build and publish image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: context
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.release.outputs.image }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+
+  release-notes:
+    needs: build-wheel
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-pip-install.yml
+    with:
+      release_tag: ${{ github.event.release.tag_name }}
+
+  # PyPI runs last so a failure there cannot hold back the GitHub release
+  # wheel, its install notes or the images.
+  publish-pypi:
+    needs: [build-wheel, release-notes, publish-crema-images]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - name: Download wheel
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: pyronaut-wheel
+          path: dist
+      - name: Publish wheel to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+
+  # The PyPI command is added to the notes only after the upload succeeds, so
+  # the notes never point at a version that cannot be installed.
+  release-notes-pypi:
+    needs: publish-pypi
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-pip-install.yml
+    with:
+      release_tag: ${{ github.event.release.tag_name }}
+      pypi: true
