@@ -499,8 +499,12 @@ def run(
             debug_vm=debug_vm,
         )
 
-    if not _is_supported_platform(current_platform):
-        print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
+    if not _is_supported_project_platform(current_platform):
+        print(
+            "Pyronaut CLI v2 phase 1 supports macOS and Linux; Windows project commands require "
+            "PYRONAUT_DEV_NATIVE_EXECUTABLE.",
+            file=sys.stderr,
+        )
         return PLATFORM_UNSUPPORTED
 
     project_dir = _extract_project_dir(forwarded_args)
@@ -6043,7 +6047,8 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
 def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> ManagedProcess:
     launch = _launch_indicator(command_line)
     try:
-        process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds)
+        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError:
         launch.abandon()
         raise
@@ -7798,7 +7803,8 @@ def _filter_create_features(output: str, version: str) -> str:
 def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> int:
     launch = _launch_indicator(command_line)
     try:
-        process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds)
+        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError as exception:
         launch.abandon()
         print(f"Failed executing delegated command: {exception}", file=sys.stderr)
@@ -7815,12 +7821,14 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
 
 def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:
     try:
+        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
         completed = subprocess.run(
             command_line,
             check=False,
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            **options,
         )
         return int(completed.returncode)
     except KeyboardInterrupt:
@@ -7828,6 +7836,10 @@ def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = 
     except OSError as exception:
         print(f"Failed executing delegated command: {exception}", file=sys.stderr)
         return INTERNAL_ERROR
+
+
+def _uses_windows_batch_shell(command_line: Sequence[str]) -> bool:
+    return sys.platform == "win32" and bool(command_line) and command_line[0].lower().endswith((".bat", ".cmd"))
 
 
 def _resolve_executable(command_name: str) -> str | None:
@@ -8518,6 +8530,12 @@ def _read_external_test_resources_enabled(project_dir: Path) -> bool:
 
 def _is_supported_platform(platform_name: str) -> bool:
     return platform_name.startswith("linux") or platform_name == "darwin"
+
+
+def _is_supported_project_platform(platform_name: str) -> bool:
+    return _is_supported_platform(platform_name) or (
+        platform_name == "win32" and bool(_read_env("PYRONAUT_DEV_NATIVE_EXECUTABLE"))
+    )
 
 
 def _print_usage(stream=None) -> None:
