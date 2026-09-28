@@ -228,6 +228,7 @@ class ProjectVirtualenvTest(unittest.TestCase):
         self.graalpy_home = self.root / "graalpy"
         self.graalpy = _write_fake_graalpy(self.graalpy_home)
         self.commands = []
+        self.windows_venv = False
         cli._validated_setup_manifest = {"graalpy": {"executable": str(self.graalpy)}}
 
     def tearDown(self):
@@ -238,9 +239,10 @@ class ProjectVirtualenvTest(unittest.TestCase):
         self.commands.append((command, env))
         if command[1:3] == ["-m", "venv"]:
             venv = Path(command[3])
-            python = venv / "bin" / "python"
+            venv_bin = venv / ("Scripts" if self.windows_venv else "bin")
+            python = venv_bin / ("python.exe" if self.windows_venv else "python")
             python.parent.mkdir(parents=True)
-            python.symlink_to(self.graalpy)
+            python.write_text("# fake GraalPy interpreter\n", encoding="utf-8")
             (venv / "pyvenv.cfg").write_text(f"home = {self.graalpy.parent}\n", encoding="utf-8")
         return 0
 
@@ -275,7 +277,9 @@ class ProjectVirtualenvTest(unittest.TestCase):
             ],
             pip_command,
         )
-        self.assertEqual(str(venv), pip_env["VIRTUAL_ENV"])
+        self.assertNotIn("VIRTUAL_ENV", self.commands[0][1])
+        self.assertNotIn("VIRTUAL_ENV", pip_env)
+        self.assertEqual(str(venv / "bin"), pip_env["PATH"].split(os.pathsep)[0])
 
         # Unchanged declarations do not reinstall.
         self.commands.clear()
@@ -291,6 +295,25 @@ class ProjectVirtualenvTest(unittest.TestCase):
         self.commands.clear()
         self.assertEqual(cli.SUCCESS, self.ensure(refresh=True))
         self.assertEqual(1, len(self.commands))
+
+    def test_windows_venv_uses_scripts_and_python_exe(self):
+        self.windows_venv = True
+        (self.project / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+        with patch.dict(os.environ, {"VIRTUAL_ENV": str(self.root / "outer-venv"), "PYTHONHOME": "invalid"}):
+            self.assertEqual(cli.SUCCESS, self.ensure())
+
+        venv = self.project / ".venv"
+        scripts = venv / "Scripts"
+        self.assertEqual(str(scripts / "python.exe"), self.commands[1][0][0])
+        self.assertNotIn("VIRTUAL_ENV", self.commands[0][1])
+        self.assertNotIn("VIRTUAL_ENV", self.commands[1][1])
+        self.assertNotIn("PYTHONHOME", self.commands[0][1])
+        self.assertNotIn("PYTHONHOME", self.commands[1][1])
+        self.assertEqual(str(scripts), self.commands[1][1]["PATH"].split(os.pathsep)[0])
+
+        activated = cli._apply_project_virtualenv({}, self.project)
+        self.assertEqual(str(venv), activated["VIRTUAL_ENV"])
+        self.assertEqual(str(scripts / "python.exe"), activated["PYRONAUT_PYTHON_EXECUTABLE"])
 
     def test_adds_pytest_when_project_has_tests(self):
         (self.project / "pyproject.toml").write_text("[project]\nname = 'app'\n", encoding="utf-8")
@@ -311,8 +334,7 @@ class ProjectVirtualenvTest(unittest.TestCase):
         cpython = self.root / "cpython" / "bin" / "python3"
         cpython.parent.mkdir(parents=True)
         cpython.write_text("#!/bin/sh\n", encoding="utf-8")
-        cpython.chmod(0o755)
-        (venv_bin / "python").symlink_to(cpython)
+        (venv_bin / "python").write_text("# fake CPython interpreter\n", encoding="utf-8")
         (self.project / ".venv" / "pyvenv.cfg").write_text(f"home = {cpython.parent}\n", encoding="utf-8")
         self.assertEqual(cli.PRECONDITION_FAILED, self.ensure())
         self.assertEqual([], self.commands)
