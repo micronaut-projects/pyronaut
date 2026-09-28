@@ -171,8 +171,8 @@ tasks {
         inputs.property("pyronautNativeImageCiArgs", nativeImageCiArgs)
         inputs.property("pyronautPgoMode", PyronautPgo.mode(project).name)
         inputs.property(
-            "pyronautPgoPreserveArg",
-            if (PyronautPgo.mode(project) == PyronautPgo.Mode.OFF) "" else PyronautPgo.graalvmCollectionsPreserveArg()
+            "pyronautPgoPreserveArgs",
+            if (PyronautPgo.mode(project) == PyronautPgo.Mode.OFF) emptyList<String>() else PyronautPgo.graalvmPgoPreserveArgs()
         )
         inputs.property("pyronautCodeCompression", PyronautPgo.codeCompression(project, "pyronaut-run-python"))
         inputs.property("pyronautPgoSampling", PyronautPgo.sampling(project))

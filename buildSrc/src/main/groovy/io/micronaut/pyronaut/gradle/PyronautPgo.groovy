@@ -25,6 +25,8 @@ final class PyronautPgo {
     static final String CODE_COMPRESSION_PROPERTY = "pyronaut.codeCompression"
     // PGO training can dispatch interpreted code to collection AOT methods missed by reachability analysis.
     static final String GRAALVM_COLLECTIONS_PRESERVE_ARG = "-H:Preserve=package=org.graalvm.collections"
+    // GraalOS discovers the GraalPy Truffle language provider at runtime through ServiceLoader.
+    static final String TRUFFLE_PROVIDER_PRESERVE_ARG = "-H:Preserve=package=com.oracle.truffle.api.provider"
     // Instrumented images are compiled at -O2 with profiling code and can outgrow native-image's
     // default heap (47% of RAM, capped at 30 GiB), for example -Ppyronaut.pgo.builderMaxHeap=52g.
     static final String BUILDER_MAX_HEAP_PROPERTY = "pyronaut.pgo.builderMaxHeap"
@@ -40,8 +42,8 @@ final class PyronautPgo {
     private PyronautPgo() {
     }
 
-    static String graalvmCollectionsPreserveArg() {
-        GRAALVM_COLLECTIONS_PRESERVE_ARG
+    static List<String> graalvmPgoPreserveArgs() {
+        [GRAALVM_COLLECTIONS_PRESERVE_ARG, TRUFFLE_PROVIDER_PRESERVE_ARG]
     }
 
     static Mode mode(Project project) {
@@ -130,7 +132,7 @@ final class PyronautPgo {
             args << "--pgo=" + requireProfiles(project, imageName).collect { it.absolutePath }.join(",")
         }
         args << "-H:+UnlockExperimentalVMOptions"
-        args << GRAALVM_COLLECTIONS_PRESERVE_ARG
+        args.addAll(graalvmPgoPreserveArgs())
         if (codeCompression(project, imageName)) {
             args << "-H:+EnableCodeCompression"
         }
@@ -173,7 +175,7 @@ final class PyronautPgo {
             args << "--code-compression"
         }
         args << "-H:+UnlockExperimentalVMOptions"
-        args << GRAALVM_COLLECTIONS_PRESERVE_ARG
+        args.addAll(graalvmPgoPreserveArgs())
         args.addAll(samplingArgs(project))
         args << "-H:BuildOutputJSONFile=" + buildOutputJson(project, imageName).absolutePath
         args << "-H:-UnlockExperimentalVMOptions"
