@@ -53,6 +53,79 @@ final class DirectSourceInstallTest {
     }
 
     @Test
+    void buildInstallResolvesDirectSourcesWithoutIdeSupport(@TempDir Path tempDir) throws Exception {
+        Path project = tempDir.resolve("build-project");
+        Path localRepository = tempDir.resolve("build-maven-local");
+        Files.createDirectories(project);
+        writeEmptyPlatformBom(localRepository);
+        Files.writeString(project.resolve("App.java"), "class App {}\n");
+
+        int exitCode = new CommandLine(new PyronautInstallMain()).execute(
+            "--project-dir", project.toString(),
+            "--local-repository", localRepository.toString(),
+            "--no-ide-support",
+            "App.java"
+        );
+
+        assertEquals(InstallExitCode.SUCCESS.code(), exitCode);
+        assertTrue(Files.isRegularFile(project.resolve("__pyronaut__/resolved-runtime-dependencies")));
+        assertFalse(Files.exists(project.resolve(".classpath")));
+        assertFalse(Files.exists(project.resolve(".vscode")));
+        assertFalse(Files.exists(project.resolve(".idea")));
+    }
+
+    @Test
+    void javaSourcesUseManagedCoreWithoutPythonRuntime(@TempDir Path tempDir) throws Exception {
+        Path project = tempDir.resolve("core-project");
+        Path localRepository = tempDir.resolve("core-maven-local");
+        Files.createDirectories(project);
+        writeEmptyBom(localRepository, "io.micronaut.platform", "micronaut-platform", PyronautManagedVersions.micronautPlatformVersion());
+        String coreVersion = PyronautManagedVersions.micronautCoreVersion();
+        Path coreBom = localRepository.resolve("io/micronaut/micronaut-core-bom").resolve(coreVersion);
+        Files.createDirectories(coreBom);
+        Files.writeString(coreBom.resolve("micronaut-core-bom-" + coreVersion + ".pom"), """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>io.micronaut</groupId>
+              <artifactId>micronaut-core-bom</artifactId>
+              <version>%1$s</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>io.micronaut</groupId>
+                    <artifactId>micronaut-context-python</artifactId>
+                    <version>%1$s</version>
+                  </dependency>
+                  <dependency>
+                    <groupId>io.micronaut</groupId>
+                    <artifactId>micronaut-inject-python</artifactId>
+                    <version>%1$s</version>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """.formatted(coreVersion), StandardCharsets.UTF_8);
+        writeArtifact(localRepository, "io.micronaut", "micronaut-context-python", coreVersion);
+        writeArtifact(localRepository, "io.micronaut", "micronaut-inject-python", coreVersion);
+        Files.writeString(project.resolve("App.java"), "class App {}\n");
+
+        int exitCode = new CommandLine(new PyronautInstallMain()).execute(
+            "--project-dir", project.toString(),
+            "--local-repository", localRepository.toString(),
+            "--offline",
+            "--no-ide-support",
+            "App.java"
+        );
+
+        assertEquals(InstallExitCode.SUCCESS.code(), exitCode);
+        assertFalse(Files.readString(project.resolve("__pyronaut__/resolved-runtime-dependencies"))
+            .contains("micronaut-context-python"));
+        assertFalse(Files.readString(project.resolve("__pyronaut__/resolved-build-dependencies"))
+            .contains("micronaut-inject-python"));
+    }
+
+    @Test
     void installsJavaSourcesAndMergesEditorMetadata(@TempDir Path tempDir) throws Exception {
         Path project = tempDir.resolve("project");
         Path repository = tempDir.resolve("repository");
@@ -405,18 +478,22 @@ final class DirectSourceInstallTest {
     }
 
     private static void writeEmptyPlatformBom(Path repository) throws Exception {
-        String version = PyronautManagedVersions.micronautPlatformVersion();
-        Path directory = repository.resolve("io/micronaut/platform/micronaut-platform").resolve(version);
+        writeEmptyBom(repository, "io.micronaut.platform", "micronaut-platform", PyronautManagedVersions.micronautPlatformVersion());
+        writeEmptyBom(repository, "io.micronaut", "micronaut-core-bom", PyronautManagedVersions.micronautCoreVersion());
+    }
+
+    private static void writeEmptyBom(Path repository, String group, String artifact, String version) throws Exception {
+        Path directory = repository.resolve(group.replace('.', '/')).resolve(artifact).resolve(version);
         Files.createDirectories(directory);
-        Files.writeString(directory.resolve("micronaut-platform-" + version + ".pom"), """
+        Files.writeString(directory.resolve(artifact + "-" + version + ".pom"), """
             <project xmlns="http://maven.apache.org/POM/4.0.0">
               <modelVersion>4.0.0</modelVersion>
-              <groupId>io.micronaut.platform</groupId>
-              <artifactId>micronaut-platform</artifactId>
+              <groupId>%s</groupId>
+              <artifactId>%s</artifactId>
               <version>%s</version>
               <packaging>pom</packaging>
             </project>
-            """.formatted(version), StandardCharsets.UTF_8);
+            """.formatted(group, artifact, version), StandardCharsets.UTF_8);
     }
 
     private static void writeArtifact(Path repository,

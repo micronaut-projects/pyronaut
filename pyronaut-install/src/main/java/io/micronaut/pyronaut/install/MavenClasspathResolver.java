@@ -583,9 +583,9 @@ final class MavenClasspathResolver {
             if (dependencies.build() != null) {
                 build.addAll(dependencies.build());
             }
-            addDefaultCoordinate(build, MICRONAUT_INJECT_PYTHON_MODULE, managedVersions);
-            addDefaultCoordinate(build, MICRONAUT_CONTEXT_PYTHON_MODULE, managedVersions);
-            addDefaultCoordinate(build, MICRONAUT_OPENAPI_PROCESSOR_MODULE, managedVersions);
+            addDefaultCoordinate(build, dependencies, MICRONAUT_INJECT_PYTHON_MODULE, managedVersions);
+            addDefaultCoordinate(build, dependencies, MICRONAUT_CONTEXT_PYTHON_MODULE, managedVersions);
+            addDefaultCoordinate(build, dependencies, MICRONAUT_OPENAPI_PROCESSOR_MODULE, managedVersions);
             return List.copyOf(build);
         }
         if (scope == InstallScope.RUNTIME) {
@@ -593,15 +593,15 @@ final class MavenClasspathResolver {
             if (dependencies.runtime() != null) {
                 runtime.addAll(dependencies.runtime());
             }
-            addDefaultCoordinate(runtime, MICRONAUT_CONTEXT_PYTHON_MODULE, managedVersions);
-            addDefaultCoordinate(runtime, MICRONAUT_TOML_MODULE, managedVersions);
-            addDefaultCoordinate(runtime, MICRONAUT_OPENAPI_ANNOTATIONS_MODULE, managedVersions);
+            addDefaultCoordinate(runtime, dependencies, MICRONAUT_CONTEXT_PYTHON_MODULE, managedVersions);
+            addDefaultCoordinate(runtime, dependencies, MICRONAUT_TOML_MODULE, managedVersions);
+            addDefaultCoordinate(runtime, dependencies, MICRONAUT_OPENAPI_ANNOTATIONS_MODULE, managedVersions);
             String testResourcesClient = testResourcesClientCoordinate(model, managedVersions);
             if (testResourcesClient != null) {
                 runtime.add(testResourcesClient);
             }
             if (controlPanelProductionEnabled(model)) {
-                addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+                addDefaultCoordinate(runtime, dependencies, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
                 addDefaultCacheImplementationIfMissing(runtime, managedVersions);
                 runtime.add(controlPanelManagementCoordinate());
                 runtime.add(controlPanelUiCoordinate());
@@ -613,9 +613,9 @@ final class MavenClasspathResolver {
             if (dependencies.developmentRuntime() != null) {
                 runtime.addAll(dependencies.developmentRuntime());
             }
-            addDefaultCoordinate(runtime, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
+            addDefaultCoordinate(runtime, dependencies, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
             if (isMacOs()) {
-                addDefaultCoordinate(runtime, MICRONAUT_RUNTIME_OSX_MODULE, managedVersions);
+                addDefaultCoordinate(runtime, dependencies, MICRONAUT_RUNTIME_OSX_MODULE, managedVersions);
             }
             addDefaultCacheImplementationIfMissing(runtime, managedVersions);
             if (!model.pyronaut().controlPanelConfigured() || controlPanelEnabled(model)) {
@@ -629,8 +629,8 @@ final class MavenClasspathResolver {
         if (dependencies.test() != null) {
             merged.addAll(dependencies.test());
         }
-        addDefaultCoordinate(merged, JUNIT_PLATFORM_LAUNCHER_MODULE, managedVersions);
-        addDefaultCoordinate(merged, JUNIT_JUPITER_ENGINE_MODULE, managedVersions);
+        addDefaultCoordinate(merged, dependencies, JUNIT_PLATFORM_LAUNCHER_MODULE, managedVersions);
+        addDefaultCoordinate(merged, dependencies, JUNIT_JUPITER_ENGINE_MODULE, managedVersions);
         return List.copyOf(merged);
     }
 
@@ -946,6 +946,21 @@ final class MavenClasspathResolver {
      */
     private static boolean isMacOs() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ENGLISH).contains("mac");
+    }
+
+    /**
+     * Adds a default module unless the project excludes it globally, so that an
+     * exclusion keeps the module off the classpath rather than only removing it
+     * as a transitive dependency.
+     */
+    private static void addDefaultCoordinate(Set<String> coordinates,
+                                             PyprojectModel.Dependencies dependencies,
+                                             String module,
+                                             Map<String, String> managedVersions) {
+        if (dependencies.exclusions() != null && dependencies.exclusions().contains(module)) {
+            return;
+        }
+        addDefaultCoordinate(coordinates, module, managedVersions);
     }
 
     private static void addDefaultCoordinate(Set<String> coordinates, String module, Map<String, String> managedVersions) {

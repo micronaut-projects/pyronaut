@@ -29,9 +29,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HexFormat;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,6 +45,11 @@ public final class DirectSourceDependencyResolver {
     private static final String HASH_FILE = "direct-source-declarations.sha256";
     private static final String LAUNCH_METADATA_FILE = "direct-source-launch.properties";
     private static final String LAUNCH_CACHE_VERSION = "4-complete-test-resources-server-classpath";
+    /** Micronaut's Python runtime, which Java direct sources never need. */
+    private static final List<String> JAVA_SOURCE_EXCLUSIONS = List.of(
+        "io.micronaut:micronaut-context-python",
+        "io.micronaut:micronaut-inject-python"
+    );
     private final MavenClasspathResolver resolver;
 
     /** Creates a resolver using the configured Maven environment. */
@@ -148,13 +153,44 @@ public final class DirectSourceDependencyResolver {
                                           boolean offline,
                                           boolean bypassCache,
                                           List<String> fingerprintInputs) throws IOException {
+        return resolveDetailed(cacheDirectory, declarations, repositories, localRepository, offline, bypassCache,
+            fingerprintInputs, true);
+    }
+
+    /**
+     * Resolves direct-source declarations against the tool's managed Micronaut
+     * Core and Platform versions.
+     *
+     * @param cacheDirectory persistent direct-source cache directory
+     * @param declarations declared dependencies
+     * @param repositories Maven repository URLs
+     * @param localRepository local Maven repository
+     * @param offline whether repository access is offline
+     * @param bypassCache whether manifests must be rewritten
+     * @param fingerprintInputs additional source and launcher cache inputs
+     * @param pythonSources whether the sources are Python; Java sources exclude
+     *                      Micronaut's Python runtime from every scope
+     * @return detailed resolved classpaths
+     * @throws IOException if the cache cannot be read or written
+     */
+    public DetailedResult resolveDetailed(Path cacheDirectory,
+                                          List<DirectSourceDeclarations.Dependency> declarations,
+                                          List<String> repositories,
+                                          Path localRepository,
+                                          boolean offline,
+                                          boolean bypassCache,
+                                          List<String> fingerprintInputs,
+                                          boolean pythonSources) throws IOException {
         List<String> build = declarations.stream().filter(DirectSourceDeclarations.Dependency::build).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         List<String> runtime = declarations.stream().filter(d -> d.scope() == DirectSourceDeclarations.Scope.RUNTIME).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         List<String> test = declarations.stream().filter(DirectSourceDeclarations.Dependency::test).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         List<String> boms = declarations.stream().filter(DirectSourceDeclarations.Dependency::bom).map(DirectSourceDeclarations.Dependency::coordinate).toList();
         Map<String, List<String>> artifactExclusions = new LinkedHashMap<>();
         declarations.forEach(d -> artifactExclusions.put(moduleKey(d.coordinate()), d.exclusions()));
-        String hash = fingerprint(build, runtime, test, boms, artifactExclusions, repositories, localRepository, fingerprintInputs);
+        List<String> globalExclusions = pythonSources ? List.of() : JAVA_SOURCE_EXCLUSIONS;
+        List<String> inputs = new ArrayList<>(fingerprintInputs);
+        globalExclusions.forEach(exclusion -> inputs.add("exclude=" + exclusion));
+        String hash = fingerprint(build, runtime, test, boms, artifactExclusions, repositories, localRepository, inputs);
         Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
         Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
         Path testManifest = cacheDirectory.resolve(InstallScope.TEST.manifestFile());
@@ -163,7 +199,7 @@ public final class DirectSourceDependencyResolver {
             return new DetailedResult(read(buildManifest), read(runtimeManifest), read(testManifest),
                 artifactsFromClasspath(read(buildManifest)), artifactsFromClasspath(read(runtimeManifest)), true);
         }
-        PyprojectModel model = model(build, runtime, test, boms, artifactExclusions, repositories);
+        PyprojectModel model = model(build, runtime, test, boms, globalExclusions, artifactExclusions, repositories);
         var buildDetails = resolver.resolveScopeDetails(model, InstallScope.BUILD, localRepository, offline, bypassCache);
         var runtimeDetails = resolver.resolveScopeDetails(model, InstallScope.RUNTIME, localRepository, offline, bypassCache);
         var testDetails = resolver.resolveScopeDetails(model, InstallScope.TEST, localRepository, offline, bypassCache);
@@ -547,6 +583,12 @@ public final class DirectSourceDependencyResolver {
                 ? List.of()
                 : List.of(localRepository.toAbsolutePath().normalize().toString()));
             update(digest, "additional", additionalInputs);
+            // Direct sources inherit the tool's managed versions; a change must
+            // not reuse manifests resolved against a different Micronaut Core.
+            update(digest, "managed-versions", List.of(
+                PyronautManagedVersions.micronautCoreVersion(),
+                PyronautManagedVersions.micronautPlatformVersion()
+            ));
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
@@ -570,10 +612,12 @@ public final class DirectSourceDependencyResolver {
     }
 
     private static PyprojectModel model(List<String> build, List<String> runtime, List<String> test,
-                                        List<String> boms, Map<String, List<String>> exclusions,
-                                        List<String> repositories) {
-        PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(null, PyronautManagedVersions.micronautPlatformVersion(),
-            repositories, null, new PyprojectModel.Dependencies(runtime, List.of(), build, test, boms, List.of(), exclusions),
+                                        List<String> boms, List<String> globalExclusions,
+                                        Map<String, List<String>> exclusions, List<String> repositories) {
+        // Pin Micronaut Core to the tool's version: the Platform BOM can lag
+        // behind it, and the packaged Pyronaut runtime needs the newer Core.
+        PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(PyronautManagedVersions.micronautCoreVersion(), PyronautManagedVersions.micronautPlatformVersion(),
+            repositories, null, new PyprojectModel.Dependencies(runtime, List.of(), build, test, boms, globalExclusions, exclusions),
             null, null, null, null, null, null, null, null, null, null, false);
         return new PyprojectModel(null, null, pyronaut);
     }

@@ -37,6 +37,7 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
     private static final String INDEX_PATH = "PYRONAUT-INF/classpath.idx";
     private static final String ROOT_PREFIX = "root=";
     private static final String MAIN_CLASS_PREFIX = "main-class=";
+    private static final String MICRONAUT_SERVICES = "META-INF/micronaut";
 
     static {
         registerAsParallelCapable();
@@ -94,12 +95,20 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
                 }
             }
         }
-        return null;
+        JarEntry services = findMicronautServiceDirectory(name);
+        return services == null ? null : entryUrlOrNull(services);
     }
 
     @Override
     protected Enumeration<URL> findResources(String name) {
         List<URL> resources = new ArrayList<>();
+        JarEntry services = findMicronautServiceDirectory(name);
+        if (services != null) {
+            // Roots hold no directory entries; the packager merges every
+            // root's service markers into one directory at the archive root.
+            URL url = entryUrlOrNull(services);
+            return Collections.enumeration(url == null ? List.of() : List.of(url));
+        }
         for (Root root : roots) {
             JarEntry entry = findEntry(root, name);
             if (entry != null) {
@@ -157,6 +166,15 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
         try (InputStream input = jarFile.getInputStream(entry)) {
             return new Manifest(input);
         }
+    }
+
+    private JarEntry findMicronautServiceDirectory(String name) {
+        String directory = name.endsWith("/") ? name.substring(0, name.length() - 1) : name;
+        if (!directory.equals(MICRONAUT_SERVICES) && !directory.startsWith(MICRONAUT_SERVICES + "/")) {
+            return null;
+        }
+        JarEntry entry = jarFile.getJarEntry(directory + "/");
+        return entry != null && entry.isDirectory() ? entry : null;
     }
 
     private JarEntry findEntry(Root root, String logicalName) {

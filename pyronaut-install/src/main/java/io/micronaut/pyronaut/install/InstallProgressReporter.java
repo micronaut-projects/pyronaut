@@ -327,8 +327,9 @@ public final class InstallProgressReporter implements AutoCloseable {
         done("Python editor stubs are up to date");
     }
 
-    void directSourceSelection(String language, int sourceCount) {
-        note("Installing IDE support for " + sourceCount + " direct " + language + " source" + (sourceCount == 1 ? "" : "s") + "...");
+    void directSourceSelection(String language, int sourceCount, boolean ideSupport) {
+        String sources = sourceCount + " direct " + language + " source" + (sourceCount == 1 ? "" : "s");
+        note(ideSupport ? "Installing IDE support for " + sources + "..." : "Resolving dependencies for " + sources + "...");
     }
 
     void directSourceDeclarations(int buildDependencies, int runtimeDependencies, int repositories) {

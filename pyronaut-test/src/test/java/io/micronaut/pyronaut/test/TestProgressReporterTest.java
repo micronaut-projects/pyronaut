@@ -77,7 +77,7 @@ class TestProgressReporterTest {
         assertTrue(output.contains("SKIPPED tests/test_app.py::test_later (skipped: not yet)"), output);
         assertTrue(output.matches("(?s).*1 of 2 tests failed, 1 skipped in \\d+\\.\\ds.*"), output);
         assertTrue(output.contains("Test reports directory: reports"), output);
-        assertTrue(output.contains("Test report: "), output);
+        assertTrue(output.contains("Test report: " + Path.of("reports/index.html").toUri()), output);
         assertFalse(output.contains(""), output);
     }
 
@@ -111,7 +111,7 @@ class TestProgressReporterTest {
         assertTrue(output.contains("  x tests/test_setup.py (error)"), output);
         assertTrue(output.contains("      RuntimeException: import failed"), output);
         assertTrue(output.matches("(?s).*\\[\\d+\\.\\ds] x 1 of 2 tests failed, 1 error \\(\\d+\\.\\ds\\).*"), output);
-        assertTrue(output.contains("  Report: /tmp/reports/index.html"), output);
+        assertTrue(output.contains("  Report: file:///tmp/reports/index.html"), output);
         assertTrue(buffer.toString(StandardCharsets.UTF_8).contains("]8;;file:///tmp/reports/index.html"));
     }
 

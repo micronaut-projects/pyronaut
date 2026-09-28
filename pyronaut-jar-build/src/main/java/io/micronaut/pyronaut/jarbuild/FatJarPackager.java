@@ -32,6 +32,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -51,6 +52,7 @@ public final class FatJarPackager {
     private static final String RESOURCE_ROOT = ARCHIVE_ROOT + "app/resources/";
     private static final String LIB_ROOT = ARCHIVE_ROOT + "lib/";
     private static final String LAUNCHER_PACKAGE = "io/micronaut/pyronaut/jarbuild/launcher/";
+    static final String MICRONAUT_SERVICES = "META-INF/micronaut/";
     private static final long REPRODUCIBLE_TIMESTAMP = 0L;
 
     /**
@@ -133,6 +135,7 @@ public final class FatJarPackager {
                     }
                 }
                 copyLauncherClasses(zip, written);
+                writeMicronautServiceIndex(zip, written, roots);
                 archiveEntries = written.size();
             }
             move(temporary, output);
@@ -213,6 +216,46 @@ public final class FatJarPackager {
                     write(zip, written, entry.getName(), input);
                 }
             }
+        }
+    }
+
+    /**
+     * Merges every root's {@code META-INF/micronaut/<service>/<entry>} markers
+     * into the archive root. Micronaut discovers beans by listing that
+     * directory, and its JAR scan only matches entries at the archive root, so
+     * the prefixed copies inside {@code PYRONAUT-INF} are invisible to it.
+     */
+    private static void writeMicronautServiceIndex(ZipOutputStream zip, Set<String> written, List<Root> roots)
+        throws IOException {
+        TreeSet<String> services = new TreeSet<>();
+        for (String name : written) {
+            for (Root root : roots) {
+                if (!name.startsWith(root.prefix())) {
+                    continue;
+                }
+                String relative = name.substring(root.prefix().length());
+                if (relative.startsWith(MICRONAUT_SERVICES)) {
+                    String[] segments = relative.substring(MICRONAUT_SERVICES.length()).split("/", -1);
+                    if (segments.length >= 2 && !segments[0].isEmpty() && !segments[1].isEmpty()) {
+                        services.add(segments[0] + "/" + segments[1]);
+                    }
+                }
+                break;
+            }
+        }
+        if (services.isEmpty()) {
+            return;
+        }
+        byte[] empty = new byte[0];
+        write(zip, written, MICRONAUT_SERVICES, empty);
+        String currentService = null;
+        for (String service : services) {
+            String serviceName = service.substring(0, service.indexOf('/'));
+            if (!serviceName.equals(currentService)) {
+                write(zip, written, MICRONAUT_SERVICES + serviceName + "/", empty);
+                currentService = serviceName;
+            }
+            write(zip, written, MICRONAUT_SERVICES + service, empty);
         }
     }
 

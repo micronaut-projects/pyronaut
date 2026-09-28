@@ -81,9 +81,19 @@ final class DirectSourceInstaller {
                  boolean offline,
                  boolean bypassCache,
                  InstallProgressReporter progressReporter) throws Exception {
+        install(projectDir, selectors, localRepository, offline, bypassCache, true, progressReporter);
+    }
+
+    void install(Path projectDir,
+                 List<Path> selectors,
+                 Path localRepository,
+                 boolean offline,
+                 boolean bypassCache,
+                 boolean ideSupport,
+                 InstallProgressReporter progressReporter) throws Exception {
         Selection selection = select(projectDir, selectors);
         String language = selection.language() == DirectSourceDiscovery.Language.JAVA ? "Java" : "Python";
-        progressReporter.directSourceSelection(language, selection.files().size());
+        progressReporter.directSourceSelection(language, selection.files().size(), ideSupport);
         Path cacheDir = projectDir.resolve("__pyronaut__");
         Files.createDirectories(cacheDir);
         List<Path> discoveryClasspath = discoveryClasspath();
@@ -114,12 +124,18 @@ final class DirectSourceInstaller {
                 localRepository,
                 offline,
                 bypassCache,
-                fingerprintInputs(selection.files(), discoveryClasspath)
+                fingerprintInputs(selection.files(), discoveryClasspath),
+                selection.language() == DirectSourceDiscovery.Language.PYTHON
             );
             LinkedHashSet<String> resolvedArtifacts = new LinkedHashSet<>(resolved.build());
             resolvedArtifacts.addAll(resolved.runtime());
             resolvedArtifacts.addAll(resolved.test());
             progressReporter.directSourceDependencies(resolvedArtifacts.size());
+            if (!ideSupport) {
+                // Builds only need the resolved dependency manifests; editor
+                // metadata is for `pyronaut install` on the user's sources.
+                return;
+            }
             if (selection.language() == DirectSourceDiscovery.Language.JAVA) {
                 List<Path> ideClasspath = jarClasspath(discoveryClasspath, resolved.build(), resolved.runtime());
                 javaEditorSupport.ensureWritten(

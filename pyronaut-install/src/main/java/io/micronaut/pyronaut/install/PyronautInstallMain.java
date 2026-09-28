@@ -82,6 +82,9 @@ public final class PyronautInstallMain implements Callable<Integer> {
     @CommandLine.Option(names = "--offline", description = "Use offline mode for repository access")
     boolean offline;
 
+    @CommandLine.Option(names = "--no-ide-support", hidden = true, description = "Resolve direct sources without generating IDE support files")
+    boolean noIdeSupport;
+
     @CommandLine.Option(names = "--resolve-tools-only", hidden = true, description = "Resolve SDK launcher classpaths without installing a project")
     boolean resolveToolsOnly;
 
@@ -196,6 +199,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                         localRepo,
                         offline,
                         refresh || noCache,
+                        !noIdeSupport,
                         progressReporter
                     );
                 }
