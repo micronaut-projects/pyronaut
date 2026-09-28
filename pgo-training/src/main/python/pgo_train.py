@@ -70,6 +70,10 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _venv_python(venv: Path, *, windows: bool = os.name == "nt") -> Path:
+    return venv / ("Scripts/python.exe" if windows else "bin/python")
+
+
 def pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -295,7 +299,8 @@ class Trainer:
     def _create_venv(self) -> Path:
         venv = self.work / "venv"
         self._check([self.options.graalpy, "-m", "venv", str(venv)], "create-venv", cwd=self.work, env=os.environ.copy())
-        self._check([str(venv / "bin" / "python"), "-m", "pip", "install", "--quiet", "pytest==9.0.3"],
+        python = _venv_python(venv)
+        self._check([str(python), "-m", "pip", "install", "--quiet", "pytest==9.0.3"],
                     "pip-install", cwd=self.work, env=os.environ.copy())
         return venv
 
@@ -328,7 +333,7 @@ class Trainer:
             "PYTHONPATH": self.options.cli_source,
             "PYRONAUT_TRACE_DELEGATION": "1",
             "VIRTUAL_ENV": str(self.venv),
-            "PATH": f"{self.venv / 'bin'}{os.pathsep}{Path(self.options.java_home) / 'bin'}{os.pathsep}{env.get('PATH', '')}",
+            "PATH": f"{_venv_python(self.venv).parent}{os.pathsep}{Path(self.options.java_home) / 'bin'}{os.pathsep}{env.get('PATH', '')}",
             "PGO_SCENARIO": scenario,
             "PGO_PROFILES_DIR": str(self.profiles),
             "PGO_PIDS_DIR": str(self.pids),
