@@ -9472,7 +9472,7 @@ def _graalpy_sdk_home(spec: _GraalPySpec) -> Path:
 
 
 def _graalpy_executable_in(home: Path) -> Path | None:
-    for name in ("graalpy", "python3", "python"):
+    for name in ("graalpy", "graalpy.exe", "python3", "python3.exe", "python", "python.exe"):
         candidate = home / "bin" / name
         if _is_executable_file(candidate):
             return candidate
