@@ -25,7 +25,9 @@ val graalPy = providers.gradleProperty("pyronaut.pgo.graalpy")
     .orElse(providers.gradleProperty("pyronautPyenvVersion").map {
         "${System.getProperty("user.home")}/.pyenv/versions/$it/bin/graalpy"
     })
-val nativeExecutableSuffix = if (System.getProperty("os.name").lowercase().contains("windows")) ".exe" else ""
+val isWindows = System.getProperty("os.name").lowercase().contains("windows")
+val nativeExecutableSuffix = if (isWindows) ".exe" else ""
+val launcherSuffix = if (isWindows) ".bat" else ""
 val trainingScale = providers.gradleProperty("pyronaut.pgo.trainingScale").orElse("1.0")
 // Comma-separated scenarios to leave out, for local debugging only: a release profile must cover every scenario.
 val trainingSkip = providers.gradleProperty("pyronaut.pgo.trainingSkip").orElse("")
@@ -33,7 +35,7 @@ val trainingSkip = providers.gradleProperty("pyronaut.pgo.trainingSkip").orElse(
 fun toolProject(tool: String) = project(":micronaut-pyronaut-$tool")
 
 fun toolExecutable(tool: String): File = toolProject(tool).layout.buildDirectory
-    .file("install/micronaut-pyronaut-$tool/bin/pyronaut-$tool").get().asFile
+    .file("install/micronaut-pyronaut-$tool/bin/pyronaut-$tool$launcherSuffix").get().asFile
 
 val imageManifestTasks = mapOf(
     "pyronaut-dev" to ":micronaut-pyronaut-dev:writeNativeClasspathManifests",

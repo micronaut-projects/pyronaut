@@ -42,6 +42,29 @@ echo $$ >> "$PGO_PIDS_DIR/$scenario.pids"
 exec "@EXECUTABLE@" "-XX:ProfilesDumpFile=$PGO_PROFILES_DIR/$scenario-$$.iprof" "$@"
 """
 
+WINDOWS_INSTRUMENTED_SHIM = """import os
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+scenario = os.environ.get("PGO_SCENARIO", "unscoped")
+profiles = Path(os.environ["PGO_PROFILES_DIR"])
+pids = Path(os.environ["PGO_PIDS_DIR"])
+profiles.mkdir(parents=True, exist_ok=True)
+pids.mkdir(parents=True, exist_ok=True)
+profile = profiles / f"{scenario}-{uuid.uuid4().hex}.iprof"
+process = subprocess.Popen(
+    [@EXECUTABLE@, f"-XX:ProfilesDumpFile={profile}", *sys.argv[1:]],
+    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+)
+with (pids / f"{scenario}.pids").open("a", encoding="utf-8") as stream:
+    stream.write(f"{process.pid}\\t{profile.name}\\n")
+with (pids / f"{scenario}.children.pids").open("a", encoding="utf-8") as stream:
+    stream.write(f"{process.pid}\\n")
+raise SystemExit(process.wait())
+"""
+
 # The CLI passes native-launcher style leading -D/-XX options, which the Gradle start script
 # cannot take, so the JVM pyronaut-dev is started directly.
 JVM_DEV_SHIM = """#!/bin/bash
@@ -56,6 +79,41 @@ done
 exec "$JAVA_HOME/bin/java" --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED \\
   ${jvm_args[@]+"${jvm_args[@]}"} -cp "@LIB@/*" io.micronaut.pyronaut.dev.PyronautDevMain "$@"
 """
+
+WINDOWS_JVM_DEV_SHIM = """import os
+import subprocess
+import sys
+from pathlib import Path
+
+arguments = sys.argv[1:]
+jvm_args = []
+while arguments and (arguments[0].startswith("-D") or arguments[0].startswith("-XX")):
+    jvm_args.append(arguments.pop(0))
+command = [
+    @JAVA@,
+    "--sun-misc-unsafe-memory-access=allow",
+    "--enable-native-access=ALL-UNNAMED",
+    *jvm_args,
+    "-cp",
+    @CLASSPATH@,
+    "io.micronaut.pyronaut.dev.PyronautDevMain",
+    *arguments,
+]
+process = subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+scenario = os.environ.get("PGO_SCENARIO")
+if scenario:
+    pids = Path(os.environ["PGO_PIDS_DIR"])
+    pids.mkdir(parents=True, exist_ok=True)
+    with (pids / f"{scenario}.children.pids").open("a", encoding="utf-8") as stream:
+        stream.write(f"{process.pid}\\n")
+raise SystemExit(process.wait())
+"""
+
+
+def _process_group_options() -> dict:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
 
 
 class TrainingError(RuntimeError):
@@ -271,22 +329,46 @@ class Trainer:
     def _write_instrumented_shim(self) -> None:
         directory = self.shims / self.image
         directory.mkdir()
-        shim = directory / self.image
-        shim.write_text(INSTRUMENTED_SHIM.replace("@EXECUTABLE@", str(Path(self.options.executable).resolve())))
-        shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        executable = str(Path(self.options.executable).resolve())
+        if os.name == "nt":
+            shim = self._write_windows_shim(
+                directory / self.image,
+                WINDOWS_INSTRUMENTED_SHIM.replace("@EXECUTABLE@", repr(executable)),
+            )
+        else:
+            shim = directory / self.image
+            shim.write_text(INSTRUMENTED_SHIM.replace("@EXECUTABLE@", executable))
+            shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         self._copy_manifests(directory, Path(self.options.manifests_dir))
         if self.image == "pyronaut-dev":
             shutil.copytree(Path(self.options.dev_install_dir).resolve() / "lib", directory / "lib")
         self.instrumented_shim = shim
+
+    def _write_windows_shim(self, base: Path, script: str) -> Path:
+        helper = base.with_suffix(".py")
+        shim = base.with_suffix(".cmd")
+        helper.write_text(script, encoding="utf-8")
+        shim.write_text(
+            f'@echo off\r\n"{self.options.graalpy}" "%~dpn0.py" %*\r\nexit /b %ERRORLEVEL%\r\n',
+            encoding="utf-8",
+        )
+        return shim
 
     def _write_jvm_dev_shim(self) -> None:
         install = Path(self.options.dev_install_dir).resolve()
         directory = self.shims / "jvm-dev"
         (directory / "bin").mkdir(parents=True)
         shutil.copytree(install / "lib", directory / "lib")
-        shim = directory / "bin" / "pyronaut-dev"
-        shim.write_text(JVM_DEV_SHIM.replace("@LIB@", str(install / "lib")))
-        shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        base = directory / "bin" / "pyronaut-dev"
+        if os.name == "nt":
+            classpath = str(install / "lib" / "*")
+            script = WINDOWS_JVM_DEV_SHIM.replace("@JAVA@", repr(str(Path(self.options.java_home) / "bin" / "java.exe")))
+            script = script.replace("@CLASSPATH@", repr(classpath))
+            shim = self._write_windows_shim(base, script)
+        else:
+            shim = base
+            shim.write_text(JVM_DEV_SHIM.replace("@LIB@", str(install / "lib")))
+            shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         self._copy_manifests(directory / "bin", install / "bin")
         self.jvm_dev_shim = shim
 
@@ -402,7 +484,7 @@ class Trainer:
             output = log_file.open("w")
             started = time.monotonic()
             process = subprocess.Popen(self.cli(*args), cwd=cwd, env=self.env(name), stdout=output,
-                                       stderr=subprocess.STDOUT, start_new_session=True)
+                                       stderr=subprocess.STDOUT, **_process_group_options())
             details: dict = {}
             try:
                 self._wait_ready(port, process, log_file)
@@ -435,6 +517,8 @@ class Trainer:
 
     def _stop(self, scenario: str, process: subprocess.Popen) -> None:
         if self.jvm:
+            if os.name == "nt":
+                self._stop_windows_children(scenario)
             self._signal_group(process, signal.SIGTERM)
             return
         # Stop the CLI first so that a development watcher cannot restart the application, then
@@ -442,6 +526,9 @@ class Trainer:
         if process.poll() is None:
             process.kill()
             process.wait()
+        if os.name == "nt":
+            self._stop_windows_children(scenario)
+            return
         for pid in self._pids(scenario):
             if pid_alive(pid):
                 os.kill(pid, signal.SIGTERM)
@@ -455,8 +542,34 @@ class Trainer:
         if survivors:
             raise TrainingError(f"{scenario}: launcher processes {survivors} ignored SIGTERM and were killed")
 
+    def _stop_windows_children(self, scenario: str) -> None:
+        pids = self._pids(scenario)
+        for pid in pids:
+            if pid_alive(pid):
+                try:
+                    os.kill(pid, signal.CTRL_BREAK_EVENT)
+                except (ProcessLookupError, PermissionError):
+                    pass
+        deadline = time.monotonic() + self.options.shutdown_timeout
+        while time.monotonic() < deadline and any(pid_alive(pid) for pid in pids):
+            time.sleep(0.5)
+        survivors = [pid for pid in pids if pid_alive(pid)]
+        for pid in survivors:
+            os.kill(pid, signal.SIGTERM)
+        if survivors:
+            raise TrainingError(f"{scenario}: launcher processes {survivors} ignored CTRL_BREAK and were terminated")
+
     @staticmethod
     def _signal_group(process: subprocess.Popen, sig: int) -> None:
+        if os.name == "nt":
+            if process.poll() is None:
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            try:
+                process.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            return
         try:
             os.killpg(process.pid, sig)
         except (ProcessLookupError, PermissionError):
@@ -468,15 +581,32 @@ class Trainer:
             process.wait()
 
     def _pids(self, scenario: str) -> list[int]:
+        files = (self.pids / f"{scenario}.pids", self.pids / f"{scenario}.children.pids")
+        return list(dict.fromkeys(
+            int(line.split("\t", 1)[0])
+            for file in files if file.is_file()
+            for line in file.read_text().splitlines() if line.strip()
+        ))
+
+    def _launcher_profiles(self, scenario: str) -> list[tuple[int, Path]]:
         file = self.pids / f"{scenario}.pids"
-        return [int(line) for line in file.read_text().split()] if file.is_file() else []
+        if not file.is_file():
+            return []
+        entries = []
+        for line in file.read_text().splitlines():
+            if not line.strip():
+                continue
+            pid, separator, profile = line.partition("\t")
+            profile_path = self.profiles / profile if separator else self.profiles / f"{scenario}-{pid}.iprof"
+            entries.append((int(pid), profile_path))
+        return entries
 
     def _record(self, scenario: str, **details) -> None:
         entry = dict(details)
         if not self.jvm:
             profiles = sorted(self.profiles.glob(f"{scenario}-*.iprof"))
-            launched = self._pids(scenario)
-            missing = [pid for pid in launched if not (self.profiles / f"{scenario}-{pid}.iprof").is_file()]
+            launched = self._launcher_profiles(scenario)
+            missing = [str(profile) for _pid, profile in launched if not profile.is_file()]
             empty = [profile.name for profile in profiles if profile.stat().st_size == 0]
             if not launched:
                 raise TrainingError(f"{scenario}: the instrumented {self.image} was never launched")

@@ -13,7 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import socket
 import threading
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from unittest.mock import ANY
 
 _CLI_MODULE_PATH = Path(__file__).resolve().parents[2] / "main" / "python" / "pyronaut_cli_v2" / "cli.py"
@@ -437,9 +437,53 @@ class OrchestratorTest(unittest.TestCase):
             self.assertIn("pyronaut-validate-config", executed[0][0])
             self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "main"], executed[1])
 
-    def test_platform_guardrail(self):
+    def test_project_commands_are_supported_on_windows_with_native_launcher(self):
+        executed = []
+        with patch.dict(os.environ, {"PYRONAUT_DEV_NATIVE_EXECUTABLE": "C:/pyronaut-dev.cmd"}):
+            exit_code = cli.run(
+                ["install", "--project-dir", "C:/demo"],
+                runner=lambda command_line: executed.append(command_line) or 0,
+                resolver=self._resolver(),
+                platform_name="win32",
+            )
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        self.assertEqual([["/tmp/pyronaut-install", "--project-dir", "C:/demo"]], executed)
+
+    def test_windows_project_commands_require_native_launcher(self):
         exit_code = cli.run(["install"], runner=self._runner_ok(), resolver=self._resolver(), platform_name="win32")
         self.assertEqual(cli.PLATFORM_UNSUPPORTED, exit_code)
+
+    def test_setup_remains_unsupported_on_windows(self):
+        exit_code = cli.run(["setup"], runner=self._runner_ok(), resolver=self._resolver(), platform_name="win32")
+        self.assertEqual(cli.PLATFORM_UNSUPPORTED, exit_code)
+
+    def test_windows_batch_launchers_use_command_shell(self):
+        with patch.object(cli.sys, "platform", "win32"):
+            self.assertTrue(cli._uses_windows_batch_shell([r"C:\tools\pyronaut.cmd", "install"]))
+            self.assertTrue(cli._uses_windows_batch_shell([r"C:\tools\pyronaut-install.bat"]))
+            self.assertFalse(cli._uses_windows_batch_shell([r"C:\tools\pyronaut.exe"]))
+        with patch.object(cli.sys, "platform", "linux"):
+            self.assertFalse(cli._uses_windows_batch_shell(["pyronaut-install.bat"]))
+
+    def test_windows_batch_delegate_runs_through_shell(self):
+        launch = Mock()
+        launch.environment.return_value = {}
+        launch.pass_fds = ()
+        process = MagicMock()
+        process.wait.return_value = cli.SUCCESS
+
+        with (
+            patch.object(cli.sys, "platform", "win32"),
+            patch.object(cli, "_launch_indicator", return_value=launch),
+            patch.object(cli.subprocess, "Popen", return_value=process) as popen,
+        ):
+            exit_code = cli._run_subprocess([r"C:\tools\pyronaut-install.bat", "install"], {})
+
+        self.assertEqual(cli.SUCCESS, exit_code)
+        popen.assert_called_once_with(
+            [r"C:\tools\pyronaut-install.bat", "install"], env={}, pass_fds=(), shell=True
+        )
 
     def test_default_delegation_does_not_print_command_line(self):
         stderr = io.StringIO()
