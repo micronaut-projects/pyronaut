@@ -551,7 +551,8 @@ Packaging selection:
 
 The configured values are `fat-jar`, `wheel-jvm`, `wheel-native`,
 `wheel-crema`, `docker-jvm`, `docker-native`, and `docker-crema`; the default is
-`wheel-jvm`. Explicit flags take precedence. The spelling `jar` is not accepted
+`fat-jar` for Java applications (Maven and Gradle projects, projects with Java
+sources, and direct `.java` sources) and `wheel-jvm` otherwise. Explicit flags take precedence. The spelling `jar` is not accepted
 in configuration. Pyronaut no longer accepts `tool.pyronaut.build.mode`: migrate JVM and
 native values to `wheel-jvm` and `wheel-native` (or the matching Docker/Crema
 format). `tool.pyronaut.toolchain.type` continues to select how CLI tools run,

@@ -39,6 +39,7 @@ import java.util.jar.Manifest;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -340,6 +341,49 @@ class FatJarPackagerTest {
         String processOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertEquals(0, process.waitFor(), processOutput);
         assertTrue(processOutput.contains("packaged-application-discovered"), processOutput);
+    }
+
+    @Test
+    void startsAMicronautContextFromDependencyBeanDefinitions() throws Exception {
+        Path classes = temporaryDirectory.resolve("context-application");
+        List<Path> dependencies = Arrays.stream(System.getProperty("java.class.path").split(System.getProperty("path.separator")))
+            .map(Path::of)
+            .filter(Files::exists)
+            .toList();
+        compile(classes, dependencies, source("context/Main.java", """
+            package context;
+            import io.micronaut.context.ApplicationContext;
+            import io.micronaut.context.event.ApplicationEventPublisher;
+            import io.micronaut.context.event.StartupEvent;
+            import io.micronaut.core.type.Argument;
+            public final class Main {
+                public static void main(String[] args) {
+                    try (ApplicationContext context = ApplicationContext.run()) {
+                        context.getBean(Argument.of(ApplicationEventPublisher.class, StartupEvent.class));
+                        System.out.println("context-started");
+                    }
+                }
+            }
+            """));
+        Path output = temporaryDirectory.resolve("context.jar");
+        new FatJarPackager().packageApplication(
+            FatJarRequest.builder(output, classes, "context.Main")
+                .applicationName("context-test")
+                .applicationVersion("1.0")
+                .classpath(dependencies)
+                .build()
+        );
+
+        try (JarFile jar = new JarFile(output.toFile())) {
+            assertNotNull(jar.getJarEntry("META-INF/micronaut/io.micronaut.inject.BeanDefinitionReference/"
+                + "io.micronaut.context.event.ApplicationEventPublisherFactory"));
+        }
+        Process process = new ProcessBuilder(javaExecutable(), "-jar", output.toString())
+            .redirectErrorStream(true)
+            .start();
+        String processOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, process.waitFor(), processOutput);
+        assertTrue(processOutput.contains("context-started"), processOutput);
     }
 
     @Test

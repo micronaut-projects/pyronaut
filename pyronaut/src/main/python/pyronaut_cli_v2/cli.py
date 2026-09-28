@@ -2681,6 +2681,9 @@ def _run_direct_source_build(
             str(declaration_root),
             *_local_repository_install_args(_extract_local_repository(args)),
             *declaration_selectors,
+            # IDE metadata is only useful for `pyronaut install` on the user's
+            # own sources; the build only needs the resolved manifests.
+            "--no-ide-support",
         ]
         if no_cache:
             install_args.append("--no-cache")
@@ -2732,7 +2735,7 @@ def _run_direct_source_build(
                     encoding="utf-8",
                 )
 
-        exit_code = _run_build(
+        return _run_build(
             args=_direct_build_arguments(args, staging_project, root, language),
             runner=runner,
             resolver=resolver,
@@ -2742,14 +2745,8 @@ def _run_direct_source_build(
             project_metadata=(project_name, project_version),
             preflight_install=False,
             platform_name=platform_name,
+            dist_dir=root / "dist",
         )
-        if exit_code == SUCCESS and not _extract_build_docker(args):
-            dist = root / "dist"
-            dist.mkdir(parents=True, exist_ok=True)
-            for artifact in (staging_project / "dist").glob("*"):
-                if artifact.is_file():
-                    shutil.copy2(artifact, dist / artifact.name)
-        return exit_code
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -2765,12 +2762,16 @@ def _run_build(
     project_metadata: tuple[str, str] | None = None,
     preflight_install: bool = True,
     platform_name: str | None = None,
+    dist_dir: Path | None = None,
 ) -> int:
     if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
         _print_build_usage()
         return SUCCESS
 
     project_dir = Path(_extract_project_dir(args)).resolve()
+    # Direct-source builds stage a project under __pyronaut__ but publish the
+    # artifacts next to the user's sources.
+    dist_dir = dist_dir or project_dir / "dist"
     verbose = _extract_build_verbose(args)
     try:
         packaging_format = _resolve_packaging_format(project_dir, args)
@@ -2903,6 +2904,7 @@ def _run_build(
             runner=runner,
             resolver=resolver,
             java_home_provider=java_home_provider,
+            dist_dir=dist_dir,
         )
 
     if docker_build:
@@ -2923,7 +2925,6 @@ def _run_build(
             additional_native_binaries=additional_native_binaries,
         )
 
-    dist_dir = project_dir / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
     _remove_existing_built_wheels(dist_dir, project_name)
     python_exec = _read_env("PYRONAUT_PYTHON_EXECUTABLE") or sys.executable or "python3"
@@ -3145,6 +3146,7 @@ def _run_fat_jar_build(
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
     java_home_provider: JavaHomeProvider | None,
+    dist_dir: Path | None = None,
 ) -> int:
     delegate_executable = resolver(JAR_BUILD_EXECUTABLE)
     if delegate_executable is None:
@@ -3178,7 +3180,7 @@ def _run_fat_jar_build(
             if (resolved := _resolve_layout_dir(project_dir, configured)).is_dir()
         ]
 
-    dist_dir = project_dir / "dist"
+    dist_dir = dist_dir or project_dir / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
     output = dist_dir / f"{_jar_file_component(project_name)}-{_jar_file_component(project_version)}.jar"
     with tempfile.TemporaryDirectory(prefix="pyronaut-build-jar-") as temporary:
@@ -4706,6 +4708,10 @@ def _resolve_packaging_format(project_dir: Path, args: Sequence[str]) -> str:
         return "docker-native" if docker else "wheel-native"
 
     if configured == "fat-jar" and _has_main_class_option(args):
+        if not _packaging_format_configured(project_dir):
+            # The FAT JAR default for Java always launches PyronautRunMain; a
+            # custom main class keeps the previous JVM wheel default.
+            return DEFAULT_PACKAGING_FORMAT
         raise ValueError("--main-class is not supported for fat-jar packaging; PyronautRunMain is always used")
     return configured
 
@@ -4957,10 +4963,28 @@ def _toolchain_type_from_pyronaut_table(pyronaut: dict[str, object] | None) -> s
     raise ValueError("Invalid toolchain type in pyproject.toml. Use tool.pyronaut.toolchain.type = 'jvm' or 'native'")
 
 
+def _default_packaging_format(project_dir: Path) -> str:
+    """Java applications default to a FAT JAR; Python applications to a wheel."""
+    if _is_external_build_project(project_dir):
+        return "fat-jar"
+    if not (project_dir / "pyproject.toml").is_file():
+        return DEFAULT_PACKAGING_FORMAT
+    java_root = project_dir / _read_pyproject_sources(project_dir).java_source_dir
+    if java_root.is_dir() and any(java_root.rglob("*.java")):
+        return "fat-jar"
+    return DEFAULT_PACKAGING_FORMAT
+
+
+def _packaging_format_configured(project_dir: Path) -> bool:
+    pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    packaging = pyronaut.get("packaging") if isinstance(pyronaut, dict) else None
+    return isinstance(packaging, dict) and "format" in packaging
+
+
 def _read_pyproject_packaging_format(project_dir: Path) -> str:
     pyronaut = _read_pyproject_pyronaut_table(project_dir)
     if not isinstance(pyronaut, dict):
-        return DEFAULT_PACKAGING_FORMAT
+        return _default_packaging_format(project_dir)
     build = pyronaut.get("build")
     if isinstance(build, dict):
         if "base-image" in build:
@@ -4971,10 +4995,12 @@ def _read_pyproject_packaging_format(project_dir: Path) -> str:
             raise ValueError("Unsupported configuration 'tool.pyronaut.build.mode'; use 'tool.pyronaut.packaging.format'")
     packaging = pyronaut.get("packaging")
     if packaging is None:
-        return DEFAULT_PACKAGING_FORMAT
+        return _default_packaging_format(project_dir)
     if not isinstance(packaging, dict):
         raise ValueError("Invalid [tool.pyronaut.packaging]: expected a table")
-    value = packaging.get("format", DEFAULT_PACKAGING_FORMAT)
+    if "format" not in packaging:
+        return _default_packaging_format(project_dir)
+    value = packaging["format"]
     if not isinstance(value, str):
         raise ValueError("Invalid tool.pyronaut.packaging.format: expected a string")
     normalized = value.strip()

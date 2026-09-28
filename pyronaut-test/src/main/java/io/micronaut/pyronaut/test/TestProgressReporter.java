@@ -239,7 +239,10 @@ public final class TestProgressReporter implements TestExecutionListener, AutoCl
             region.printAbove(region.stamp(tone, glyph, message, took));
             if (reportDirectory != null) {
                 Path html = reportDirectory.resolve("index.html");
-                region.printAbove(region.paint(LiveRegion.DIM, "  Report: " + Terminal.link(displayPath(html), html.toUri().toString())));
+                // Show the file: URL itself: terminals without OSC 8 support
+                // still detect it as a link, unlike a relative path.
+                String uri = html.toUri().toString();
+                region.printAbove(region.paint(LiveRegion.DIM, "  Report: " + Terminal.link(uri, uri)));
             }
         } else {
             output.println(message + " in " + Terminal.formatDuration(took));
@@ -261,7 +264,8 @@ public final class TestProgressReporter implements TestExecutionListener, AutoCl
         Path directory = reportDirectory.normalize();
         Path html = directory.resolve("index.html");
         output.println("Test reports directory: " + directory);
-        output.println("Test report: " + (hyperlink ? Terminal.link(html.toString(), html.toUri().toString()) : html.toString()));
+        String uri = html.toUri().toString();
+        output.println("Test report: " + (hyperlink ? Terminal.link(uri, uri) : uri));
     }
 
     /**
@@ -378,15 +382,6 @@ public final class TestProgressReporter implements TestExecutionListener, AutoCl
         return region.glyphs();
     }
 
-    private static String displayPath(Path path) {
-        try {
-            Path cwd = Path.of("").toAbsolutePath();
-            Path absolute = path.toAbsolutePath().normalize();
-            return absolute.startsWith(cwd) ? cwd.relativize(absolute).toString() : absolute.toString();
-        } catch (RuntimeException e) {
-            return path.toString();
-        }
-    }
 
     private List<String> frameLines(LiveRegion region, int spinnerFrame, int width) {
         List<String> lines = new ArrayList<>();

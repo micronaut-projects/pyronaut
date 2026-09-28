@@ -1,7 +1,9 @@
 = Packaging and Deployment
 
-`pyronaut build` packages the processed application for distribution. The
-default is `wheel-jvm`; configure another default with
+`pyronaut build` packages the processed application for distribution. Java
+applications (Maven and Gradle projects, projects with Java sources, and direct
+`.java` sources) default to `fat-jar`; Python applications default to
+`wheel-jvm`. Configure another default with
 `tool.pyronaut.packaging.format`. An explicit packaging flag takes precedence
 over that setting. `tool.pyronaut.toolchain.type` only controls how Pyronaut's
 CLI tooling executes and does not select a build output.
@@ -14,12 +16,13 @@ CLI tooling executes and does not select a build output.
 
 |`fat-jar`
 |`pyronaut build --jar`
-|One JVM-hosted artifact runnable with `java -jar`. It includes the selected
-Java or Python production runtime and is typically larger than a wheel.
+|The default for Java applications. One JVM-hosted artifact runnable with
+`java -jar`. It includes the selected Java or Python production runtime and is
+typically larger than a wheel.
 
 |`wheel-jvm`
 |`pyronaut build --jvm`
-|The default Python distribution. It has the shortest build time and is a good
+|The default for Python applications. It has the shortest build time and is a good
 choice when a JVM is already available in the deployment environment.
 
 |`docker-jvm`
@@ -74,7 +77,9 @@ The outer JAR contains a small launcher plus an indexed `PYRONAUT-INF` layout.
 Application classes and resources precede dependencies, followed by dependency
 roots in resolved-classpath order. Duplicate classes use first-root-wins
 semantics. Resources, including `META-INF/services` descriptors, remain
-enumerable across every root. The launcher preserves multi-release JAR
+enumerable across every root. The packager also merges every root's Micronaut
+bean and service markers into `META-INF/micronaut/` at the archive root so that
+Micronaut's classpath scanning finds them. The launcher preserves multi-release JAR
 selection and package manifest metadata such as sealing. It reads entries directly
 from the artifact and does not extract them to disk.
 
@@ -265,10 +270,15 @@ Docker, and native-base flows as a regular project:
 ----
 pyronaut build App.java --native --name hello-java --version 1.0.0
 pyronaut build App.py --docker --native-base=default
-pyronaut build App.java --jar --name hello-java --version 1.0.0
+pyronaut build App.java --name hello-java --version 1.0.0
 ----
 
-Pyronaut compiles sources to disk under `__pyronaut__/direct-source-build`. Use
+Direct `.java` sources build a FAT JAR by default and `.py` sources a JVM
+wheel. Pyronaut compiles sources to disk under
+`__pyronaut__/direct-source-build` and writes the artifacts to `dist/` next to
+the sources, for example `dist/hello-java-1.0.0.jar`. The build resolves
+dependencies only; it does not generate the IDE files that
+`pyronaut install App.java` creates. Use
 `--setup pyproject.toml` for project configuration. Pyronaut resolves inline
 `@Dependency` declarations before packaging and includes them in a custom
 native base's SBOM.

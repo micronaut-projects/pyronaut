@@ -25,7 +25,7 @@ class InstallProgressReporterTest {
             reporter.artifactProgressed(InstallScope.RUNTIME, "a/b/runtime-dependency-1.0.jar", 10, 100);
             reporter.finishScope(InstallScope.RUNTIME, 3);
             reporter.generatedApplicationSchema(12);
-            reporter.directSourceSelection("Java", 2);
+            reporter.directSourceSelection("Java", 2, true);
             reporter.directSourceDeclarations(1, 2, 1);
             reporter.directSourceDependencies(4);
             reporter.directSourceEditorSupport("Java");
@@ -37,6 +37,7 @@ class InstallProgressReporterTest {
         assertTrue(output.contains("Resolved runtime dependencies (3 artifacts)"));
         assertTrue(output.contains("Generated application schema from runtime classpath (12 fragments)"));
         assertTrue(output.contains("Installing IDE support for 2 direct Java sources..."));
+        assertFalse(output.contains("Resolving dependencies for 2 direct Java sources..."));
         assertTrue(output.contains("Discovered direct-source declarations (1 build, 2 runtime, 1 repositories)"));
         assertTrue(output.contains("Resolved direct-source dependencies (4 artifacts)"));
         assertTrue(output.contains("Generated Java IDE support"));
@@ -185,7 +186,7 @@ class InstallProgressReporterTest {
             reporter.artifactStarted(InstallScope.TEST, "a/b/c.jar");
             reporter.finishScope(InstallScope.TEST, 2);
             reporter.generatedApplicationSchema(5);
-            reporter.directSourceSelection("Java", 2);
+            reporter.directSourceSelection("Java", 2, true);
             reporter.directSourceDeclarations(1, 2, 1);
             reporter.directSourceDependencies(4);
             reporter.directSourceEditorSupport("Java");

@@ -6421,8 +6421,11 @@ additional-test-resources = ["test-fixtures"]
             self.assertTrue((staging_project / "__pyronaut__" / "resolved-runtime-dependencies").is_file())
             self.assertTrue((staging_project / "__pyronaut__" / "resolved-test-dependencies").is_file())
 
-    def test_build_direct_source_jar_is_copied_to_requested_project_dist(self):
+    def test_build_direct_source_jar_is_written_to_requested_project_dist(self):
+        install_args = []
+
         def fake_delegate(command, args, runner, resolver, **kwargs):
+            install_args.append(list(args))
             project_dir = Path(args[args.index("--project-dir") + 1])
             cache = project_dir / "__pyronaut__"
             (cache / "classes").mkdir(parents=True, exist_ok=True)
@@ -6432,8 +6435,7 @@ additional-test-resources = ["test-fixtures"]
 
         def fake_build(**kwargs):
             self.assertIn("--jar", kwargs["args"])
-            staging = Path(kwargs["args"][kwargs["args"].index("--project-dir") + 1])
-            dist = staging / "dist"
+            dist = kwargs["dist_dir"]
             dist.mkdir()
             (dist / "hello-1.2.3.jar").write_bytes(b"jar")
             return 0
@@ -6450,6 +6452,45 @@ additional-test-resources = ["test-fixtures"]
                 )
             self.assertEqual(0, exit_code)
             self.assertEqual(b"jar", (project_dir / "dist" / "hello-1.2.3.jar").read_bytes())
+            self.assertIn("--no-ide-support", install_args[0])
+
+    def test_build_packaging_format_defaults_to_fat_jar_for_java_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = 'demo'\n\n[tool.pyronaut.sources]\njava = 'src-java'\n", encoding="utf-8"
+            )
+            (project_dir / "src-java" / "example").mkdir(parents=True)
+            (project_dir / "src-java" / "example" / "App.java").write_text("package example; class App {}\n", encoding="utf-8")
+
+            self.assertEqual("fat-jar", cli._resolve_packaging_format(project_dir, []))
+            self.assertEqual("wheel-jvm", cli._resolve_packaging_format(project_dir, ["--jvm"]))
+            # A custom main class cannot be used with the FAT JAR launcher, so
+            # the implied default falls back to a JVM wheel.
+            self.assertEqual("wheel-jvm", cli._resolve_packaging_format(project_dir, ["--main-class", "example.App"]))
+
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = 'demo'\n\n[tool.pyronaut.sources]\njava = 'src-java'\n\n"
+                "[tool.pyronaut.packaging]\nformat = 'wheel-native'\n",
+                encoding="utf-8",
+            )
+            self.assertEqual("wheel-native", cli._resolve_packaging_format(project_dir, []))
+
+    def test_build_packaging_format_defaults_to_wheel_for_python_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+            (project_dir / "src").mkdir()
+            (project_dir / "src" / "main.py").write_text("print('hi')\n", encoding="utf-8")
+
+            self.assertEqual("wheel-jvm", cli._resolve_packaging_format(project_dir, []))
+
+    def test_build_packaging_format_defaults_to_fat_jar_for_gradle_projects(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "build.gradle.kts").write_text("plugins { java }\n", encoding="utf-8")
+
+            self.assertEqual("fat-jar", cli._resolve_packaging_format(project_dir, []))
 
     def test_build_mode_flag_with_separate_value_uses_native(self):
         executed = []

@@ -81,7 +81,7 @@ verbose = false # stream application and test framework output to the console
 
 `format` accepts exactly `fat-jar`, `wheel-jvm`, `wheel-native`,
 `wheel-crema`, `docker-jvm`, `docker-native`, or `docker-crema`. It defaults to
-`wheel-jvm`. Command-line flags such as `--jar`, `--jvm`, `--native`, and
+`fat-jar` when the project has Java sources and to `wheel-jvm` otherwise. Command-line flags such as `--jar`, `--jvm`, `--native`, and
 `--docker` override the configured format for that invocation.
 
 The former `tool.pyronaut.build.mode` setting is no longer accepted. Migrate
