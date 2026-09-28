@@ -243,8 +243,8 @@ packages.find.where = ["src"]
 
 [tool.pyronaut]
 repositories = ["mavenCentral"]
-core.version = "5.2.3"
-platform.version = "5.1.0"
+core.version = "5.2.9"
+platform.version = "5.2.0"
 
 [tool.pyronaut.toolchain]
 type = "native"
