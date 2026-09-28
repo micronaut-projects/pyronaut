@@ -8128,8 +8128,9 @@ def _pyronaut_dev_native_command_line(
         if provided_jars:
             # Metadata consumers inspect these shipped JARs directly; they are
             # deliberately not part of the application's runtime classpath.
-            provided_jar_dirs = sorted({str(Path(jar).parent) for jar in provided_jars})
-            jvm_args.append(f"-Dpyronaut.dev.native.provided.jars={os.pathsep.join(provided_jar_dirs)}")
+            provided_jar_dirs = sorted({Path(jar).parent for jar in provided_jars})
+            provided_jar_wildcards = [str(d / "*") for d in provided_jar_dirs]
+            jvm_args.append(f"-Dpyronaut.dev.native.provided.jars={os.pathsep.join(provided_jar_wildcards)}")
     selected_environment = (
         environment if environment is not None and not _has_micronaut_environments_property(args)
         else _default_environment(command, args)
