@@ -526,7 +526,7 @@ class DoctorChecksTest(unittest.TestCase):
             cpython = cli._doctor_check_graalpy(project)
         self.assertEqual(doctor.FAIL, cpython.status)
         self.assertIn("was not created with GraalPy", cpython.detail)
-        self.assertIn(f"rm -rf {project / '.venv'} && pyronaut install", cpython.fix)
+        self.assertIn(f"Remove {project / '.venv'} and run pyronaut install", cpython.fix)
 
     def test_graalpy_check_warns_when_project_has_no_virtualenv_but_graalpy_exists(self):
         project = self.root / "app"

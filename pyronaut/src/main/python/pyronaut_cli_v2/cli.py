@@ -5158,7 +5158,7 @@ def _apply_project_virtualenv(env: dict[str, str] | None, project_dir: Path) -> 
     if not venv_dir.is_dir():
         return env
 
-    venv_bin = venv_dir / "bin"
+    venv_bin = _virtualenv_bin(venv_dir)
     venv_python = _resolve_virtualenv_python(venv_bin) if venv_bin.is_dir() else None
     if venv_python is None:
         # Do not poison the delegated process with a stale/broken virtualenv.
@@ -5183,8 +5183,13 @@ def _prepend_path_entry(path_value: str, entry: str) -> str:
     return os.pathsep.join([entry, *entries])
 
 
+def _virtualenv_bin(venv_dir: Path) -> Path:
+    scripts = venv_dir / "Scripts"
+    return scripts if scripts.is_dir() else venv_dir / "bin"
+
+
 def _resolve_virtualenv_python(venv_bin: Path) -> Path | None:
-    for name in ("python", "python3"):
+    for name in ("python.exe", "python3.exe", "python", "python3"):
         candidate = venv_bin / name
         if candidate.is_file():
             return candidate
@@ -9771,12 +9776,13 @@ def _ensure_project_virtualenv(
         return SUCCESS
     progress = _progress_console()
     venv_dir = project_dir / ".venv"
-    venv_python = _resolve_virtualenv_python(venv_dir / "bin") if venv_dir.is_dir() else None
+    venv_bin = _virtualenv_bin(venv_dir)
+    venv_python = _resolve_virtualenv_python(venv_bin) if venv_dir.is_dir() else None
     if venv_dir.is_dir():
         if venv_python is None or not _virtualenv_is_graalpy(venv_python):
             print(
                 f"{venv_dir} was not created with GraalPy, so the embedded runtime cannot use its packages. "
-                f"Remove it (rm -rf {venv_dir}) and run pyronaut install again.",
+                f"Remove {venv_dir} and run pyronaut install again.",
                 file=sys.stderr,
             )
             return PRECONDITION_FAILED
@@ -9784,7 +9790,7 @@ def _ensure_project_virtualenv(
         if base_home is not None and not base_home.is_dir():
             print(
                 f"{venv_dir} was created from {base_home}, which no longer exists. "
-                f"Remove it (rm -rf {venv_dir}) and run pyronaut install again.",
+                f"Remove {venv_dir} and run pyronaut install again.",
                 file=sys.stderr,
             )
             return PRECONDITION_FAILED
@@ -9797,10 +9803,16 @@ def _ensure_project_virtualenv(
             print(f"Unable to locate {wanted} to create {venv_dir}. Run pyronaut setup.", file=sys.stderr)
             return PRECONDITION_FAILED
         with progress.step(f"Creating {_display_path(venv_dir)} with GraalPy", done=f"Created {_display_path(venv_dir)} with GraalPy"):
-            exit_code = _run_showing_output_on_failure(runner, [str(graalpy), "-m", "venv", str(venv_dir)], None)
+            venv_env = dict(os.environ)
+            venv_env.pop("VIRTUAL_ENV", None)
+            venv_env.pop("PYTHONHOME", None)
+            exit_code = _run_showing_output_on_failure(
+                runner, [str(graalpy), "-m", "venv", str(venv_dir)], venv_env
+            )
         if exit_code != SUCCESS:
             return exit_code
-        venv_python = _resolve_virtualenv_python(venv_dir / "bin")
+        venv_bin = _virtualenv_bin(venv_dir)
+        venv_python = _resolve_virtualenv_python(venv_bin)
         if venv_python is None:
             print(f"GraalPy did not create an interpreter in {venv_dir}", file=sys.stderr)
             return PRECONDITION_FAILED
@@ -9827,9 +9839,9 @@ def _ensure_project_virtualenv(
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
     env = dict(os.environ)
-    env["VIRTUAL_ENV"] = str(venv_dir)
+    env.pop("VIRTUAL_ENV", None)
     env.pop("PYTHONHOME", None)
-    env["PATH"] = _prepend_path_entry(env.get("PATH", ""), str(venv_dir / "bin"))
+    env["PATH"] = _prepend_path_entry(env.get("PATH", ""), str(venv_bin))
     with progress.step("Installing Python dependencies into .venv", done="Python dependencies installed into .venv") as step:
         exit_code = _run_showing_output_on_failure(runner, command_line, env)
         step.failed = exit_code != SUCCESS
@@ -10229,18 +10241,18 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
     if project_dir is not None:
         venv_dir = project_dir / ".venv"
         if venv_dir.is_dir():
-            venv_python = _resolve_virtualenv_python(venv_dir / "bin")
+            venv_python = _resolve_virtualenv_python(_virtualenv_bin(venv_dir))
             data["virtualenv"] = str(venv_dir)
             if venv_python is None:
                 return _doctor.CheckResult(
-                    "graalpy", "GraalPy", _doctor.FAIL, f"{venv_dir} has no bin/python (broken virtualenv)",
-                    f"Recreate it: rm -rf {venv_dir} && pyronaut install", data,
+                    "graalpy", "GraalPy", _doctor.FAIL, f"{venv_dir} has no Python interpreter (broken virtualenv)",
+                    f"Remove {venv_dir} and run pyronaut install", data,
                 )
             if not _virtualenv_is_graalpy(venv_python):
                 return _doctor.CheckResult(
                     "graalpy", "GraalPy", _doctor.FAIL,
                     f"{venv_dir} was not created with GraalPy, so its packages cannot be used by the embedded runtime",
-                    f"Recreate it: rm -rf {venv_dir} && pyronaut install", data,
+                    f"Remove {venv_dir} and run pyronaut install", data,
                 )
             version_line = _probe_python_version(venv_python)
             data["executable"] = str(venv_python)
@@ -10248,7 +10260,7 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
             if version_line is None:
                 return _doctor.CheckResult(
                     "graalpy", "GraalPy", _doctor.FAIL, f"{venv_python} does not start",
-                    f"Recreate it: rm -rf {venv_dir} && pyronaut install", data,
+                    f"Remove {venv_dir} and run pyronaut install", data,
                 )
             if expected and not _graalpy_versions_match(version_line, expected, expected_pyenv):
                 return _doctor.CheckResult(
@@ -10407,7 +10419,8 @@ def _doctor_check_install_manifests(project_dir: Path) -> _doctor.CheckResult:
 
 def _doctor_check_pytest(project_dir: Path) -> _doctor.CheckResult:
     venv_dir = project_dir / ".venv"
-    venv_python = _resolve_virtualenv_python(venv_dir / "bin") if (venv_dir / "bin").is_dir() else None
+    venv_bin = _virtualenv_bin(venv_dir)
+    venv_python = _resolve_virtualenv_python(venv_bin) if venv_bin.is_dir() else None
     data: dict[str, object] = {"virtualenv": str(venv_dir) if venv_dir.is_dir() else None}
     if venv_python is None:
         return _doctor.CheckResult(
@@ -10904,16 +10917,16 @@ def _doctor_check_interpreter(project_dir: Path | None) -> _doctor.CheckResult:
         except OSError:
             same = False
         if not same:
-            problems.append((_doctor.WARN, f"activated virtualenv {active} is not the project .venv; Pyronaut commands use {venv_dir}", f"Run: source {venv_dir / 'bin' / 'activate'}"))
+            problems.append((_doctor.WARN, f"activated virtualenv {active} is not the project .venv; Pyronaut commands use {venv_dir}", f"Deactivate the current virtualenv; Pyronaut automatically uses {venv_dir}"))
 
     base_home: Path | None = None
     if venv_dir is not None and venv_dir.is_dir():
         base_home = _virtualenv_base_home(venv_dir)
         data["virtualenvBase"] = str(base_home) if base_home else None
         if base_home is None:
-            problems.append((_doctor.WARN, f"{venv_dir}/pyvenv.cfg has no home entry", "Recreate the environment: rm -rf .venv && pyronaut install"))
+            problems.append((_doctor.WARN, f"{venv_dir}/pyvenv.cfg has no home entry", "Remove .venv and run pyronaut install"))
         elif not base_home.is_dir():
-            problems.append((_doctor.FAIL, f"{venv_dir} was created from {base_home}, which no longer exists (the base interpreter was removed)", "Recreate the environment: rm -rf .venv && pyronaut install"))
+            problems.append((_doctor.FAIL, f"{venv_dir} was created from {base_home}, which no longer exists (the base interpreter was removed)", "Remove .venv and run pyronaut install"))
         else:
             selected = _find_global_graalpy()
             if selected is not None and _is_executable_file(selected[0]):
@@ -11029,7 +11042,8 @@ def _doctor_check_packages(project_dir: Path, config: _DoctorRuntimeConfig) -> _
     if not packages:
         return _doctor.CheckResult("packages", "Python packages", _doctor.PASS, "no [project].dependencies declared in pyproject.toml", data=data)
     venv_dir = project_dir / ".venv"
-    venv_python = _resolve_virtualenv_python(venv_dir / "bin") if (venv_dir / "bin").is_dir() else None
+    venv_bin = _virtualenv_bin(venv_dir)
+    venv_python = _resolve_virtualenv_python(venv_bin) if venv_bin.is_dir() else None
     if venv_python is None:
         return _doctor.CheckResult(
             "packages", "Python packages", _doctor.FAIL,
@@ -11041,7 +11055,7 @@ def _doctor_check_packages(project_dir: Path, config: _DoctorRuntimeConfig) -> _
     if report is None:
         return _doctor.CheckResult(
             "packages", "Python packages", _doctor.FAIL, f"package probe failed in {venv_python}: {error}",
-            "Recreate the environment: rm -rf .venv && pyronaut install", data,
+            "Remove .venv and run pyronaut install", data,
         )
     results = report.get("packages") if isinstance(report.get("packages"), dict) else {}
     data["packages"] = results
@@ -11136,7 +11150,8 @@ def _doctor_check_graalpy_compatibility(project_dir: Path, *, offline: bool) -> 
     if not packages:
         return _doctor.CheckResult("compat", "GraalPy compatibility", _doctor.PASS, "no [project].dependencies to look up", data=data)
     venv_dir = project_dir / ".venv"
-    venv_python = _resolve_virtualenv_python(venv_dir / "bin") if (venv_dir / "bin").is_dir() else None
+    venv_bin = _virtualenv_bin(venv_dir)
+    venv_python = _resolve_virtualenv_python(venv_bin) if venv_bin.is_dir() else None
     version_line = _probe_python_version(venv_python) if venv_python is not None else None
     release = _graalpy_release_tag(version_line, _read_version_properties().get("graalpy"))
     data["release"] = release
