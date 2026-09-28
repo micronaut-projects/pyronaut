@@ -144,7 +144,7 @@ class DoctorCommandTest(unittest.TestCase):
             self.assertEqual(cli.USAGE_ERROR, cli.run(["doctor", "--progress", "loud"]))
         self.assertIn("Unknown pyronaut doctor option: --bogus", stderr.getvalue())
         self.assertIn("Invalid value for --progress", stderr.getvalue())
-        self.assertIn("<setup|doctor|install", stderr.getvalue())
+        self.assertIn("<setup|update|doctor|install", stderr.getvalue())
 
     def test_doctor_does_not_require_setup_state(self):
         fake_checks = [("python", "Python", lambda: _result("python", doctor.PASS))]
