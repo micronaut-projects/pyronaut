@@ -24,7 +24,7 @@ SDK for Windows x64.
 
 [source,bash]
 ----
-pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
+pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ----
 
 == Quick-start workflow
@@ -107,6 +107,31 @@ repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]
 `--refresh` re-resolves and rewrites setup state while reusing healthy downloaded JDK, GraalPy, and native images.
 `--offline` performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
 When setup is missing, corrupt, or stale, execution commands exit with code `8` and print `Pyronaut setup is missing or stale. Run pyronaut setup.`
+
+=== `pyronaut update`
+
+Replaces the installed Pyronaut wheel with a newer release from GitHub and provisions it:
+
+[source,bash]
+----
+pyronaut update [<version>] [--check] [--keep-old] [--local-repository <dir>] [--progress <auto|on|off>]
+----
+
+Without a version, update selects the newest release that carries a Pyronaut wheel.
+A stable installation only moves to stable releases. When the installed version is a pre-release (a milestone, release candidate, or snapshot, or a release that GitHub marks as a pre-release), update may also select a newer pre-release.
+Pass a version such as `1.0.0` or `v1.0.0` to install that release instead, including an older one.
+
+Update then:
+
+. downloads the release's wheel and installs it with `pip` into the Python environment that runs `pyronaut`;
+. runs the new version's `pyronaut setup`, which downloads the matching `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` launchers and prepares the Maven repository recorded by the previous setup;
+. removes the launchers, tool runtimes, setup state, and Pyronaut Maven artifacts of every version older than the installed one.
+
+Update never removes versions newer than the one it installs, nor a launcher version pinned by `[native-images].version`.
+If setup fails, the new wheel stays installed and older versions are kept; fix the reported problem and run `pyronaut setup`.
+
+`--check` reports an available update without installing it, and `--keep-old` skips the removal of older versions.
+Update reads releases through the GitHub API; set `GH_TOKEN` or `GITHUB_TOKEN` when the API requires authentication.
 
 === `pyronaut doctor`
 
