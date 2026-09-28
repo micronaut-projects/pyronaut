@@ -41,7 +41,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"setup", "doctor", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "update", "doctor", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -319,6 +319,16 @@ def run(
             print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
             return PLATFORM_UNSUPPORTED
         return _run_setup(setup_args, execute)
+
+    if command == "update":
+        update_args = list(argv[1:])
+        if _extract_flag(update_args, "--help") or _extract_flag(update_args, "-h"):
+            _print_update_usage()
+            return SUCCESS
+        if not _is_supported_platform(current_platform):
+            print("Pyronaut CLI v2 phase 1 supports macOS and Linux only.", file=sys.stderr)
+            return PLATFORM_UNSUPPORTED
+        return _run_update(update_args, execute)
 
     if command == "create":
         return _run_create(list(argv[1:]), execute, current_platform)
@@ -6658,47 +6668,21 @@ def _github_release_asset(
     allow_draft: bool = False,
     release_tag: str | None = None,
 ) -> tuple[str, dict[str, str]] | None:
-    parsed = urllib.parse.urlparse(base_url)
-    parts = [part for part in parsed.path.split("/") if part]
     if not _is_github_release_url(base_url):
         return None
 
-    owner, repository = parts[:2]
     tag = (
         release_tag.strip()
         if release_tag is not None
         else (version if version.startswith("v") else f"v{version}")
     )
-    token = next(
-        (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN") if os.environ.get(name)),
-        None,
-    )
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    token = _github_token()
+    headers = _github_api_headers()
 
     def get_json(url: str) -> object | None:
-        proxy, bypass = _download_proxy(url)
-        parsed_url = urllib.parse.urlparse(url)
-        host = parsed_url.hostname or ""
-        host_with_port = parsed_url.netloc.rsplit("@", 1)[-1]
-        bypassed = _proxy_bypasses_host(host, bypass) or _proxy_bypasses_host(host_with_port, bypass)
-        proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
-        try:
-            with opener.open(urllib.request.Request(url, headers=headers)) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return None
-            raise RuntimeError(f"Unable to read GitHub release metadata from {url}: HTTP {exc.code}") from exc
-        except (OSError, ValueError, TypeError) as exc:
-            raise RuntimeError(f"Unable to read GitHub release metadata from {url}: {exc}") from exc
+        return _github_api_json(url, headers)
 
-    api_root = f"https://api.github.com/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repository)}"
+    api_root = _github_api_root(base_url)
     release = get_json(f"{api_root}/releases/tags/{urllib.parse.quote(tag)}")
     if isinstance(release, dict) and release.get("draft") and not allow_draft:
         release = None
@@ -6735,6 +6719,50 @@ def _github_release_asset(
     download_headers = dict(headers)
     download_headers["Accept"] = "application/octet-stream"
     return asset["url"], download_headers
+
+
+def _github_token() -> str | None:
+    return next(
+        (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN") if os.environ.get(name)),
+        None,
+    )
+
+
+def _github_api_headers() -> dict[str, str]:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = _github_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _github_api_root(base_url: str) -> str:
+    """Return the REST API root of the repository behind a ``.../releases`` URL."""
+    owner, repository = [part for part in urllib.parse.urlparse(base_url).path.split("/") if part][:2]
+    return f"https://api.github.com/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repository)}"
+
+
+def _github_api_json(url: str, headers: dict[str, str]) -> object | None:
+    """Read a GitHub REST API document through the configured proxy; ``None`` on 404."""
+    proxy, bypass = _download_proxy(url)
+    parsed_url = urllib.parse.urlparse(url)
+    host = parsed_url.hostname or ""
+    host_with_port = parsed_url.netloc.rsplit("@", 1)[-1]
+    bypassed = _proxy_bypasses_host(host, bypass) or _proxy_bypasses_host(host_with_port, bypass)
+    proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+    try:
+        with opener.open(urllib.request.Request(url, headers=headers)) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise RuntimeError(f"Unable to read GitHub release metadata from {url}: HTTP {exc.code}") from exc
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"Unable to read GitHub release metadata from {url}: {exc}") from exc
 
 
 def _is_github_release_url(base_url: str) -> bool:
@@ -8495,7 +8523,7 @@ def _is_supported_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_create_usage(stream=None) -> None:
@@ -8965,6 +8993,365 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+
+
+# -- pyronaut update ---------------------------------------------------------
+#
+# Update replaces the installed SDK wheel with one attached to a GitHub
+# release, then hands over to the new wheel's own `pyronaut setup` so the
+# native launchers, the Maven cache, and the setup state are provisioned by
+# the code that will use them. Caches of older SDK versions are removed only
+# once that setup has succeeded.
+
+_UPDATE_WHEEL_PATTERN = re.compile(r"^pyronaut-([^-]+)-py3-none-any\.whl$")
+_SDK_VERSION_PATTERN = re.compile(r"^v?(\d+(?:\.\d+)*)(?:[-.]?([A-Za-z]+)[-.]?(\d*))?$")
+# Pre-release qualifiers in the forms used by release tags (1.0.0-M1,
+# 1.0.0-RC1), Maven snapshots (1.0.0-SNAPSHOT), and PEP 440 wheel versions
+# (1.0.0rc1, 1.0.0.dev0), ordered by maturity. A final release ranks above all.
+_SDK_PRE_RELEASE_RANKS = {
+    "dev": 0, "snapshot": 0, "a": 1, "alpha": 1, "m": 2, "b": 3, "beta": 3, "rc": 4, "cr": 4,
+}
+_SDK_FINAL_RANK = 5
+_UPDATE_RELEASE_PAGES = 10
+
+
+class _SdkVersion(NamedTuple):
+    release: tuple[int, ...]
+    rank: int
+    number: int
+
+    @property
+    def prerelease(self) -> bool:
+        return self.rank != _SDK_FINAL_RANK
+
+
+class _SdkRelease(NamedTuple):
+    tag: str
+    version: _SdkVersion
+    prerelease: bool
+    wheel_name: str | None
+    wheel_url: str | None
+
+    @property
+    def display_version(self) -> str:
+        match = _UPDATE_WHEEL_PATTERN.match(self.wheel_name or "")
+        return match.group(1) if match else self.tag.removeprefix("v")
+
+
+def _parse_sdk_version(value: str) -> _SdkVersion | None:
+    """Parse a release tag, Maven version, or PEP 440 wheel version for ordering."""
+    match = _SDK_VERSION_PATTERN.match(value.strip())
+    if match is None:
+        return None
+    release = tuple(int(part) for part in match.group(1).split("."))
+    # 1.0 and 1.0.0 name the same release.
+    while len(release) > 1 and release[-1] == 0:
+        release = release[:-1]
+    qualifier = (match.group(2) or "").lower()
+    if not qualifier:
+        return _SdkVersion(release, _SDK_FINAL_RANK, 0)
+    rank = _SDK_PRE_RELEASE_RANKS.get(qualifier)
+    if rank is None:
+        return None
+    return _SdkVersion(release, rank, int(match.group(3) or 0))
+
+
+def _print_update_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
+        "Usage: pyronaut update [<version>] [--check] [--keep-old] [--local-repository <dir>] "
+        "[--progress <auto|on|off>] [--allow-draft-release]\n"
+    )
+    stream.write(
+        "Replace the installed Pyronaut wheel with a GitHub release (the latest one when <version> is omitted), "
+        "provision its launchers and Maven artifacts, and remove older versions.\n"
+    )
+
+
+def _parse_update_arguments(args: Sequence[str]) -> tuple[str | None, list[str]]:
+    """Split the optional version from the options, rejecting anything unknown."""
+    value_options = {"--local-repository", "--local-repo", "--progress"}
+    flag_options = {"--check", "--keep-old"}
+    requested: str | None = None
+    options: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in value_options:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {token}")
+            options.extend(args[index:index + 2])
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in value_options) or token in flag_options:
+            options.append(token)
+            index += 1
+            continue
+        if token.startswith("-"):
+            raise ValueError(f"Unknown pyronaut update option: {token}")
+        if requested is not None:
+            raise ValueError(f"pyronaut update accepts a single version, got '{requested}' and '{token}'")
+        if _parse_sdk_version(token) is None:
+            raise ValueError(f"Invalid Pyronaut version: {token}")
+        requested = token
+        index += 1
+    progress = _extract_option_value(options, "--progress")
+    if progress is not None and progress not in {"auto", "on", "off"}:
+        raise ValueError("Invalid value for --progress. Use auto, on, or off")
+    return requested, options
+
+
+def _update_release_url() -> str:
+    """Return the GitHub releases page that supplies SDK updates.
+
+    A ``[native-images].base-url`` that points at another GitHub repository
+    (a fork) supplies the wheel as well as the launchers; a local directory
+    only replaces the launchers, so updates still come from Pyronaut.
+    """
+    configured = _read_pyronaut_user_settings().get(_NATIVE_IMAGE_SETTINGS_TABLE)
+    base_url = configured.get("base-url") if isinstance(configured, dict) else None
+    if isinstance(base_url, str) and _is_github_release_url(base_url.strip()):
+        return base_url.strip()
+    return _NATIVE_IMAGE_BASE_URL
+
+
+def _sdk_releases(*, allow_draft: bool = False) -> list[_SdkRelease]:
+    """List the published releases whose tags are SDK versions."""
+    base_url = _update_release_url()
+    api_root = _github_api_root(base_url)
+    headers = _github_api_headers()
+    releases: list[_SdkRelease] = []
+    for page in range(1, _UPDATE_RELEASE_PAGES + 1):
+        data = _github_api_json(f"{api_root}/releases?per_page=100&page={page}", headers)
+        if data is None and page == 1:
+            token_hint = (
+                "; check GH_TOKEN, GITHUB_TOKEN, GITHUB_API_TOKEN, or PYRONAUT_RELEASE_TOKEN read access"
+                if _github_token() is None
+                else ""
+            )
+            raise RuntimeError(f"Unable to list Pyronaut releases at {base_url}{token_hint}")
+        if not isinstance(data, list) or not data:
+            break
+        for item in data:
+            if not isinstance(item, dict) or (item.get("draft") and not allow_draft):
+                continue
+            tag = item.get("tag_name")
+            version = _parse_sdk_version(tag) if isinstance(tag, str) else None
+            if version is None:
+                continue
+            wheel = next(
+                (
+                    asset
+                    for asset in item.get("assets") or []
+                    if isinstance(asset, dict)
+                    and isinstance(asset.get("name"), str)
+                    and _UPDATE_WHEEL_PATTERN.match(asset["name"])
+                    and isinstance(asset.get("url"), str)
+                ),
+                None,
+            )
+            releases.append(_SdkRelease(
+                tag=tag,
+                version=version,
+                prerelease=bool(item.get("prerelease")) or version.prerelease,
+                wheel_name=wheel["name"] if wheel else None,
+                wheel_url=wheel["url"] if wheel else None,
+            ))
+        if len(data) < 100:
+            break
+    return releases
+
+
+def _installed_sdk_is_prerelease(installed: _SdkVersion, releases: Sequence[_SdkRelease]) -> bool:
+    """Whether the installed SDK is a pre-release by its version or its GitHub release."""
+    return installed.prerelease or any(
+        release.prerelease for release in releases if release.version == installed
+    )
+
+
+def _select_update_release(
+    releases: Sequence[_SdkRelease],
+    *,
+    installed_prerelease: bool,
+    requested: str | None,
+) -> _SdkRelease | None:
+    """Pick the requested release, or the newest one the installed channel accepts.
+
+    A stable installation only ever moves to stable releases; a pre-release
+    installation may move to a newer pre-release as well.
+    """
+    if requested is not None:
+        wanted = _parse_sdk_version(requested)
+        release = next(
+            (candidate for candidate in releases if candidate.tag in {requested, f"v{requested}"}),
+            None,
+        ) or next((candidate for candidate in releases if candidate.version == wanted), None)
+        if release is None:
+            raise RuntimeError(f"Pyronaut release {requested} was not found")
+        if release.wheel_url is None:
+            raise RuntimeError(f"Pyronaut release {release.tag} has no pyronaut wheel attached")
+        return release
+    candidates = [
+        release
+        for release in releases
+        if release.wheel_url is not None and (installed_prerelease or not release.prerelease)
+    ]
+    return max(candidates, key=lambda release: release.version, default=None)
+
+
+def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
+    progress = _progress_console()
+    try:
+        requested, options = _parse_update_arguments(args)
+        progress.configure(_extract_option_value(options, "--progress"))
+        if not _setup_is_required():
+            raise RuntimeError(
+                "pyronaut update replaces an installed Pyronaut wheel, but this CLI runs from a source checkout"
+            )
+        installed = _installed_pyronaut_version()
+        installed_version = _parse_sdk_version(installed)
+        if installed_version is None:
+            raise RuntimeError(f"Unable to determine the installed Pyronaut version (found '{installed}')")
+
+        with progress.step("Checking for Pyronaut releases", done="Checked Pyronaut releases") as check_step:
+            releases = _sdk_releases(allow_draft=_allow_draft_release)
+            release = _select_update_release(
+                releases,
+                installed_prerelease=_installed_sdk_is_prerelease(installed_version, releases),
+                requested=requested,
+            )
+            if release is not None and (release.version == installed_version or (
+                requested is None and release.version < installed_version
+            )):
+                release = None
+            if release is not None:
+                check_step.done_label = f"Found Pyronaut {release.display_version} (installed {installed})"
+        if release is None:
+            print(f"Pyronaut {installed} is up to date")
+            return SUCCESS
+        target = release.display_version
+        if _extract_flag(options, "--check"):
+            print(f"Pyronaut {target} is available. Run pyronaut update to install it.")
+            return SUCCESS
+
+        # Resolve the Maven repository from the current setup state before the
+        # wheel changes: the new version has no state of its own yet, and
+        # would otherwise fall back to ~/.m2/repository.
+        local_repository = _setup_local_repository(options)
+        update_root = Path.home() / ".pyronaut" / "update"
+        update_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".update-", dir=update_root) as temp_dir:
+            assert release.wheel_name is not None and release.wheel_url is not None
+            wheel = Path(temp_dir) / release.wheel_name
+            download_headers = _github_api_headers()
+            download_headers["Accept"] = "application/octet-stream"
+            _download_url_with_progress(
+                release.wheel_url, wheel, f"Downloading pyronaut {target} wheel", headers=download_headers
+            )
+            with progress.step(f"Installing pyronaut {target} wheel", done=f"Installed pyronaut {target} wheel"):
+                pip_code = _run_showing_output_on_failure(
+                    runner,
+                    [
+                        sys.executable, "-m", "pip", "install",
+                        "--disable-pip-version-check", "--no-input", "--no-deps",
+                        str(wheel),
+                    ],
+                    None,
+                )
+                if pip_code != SUCCESS:
+                    raise RuntimeError(f"pip failed to install {wheel.name} with {sys.executable}")
+
+        # The new wheel provisions its own launchers, Maven artifacts, and
+        # setup state. It renders its own progress on the shared timeline.
+        setup_command = [sys.executable, "-m", "pyronaut_cli_v2"]
+        if _allow_draft_release:
+            setup_command.append("--allow-draft-release")
+        setup_command.extend(["setup", "--local-repository", str(local_repository)])
+        setup_command.extend(["--progress", _extract_option_value(options, "--progress") or "auto"])
+        if runner(setup_command, _terminal_environment(dict(os.environ))) != SUCCESS:
+            raise RuntimeError(
+                f"Pyronaut {target} is installed, but its setup failed. Resolve the problem above and run pyronaut setup."
+            )
+
+        summary = ""
+        if not _extract_flag(options, "--keep-old"):
+            with progress.step("Removing older Pyronaut versions") as cleanup_step:
+                removed, freed = _remove_older_sdk_versions(release.version, local_repository)
+                if removed:
+                    summary = f"; removed {', '.join(removed)} and freed {_format_bytes(freed)}"
+                    cleanup_step.done_label = f"Removed Pyronaut {', '.join(removed)}"
+                else:
+                    cleanup_step.done_label = "No older Pyronaut versions to remove"
+        print(f"Pyronaut updated from {installed} to {target}{summary}")
+        return SUCCESS
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+
+
+def _older_sdk_version_dirs(parent: Path, keep: _SdkVersion, pinned: frozenset[str] = frozenset()) -> list[Path]:
+    """Version-named directories below ``parent`` that are older than ``keep``."""
+    if not parent.is_dir():
+        return []
+    older = []
+    for candidate in parent.iterdir():
+        if not candidate.is_dir() or candidate.is_symlink() or candidate.name in pinned:
+            continue
+        version = _parse_sdk_version(candidate.name)
+        if version is not None and version < keep:
+            older.append(candidate)
+    return older
+
+
+def _directory_size(path: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _remove_older_sdk_versions(keep: _SdkVersion, local_repository: Path) -> tuple[list[str], int]:
+    """Delete the launchers, tool runtimes, setup state, and seeded Maven
+    artifacts of SDK versions older than ``keep``.
+
+    Newer versions are never touched, so a downgrade keeps them, and neither
+    is a launcher version pinned by ``[native-images].version``.
+    """
+    configured = _read_pyronaut_user_settings().get(_NATIVE_IMAGE_SETTINGS_TABLE)
+    pinned_images = (
+        frozenset({_native_image_distribution_version(configured["version"].strip())})
+        if isinstance(configured, dict) and isinstance(configured.get("version"), str)
+        else frozenset()
+    )
+    pyronaut_home = Path.home() / ".pyronaut"
+    candidates = _older_sdk_version_dirs(pyronaut_home / "bin", keep, pinned_images)
+    for parent in (pyronaut_home / "tools", pyronaut_home / "setup"):
+        candidates.extend(_older_sdk_version_dirs(parent, keep))
+    maven_group = local_repository / "io" / "micronaut" / "pyronaut"
+    if maven_group.is_dir():
+        for artifact in sorted(maven_group.iterdir()):
+            if artifact.is_dir() and artifact.name.startswith("micronaut-pyronaut"):
+                candidates.extend(_older_sdk_version_dirs(artifact, keep))
+    removed: set[_SdkVersion] = set()
+    names: dict[_SdkVersion, str] = {}
+    freed = 0
+    for directory in candidates:
+        size = _directory_size(directory)
+        shutil.rmtree(directory, ignore_errors=True)
+        if directory.exists():
+            continue
+        freed += size
+        version = _parse_sdk_version(directory.name)
+        assert version is not None
+        removed.add(version)
+        # Prefer the plain release spelling (0.0.4) over a Maven or PEP 440 one.
+        names[version] = min(names.get(version, directory.name), directory.name, key=len)
+    return [names[version] for version in sorted(removed)], freed
 
 
 # -- GraalPy interpreter -----------------------------------------------------

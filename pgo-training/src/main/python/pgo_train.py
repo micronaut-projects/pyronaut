@@ -72,6 +72,10 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _venv_python(venv: Path, *, windows: bool = os.name == "nt") -> Path:
+    return venv / ("Scripts/python.exe" if windows else "bin/python")
+
+
 def pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -270,34 +274,35 @@ class Trainer:
         shim = directory / self.image
         shim.write_text(INSTRUMENTED_SHIM.replace("@EXECUTABLE@", str(Path(self.options.executable).resolve())))
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        self._link_manifests(directory, Path(self.options.manifests_dir))
+        self._copy_manifests(directory, Path(self.options.manifests_dir))
         if self.image == "pyronaut-dev":
-            os.symlink(Path(self.options.dev_install_dir).resolve() / "lib", directory / "lib")
+            shutil.copytree(Path(self.options.dev_install_dir).resolve() / "lib", directory / "lib")
         self.instrumented_shim = shim
 
     def _write_jvm_dev_shim(self) -> None:
         install = Path(self.options.dev_install_dir).resolve()
         directory = self.shims / "jvm-dev"
         (directory / "bin").mkdir(parents=True)
-        os.symlink(install / "lib", directory / "lib")
+        shutil.copytree(install / "lib", directory / "lib")
         shim = directory / "bin" / "pyronaut-dev"
         shim.write_text(JVM_DEV_SHIM.replace("@LIB@", str(install / "lib")))
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        self._link_manifests(directory / "bin", install / "bin")
+        self._copy_manifests(directory / "bin", install / "bin")
         self.jvm_dev_shim = shim
 
     @staticmethod
-    def _link_manifests(directory: Path, source: Path) -> None:
+    def _copy_manifests(directory: Path, source: Path) -> None:
         for name in ("native-compile-classpath.txt", "native-provided-classpath.txt"):
             target = source / name
             if not target.is_file():
                 raise TrainingError(f"Missing classpath manifest {target}")
-            os.symlink(target, directory / name)
+            shutil.copyfile(target, directory / name)
 
     def _create_venv(self) -> Path:
         venv = self.work / "venv"
         self._check([self.options.graalpy, "-m", "venv", str(venv)], "create-venv", cwd=self.work, env=os.environ.copy())
-        self._check([str(venv / "bin" / "python"), "-m", "pip", "install", "--quiet", "pytest==9.0.3"],
+        python = _venv_python(venv)
+        self._check([str(python), "-m", "pip", "install", "--quiet", "pytest==9.0.3"],
                     "pip-install", cwd=self.work, env=os.environ.copy())
         return venv
 
@@ -336,7 +341,7 @@ class Trainer:
             "PYTHONPATH": self.options.cli_source,
             "PYRONAUT_TRACE_DELEGATION": "1",
             "VIRTUAL_ENV": str(self.venv),
-            "PATH": f"{self.venv / 'bin'}{os.pathsep}{Path(self.options.java_home) / 'bin'}{os.pathsep}{env.get('PATH', '')}",
+            "PATH": f"{_venv_python(self.venv).parent}{os.pathsep}{Path(self.options.java_home) / 'bin'}{os.pathsep}{env.get('PATH', '')}",
             "PGO_SCENARIO": scenario,
             "PGO_PROFILES_DIR": str(self.profiles),
             "PGO_PIDS_DIR": str(self.pids),
@@ -365,12 +370,12 @@ class Trainer:
                                     stdout=output, stderr=subprocess.STDOUT)
         if result.returncode != 0:
             raise TrainingError(f"{scenario}: {' '.join(command[2:])} exited with {result.returncode}; see {log_file}\n"
-                                + self._tail(log_file))
+                                + self._log_contents(log_file))
         return round(time.monotonic() - start, 1)
 
     @staticmethod
-    def _tail(path: Path, lines: int = 40) -> str:
-        return "\n".join(path.read_text(errors="replace").splitlines()[-lines:])
+    def _log_contents(path: Path) -> str:
+        return path.read_text(errors="replace").rstrip()
 
     def skipped(self, scenario: str) -> bool:
         if scenario in self.options.skip:
@@ -417,7 +422,7 @@ class Trainer:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise TrainingError(f"Server exited with {process.returncode} before it was ready; see {log_file}\n"
-                                    + self._tail(log_file))
+                                    + self._log_contents(log_file))
             try:
                 connection = http.client.HTTPConnection("localhost", port, timeout=5)
                 connection.request("GET", "/hello")

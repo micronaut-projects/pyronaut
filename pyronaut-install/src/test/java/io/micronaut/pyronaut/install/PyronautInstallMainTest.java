@@ -3721,8 +3721,92 @@ class PyronautInstallMainTest {
             project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/test/annotation/__init__.pyi"),
             StandardCharsets.UTF_8
         );
-        assertTrue(annotationStub.contains("@overload\ndef Sql(target: _T, /) -> _T: ..."));
-        assertTrue(annotationStub.contains("def Sql(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:"));
+        // An annotation carrying nested types is rendered as a callable class, because a bare `def`
+        // holds no names. `@Sql` still applies, and `Sql.Phase` now resolves.
+        assertTrue(annotationStub.contains("class _SqlAnnotation(Protocol):"));
+        assertTrue(annotationStub.contains("\nSql: _SqlAnnotation"));
+        assertTrue(annotationStub.contains("    def __call__(self, *args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T: ..."));
+        assertTrue(annotationStub.contains("    @overload\n    def __call__(self, target: _T, /) -> _T: ..."));
+
+        // The nested types are reachable through it, and a nested annotation takes a receiver
+        // because it is a method now.
+        assertTrue(annotationStub.contains("    class Phase(Enum):\n        BEFORE_ALL = ...\n        AFTER_ALL = ..."));
+        assertTrue(annotationStub.contains("    def Sqls(self, *args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T: ..."));
+
+        // A member typed by a nested enum is referenced through its enclosing type rather than by a
+        // bare name that has no Java type behind it.
+        assertTrue(annotationStub.contains("phase: Sql.Phase = ..."));
+
+        // And neither nested type is advertised at module level, where the import it suggests
+        // (`from micronaut.test.annotation import Phase`) does not compile.
+        assertFalse(annotationStub.contains("\nclass Phase(Enum):"));
+        assertFalse(annotationStub.contains("\ndef Sqls("));
+    }
+
+    @Test
+    void nestedTypesSharingASimpleNameAreBothEmitted() throws Exception {
+        // Two enclosing annotations in one package, each with a nested enum of the same name. Both
+        // used to collapse onto a single module-level `Visibility`; collection kept the first and
+        // dropped the second silently, so one of the two was missing from the stub altogether.
+        Path repository = tempDir.resolve("repo-python-ide-nested-collision");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.test.collision.Introspected", """
+                package io.micronaut.test.collision;
+
+                import java.lang.annotation.Retention;
+                import java.lang.annotation.RetentionPolicy;
+
+                @Retention(RetentionPolicy.RUNTIME)
+                public @interface Introspected {
+                    Visibility visibility() default Visibility.DEFAULT;
+
+                    enum Visibility {
+                        DEFAULT,
+                        PUBLIC
+                    }
+                }
+                """,
+            "io.micronaut.test.collision.BeanProperties", """
+                package io.micronaut.test.collision;
+
+                import java.lang.annotation.Retention;
+                import java.lang.annotation.RetentionPolicy;
+
+                @Retention(RetentionPolicy.RUNTIME)
+                public @interface BeanProperties {
+                    Visibility visibility() default Visibility.ANY;
+
+                    enum Visibility {
+                        ANY,
+                        NONE
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-nested-collision");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String stub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/test/collision/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(stub.contains("class _IntrospectedAnnotation(Protocol):"));
+        assertTrue(stub.contains("class _BeanPropertiesAnnotation(Protocol):"));
+        // Each keeps its own members, which is what the dropped type used to cost.
+        assertTrue(stub.contains("    class Visibility(Enum):\n        DEFAULT = ...\n        PUBLIC = ..."));
+        assertTrue(stub.contains("    class Visibility(Enum):\n        ANY = ...\n        NONE = ..."));
+        assertTrue(stub.contains("visibility: Introspected.Visibility = ..."));
+        assertTrue(stub.contains("visibility: BeanProperties.Visibility = ..."));
+        assertFalse(stub.contains("\nclass Visibility(Enum):"));
     }
 
     @Test

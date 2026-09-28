@@ -74,7 +74,7 @@ final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
     static final String GENERATED_MARKER_FILE_NAME = ".generated";
-    private static final String GENERATOR_VERSION = "10";
+    private static final String GENERATOR_VERSION = "11";
     private static final String SHARED_CACHE_DIR_PROPERTY = "pyronaut.ide-stubs.cache-dir";
     private static final String SHARED_CACHE_DIR_NAME = "ide-stubs";
     private static final String VFS_PYTHON_SOURCE_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/src/";
@@ -274,19 +274,71 @@ final class PythonIdeStubGenerator {
                                                                             List<PackageMapping> packageMappings,
                                                                             List<Pattern> excludePatterns,
                                                                             List<WarningDetail> warnings) throws IOException {
-        Map<String, Map<String, TypeDescriptor>> packages = new TreeMap<>();
+        // Two passes, because a nested type is emitted inside its enclosing type and the two arrive
+        // independently -- one .class entry each, in an order that puts `Mapper$Mapping` before
+        // `Mapper`, since '$' sorts below '.'. So collect everything first, then resolve nesting.
+        Map<String, PendingType> pending = new LinkedHashMap<>();
         Set<String> seen = new HashSet<>();
         for (ResolvedArtifact artifact : jars) {
-            collectJarClassModels(artifact, packageMappings, excludePatterns, seen, packages, warnings);
+            collectJarClassModels(artifact, packageMappings, excludePatterns, seen, pending, warnings);
+        }
+        return assemblePackages(pending);
+    }
+
+    /**
+     * Groups the collected types into modules, emitting a nested type inside its enclosing type
+     * rather than beside it.
+     *
+     * <p>A nested type whose enclosing type is not itself emitted -- excluded, internal, or not
+     * public -- stays at module level under its own simple name, so that nothing is lost.
+     *
+     * @param pending Every type to emit, keyed by binary name
+     * @return The type descriptors by module, then by module-level symbol name
+     */
+    private static Map<String, Map<String, TypeDescriptor>> assemblePackages(Map<String, PendingType> pending) {
+        Map<String, Map<String, TypeDescriptor>> packages = new TreeMap<>();
+        for (PendingType type : pending.values()) {
+            String enclosing = enclosingBinaryName(type.className());
+            if (enclosing != null && pending.containsKey(enclosing)) {
+                continue;
+            }
+            TypeDescriptor descriptor = describeClassModel(type, pending);
+            packages.computeIfAbsent(type.module(), ignored -> new TreeMap<>())
+                .putIfAbsent(descriptor.symbolName(), descriptor);
         }
         return packages;
+    }
+
+    /**
+     * The binary name of the type a nested type is declared in.
+     *
+     * @param className A binary class name, nested types separated by {@code $}
+     * @return The enclosing type's binary name, or {@code null} when the type is top level
+     */
+    private static String enclosingBinaryName(String className) {
+        int separator = className.lastIndexOf('$');
+        return separator < 0 ? null : className.substring(0, separator);
+    }
+
+    /**
+     * The types declared directly inside the given type, in the order they are emitted.
+     *
+     * @param className The enclosing type's binary name
+     * @param pending Every type being emitted, keyed by binary name
+     * @return The directly nested types, ordered by simple name
+     */
+    private static List<PendingType> nestedTypes(String className, Map<String, PendingType> pending) {
+        return pending.values().stream()
+            .filter(candidate -> className.equals(enclosingBinaryName(candidate.className())))
+            .sorted(Comparator.comparing(candidate -> simpleName(candidate.className())))
+            .toList();
     }
 
     private static void collectJarClassModels(ResolvedArtifact artifact,
                                               List<PackageMapping> packageMappings,
                                               List<Pattern> excludePatterns,
                                               Set<String> seen,
-                                              Map<String, Map<String, TypeDescriptor>> packages,
+                                              Map<String, PendingType> pending,
                                               List<WarningDetail> warnings) throws IOException {
         try (ZipFile binary = new ZipFile(artifact.binaryJar().toFile());
              ZipFile source = openSourceZip(artifact, warnings)) {
@@ -312,8 +364,7 @@ final class PythonIdeStubGenerator {
                         warnings.add(WarningDetail.of("Skipped stub generation for " + className + " because a referenced type is unavailable"));
                         continue;
                     }
-                    TypeDescriptor descriptor = describeClassModel(model, className, module, documentation);
-                    packages.computeIfAbsent(module, ignored -> new TreeMap<>()).putIfAbsent(simpleName, descriptor);
+                    pending.putIfAbsent(className, new PendingType(model, className, module, documentation));
                 } catch (RuntimeException e) {
                     warnings.add(WarningDetail.fromThrowable("Skipped stub generation for " + className, e));
                 }
@@ -549,21 +600,81 @@ final class PythonIdeStubGenerator {
             .anyMatch(annotation -> INTERNAL_ANNOTATION_NAME.equals(annotation.annotationType().getName()));
     }
 
-    private static TypeDescriptor describeClassModel(ClassModel model,
-                                                     String className,
-                                                     String module,
-                                                     SourceDocumentationParser.ParsedSourceDocumentation documentation) {
+    private static TypeDescriptor describeClassModel(PendingType type, Map<String, PendingType> pending) {
+        return describeClassModel(type, pending, false);
+    }
+
+    /**
+     * Renders one type's stub, with any types nested inside it rendered inside its body.
+     *
+     * @param type The type to render
+     * @param pending Every type being emitted, so that nested types can be found
+     * @param asMember Whether this type is itself being rendered inside an enclosing type, in which
+     *                 case an annotation becomes a method and so needs a receiver parameter
+     * @return The rendered descriptor
+     */
+    private static TypeDescriptor describeClassModel(PendingType type,
+                                                     Map<String, PendingType> pending,
+                                                     boolean asMember) {
+        ClassModel model = type.model();
+        String className = type.className();
+        String module = type.module();
+        SourceDocumentationParser.ParsedSourceDocumentation documentation = type.documentation();
         String simpleName = simpleName(className);
+
+        // A nested type is reached through its enclosing type in Python -- `Mapper.Mapping`, since
+        // there is no `Mapping` of its own -- so it is rendered inside the enclosing type's body.
+        StringBuilder nested = new StringBuilder();
+        Set<ImportRef> nestedImports = new LinkedHashSet<>();
+        Set<TypeVarBinding> nestedTypeVars = new LinkedHashSet<>();
+        boolean nestedAnnotations = false;
+        boolean nestedEnums = false;
+        for (PendingType child : nestedTypes(className, pending)) {
+            TypeDescriptor rendered = describeClassModel(child, pending, true);
+            nested.append(indentBlock(rendered.renderedStub(), "    "));
+            nestedImports.addAll(rendered.imports());
+            nestedTypeVars.addAll(rendered.typeVarBindings());
+            // The flags drive the module's `_T` TypeVar and `from enum import Enum`, so a nested
+            // annotation or enum has to raise them on the enclosing type that carries it.
+            nestedAnnotations |= rendered.annotationLike();
+            nestedEnums |= rendered.enumLike();
+        }
+        boolean hasNested = !nested.isEmpty();
+
         if (model.flags().has(AccessFlag.ANNOTATION)) {
             String invocation = renderAnnotationInvocation(model);
             // IDEs resolve hover documentation against the matched overload, so every signature carries the docstring.
             String annotationDocumentation = annotationDocumentation(model, documentation);
+            String receiver = asMember ? "self" : "";
+            String separator = asMember && !invocation.isBlank() ? ", " : "";
+            if (hasNested) {
+                // An annotation that carries nested types cannot stay a bare `def`, because a
+                // function holds no names. A callable class does both: `@Mapper` still applies, and
+                // `Mapper.Mapping` resolves. Only annotations with nested types take this shape, so
+                // every other annotation stub is unchanged.
+                String holder = "_" + simpleName + "Annotation";
+                StringBuilder annotationStub = new StringBuilder("class ").append(holder).append("(Protocol):\n");
+                appendDocstring(annotationStub, annotationDocumentation, "    ");
+                annotationStub.append(nested);
+                annotationStub.append("    @overload\n    def __call__(self");
+                if (!invocation.isBlank()) {
+                    annotationStub.append(", ").append(invocation);
+                }
+                annotationStub.append(") -> Callable[[_T], _T]: ...\n");
+                annotationStub.append("    @overload\n    def __call__(self, target: _T, /) -> _T: ...\n");
+                annotationStub.append("    def __call__(self, *args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T: ...\n");
+                annotationStub.append("\n").append(simpleName).append(": ").append(holder).append("\n");
+                return new TypeDescriptor(module, simpleName, annotationStub.toString(),
+                    Set.copyOf(nestedImports), Set.copyOf(nestedTypeVars), true, nestedEnums);
+            }
             StringBuilder annotationStub = new StringBuilder("@overload\ndef ").append(simpleName)
-                .append("(").append(invocation).append(") -> Callable[[_T], _T]");
+                .append("(").append(receiver).append(separator).append(invocation).append(") -> Callable[[_T], _T]");
             appendCallableBody(annotationStub, annotationDocumentation, "");
-            annotationStub.append("@overload\ndef ").append(simpleName).append("(target: _T, /) -> _T");
+            annotationStub.append("@overload\ndef ").append(simpleName)
+                .append("(").append(asMember ? "self, " : "").append("target: _T, /) -> _T");
             appendCallableBody(annotationStub, annotationDocumentation, "");
-            annotationStub.append("def ").append(simpleName).append("(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T");
+            annotationStub.append("def ").append(simpleName)
+                .append("(").append(asMember ? "self, " : "").append("*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T");
             appendCallableBody(annotationStub, annotationDocumentation, "");
             return new TypeDescriptor(module, simpleName, annotationStub.toString(),
                 Set.of(), Set.of(), true, false);
@@ -571,14 +682,16 @@ final class PythonIdeStubGenerator {
         if (model.flags().has(AccessFlag.ENUM)) {
             StringBuilder enumStub = new StringBuilder("class ").append(simpleName).append("(Enum):\n");
             appendDocstring(enumStub, documentation.classDocumentation(), "    ");
+            enumStub.append(nested);
             model.fields().stream().filter(field -> field.flags().has(AccessFlag.ENUM)).forEach(field -> {
                 enumStub.append("    ").append(field.fieldName().stringValue()).append(" = ...\n");
                 appendDocstring(enumStub, documentation.fieldDocumentation(field.fieldName().stringValue()), "    ");
             });
-            if (model.fields().stream().noneMatch(field -> field.flags().has(AccessFlag.ENUM))) {
+            if (!hasNested && model.fields().stream().noneMatch(field -> field.flags().has(AccessFlag.ENUM))) {
                 enumStub.append("    ...\n");
             }
-            return new TypeDescriptor(module, simpleName, enumStub.toString(), Set.of(), Set.of(), false, true);
+            return new TypeDescriptor(module, simpleName, enumStub.toString(),
+                Set.copyOf(nestedImports), Set.copyOf(nestedTypeVars), nestedAnnotations, true);
         }
         java.lang.classfile.ClassSignature classSignature = model.findAttribute(Attributes.signature())
             .map(SignatureAttribute::asClassSignature).orElse(null);
@@ -603,7 +716,8 @@ final class PythonIdeStubGenerator {
         }
         stub.append(":\n");
         appendDocstring(stub, documentation.classDocumentation(), "    ");
-        boolean members = false;
+        stub.append(nested);
+        boolean members = hasNested;
         for (FieldModel field : model.fields().stream().sorted(Comparator.comparing(f -> f.fieldName().stringValue())).toList()) {
             if (!field.flags().has(AccessFlag.PUBLIC) || field.flags().has(AccessFlag.SYNTHETIC)) {
                 continue;
@@ -707,7 +821,24 @@ final class PythonIdeStubGenerator {
         if (!members) {
             stub.append("    ...\n");
         }
-        return new TypeDescriptor(module, simpleName, stub.toString(), classModelImports(model, module), Set.copyOf(typeVarBindings), false, false);
+        Set<ImportRef> imports = new LinkedHashSet<>(classModelImports(model, module));
+        imports.addAll(nestedImports);
+        typeVarBindings.addAll(nestedTypeVars);
+        return new TypeDescriptor(module, simpleName, stub.toString(), Set.copyOf(imports),
+            Set.copyOf(typeVarBindings), nestedAnnotations, nestedEnums);
+    }
+
+    /**
+     * Indents a rendered stub so that it can be nested inside an enclosing type's body.
+     *
+     * @param text The rendered stub
+     * @param indent The indent to apply to every non-blank line
+     * @return The indented block, newline terminated
+     */
+    private static String indentBlock(String text, String indent) {
+        StringBuilder indented = new StringBuilder();
+        text.lines().forEach(line -> indented.append(line.isBlank() ? line : indent + line).append("\n"));
+        return indented.toString();
     }
 
     private static Set<ImportRef> classModelImports(ClassModel model, String module) {
@@ -727,7 +858,7 @@ final class PythonIdeStubGenerator {
             addClassDescImport(type.componentType(), module, imports);
             return;
         }
-        addClassNameImport(type.packageName() + "." + simpleName(type.displayName()), module, imports);
+        addClassNameImport(type.packageName() + "." + type.displayName(), module, imports);
     }
 
     private static void addClassNameImport(String className, String module, Set<ImportRef> imports) {
@@ -737,7 +868,9 @@ final class PythonIdeStubGenerator {
             return;
         }
         String packageName = dottedName.substring(0, separator);
-        String symbolName = simpleName(dottedName.substring(separator + 1));
+        // A nested type is imported by the outermost type enclosing it; that is the only
+        // module-level name, and the one the reference `Mapper.Mapping` is resolved against.
+        String symbolName = importedName(dottedName.substring(separator + 1));
         if (!(packageName.startsWith("io.micronaut") || packageName.startsWith("jakarta"))) {
             return;
         }
@@ -764,10 +897,10 @@ final class PythonIdeStubGenerator {
         } else {
             model.superclass().map(entry -> entry.asInternalName())
                 .filter(name -> !"java/lang/Object".equals(name))
-                .map(name -> simpleName(name.replace('/', '.')))
+                .map(name -> qualifiedReferenceName(name.replace('/', '.')))
                 .ifPresent(bases::add);
             model.interfaces().stream()
-                .map(entry -> simpleName(entry.asInternalName().replace('/', '.')))
+                .map(entry -> qualifiedReferenceName(entry.asInternalName().replace('/', '.')))
                 .forEach(bases::add);
         }
         return List.copyOf(bases);
@@ -963,7 +1096,7 @@ final class PythonIdeStubGenerator {
                 case "java/util/List", "java/util/Collection", "java/util/Set", "java/lang/Iterable" -> "list";
                 case "java/util/Map" -> "dict";
                 case "java/lang/String", "java/lang/CharSequence" -> "str";
-                default -> simpleName(type.className().replace('/', '.'));
+                default -> qualifiedReferenceName(type.className().replace('/', '.'));
             };
             if (type.typeArgs().isEmpty()) {
                 return raw;
@@ -999,7 +1132,7 @@ final class PythonIdeStubGenerator {
         String packageName = type.packageName();
         return packageName.equals("io.micronaut") || packageName.startsWith("io.micronaut.")
             || packageName.equals("jakarta") || packageName.startsWith("jakarta.")
-            ? simpleName(type.displayName())
+            ? referenceName(type.displayName())
             : "Any";
     }
 
@@ -1012,6 +1145,42 @@ final class PythonIdeStubGenerator {
         className = className.replace('$', '.');
         int separator = className.lastIndexOf('.');
         return separator < 0 ? className : className.substring(separator + 1);
+    }
+
+    /**
+     * The name a type is referenced by within its own module. A nested type keeps its enclosing
+     * types, because that is how it is reached in Python: {@code Mapper.Mapping}, never
+     * {@code Mapping}, which does not exist as a type of its own.
+     *
+     * @param displayName A name relative to its package, nested types separated by {@code $}
+     * @return The dotted reference name
+     */
+    private static String referenceName(String displayName) {
+        return displayName.replace('$', '.');
+    }
+
+    /**
+     * The reference name for a fully qualified type: the package goes, the enclosing types stay.
+     *
+     * @param qualifiedName A dotted package-qualified name, nested types separated by {@code $}
+     * @return The dotted reference name
+     */
+    private static String qualifiedReferenceName(String qualifiedName) {
+        int separator = qualifiedName.lastIndexOf('.');
+        return referenceName(separator < 0 ? qualifiedName : qualifiedName.substring(separator + 1));
+    }
+
+    /**
+     * The module-level symbol a type is imported under. For a nested type that is the outermost
+     * type enclosing it, since only that one is a module-level name.
+     *
+     * @param displayName A name relative to its package, nested types separated by {@code $}
+     * @return The importable symbol name
+     */
+    private static String importedName(String displayName) {
+        String dotted = displayName.replace('$', '.');
+        int separator = dotted.indexOf('.');
+        return separator < 0 ? dotted : dotted.substring(0, separator);
     }
 
     private static String classNameFromEntry(String entry) {
@@ -2087,6 +2256,20 @@ final class PythonIdeStubGenerator {
                                   Set<TypeVarBinding> typeVarBindings,
                                   boolean annotationLike,
                                   boolean enumLike) {
+    }
+
+    /**
+     * A type that has passed the collection filters and is waiting for nesting to be resolved.
+     *
+     * @param model The parsed class file
+     * @param className The binary name, nested types separated by {@code $}
+     * @param module The Python module it belongs to
+     * @param documentation Documentation parsed from the sources jar, when there was one
+     */
+    private record PendingType(ClassModel model,
+                               String className,
+                               String module,
+                               SourceDocumentationParser.ParsedSourceDocumentation documentation) {
     }
 
     private record LoadedType(Class<?> type,

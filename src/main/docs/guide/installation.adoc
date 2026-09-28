@@ -52,6 +52,15 @@ The setup command is idempotent. Run `pyronaut setup --refresh` when you need to
 If Pyronaut cannot find a recorded artifact, or if the SDK, platform, repository, or native bundle configuration changes, execution commands exit with code `8` and instruct you to run `pyronaut setup` again.
 Help and version commands remain available before setup.
 
+To upgrade an installed CLI to the latest release and provision it in one step, run:
+
+[source,bash]
+----
+pyronaut update
+----
+
+The command also removes the launchers and cached artifacts of older versions. See <<pyronautCliV2,Pyronaut CLI Reference>> for its options.
+
 If `pyronaut setup` or any later command fails, run `pyronaut doctor` first:
 
 [source,bash]

@@ -57,7 +57,7 @@ class Benchmark(pgo_train.Trainer):
         shim = directory / self.image
         shim.write_text(PLAIN_SHIM.replace("@EXECUTABLE@", self.options.executable))
         shim.chmod(0o755)
-        self._link_manifests(directory, Path(self.options.manifests_dir))
+        self._copy_manifests(directory, Path(self.options.manifests_dir))
         self.instrumented_shim = shim
         if self.image != "pyronaut-dev":
             self._write_jvm_dev_shim()
