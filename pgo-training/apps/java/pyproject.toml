@@ -1,4 +1,6 @@
-# PGO training workload for pyronaut-run (applications without Python).
+# pyronaut-dev PGO training workload for a pyproject.toml project with only Java sources.
+# pyronaut-run trains on ../java-maven instead: a pyproject.toml project always resolves the GraalPy
+# runtime, which the pyronaut-run image does not contain.
 # @REPOSITORY@ is replaced by the training driver with the staged Pyronaut artifact repository.
 
 [project]

@@ -69,7 +69,7 @@ class Benchmark(pgo_train.Trainer):
     # ---- runtime images --------------------------------------------------------------------------
 
     def run_runtime(self) -> None:
-        app_name = "java" if self.image == "pyronaut-run" else "python"
+        app_name = pgo_train.RUN_APP if self.image == "pyronaut-run" else "python"
         port = free_port()
         app = self.copy_app(app_name, port)
         env = self.env("prepare")
@@ -89,7 +89,7 @@ class Benchmark(pgo_train.Trainer):
         """Starts ``pyronaut run`` once to learn the exact launcher command line it delegates to."""
         log_file = self.logs / "discover.log"
         with log_file.open("w") as output:
-            process = subprocess.Popen(self.cli("run", "--no-validate"), cwd=app, env=self.env("discover"),
+            process = subprocess.Popen(self.cli(*self.run_args(app)), cwd=app, env=self.env("discover"),
                                        stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             try:
                 self._wait_ready(port, process, log_file)

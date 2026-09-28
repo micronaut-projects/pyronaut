@@ -29,6 +29,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 IMAGES = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
+# The pyronaut-run workload. It must be a Maven or Gradle project, not a pyproject.toml project.
+RUN_APP = "java-maven"
 SPECIES = ("dog", "cat", "rabbit", "parrot", "hamster", "lizard")
 NAMES = ("Rex", "Tom", "Bella", "Coco", "Milo", "Luna", "Max", "Daisy", "Oscar", "Ruby")
 
@@ -319,8 +321,14 @@ class Trainer:
 
     @staticmethod
     def set_port(app: Path, port: int) -> None:
-        config = app / "config" / "application.toml"
+        # Pyronaut apps keep their configuration in config/, Maven apps in src/main/resources/.
+        config = next(path for path in (app / "config" / "application.toml",
+                                        app / "src" / "main" / "resources" / "application.toml") if path.is_file())
         config.write_text(config.read_text().replace("port = 8080", f"port = {port}", 1))
+
+    def run_args(self, app: Path) -> list[str]:
+        """``pyronaut run`` arguments. A Maven app has no pyproject.toml toolchain, so JVM runs select it here."""
+        return ["run", "--no-validate", *(["--jvm"] if self.jvm and (app / "pom.xml").is_file() else [])]
 
     # ---- process control -----------------------------------------------------------------------
 
@@ -485,7 +493,9 @@ class Trainer:
         elif self.image == "pyronaut-run-python":
             self._train_runtime("python", has_summary=True)
         else:
-            self._train_runtime("java", has_summary=True)
+            # A plain Maven project run through Pyronaut's external build support: its runtime classpath is
+            # what Maven resolves, without the GraalPy runtime a pyproject.toml project always gets.
+            self._train_runtime(RUN_APP, has_summary=True)
 
     def _train_runtime(self, app_name: str, has_summary: bool) -> None:
         port = free_port()
@@ -497,7 +507,7 @@ class Trainer:
         for args in (("install",), ("process",)):
             log(f"prepare: pyronaut {' '.join(args)}")
             self._check(self.cli(*args), "prepare", app, env=prepare_env)
-        run = ["run", "--no-validate"]
+        run = self.run_args(app)
         self.serve("startup", app, run, port, None, launches=self.options.startup_launches)
         self.serve("runtime", app, run, port, Workload(self.options.scale, has_summary))
 
