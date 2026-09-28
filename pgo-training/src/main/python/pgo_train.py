@@ -268,29 +268,29 @@ class Trainer:
         shim = directory / self.image
         shim.write_text(INSTRUMENTED_SHIM.replace("@EXECUTABLE@", str(Path(self.options.executable).resolve())))
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        self._link_manifests(directory, Path(self.options.manifests_dir))
+        self._copy_manifests(directory, Path(self.options.manifests_dir))
         if self.image == "pyronaut-dev":
-            os.symlink(Path(self.options.dev_install_dir).resolve() / "lib", directory / "lib")
+            shutil.copytree(Path(self.options.dev_install_dir).resolve() / "lib", directory / "lib")
         self.instrumented_shim = shim
 
     def _write_jvm_dev_shim(self) -> None:
         install = Path(self.options.dev_install_dir).resolve()
         directory = self.shims / "jvm-dev"
         (directory / "bin").mkdir(parents=True)
-        os.symlink(install / "lib", directory / "lib")
+        shutil.copytree(install / "lib", directory / "lib")
         shim = directory / "bin" / "pyronaut-dev"
         shim.write_text(JVM_DEV_SHIM.replace("@LIB@", str(install / "lib")))
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        self._link_manifests(directory / "bin", install / "bin")
+        self._copy_manifests(directory / "bin", install / "bin")
         self.jvm_dev_shim = shim
 
     @staticmethod
-    def _link_manifests(directory: Path, source: Path) -> None:
+    def _copy_manifests(directory: Path, source: Path) -> None:
         for name in ("native-compile-classpath.txt", "native-provided-classpath.txt"):
             target = source / name
             if not target.is_file():
                 raise TrainingError(f"Missing classpath manifest {target}")
-            os.symlink(target, directory / name)
+            shutil.copyfile(target, directory / name)
 
     def _create_venv(self) -> Path:
         venv = self.work / "venv"
