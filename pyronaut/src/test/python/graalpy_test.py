@@ -73,6 +73,7 @@ class GraalPyProvisioningTest(unittest.TestCase):
         self._env.stop()
         self._temp.cleanup()
 
+
     def test_required_graalpy_comes_from_version_properties(self):
         with patch.object(cli, "_read_version_properties", return_value=_VERSION_PROPERTIES):
             self.assertEqual(_SPEC, cli._required_graalpy())
@@ -217,6 +218,22 @@ class GraalPyProvisioningTest(unittest.TestCase):
         with patch.dict(os.environ, {"PYRONAUT_PYTHON_EXECUTABLE": "/custom/python"}):
             env = cli._build_java_home_env("run", lambda: "/tmp/graalvm")
         self.assertEqual("/custom/python", env["PYRONAUT_PYTHON_EXECUTABLE"])
+
+
+class RunningGraalPyTest(unittest.TestCase):
+    def test_running_graalpy_finds_windows_executable_in_base_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            executable = home / "bin" / "graalpy.exe"
+            executable.parent.mkdir()
+            executable.write_text("fake GraalPy executable\n", encoding="utf-8")
+            executable.chmod(0o755)
+
+            with (
+                patch.object(cli.sys, "implementation", types.SimpleNamespace(name="graalpy")),
+                patch.object(cli.sys, "base_prefix", str(home)),
+            ):
+                self.assertEqual(executable, cli._running_graalpy())
 
 
 class ProjectVirtualenvTest(unittest.TestCase):
