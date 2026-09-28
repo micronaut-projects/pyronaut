@@ -357,12 +357,12 @@ class Trainer:
                                     stdout=output, stderr=subprocess.STDOUT)
         if result.returncode != 0:
             raise TrainingError(f"{scenario}: {' '.join(command[2:])} exited with {result.returncode}; see {log_file}\n"
-                                + self._tail(log_file))
+                                + self._log_contents(log_file))
         return round(time.monotonic() - start, 1)
 
     @staticmethod
-    def _tail(path: Path, lines: int = 40) -> str:
-        return "\n".join(path.read_text(errors="replace").splitlines()[-lines:])
+    def _log_contents(path: Path) -> str:
+        return path.read_text(errors="replace").rstrip()
 
     def skipped(self, scenario: str) -> bool:
         if scenario in self.options.skip:
@@ -409,7 +409,7 @@ class Trainer:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise TrainingError(f"Server exited with {process.returncode} before it was ready; see {log_file}\n"
-                                    + self._tail(log_file))
+                                    + self._log_contents(log_file))
             try:
                 connection = http.client.HTTPConnection("localhost", port, timeout=5)
                 connection.request("GET", "/hello")
