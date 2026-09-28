@@ -1,0 +1,7 @@
+[micronaut.application]
+name = "pgo-training"
+
+[micronaut.server]
+# The training driver rewrites this with a free port.
+port = 8080
+host = "localhost"
