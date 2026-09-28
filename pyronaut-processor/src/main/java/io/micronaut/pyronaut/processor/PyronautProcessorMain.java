@@ -22,9 +22,11 @@ import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.config.terminal.TerminalInfo;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
+import io.micronaut.pyronaut.processor.report.StaticCompilationReportPage;
 import io.micronaut.python.compiler.PythonIncrementalMode;
 import picocli.CommandLine;
 
+import java.io.IOException;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -369,6 +371,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             );
                         }
                         progressReporter.finishPass("main", mainSourceCount);
+                        renderStaticCompilationReport(mainOptions, progressReporter);
                         mainStatus = "processed";
                     }
                     if (externalLayout != null) {
@@ -491,6 +494,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             }
                             syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                             progressReporter.finishPass("test", testSourceCount);
+                            renderStaticCompilationReport(testOptions, progressReporter);
                             testStatus = "processed";
                         }
                     }
@@ -563,6 +567,24 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         }
         String name = fileName.toString();
         return name.startsWith(artifactId + "-") && name.endsWith(".jar");
+    }
+
+    /**
+     * Renders the page of the static compilation report when the pass wrote one.
+     */
+    private static void renderStaticCompilationReport(List<String> options, ProcessorProgressReporter progressReporter) {
+        Path directory = ProcessorOptions.staticCompilationReport(options);
+        if (directory == null) {
+            return;
+        }
+        try {
+            Path html = StaticCompilationReportPage.write(directory);
+            if (html != null) {
+                progressReporter.staticCompilationReport(html);
+            }
+        } catch (IOException e) {
+            System.err.println("Unable to render the static compilation report in " + directory + ": " + e.getMessage());
+        }
     }
 
     public static void main(String[] args) {

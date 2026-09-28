@@ -443,3 +443,90 @@ footer strong {
   .time { display: none; }
   .group-head { flex-wrap: wrap; }
 }
+
+/* Static compilation: the outcomes of the decisions and the reasons panel */
+:root {
+  --candidate: #4f7bff;
+  --candidate-soft: rgba(79, 123, 255, .14);
+  --ineligible: #7c849e;
+  --ineligible-soft: rgba(124, 132, 158, .16);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --candidate: #7d9bff;
+    --candidate-soft: rgba(125, 155, 255, .16);
+    --ineligible: #9099b8;
+    --ineligible-soft: rgba(144, 153, 184, .18);
+  }
+}
+.hero-meta code { font-family: var(--mono); color: rgba(255, 255, 255, .85); }
+.verdict.skipped .dot { background: #ffbe3d; box-shadow: 0 0 0 4px rgba(255, 190, 61, .25); }
+.verdict.candidate .dot { background: #7d9bff; box-shadow: 0 0 0 4px rgba(125, 155, 255, .25); }
+.stat.compiled { --tone: var(--passed); }
+.stat.candidate { --tone: var(--candidate); }
+.stat.excluded { --tone: var(--skipped); }
+.stat.ineligible { --tone: var(--ineligible); }
+.stat.bridge { --tone: var(--accent-2); }
+.stat.skipped { --tone: var(--failed); }
+.stat.skipped.nonzero .value { color: var(--failed); }
+.bar .compiled { background: linear-gradient(90deg, #12b981, var(--passed)); }
+.bar .candidate { background: var(--candidate); }
+.bar .excluded { background: var(--skipped); }
+.bar .ineligible { background: var(--ineligible); }
+.pill.compiled { color: var(--passed); background: var(--passed-soft); }
+.pill.candidate { color: var(--candidate); background: var(--candidate-soft); }
+.pill.excluded { color: var(--skipped); background: var(--skipped-soft); }
+.pill.ineligible { color: var(--ineligible); background: var(--ineligible-soft); }
+.test.compiled { --tone: var(--passed); --tone-soft: var(--passed-soft); }
+.test.candidate { --tone: var(--candidate); --tone-soft: var(--candidate-soft); }
+.test.skipped { --tone: var(--failed); --tone-soft: var(--failed-soft); }
+.test.excluded { --tone: var(--skipped); --tone-soft: var(--skipped-soft); }
+.test.ineligible { --tone: var(--ineligible); --tone-soft: var(--ineligible-soft); }
+.test.skipped > summary::before { opacity: 1; }
+.facts { color: var(--muted); font-size: .84rem; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.section.reasons { --section-tone: var(--failed); }
+ol.reasons { margin: 0; padding-left: 20px; font-size: .9rem; }
+ol.reasons li { margin: 0 0 10px; }
+ol.reasons li:last-child { margin-bottom: 0; }
+.rule-id, .where {
+  font-family: var(--mono);
+  font-size: .8rem;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.rule-id { color: var(--failed); }
+.where { color: var(--muted); }
+.hint {
+  margin: 6px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: .86rem;
+  color: var(--text);
+  background: var(--passed-soft);
+  border-left: 3px solid var(--passed);
+}
+.hint::before { content: "Fix: "; font-weight: 700; color: var(--passed); }
+
+/* The reasons panel: one row per rule, styled as the rows of the decisions */
+.rule { border-top: 1px solid var(--border); --tone: var(--failed); --tone-soft: var(--failed-soft); }
+.rule:first-of-type { border-top: 0; }
+.rule > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 18px;
+  cursor: pointer;
+}
+.rule > summary::-webkit-details-marker { display: none; }
+.rule > summary:hover { background: var(--surface-2); }
+.rule[open] .chevron { transform: rotate(90deg); }
+.rule .name { color: var(--failed); font-weight: 600; }
+.rule .detail { padding-top: 0; }
+.rule .hint { margin-top: 0; }
+ul.affected { margin: 10px 0 0; padding-left: 20px; font-size: .86rem; }
+ul.affected li { margin: 2px 0; }
+ul.affected .name { flex: none; }
+.blockers .group-head .file svg { color: var(--failed); }
