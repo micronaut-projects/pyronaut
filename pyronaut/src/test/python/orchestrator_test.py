@@ -1335,6 +1335,50 @@ class OrchestratorTest(unittest.TestCase):
         jars_arg = next(arg for arg in command_line if arg.startswith("-Dpyronaut.dev.native.provided.jars="))
         self.assertEqual(f"-Dpyronaut.dev.native.provided.jars={lib_dir.resolve()}", jars_arg)
         self.assertLess(len(jars_arg), 256)
+        artifacts_arg = next(arg for arg in command_line if arg.startswith("-Dpyronaut.dev.native.provided.artifacts="))
+        self.assertEqual(
+            f"-Dpyronaut.dev.native.provided.artifacts=@{(bin_dir / 'native-provided-classpath.txt').resolve()}",
+            artifacts_arg,
+        )
+
+    def test_windows_launch_spills_long_native_system_properties_to_options_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            classpath = ";".join(f"C:\\repo\\lib-{index}.jar" for index in range(600))
+            command_line = [
+                "C:\\tools\\pyronaut-dev.cmd",
+                "-Dmicronaut.environments=dev",
+                f"-Dpyronaut.dev.compiler.class.path={classpath}",
+                f"-Djava.class.path={classpath}",
+                "process",
+                "--classpath",
+                "short.jar",
+            ]
+            with patch.object(cli.sys, "platform", "win32"), patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                launched, options = cli._windows_launch(command_line)  # noqa: SLF001
+                relaunched, _ = cli._windows_launch(command_line)  # noqa: SLF001
+                options_file = Path(launched[1].split("=", 1)[1])
+                spilled = options_file.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual({"shell": True}, options)
+        self.assertEqual(launched, relaunched)
+        self.assertTrue(launched[1].startswith("-Dpyronaut.jvm.options.file="))
+        self.assertEqual(
+            ["C:\\tools\\pyronaut-dev.cmd", launched[1], "-Dmicronaut.environments=dev", "process", "--classpath", "short.jar"],
+            launched,
+        )
+        self.assertEqual(command_line[2:4], spilled)
+        self.assertLess(len(subprocess.list2cmdline(launched)), 8191)
+
+    def test_windows_launch_keeps_short_or_non_native_command_lines(self):
+        long_property = "-Dpyronaut.dev.compiler.class.path=" + "x" * 9000
+        with patch.object(cli.sys, "platform", "win32"):
+            short = ["C:\\tools\\pyronaut-dev.exe", "-Dmicronaut.environments=dev", "install"]
+            self.assertEqual((short, {}), cli._windows_launch(short))  # noqa: SLF001
+            java = ["C:\\jdk\\bin\\java.exe", long_property, "Main"]
+            self.assertEqual((java, {}), cli._windows_launch(java))  # noqa: SLF001
+        with patch.object(cli.sys, "platform", "linux"):
+            native = ["/tools/pyronaut-dev", long_property, "install"]
+            self.assertEqual((native, {}), cli._windows_launch(native))  # noqa: SLF001
 
     def test_native_provided_coordinates_keep_same_artifact_id_from_different_group(self):
         with tempfile.TemporaryDirectory() as temp_dir:

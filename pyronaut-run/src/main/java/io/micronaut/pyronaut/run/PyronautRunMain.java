@@ -17,6 +17,7 @@ package io.micronaut.pyronaut.run;
 
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
+import io.micronaut.pyronaut.config.model.JvmOptionsFile;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
@@ -612,6 +613,7 @@ public class PyronautRunMain implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
+        JvmOptionsFile.apply();
         Terminal.notifyLaunched();
         PyronautRuntimeProperties.disableGraalVmImageSingletons();
         loadRunConfigurer().initializeLauncher();
