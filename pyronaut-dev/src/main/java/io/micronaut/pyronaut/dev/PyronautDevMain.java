@@ -205,7 +205,10 @@ public final class PyronautDevMain implements Callable<Integer> {
     static void main(String[] args) {
         JvmOptionsFile.apply();
         Terminal.notifyLaunched();
-        PyronautRuntimeProperties.disableGraalVmImageSingletons();
+        // install only uses bundled beans; keep their native-image service definitions available.
+        if (args.length == 0 || !"install".equals(args[0])) {
+            PyronautRuntimeProperties.disableGraalVmImageSingletons();
+        }
         configureNativeRuntimeDefaults();
         initializeLauncherLogging();
         Integer verificationExit = verifySystemResourceIfRequested();
