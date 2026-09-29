@@ -31,6 +31,7 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationCon
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.model.JvmOptionsFile;
 import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarationRequest;
@@ -202,6 +203,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     static void main(String[] args) {
+        JvmOptionsFile.apply();
         Terminal.notifyLaunched();
         PyronautRuntimeProperties.disableGraalVmImageSingletons();
         configureNativeRuntimeDefaults();

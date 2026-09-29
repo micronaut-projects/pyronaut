@@ -25,7 +25,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable, Iterable, Iterator, NamedTuple, Protocol, Sequence
 
 from .progress import PROGRESS_EPOCH_ENV as _PROGRESS_EPOCH_ENV
@@ -6082,7 +6082,7 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
 def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> ManagedProcess:
     launch = _launch_indicator(command_line)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        command_line, options = _windows_launch(command_line)
         process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError:
         launch.abandon()
@@ -7838,7 +7838,7 @@ def _filter_create_features(output: str, version: str) -> str:
 def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> int:
     launch = _launch_indicator(command_line)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        command_line, options = _windows_launch(command_line)
         process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError as exception:
         launch.abandon()
@@ -7856,7 +7856,7 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
 
 def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        command_line, options = _windows_launch(command_line)
         completed = subprocess.run(
             command_line,
             check=False,
@@ -7875,6 +7875,63 @@ def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = 
 
 def _uses_windows_batch_shell(command_line: Sequence[str]) -> bool:
     return sys.platform == "win32" and bool(command_line) and command_line[0].lower().endswith((".bat", ".cmd"))
+
+
+# cmd.exe rejects command lines longer than 8191 characters and CreateProcess
+# rejects those longer than 32767.
+_WINDOWS_BATCH_COMMAND_LINE_LIMIT = 8191
+_WINDOWS_COMMAND_LINE_LIMIT = 32767
+_JVM_OPTIONS_FILE_PROPERTY = "pyronaut.jvm.options.file"
+_JVM_OPTIONS_FILE_MIN_OPTION_LENGTH = 256
+
+
+def _windows_launch(command_line: list[str]) -> tuple[list[str], dict[str, bool]]:
+    """Return the command line and Popen options for launching on the current platform."""
+    if sys.platform != "win32":
+        return command_line, {}
+    batch = _uses_windows_batch_shell(command_line)
+    limit = _WINDOWS_BATCH_COMMAND_LINE_LIMIT if batch else _WINDOWS_COMMAND_LINE_LIMIT
+    return _spill_native_system_properties(command_line, limit), ({"shell": True} if batch else {})
+
+
+def _spill_native_system_properties(command_line: list[str], limit: int) -> list[str]:
+    """Move long ``-D`` options of a native Pyronaut launcher into an options file.
+
+    Classpath-valued properties easily exceed the Windows command line limit.
+    The native launchers load the file named by ``pyronaut.jvm.options.file``
+    before reading any other system property.
+    """
+    if not command_line or len(subprocess.list2cmdline(command_line)) < limit:
+        return command_line
+    executable = PureWindowsPath(command_line[0]).name.lower()
+    for suffix in (".exe", ".cmd", ".bat"):
+        executable = executable.removesuffix(suffix)
+    if executable not in _NATIVE_IMAGE_COMMANDS:
+        return command_line
+    retained = [command_line[0]]
+    spilled: list[str] = []
+    for index, value in enumerate(command_line[1:], start=1):
+        if not value.startswith("-"):
+            # Options after the subcommand belong to the launcher's own parser.
+            retained.extend(command_line[index:])
+            break
+        if value.startswith("-D") and len(value) >= _JVM_OPTIONS_FILE_MIN_OPTION_LENGTH and "\n" not in value:
+            spilled.append(value)
+        else:
+            retained.append(value)
+    if not spilled:
+        return command_line
+    content = "".join(f"{value}\n" for value in spilled)
+    directory = Path(tempfile.gettempdir()) / "pyronaut"
+    directory.mkdir(parents=True, exist_ok=True)
+    # Content-addressed so concurrent and restarted launches can share it.
+    options_file = directory / f"jvm-options-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}.txt"
+    if not options_file.is_file():
+        staging = options_file.with_name(f"{options_file.name}.{os.getpid()}.tmp")
+        with staging.open("w", encoding="utf-8", newline="\n") as output:
+            output.write(content)
+        os.replace(staging, options_file)
+    return [retained[0], f"-D{_JVM_OPTIONS_FILE_PROPERTY}={options_file}", *retained[1:]]
 
 
 def _resolve_executable(command_name: str) -> str | None:
