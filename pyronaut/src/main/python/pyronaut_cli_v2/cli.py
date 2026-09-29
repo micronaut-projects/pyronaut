@@ -8128,7 +8128,9 @@ def _pyronaut_dev_native_command_line(
         if provided_jars:
             # Metadata consumers inspect these shipped JARs directly; they are
             # deliberately not part of the application's runtime classpath.
-            jvm_args.append(f"-Dpyronaut.dev.native.provided.jars={os.pathsep.join(provided_jars)}")
+            provided_jar_dirs = sorted({Path(jar).parent for jar in provided_jars})
+            provided_jar_wildcards = [str(d / "*") for d in provided_jar_dirs]
+            jvm_args.append(f"-Dpyronaut.dev.native.provided.jars={os.pathsep.join(provided_jar_wildcards)}")
     selected_environment = (
         environment if environment is not None and not _has_micronaut_environments_property(args)
         else _default_environment(command, args)
@@ -9472,7 +9474,7 @@ def _graalpy_sdk_home(spec: _GraalPySpec) -> Path:
 
 
 def _graalpy_executable_in(home: Path) -> Path | None:
-    for name in ("graalpy", "python3", "python"):
+    for name in ("graalpy", "graalpy.exe", "python3", "python3.exe", "python", "python.exe"):
         candidate = home / "bin" / name
         if _is_executable_file(candidate):
             return candidate

@@ -1306,6 +1306,36 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual([str(binary.resolve())], jars)
         self.assertEqual({"io.micronaut:micronaut-jdbc"}, coordinates)
 
+    def test_native_dev_command_passes_provided_jar_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_dir = Path(temp_dir) / "tools" / "pyronaut-dev"
+            bin_dir = install_dir / "bin"
+            lib_dir = install_dir / "lib"
+            bin_dir.mkdir(parents=True)
+            lib_dir.mkdir()
+            native_dev = bin_dir / "pyronaut-dev.cmd"
+            native_dev.write_text("", encoding="utf-8")
+            (bin_dir / "native-provided-classpath.txt").write_text(
+                "io.micronaut:micronaut-jdbc\nio.micronaut:micronaut-core\n",
+                encoding="utf-8",
+            )
+            (lib_dir / "micronaut-jdbc-7.1.0.jar").write_text("", encoding="utf-8")
+            (lib_dir / "micronaut-core-5.2.0.jar").write_text("", encoding="utf-8")
+            project_dir = Path(temp_dir) / "project"
+            project_dir.mkdir()
+
+            with patch.object(cli, "_use_pyronaut_dev_native_toolchain", return_value=True), patch.object(
+                cli, "_resolve_pyronaut_dev_native_executable", return_value=str(native_dev)
+            ):
+                command_line = cli._pyronaut_dev_native_command_line(
+                    "install", ["--project-dir", str(project_dir)], self._resolver()
+                )
+
+        assert command_line is not None
+        jars_arg = next(arg for arg in command_line if arg.startswith("-Dpyronaut.dev.native.provided.jars="))
+        self.assertEqual(f"-Dpyronaut.dev.native.provided.jars={lib_dir.resolve()}", jars_arg)
+        self.assertLess(len(jars_arg), 256)
+
     def test_native_provided_coordinates_keep_same_artifact_id_from_different_group(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             bin_dir = Path(temp_dir) / "bin"
