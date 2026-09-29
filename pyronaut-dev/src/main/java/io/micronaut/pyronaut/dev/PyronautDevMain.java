@@ -31,6 +31,7 @@ import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationCon
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarationRequest;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarations;
@@ -129,7 +130,6 @@ public final class PyronautDevMain implements Callable<Integer> {
     private static final String DIRECT_COMPILE_PYTHON_BYTECODE = "pyronaut.dev.compile-python-bytecode";
     private static final String DIRECT_COMMAND = "pyronaut.dev.direct.command";
     private static final String PROCESSOR_DAEMON_COMMAND_PREFIX = "pyronaut.processor.daemon.command-prefix";
-    private static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
     private static final String DEFAULT_TEST_SERVER_PORT = "0";
     private static final String NETTY_NO_UNSAFE = "io.netty.noUnsafe";
     private static final String SUN_MISC_UNSAFE_MEMORY_ACCESS = "sun.misc.unsafe.memory.access";
@@ -1572,11 +1572,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static Set<String> nativeProvidedArtifacts() {
-        String configured = System.getProperty(NATIVE_PROVIDED_ARTIFACTS, "");
-        return Arrays.stream(configured.split(","))
-            .map(String::trim)
-            .filter(value -> !value.isEmpty())
-            .collect(java.util.stream.Collectors.toSet());
+        return Set.copyOf(NativeProvidedJarResolver.providedArtifactCoordinates());
     }
 
     private static boolean isNativeProvidedArtifact(Path path, Set<String> nativeArtifacts) {

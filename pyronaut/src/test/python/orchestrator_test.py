@@ -1335,6 +1335,11 @@ class OrchestratorTest(unittest.TestCase):
         jars_arg = next(arg for arg in command_line if arg.startswith("-Dpyronaut.dev.native.provided.jars="))
         self.assertEqual(f"-Dpyronaut.dev.native.provided.jars={lib_dir.resolve()}", jars_arg)
         self.assertLess(len(jars_arg), 256)
+        artifacts_arg = next(arg for arg in command_line if arg.startswith("-Dpyronaut.dev.native.provided.artifacts="))
+        self.assertEqual(
+            f"-Dpyronaut.dev.native.provided.artifacts=@{(bin_dir / 'native-provided-classpath.txt').resolve()}",
+            artifacts_arg,
+        )
 
     def test_native_provided_coordinates_keep_same_artifact_id_from_different_group(self):
         with tempfile.TemporaryDirectory() as temp_dir:
