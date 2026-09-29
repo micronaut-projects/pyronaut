@@ -155,7 +155,7 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
-    void validationClasspathIncludesNativeProvidedJarWithoutChangingProjectClasspath() throws Exception {
+    void validationClasspathIncludesResourcesDirsAndNativeProvidedJarWithoutChangingProjectClasspath() throws Exception {
         Path projectJar = Files.createFile(tempDir.resolve("project.jar"));
         Path nativeJar = Files.createFile(tempDir.resolve("native-metadata-1.0.0.jar"));
         String previousArtifacts = System.getProperty("pyronaut.dev.native.provided.artifacts");
@@ -163,13 +163,14 @@ class PyronautValidateConfigMainTest {
         try {
             System.setProperty("pyronaut.dev.native.provided.artifacts", "example:native-metadata");
             System.setProperty("pyronaut.dev.native.provided.jars", nativeJar.toString());
-            var method = MicronautConfigurationValidatorExecutor.class.getDeclaredMethod("validationClasspath", String.class);
-            method.setAccessible(true);
+            Path configDir = Files.createDirectories(tempDir.resolve("config"));
 
-            @SuppressWarnings("unchecked")
-            List<java.net.URL> urls = (List<java.net.URL>) method.invoke(null, projectJar.toString());
+            List<java.net.URL> urls = MicronautConfigurationValidatorExecutor.validationClasspath(
+                projectJar.toString(),
+                List.of(configDir, tempDir.resolve("missing-resources"))
+            );
 
-            assertEquals(List.of(projectJar.toUri().toURL(), nativeJar.toUri().toURL()), urls);
+            assertEquals(List.of(projectJar.toUri().toURL(), configDir.toUri().toURL(), nativeJar.toUri().toURL()), urls);
         } finally {
             restoreProperty("pyronaut.dev.native.provided.artifacts", previousArtifacts);
             restoreProperty("pyronaut.dev.native.provided.jars", previousJars);

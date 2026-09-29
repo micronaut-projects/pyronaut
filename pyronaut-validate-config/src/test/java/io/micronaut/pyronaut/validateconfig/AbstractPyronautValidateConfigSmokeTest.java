@@ -90,9 +90,60 @@ abstract class AbstractPyronautValidateConfigSmokeTest {
         assertTrue(json.contains("MissingDependencyConsumer") || json.contains("MissingCollaborator"), json);
     }
 
+    protected void assertValidationReportsInvalidApplicationToml() throws Exception {
+        // Mirrors a project created by `pyronaut create`: configuration lives in
+        // config/application.toml (the default [tool.pyronaut.sources] resources
+        // directory) and is not copied into __pyronaut__/classes.
+        Path project = tempDir.resolve("app");
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        Files.createDirectories(classesDir);
+        Files.createDirectories(project.resolve("config"));
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject(), StandardCharsets.UTF_8);
+        Files.writeString(project.resolve("config/application.toml"), """
+            [micronaut.server]
+            port = "eighty-eighty"
+            prot = 8080
+
+            [test.config]
+            enabled = true
+            schema-generate = "CREATE_DRPO"
+            """, StandardCharsets.UTF_8);
+        writeConfigurationSchema(classesDir);
+        Files.writeString(
+            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
+            runtimeClasspathManifest(),
+            StandardCharsets.UTF_8
+        );
+
+        RunResult result = runConfigurationValidation(project, "dev");
+
+        assertEquals(1, result.exitCode(), result.output());
+        Path jsonReport = project.resolve("__pyronaut__/reports/config-validation/dev/configuration-errors.json");
+        assertTrue(Files.exists(jsonReport), result.output());
+        String json = Files.readString(jsonReport, StandardCharsets.UTF_8);
+        assertTrue(json.contains("\"property\":\"micronaut.server.port\""), json);
+        assertTrue(json.contains("\"property\":\"micronaut.server.prot\""), json);
+        assertTrue(json.contains("\"property\":\"test.config.schema-generate\""), json);
+        assertTrue(json.contains("application.toml"), json);
+    }
+
     protected abstract RunResult runValidation(Path project) throws Exception;
 
+    protected RunResult runConfigurationValidation(Path project, String scenario) throws Exception {
+        return runJvmValidation(project, "--project-dir", project.toString(), "--scenario", scenario, "--no-cache");
+    }
+
     protected static RunResult runJvmValidation(Path project) throws Exception {
+        return runJvmValidation(project,
+            "--project-dir", project.toString(),
+            "--scenario", "run",
+            "--validate-dependency-injection",
+            "--dependency-injection-validation-strategy", "all-beans",
+            "--no-cache"
+        );
+    }
+
+    protected static RunResult runJvmValidation(Path project, String... args) throws Exception {
         ByteArrayOutputStream stdout = new ByteArrayOutputStream();
         ByteArrayOutputStream stderr = new ByteArrayOutputStream();
         PrintStream originalOut = System.out;
@@ -101,13 +152,7 @@ abstract class AbstractPyronautValidateConfigSmokeTest {
         try {
             System.setOut(new PrintStream(stdout, true, StandardCharsets.UTF_8));
             System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
-            exitCode = new CommandLine(new PyronautValidateConfigMain()).execute(
-                "--project-dir", project.toString(),
-                "--scenario", "run",
-                "--validate-dependency-injection",
-                "--dependency-injection-validation-strategy", "all-beans",
-                "--no-cache"
-            );
+            exitCode = new CommandLine(new PyronautValidateConfigMain()).execute(args);
         } finally {
             System.setOut(originalOut);
             System.setErr(originalErr);
@@ -190,6 +235,12 @@ abstract class AbstractPyronautValidateConfigSmokeTest {
                   "type": "boolean",
                   "x-micronaut-javaType": "java.lang.Boolean",
                   "x-micronaut-path": "test.config.enabled"
+                },
+                "schema-generate": {
+                  "type": "string",
+                  "enum": ["NONE", "CREATE", "CREATE_DROP"],
+                  "x-micronaut-javaType": "example.SchemaGenerate",
+                  "x-micronaut-path": "test.config.schema-generate"
                 }
               }
             }

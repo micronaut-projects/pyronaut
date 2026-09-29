@@ -9,6 +9,11 @@ class PyronautValidateConfigJvmSmokeTest extends AbstractPyronautValidateConfigS
         assertValidationFindsConfigurationAndDependencyInjectionErrors();
     }
 
+    @Test
+    void jvmValidationReportsInvalidValuesInConfigApplicationToml() throws Exception {
+        assertValidationReportsInvalidApplicationToml();
+    }
+
     @Override
     protected RunResult runValidation(java.nio.file.Path project) throws Exception {
         return runJvmValidation(project);

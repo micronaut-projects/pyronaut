@@ -11,6 +11,8 @@ dependencies {
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(mnPicocli.picocli)
     implementation(libs.micronaut.json.schema.configuration.validator)
+    // Pyronaut projects configure the application with application.toml.
+    implementation(libs.micronaut.toml)
     implementation(mnSerde.micronaut.serde.jackson)
     implementation(project(":micronaut-pyronaut-logback"))
 

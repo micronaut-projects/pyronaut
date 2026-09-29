@@ -49,7 +49,7 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
 
     @Override
     public PyronautValidateConfigMain.ValidationExecutionResult validate(PyronautValidateConfigMain.ValidationSettings settings) throws Exception {
-        List<URL> validationClasspath = validationClasspath(settings.classpath());
+        List<URL> validationClasspath = validationClasspath(settings.classpath(), settings.resourcesDirs());
         ClassLoader previousClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         BeanIntrospectionsProvider previousProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
@@ -74,18 +74,6 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
     ) throws Exception {
         Files.createDirectories(settings.outputDir());
         suppressDefaultEnvironmentLogging();
-        if (!settings.resourcesDirs().isEmpty()) {
-            // External Maven/Gradle layouts do not copy resources into the processed
-            // classes directory. Point Micronaut's environment at those directories
-            // explicitly so configuration files participate in validation.
-            System.setProperty("micronaut.config.files", settings.resourcesDirs().stream()
-                .flatMap(dir -> java.util.stream.Stream.of("application.properties", "application.yml", "application.yaml", "application.json")
-                    .map(dir::resolve)
-                    .filter(Files::isRegularFile)
-                    .map(Path::toString))
-                .reduce((left, right) -> left + java.io.File.pathSeparator + right)
-                .orElse(""));
-        }
 
         ConfigurationJsonSchemaValidator validator = new ConfigurationJsonSchemaValidator();
         validator.setFailOnNotPresent(settings.failOnNotPresent());
@@ -141,11 +129,20 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
         return new PyronautValidateConfigMain.ValidationExecutionResult(hasErrors);
     }
 
-    private static List<URL> validationClasspath(String classpath) throws java.net.MalformedURLException {
+    static List<URL> validationClasspath(String classpath, List<Path> resourcesDirs) throws java.net.MalformedURLException {
         LinkedHashSet<Path> entries = new LinkedHashSet<>();
         for (String entry : classpath.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator))) {
             if (!entry.isBlank()) {
                 entries.add(Path.of(entry).toAbsolutePath().normalize());
+            }
+        }
+        // Resources directories (config/ by default) are not copied into the processed
+        // classes directory; the launchers add them to the application classpath instead.
+        // Do the same so application.toml/yml/properties and their environment-specific
+        // variants are loaded by the same property source loaders the application uses.
+        for (Path dir : resourcesDirs) {
+            if (Files.isDirectory(dir)) {
+                entries.add(dir.toAbsolutePath().normalize());
             }
         }
         new NativeProvidedJarResolver().resolve().stream()
