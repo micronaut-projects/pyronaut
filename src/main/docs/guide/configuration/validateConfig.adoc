@@ -21,6 +21,28 @@ Supported scenarios are:
 The standalone command defaults to `production`.
 `pyronaut dev`, `pyronaut run`, `pyronaut test`, and native build flows call validation with their own scenario defaults unless you pass `--no-validate`.
 
+== What is validated
+
+Validation loads configuration the same way the application does.
+It reads `application.toml` (and `application.properties`, `application.yml` or `application.json`) plus environment-specific variants such as `application-dev.toml` from:
+
+- the resources directories (`config` by default, set with `resources` and `additional-resources` in `[tool.pyronaut.sources]`)
+- `src/main/resources`
+- for the `test` scenario, the test resources directories as well (Maven and Gradle projects also include them for `dev`)
+
+Each property is checked against the configuration schemas of the application classpath.
+Validation reports:
+
+- values of the wrong type, for example `port = "eighty-eighty"` under `[micronaut.server]`
+- values that are not in an enum, for example `schema-generate = 'CREATE_DRPO'` under `[datasources.default]`
+- unknown keys, for example `prot = 8080` under `[micronaut.server]`, with a suggestion when a similar key exists
+
+Each error names the file and line it came from.
+Unknown keys are errors while `fail-on-not-present` is `true`, which is the default.
+
+Validation runs for `pyproject.toml` projects and for Maven and Gradle projects.
+Direct-source launches such as `pyronaut dev main.py` do not run configuration validation.
+
 == Reports
 
 By default, Pyronaut writes reports under:

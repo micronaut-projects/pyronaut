@@ -14,17 +14,29 @@ class PyronautValidateConfigNativeSmokeTest extends AbstractPyronautValidateConf
         assertValidationFindsConfigurationErrors();
     }
 
+    @Test
+    void nativeBinaryReportsInvalidValuesInConfigApplicationToml() throws Exception {
+        assertValidationReportsInvalidApplicationToml();
+    }
+
+    @Override
+    protected RunResult runConfigurationValidation(Path project, String scenario) throws Exception {
+        return runNative(project, "--scenario", scenario, "--no-cache");
+    }
+
     @Override
     protected RunResult runValidation(Path project) throws Exception {
+        return runNative(project, "--scenario", "run", "--validate-dependency-injection", "--no-cache");
+    }
+
+    private static RunResult runNative(Path project, String... args) throws Exception {
         String binaryPath = System.getProperty("pyronaut.validateconfig.native.binary");
-        Path binary = Path.of(binaryPath);
-        ProcessBuilder builder = new ProcessBuilder(
-            binary.toString(),
-            "--project-dir", project.toString(),
-            "--scenario", "run",
-            "--validate-dependency-injection",
-            "--no-cache"
-        )
+        java.util.List<String> command = new java.util.ArrayList<>();
+        command.add(Path.of(binaryPath).toString());
+        command.add("--project-dir");
+        command.add(project.toString());
+        command.addAll(java.util.List.of(args));
+        ProcessBuilder builder = new ProcessBuilder(command)
             .redirectErrorStream(true);
         builder.environment().put("PYRONAUT_VALIDATE_CONFIG_TRACE", "true");
         Process process = builder.start();
