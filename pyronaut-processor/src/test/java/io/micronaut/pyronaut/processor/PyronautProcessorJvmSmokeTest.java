@@ -77,7 +77,7 @@ class PyronautProcessorJvmSmokeTest extends AbstractPyronautProcessorSmokeTest {
         assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
         assertExists(project, "__pyronaut__/incremental/main/state.properties", second.output());
         org.junit.jupiter.api.Assertions.assertTrue(
-            second.output().contains("Incrementally compiling main sources"),
+            second.output().contains("Incrementally processing main sources"),
             second.output()
         );
         org.junit.jupiter.api.Assertions.assertTrue(

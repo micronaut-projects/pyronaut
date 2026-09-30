@@ -114,7 +114,7 @@ final class ProcessorProgressReporter implements AutoCloseable {
                 message = "Processed " + passName + " sources (" + sourceCount + " files, full rebuild)";
             } else {
                 message = "Processed " + passName + " sources (" + plan.sources().size()
-                    + " of " + sourceCount + " files recompiled incrementally)";
+                    + " of " + sourceCount + " files reprocessed incrementally)";
             }
             incrementalPlan = null;
         } else {
@@ -138,7 +138,7 @@ final class ProcessorProgressReporter implements AutoCloseable {
             note("Full rebuild selected for " + passName + " sources (" + sourceCount + " files)");
             return;
         }
-        note("Incrementally compiling " + passName + " sources (" + plan.sources().size() + " of " + sourceCount + " files):");
+        note("Incrementally processing " + passName + " sources (" + plan.sources().size() + " of " + sourceCount + " files):");
         Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
         for (Path source : plan.sources()) {
             Path normalizedSource = source.toAbsolutePath().normalize();
