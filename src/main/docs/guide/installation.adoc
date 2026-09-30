@@ -14,7 +14,16 @@ python3 -m pip install --upgrade 'pyronaut=={projectVersion}'
 pyronaut --version
 ----
 
-The same wheel is also attached to its https://github.com/{githubSlug}/releases[GitHub release].
+The same wheel is also attached to its https://github.com/{githubSlug}/releases[GitHub release]. To install it
+directly from the release instead of PyPI, point `pip` at the release assets:
+
+[source,bash,subs="attributes"]
+----
+python3 -m pip install --upgrade --no-index \
+  --find-links https://github.com/{githubSlug}/releases/expanded_assets/v{projectVersion} \
+  'pyronaut=={projectVersion}'
+pyronaut --version
+----
 
 The Python installation used by `pip` only installs the CLI. Pyronaut applications run with the embedded GraalPy
 runtime supplied by the Pyronaut SDK, and `pyronaut setup` provisions the matching GraalPy interpreter for project

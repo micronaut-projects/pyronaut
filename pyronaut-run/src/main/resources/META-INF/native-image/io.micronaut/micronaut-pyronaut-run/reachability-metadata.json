@@ -54,6 +54,15 @@
       ]
     },
     {
+      "type": "io.micronaut.core.io.buffer.ReferenceCounted",
+      "methods": [
+        {
+          "name": "retain",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "io.micronaut.pyronaut.run.PyronautRunMain",
       "fields": [
         {
