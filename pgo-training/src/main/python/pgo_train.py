@@ -25,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -451,8 +452,18 @@ class Trainer:
             result = subprocess.run(command, cwd=cwd, env=env if env is not None else self.env(scenario),
                                     stdout=output, stderr=subprocess.STDOUT)
         if result.returncode != 0:
+            details = self._log_contents(log_file)
+            if scenario == "test":
+                junit_report = cwd / "__pyronaut__" / "reports" / "tests" / "junit.xml"
+                if junit_report.is_file():
+                    try:
+                        failure = ET.parse(junit_report).find(".//failure")
+                        if failure is not None:
+                            details += "\nFirst test failure (full report):\n" + (failure.text or "")
+                    except (OSError, ET.ParseError):
+                        pass
             raise TrainingError(f"{scenario}: {' '.join(command[2:])} exited with {result.returncode}; see {log_file}\n"
-                                + self._log_contents(log_file))
+                                + details)
         return round(time.monotonic() - start, 1)
 
     @staticmethod

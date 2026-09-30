@@ -1369,6 +1369,27 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(command_line[2:4], spilled)
         self.assertLess(len(subprocess.list2cmdline(launched)), 8191)
 
+    def test_windows_launch_spills_process_classpaths_after_system_properties(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            classpath = ";".join(f"C:\\repo with spaces\\lib-{index}.jar" for index in range(600))
+            command_line = [
+                "C:\\tools\\pyronaut-dev.cmd",
+                f"-Dpyronaut.dev.compiler.class.path={classpath}",
+                "process", "--project-dir", "C:\\app with spaces", "--classpath", classpath,
+                "--test-classpath", classpath,
+            ]
+            with patch.object(cli.sys, "platform", "win32"), patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                launched, options = cli._windows_launch(command_line)  # noqa: SLF001
+                args_file = Path(launched[-1][1:])
+                arguments = args_file.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual({"shell": True}, options)
+        self.assertTrue(launched[1].startswith("-Dpyronaut.jvm.options.file="))
+        self.assertEqual("-Dpicocli.useSimplifiedAtFiles=true", launched[2])
+        self.assertEqual("process", launched[3])
+        self.assertEqual(command_line[3:], arguments)
+        self.assertLess(len(subprocess.list2cmdline(launched)), 8191)
+
     def test_windows_launch_keeps_short_or_non_native_command_lines(self):
         long_property = "-Dpyronaut.dev.compiler.class.path=" + "x" * 9000
         with patch.object(cli.sys, "platform", "win32"):

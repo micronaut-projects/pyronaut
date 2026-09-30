@@ -7899,7 +7899,32 @@ def _windows_launch(command_line: list[str]) -> tuple[list[str], dict[str, bool]
         return command_line, {}
     batch = _uses_windows_batch_shell(command_line)
     limit = _WINDOWS_BATCH_COMMAND_LINE_LIMIT if batch else _WINDOWS_COMMAND_LINE_LIMIT
-    return _spill_native_system_properties(command_line, limit), ({"shell": True} if batch else {})
+    command_line = _spill_native_system_properties(command_line, limit)
+    return _spill_native_process_args(command_line, limit), ({"shell": True} if batch else {})
+
+
+def _spill_native_process_args(command_line: list[str], limit: int) -> list[str]:
+    """Use picocli's argument file when process classpaths still exceed the Windows limit."""
+    if len(subprocess.list2cmdline(command_line)) < limit or "process" not in command_line:
+        return command_line
+    executable = PureWindowsPath(command_line[0]).name.lower().removesuffix(".exe").removesuffix(".cmd").removesuffix(".bat")
+    if executable not in _NATIVE_IMAGE_COMMANDS:
+        return command_line
+    index = command_line.index("process")
+    arguments = command_line[index + 1:]
+    if not any(option in arguments for option in ("--classpath", "--test-classpath")):
+        return command_line
+    content = "\n".join(arguments) + "\n"
+    directory = Path(tempfile.gettempdir()) / "pyronaut"
+    directory.mkdir(parents=True, exist_ok=True)
+    args_file = directory / f"process-args-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}.txt"
+    if not args_file.is_file():
+        staging = args_file.with_name(f"{args_file.name}.{os.getpid()}.tmp")
+        with staging.open("w", encoding="utf-8", newline="\n") as output:
+            output.write(content)
+        os.replace(staging, args_file)
+    # The direct process delegate forwards @file to picocli; simplified files preserve paths with spaces.
+    return [*command_line[:index], "-Dpicocli.useSimplifiedAtFiles=true", "process", f"@{args_file}"]
 
 
 def _spill_native_system_properties(command_line: list[str], limit: int) -> list[str]:
