@@ -85,9 +85,9 @@ class ProcessorProgressReporterTest {
 
         String output = buffer.toString(StandardCharsets.UTF_8);
         assertTrue(output.contains("Checking main sources (10 files)..."));
-        assertTrue(output.contains("Incrementally compiling main sources (1 of 10 files):"));
+        assertTrue(output.contains("Incrementally processing main sources (1 of 10 files):"));
         assertTrue(output.contains("  - src/seed.py"));
-        assertTrue(output.contains("Processed main sources (1 of 10 files recompiled incrementally)"));
+        assertTrue(output.contains("Processed main sources (1 of 10 files reprocessed incrementally)"));
         assertFalse(output.contains("Processing main sources (10 files)..."));
     }
 }

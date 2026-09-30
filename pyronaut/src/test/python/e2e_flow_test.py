@@ -109,7 +109,7 @@ class E2EFlowTest(unittest.TestCase):
                 )
                 incremental_output = incremental_test_result.stdout + incremental_test_result.stderr
                 self.assertEqual(0, incremental_test_result.returncode, incremental_output)
-                self.assertIn("Incrementally compiling main sources (1 of 2 files)", incremental_output)
+                self.assertIn("Incrementally processing main sources (1 of 2 files)", incremental_output)
                 self.assertIn("ResourceController.java", incremental_output)
 
     @unittest.skipUnless(_e2e_full_enabled(), "Set PYRONAUT_E2E_FULL=true to run full e2e flow tests")

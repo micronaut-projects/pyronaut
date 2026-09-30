@@ -646,7 +646,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             System.err.println(e.getMessage());
             return PRECONDITION_FAILED;
         } catch (Exception e) {
-            System.err.println("Direct source launch failed: " + e);
+            System.err.println(failureMessage(e));
             return INTERNAL_ERROR;
         } finally {
             if (testResourcesSession != null) {
@@ -722,10 +722,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         int sourceCount = invocation.sources().size() + invocation.testSources().size();
         String sources = sourceCount + (sourceCount == 1 ? " source" : " sources");
         try (PhaseReporter progress = PhaseReporter.create(invocation.verbose())) {
-            PhaseReporter.Phase phase = progress.start("Compiling " + describeSources(invocation));
+            PhaseReporter.Phase phase = progress.start("Processing " + describeSources(invocation));
             try {
                 ClassLoader loader = builder.build().buildClassLoader();
-                phase.done("Compiled " + sources);
+                phase.done("Processed " + sources);
                 return loader;
             } catch (DirectSourceDeclarationRequest request) {
                 List<DirectSourceDeclarations.Dependency> dependencies = request.declarations().dependencies();
@@ -736,10 +736,20 @@ public final class PyronautDevMain implements Callable<Integer> {
                 }
                 throw request;
             } catch (RuntimeException e) {
-                phase.fail("Compilation of " + sources + " failed");
+                phase.fail("Processing of " + sources + " failed");
                 throw e;
             }
         }
+    }
+
+    /**
+     * The message to show for a failed direct-source launch: the exception's own
+     * message (for example the processor's diagnostics) without the exception
+     * class prefix, falling back to the exception itself when it has none.
+     */
+    static String failureMessage(Throwable e) {
+        String message = e.getMessage();
+        return message == null || message.isBlank() ? e.toString() : message;
     }
 
     private static String describeSources(DirectSourceInvocation invocation) {
