@@ -10,7 +10,7 @@ pluginManagement {
 
 plugins {
     id("io.micronaut.build.graalvm-dev-toolchain")
-    id("io.micronaut.build.shared.settings") version "8.0.1"
+    id("io.micronaut.build.shared.settings") version "8.1.3"
 }
 
 fun requiredGradleProperty(name: String): String =
