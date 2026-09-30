@@ -655,9 +655,11 @@ final class MavenClasspathResolver {
         }
         LinkedHashSet<MavenDependency> coordinates = new LinkedHashSet<>();
         List<MavenDependency> appDependencies = appDependenciesForServerInference(model);
-        List<MavenDependency> inferred = version == null
-            ? TestResourcesClasspath.inferTestResourcesClasspath(appDependencies)
-            : TestResourcesClasspath.inferTestResourcesClasspath(appDependencies, version);
+        List<MavenDependency> inferred = Boolean.FALSE.equals(testResources.inferClasspath())
+            ? List.of()
+            : version == null
+                ? TestResourcesClasspath.inferTestResourcesClasspath(appDependencies)
+                : TestResourcesClasspath.inferTestResourcesClasspath(appDependencies, version);
         coordinates.addAll(inferred);
 
         List<String> additionalModules = testResources.additionalModules() == null ? List.of() : testResources.additionalModules();
