@@ -169,6 +169,7 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=io.netty.util.internal.logging.*",
             "-H:Preserve=package=io.netty.channel.nio",
             "-H:Preserve=package=io.netty.channel",
+            "-H:Preserve=package=io.netty.handler.codec",
             "-H:Preserve=package=io.netty.handler.codec.http.*",
             "-H:Preserve=package=io.netty.handler.ssl",
             "-H:Preserve=package=io.netty.resolver.*",
