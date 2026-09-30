@@ -1482,6 +1482,26 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual([str(binary.resolve())], entries)
 
+    def test_native_compile_classpath_accepts_windows_launcher_names(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dir = Path(temp_dir) / "pyronaut-dev" / "native"
+            native_dir.mkdir(parents=True)
+            home = Path(temp_dir) / "home"
+            for suffix in (".cmd", ".exe"):
+                launcher = native_dir / f"pyronaut-dev{suffix}"
+                launcher.write_text("", encoding="utf-8")
+                binary = self._write_native_compile_descriptor(
+                    launcher,
+                    home,
+                    [("io.micronaut", "micronaut-inject-python", "5.2.3", "micronaut-inject-python-5.2.3.jar")],
+                )[0]
+                with patch("pathlib.Path.home", return_value=home):
+                    entries = cli._native_launcher_compile_classpath_entries(str(launcher))  # noqa: SLF001
+                self.assertEqual([str(binary.resolve())], entries)
+
+            with self.assertRaisesRegex(RuntimeError, "Pyronaut setup is missing or stale"):
+                cli._native_launcher_compile_classpath_entries(str(native_dir / "pyronaut-dev.bat"))  # noqa: SLF001
+
     def test_native_compile_classpath_falls_back_to_project_local_repository(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

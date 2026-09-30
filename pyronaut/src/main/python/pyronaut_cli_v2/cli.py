@@ -1359,8 +1359,9 @@ def _direct_control_panel_classpath_entries(executable_path: str) -> list[str]:
     executable = Path(executable_path)
     launcher_root = executable.parent.parent
     launcher_lib = launcher_root / "lib"
-    if Path(executable_path).name in _NATIVE_IMAGE_COMMANDS:
-        packaged_root = _packaged_tool_dir(Path(executable_path).name)
+    image_name = _native_image_command_name(executable)
+    if image_name in _NATIVE_IMAGE_COMMANDS:
+        packaged_root = _packaged_tool_dir(image_name)
         packaged_lib = packaged_root / "lib"
         if (packaged_lib / "control-panel").is_dir():
             launcher_root = packaged_root
@@ -1481,10 +1482,15 @@ def _resolve_run_manifest(cache_dir: Path) -> Path:
     return cache_dir / "resolved-runtime-dependencies"
 
 
+def _native_image_command_name(executable: str | Path) -> str:
+    path = Path(executable)
+    return path.stem if path.suffix.lower() in {".cmd", ".exe"} else path.name
+
+
 def _launcher_shared_lib_dir(executable_path: str | Path) -> Path:
     """Resolve the wheel-level shared library directory for a launcher."""
     path = Path(executable_path).resolve()
-    if path.name in _NATIVE_IMAGE_COMMANDS:
+    if _native_image_command_name(path) in _NATIVE_IMAGE_COMMANDS:
         packaged_shared = Path(__file__).resolve().parent / "tools" / "shared" / "lib"
         if packaged_shared.is_dir():
             return packaged_shared
@@ -1500,7 +1506,7 @@ def _delegate_lib_entries(executable_path: str, *, include_control_panel: bool =
     path = Path(executable_path).resolve()
     if path.suffix == ".jar":
         return [str(path)]
-    command_name = path.name
+    command_name = _native_image_command_name(path)
     packaged_dir = _packaged_tool_dir(command_name) if command_name in _NATIVE_IMAGE_COMMANDS else None
     roots = [path.parent.parent]
     if packaged_dir is not None:
@@ -1975,8 +1981,9 @@ def _native_launcher_manifest_path(launcher_executable: str | None, manifest_nam
         executable_parent.parent / "bin" / manifest_name,
         executable_parent.parent / manifest_name,
     )
-    if executable_path.name in _NATIVE_IMAGE_COMMANDS:
-        packaged_tool = _packaged_tool_dir(executable_path.name)
+    image_name = _native_image_command_name(executable_path)
+    if image_name in _NATIVE_IMAGE_COMMANDS:
+        packaged_tool = _packaged_tool_dir(image_name)
         candidates += (
             packaged_tool / "bin" / manifest_name,
             packaged_tool / manifest_name,
@@ -2012,7 +2019,7 @@ def _native_launcher_compile_classpath_entries(
 ) -> list[str]:
     if not launcher_executable:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
-    image_name = Path(launcher_executable).name
+    image_name = _native_image_command_name(launcher_executable)
     if image_name not in _NATIVE_IMAGE_COMMANDS:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
     if local_repository or not _setup_is_required():
@@ -2084,10 +2091,11 @@ def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> li
         executable_path.parent.parent.parent / "lib",
         _launcher_shared_lib_dir(executable_path),
     ]
-    if executable_path.name in _NATIVE_IMAGE_COMMANDS:
+    image_name = _native_image_command_name(executable_path)
+    if image_name in _NATIVE_IMAGE_COMMANDS:
         candidate_lib_dirs.extend((
-            _packaged_tool_dir(executable_path.name) / "lib",
-            _packaged_tool_dir(executable_path.name).parent / "shared" / "lib",
+            _packaged_tool_dir(image_name) / "lib",
+            _packaged_tool_dir(image_name).parent / "shared" / "lib",
         ))
     manifest_entries = _native_launcher_manifest_entries(
         launcher_executable, "native-provided-classpath.txt"
