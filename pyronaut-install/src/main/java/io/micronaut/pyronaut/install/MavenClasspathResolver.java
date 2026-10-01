@@ -60,6 +60,8 @@ import org.eclipse.aether.transport.file.FileTransporterFactory;
 import org.eclipse.aether.transport.jdk.JdkTransporterFactory;
 import org.eclipse.aether.util.artifact.JavaScopes;
 import org.eclipse.aether.util.filter.DependencyFilterUtils;
+import org.eclipse.aether.util.graph.transformer.ConflictResolver;
+import org.eclipse.aether.util.graph.visitor.FilteringDependencyVisitor;
 import org.eclipse.aether.util.repository.AuthenticationBuilder;
 import org.eclipse.aether.util.repository.DefaultProxySelector;
 
@@ -377,12 +379,29 @@ final class MavenClasspathResolver {
                 }
                 managedVersions.putIfAbsent(artifact.getGroupId() + ":" + artifact.getArtifactId(), artifact.getVersion());
             }
-            LinkedHashSet<String> coordinates = new LinkedHashSet<>(coordinatesForScope(
-                model,
-                scope,
-                managedVersions,
-                includeDefaultDependencies
-            ));
+            List<String> scopeCoordinates;
+            if (scope == InstallScope.TEST_RESOURCES_SERVER) {
+                List<MavenDependency> appDependencies = List.of();
+                if (resolvesTestResourcesServer(model)
+                    && !Boolean.FALSE.equals(model.pyronaut().testResources().inferClasspath())) {
+                    appDependencies = appDependenciesForServerInference(
+                        model,
+                        repositories,
+                        managedDependencies,
+                        managedVersions,
+                        session
+                    );
+                }
+                scopeCoordinates = testResourcesServerCoordinates(
+                    model,
+                    managedVersions,
+                    includeDefaultDependencies,
+                    appDependencies
+                );
+            } else {
+                scopeCoordinates = coordinatesForScope(model, scope, managedVersions, includeDefaultDependencies);
+            }
+            LinkedHashSet<String> coordinates = new LinkedHashSet<>(scopeCoordinates);
             if (coordinates.isEmpty()) {
                 return new ResolvedScopeDetails(List.of(), null, List.of());
             }
@@ -677,6 +696,18 @@ final class MavenClasspathResolver {
     private List<String> testResourcesServerCoordinates(PyprojectModel model,
                                                         Map<String, String> managedVersions,
                                                         boolean includeDefaultDependencies) {
+        return testResourcesServerCoordinates(
+            model,
+            managedVersions,
+            includeDefaultDependencies,
+            appDependenciesForServerInference(model)
+        );
+    }
+
+    private List<String> testResourcesServerCoordinates(PyprojectModel model,
+                                                        Map<String, String> managedVersions,
+                                                        boolean includeDefaultDependencies,
+                                                        List<MavenDependency> appDependencies) {
         if (!resolvesTestResourcesServer(model)) {
             return List.of();
         }
@@ -694,7 +725,6 @@ final class MavenClasspathResolver {
             }
         }
         LinkedHashSet<MavenDependency> coordinates = new LinkedHashSet<>();
-        List<MavenDependency> appDependencies = appDependenciesForServerInference(model);
         List<MavenDependency> inferred = Boolean.FALSE.equals(testResources.inferClasspath())
             ? List.of()
             : version == null
@@ -746,6 +776,67 @@ final class MavenClasspathResolver {
                 .filter(Objects::nonNull)
                 .forEach(appCoordinates::add);
         }
+        return List.copyOf(appCoordinates);
+    }
+
+    private List<MavenDependency> appDependenciesForServerInference(PyprojectModel model,
+                                                                    List<RemoteRepository> repositories,
+                                                                    List<Dependency> managedDependencies,
+                                                                    Map<String, String> managedVersions,
+                                                                    CloseableSession session)
+        throws DependencyCollectionException {
+        if (model.pyronaut() == null || model.pyronaut().dependencies() == null) {
+            return List.of();
+        }
+        PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
+        LinkedHashSet<MavenDependency> appCoordinates = new LinkedHashSet<>();
+        CollectRequest request = new CollectRequest();
+        request.setRepositories(repositories);
+        managedDependencies.forEach(request::addManagedDependency);
+        if (dependencies.runtime() != null) {
+            dependencies.runtime().stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(coordinate -> !coordinate.isEmpty())
+                .map(coordinate -> toDependency(model, InstallScope.RUNTIME, coordinate, managedVersions))
+                .forEach(request::addDependency);
+        }
+        if (dependencies.test() != null) {
+            dependencies.test().stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(coordinate -> !coordinate.isEmpty())
+                .map(coordinate -> toDependency(model, InstallScope.TEST, coordinate, managedVersions))
+                .forEach(request::addDependency);
+        }
+        if (request.getDependencies().isEmpty()) {
+            return List.of();
+        }
+        CollectResult collected = repositorySystem.collectDependencies(session, request);
+        collected.getRoot().accept(
+            new FilteringDependencyVisitor(new DependencyVisitor() {
+                @Override
+                public boolean visitEnter(DependencyNode node) {
+                    if (node.getData().containsKey(ConflictResolver.NODE_DATA_WINNER)) {
+                        return false;
+                    }
+                    Artifact artifact = node.getArtifact();
+                    if (artifact != null) {
+                        appCoordinates.add(new MavenDependency(
+                            artifact.getGroupId(),
+                            artifact.getArtifactId(),
+                            artifact.getVersion()
+                        ));
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visitLeave(DependencyNode node) {
+                    return true;
+                }
+            }, DependencyFilterUtils.classpathFilter(JavaScopes.RUNTIME)
+        ));
         return List.copyOf(appCoordinates);
     }
 
