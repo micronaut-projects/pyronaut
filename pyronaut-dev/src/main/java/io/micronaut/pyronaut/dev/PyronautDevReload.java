@@ -23,13 +23,11 @@ import io.micronaut.dev.manifest.ResourceRoot;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.run.PyronautRunMain;
 
+
 import java.io.IOException;
 import java.io.OutputStream;
-import java.io.UncheckedIOException;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -58,11 +56,7 @@ import java.util.concurrent.Callable;
  */
 public final class PyronautDevReload extends MicronautDevMain implements PyronautRunMain.DevelopmentRuntime {
 
-    private static final String PYRONAUT_DIR = "__pyronaut__";
-    private static final String DEV_DIR = "micronaut-dev";
     private static final String MAIN_CLASS = "pyronaut_application.PyronautMain";
-    private static final String BUILD_DEPENDENCIES_MANIFEST = "resolved-build-dependencies";
-    private static final String PROCESSOR_OPTIONS = "resolved-processor-options";
     private static final String PROCESSOR_MAIN_HASH = "processor-main.sha256";
     private static final String PROCESSOR_MAIN_INCREMENTAL = "incremental/main";
 
@@ -94,11 +88,11 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
                       Callable<Boolean> launcher) throws IOException {
         Path classes = layout.processedClassesRoot().toAbsolutePath().normalize();
         PyprojectModel.Sources sources = model.pyronaut().sources();
-        Path python = resolve(root, sources.python());
-        Path java = resolve(root, sources.java());
+        Path python = DevReloadFiles.resolve(root, sources.python());
+        Path java = DevReloadFiles.resolve(root, sources.java());
         Set<Path> additionalResources = new LinkedHashSet<>();
         for (String resource : sources.additionalResources()) {
-            additionalResources.add(resolve(root, resource));
+            additionalResources.add(DevReloadFiles.resolve(root, resource));
         }
         Tiers tiers = tiers(layout.classpathUrls(), classes, additionalResources);
         List<Path> config = tiers.config();
@@ -117,16 +111,16 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         this.parent = new URLClassLoader("pyronaut-dev-runtime", urls, launcherLoader);
         this.launcher = launcher;
 
-        Path pyronautDir = root.resolve(PYRONAUT_DIR);
+        Path pyronautDir = root.resolve(DevReloadFiles.PYRONAUT_DIR);
         // from here on the development runtime writes the processed classes: the next pyronaut process must not
         // take them for its own output, by its source fingerprint or its incremental state
         Files.deleteIfExists(pyronautDir.resolve(PROCESSOR_MAIN_HASH));
-        deleteRecursively(pyronautDir.resolve(PROCESSOR_MAIN_INCREMENTAL));
-        Path devDir = Files.createDirectories(pyronautDir.resolve(DEV_DIR));
+        DevReloadFiles.deleteRecursively(pyronautDir.resolve(PROCESSOR_MAIN_INCREMENTAL));
+        Path devDir = Files.createDirectories(pyronautDir.resolve(DevReloadFiles.DEV_DIR));
         this.generations = devDir.resolve("generations");
-        List<String> options = readStrings(pyronautDir.resolve(PROCESSOR_OPTIONS));
+        List<String> options = DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS));
         Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, runtime,
-            readLines(pyronautDir.resolve(BUILD_DEPENDENCIES_MANIFEST)), options);
+            DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST)), options);
 
         DevRuntime devRuntime = launch(DevManifest.load(manifestFile), appArgs.toArray(String[]::new));
         Runtime.getRuntime().addShutdownHook(new Thread(devRuntime::close, "pyronaut-dev-shutdown"));
@@ -146,9 +140,9 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
                               List<Path> compileClasspath,
                               List<Path> processorPath,
                               List<String> options) throws IOException {
-        writeLines(devDir.resolve("compile.argfile"), compileClasspath.stream().map(Path::toString).toList());
-        writeLines(devDir.resolve("processor.argfile"), processorPath.stream().map(Path::toString).toList());
-        writeLines(devDir.resolve("options.argfile"), options);
+        DevReloadFiles.writeLines(devDir.resolve("compile.argfile"), compileClasspath.stream().map(Path::toString).toList());
+        DevReloadFiles.writeLines(devDir.resolve("processor.argfile"), processorPath.stream().map(Path::toString).toList());
+        DevReloadFiles.writeLines(devDir.resolve("options.argfile"), options);
         Properties properties = new Properties();
         properties.setProperty("micronaut.dev.main-class", MAIN_CLASS);
         properties.setProperty("micronaut.dev.project-dir", root.toString());
@@ -191,7 +185,7 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         List<Path> additional = new ArrayList<>();
         List<Path> runtime = new ArrayList<>();
         for (URL url : classpath) {
-            Path entry = path(url);
+            Path entry = DevReloadFiles.path(url);
             if (entry.equals(classes)) {
                 continue;
             }
@@ -228,52 +222,6 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         // the application's threads inherit the generation's loader, as the run command's do the project's
         Thread.currentThread().setContextClassLoader(classLoader);
         launcher.call();
-    }
-
-    private static Path resolve(Path root, String configured) {
-        Path path = Path.of(configured);
-        return (path.isAbsolute() ? path : root.resolve(path)).toAbsolutePath().normalize();
-    }
-
-    private static Path path(URL url) {
-        try {
-            return Path.of(url.toURI()).toAbsolutePath().normalize();
-        } catch (URISyntaxException e) {
-            throw new IllegalArgumentException("Not a file URL: " + url, e);
-        }
-    }
-
-    private static List<Path> readLines(Path file) {
-        return readStrings(file).stream().map(Path::of).toList();
-    }
-
-    private static List<String> readStrings(Path file) {
-        if (!Files.isRegularFile(file)) {
-            return List.of();
-        }
-        try {
-            return Files.readAllLines(file, StandardCharsets.UTF_8).stream()
-                .map(String::strip)
-                .filter(line -> !line.isEmpty())
-                .toList();
-        } catch (IOException e) {
-            throw new UncheckedIOException("Cannot read " + file, e);
-        }
-    }
-
-    private static void deleteRecursively(Path directory) throws IOException {
-        if (!Files.isDirectory(directory)) {
-            return;
-        }
-        try (var files = Files.walk(directory)) {
-            for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(file);
-            }
-        }
-    }
-
-    private static void writeLines(Path file, List<String> lines) throws IOException {
-        Files.write(file, lines, StandardCharsets.UTF_8);
     }
 
     /**
