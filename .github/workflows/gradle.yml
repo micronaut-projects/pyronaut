@@ -124,12 +124,40 @@ jobs:
 
       - name: "📑 Publish to Github Pages"
         if: success() && github.event_name == 'push' && matrix.java == '25'
-        uses: micronaut-projects/github-pages-deploy-action@master
+        # The org-level GH_TOKEN secret is not shared with this private repository, so the
+        # micronaut-projects/github-pages-deploy-action (which requires it) cannot be used.
+        # Publish the snapshot docs with the workflow token instead.
         env:
           TARGET_REPOSITORY: ${{ steps.docs_target.outputs.value }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           BRANCH: gh-pages
           FOLDER: build/docs
+        run: |
+          set -euo pipefail
+          REPOSITORY_URL="https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPOSITORY}.git"
+          PAGES_DIR="$RUNNER_TEMP/gh-pages"
+          rm -rf "$PAGES_DIR"
+          if git ls-remote --exit-code --heads "$REPOSITORY_URL" "$BRANCH" > /dev/null; then
+            git clone --quiet --depth 1 --branch "$BRANCH" --single-branch "$REPOSITORY_URL" "$PAGES_DIR"
+          else
+            echo "Creating remote branch $BRANCH as it doesn't exist..."
+            git init --quiet "$PAGES_DIR"
+            git -C "$PAGES_DIR" checkout --quiet --orphan "$BRANCH"
+            touch "$PAGES_DIR/.nojekyll"
+          fi
+          rm -rf "$PAGES_DIR/snapshot"
+          mkdir -p "$PAGES_DIR/snapshot"
+          cp -r "$FOLDER/." "$PAGES_DIR/snapshot/"
+          cd "$PAGES_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Docs unchanged, nothing to publish."
+            exit 0
+          fi
+          git commit --quiet -m "Deploying snapshot docs for ${GITHUB_SHA}"
+          git push "$REPOSITORY_URL" "HEAD:$BRANCH"
 
       - name: "❓ Optional cleanup step"
         run: |
