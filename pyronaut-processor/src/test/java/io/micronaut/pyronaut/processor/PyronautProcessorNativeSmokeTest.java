@@ -138,7 +138,7 @@ class PyronautProcessorNativeSmokeTest extends AbstractPyronautProcessorSmokeTes
                 pyproject
             );
             assertEquals(PyronautProcessorExitCode.SUCCESS.code(), first.exitCode(), first.output());
-            daemonPid = daemonPid(project);
+            daemonPid = daemonPid(project, first.output());
             assertTrue(ProcessHandle.of(daemonPid).orElseThrow().isAlive());
 
             var changedFiles = helloWorldProjectFiles();
@@ -146,7 +146,7 @@ class PyronautProcessorNativeSmokeTest extends AbstractPyronautProcessorSmokeTes
             ProcessResult second = runNativeProcessor(binaryPath, project, changedFiles, pyproject);
 
             assertEquals(PyronautProcessorExitCode.SUCCESS.code(), second.exitCode(), second.output());
-            assertEquals(daemonPid, daemonPid(project));
+            assertEquals(daemonPid, daemonPid(project, second.output()));
             assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
         } finally {
             if (daemonPid > 0) {

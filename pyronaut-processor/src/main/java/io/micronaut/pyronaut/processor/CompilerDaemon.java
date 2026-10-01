@@ -65,7 +65,8 @@ final class CompilerDaemon {
     private static final byte EXIT = 6;
     private static final String COMMAND_PREFIX = "pyronaut.processor.daemon.command-prefix";
     private static final String IDLE_TIMEOUT = "pyronaut.processor.daemon.idle-timeout-seconds";
-    private static final Duration START_TIMEOUT = Duration.ofSeconds(15);
+    private static final String START_TIMEOUT = "pyronaut.processor.daemon.start-timeout-seconds";
+    private static final long DEFAULT_START_TIMEOUT_SECONDS = 15;
     private static final int CONNECT_TIMEOUT_MILLIS = 2_000;
     private static final int ACCEPT_POLL_MILLIS = 1_000;
     private static final int REQUEST_TIMEOUT_MILLIS = 30_000;
@@ -282,7 +283,7 @@ final class CompilerDaemon {
         processBuilder.redirectErrorStream(true);
         Process process = processBuilder.start();
 
-        long deadline = System.nanoTime() + START_TIMEOUT.toNanos();
+        long deadline = System.nanoTime() + Duration.ofSeconds(startTimeoutSeconds()).toNanos();
         while (System.nanoTime() < deadline) {
             Endpoint endpoint = readEndpoint(directory);
             if (endpoint != null
@@ -505,6 +506,10 @@ final class CompilerDaemon {
 
     private static long idleTimeoutSeconds() {
         return Math.max(1, Long.getLong(IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT_SECONDS));
+    }
+
+    private static long startTimeoutSeconds() {
+        return Math.max(1, Long.getLong(START_TIMEOUT, DEFAULT_START_TIMEOUT_SECONDS));
     }
 
     private static java.io.File nullDevice() {

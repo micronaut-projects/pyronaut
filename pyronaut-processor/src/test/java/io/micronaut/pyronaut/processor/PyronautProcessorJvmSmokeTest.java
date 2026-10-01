@@ -90,7 +90,11 @@ class PyronautProcessorJvmSmokeTest extends AbstractPyronautProcessorSmokeTest {
     void jvmProcessReusesCompilerDaemonAcrossRunsAndShutsDownWhenIdle() throws Exception {
         Path project = tempDir.resolve("daemon-project");
         String pyproject = daemonIncrementalPyproject("processor-jvm-daemon");
-        List<String> jvmOptions = List.of("-Dpyronaut.processor.daemon.idle-timeout-seconds=3");
+        List<String> jvmOptions = List.of(
+            "-Dpyronaut.processor.daemon.idle-timeout-seconds=3",
+            // The daemon is slow to start on the 2-CPU GitHub-hosted runners.
+            "-Dpyronaut.processor.daemon.start-timeout-seconds=120"
+        );
 
         ProcessResult first = runJvmProcessor(
             project,
@@ -99,7 +103,7 @@ class PyronautProcessorJvmSmokeTest extends AbstractPyronautProcessorSmokeTest {
             jvmOptions
         );
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), first.exitCode(), first.output());
-        long daemonPid = daemonPid(project);
+        long daemonPid = daemonPid(project, first.output());
         org.junit.jupiter.api.Assertions.assertTrue(ProcessHandle.of(daemonPid).orElseThrow().isAlive());
 
         var changedFiles = helloWorldProjectFiles();
@@ -107,7 +111,7 @@ class PyronautProcessorJvmSmokeTest extends AbstractPyronautProcessorSmokeTest {
         ProcessResult second = runJvmProcessor(project, changedFiles, pyproject, jvmOptions);
 
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), second.exitCode(), second.output());
-        assertEquals(daemonPid, daemonPid(project));
+        assertEquals(daemonPid, daemonPid(project, second.output()));
         assertMainArtifacts(project.resolve("__pyronaut__/classes"), second.output());
 
         var invalidFiles = helloWorldProjectFiles();
