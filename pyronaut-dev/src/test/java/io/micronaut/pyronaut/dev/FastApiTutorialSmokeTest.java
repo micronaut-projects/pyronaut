@@ -73,7 +73,7 @@ final class FastApiTutorialSmokeTest {
             .redirectErrorStream(true)
             .redirectOutput(outputFile.toFile())
             .start();
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
+        boolean finished = process.waitFor(180, TimeUnit.SECONDS);
         if (!finished) {
             process.destroyForcibly();
         }
@@ -121,7 +121,9 @@ final class FastApiTutorialSmokeTest {
     ) throws Exception {
         URI uri = URI.create("http://localhost:" + port + path);
         Exception lastFailure = null;
-        for (int attempt = 0; attempt < 120; attempt++) {
+        // First start compiles the application with GraalPy, which takes well over
+        // 30 seconds on the 2-CPU GitHub-hosted runners.
+        for (int attempt = 0; attempt < 480; attempt++) {
             if (!process.isAlive()) {
                 throw new IllegalStateException("Development server exited early:\n" + Files.readString(outputFile));
             }
@@ -135,7 +137,7 @@ final class FastApiTutorialSmokeTest {
                 Thread.sleep(250);
             }
         }
-        throw new IllegalStateException("Server did not start at " + uri, lastFailure);
+        throw new IllegalStateException("Server did not start at " + uri + ":\n" + Files.readString(outputFile), lastFailure);
     }
 
     private static void assertResponseContains(

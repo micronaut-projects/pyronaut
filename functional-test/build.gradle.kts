@@ -1625,7 +1625,7 @@ val verifyEditorSupport by tasks.registering {
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("micronaut/http/annotation/__init__.pyi").asFile,
-            "def Get(target: _T, /) -> _T: ...",
+            "signify the method receives a `HttpMethod.GET`",
             "Micronaut annotation stub docstrings"
         )
         requireFixtureFileContains(
@@ -1640,7 +1640,7 @@ val verifyEditorSupport by tasks.registering {
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
-            "def Inject() -> Callable[[_T], _T]: ...",
+            "def Inject() -> Callable[[_T], _T]:",
             "Jakarta inject stubs"
         )
         requireFixtureFileContains(

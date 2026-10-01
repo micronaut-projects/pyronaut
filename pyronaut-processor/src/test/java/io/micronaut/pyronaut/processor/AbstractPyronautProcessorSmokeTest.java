@@ -16,6 +16,7 @@ import java.util.Properties;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 abstract class AbstractPyronautProcessorSmokeTest {
 
@@ -151,11 +152,16 @@ abstract class AbstractPyronautProcessorSmokeTest {
             + "\n[tool.pyronaut.processor]\nincremental = true\ndaemon = true\n";
     }
 
-    protected static long daemonPid(Path project) throws Exception {
+    protected static long daemonPid(Path project, String output) throws Exception {
+        Path daemonDirectory = project.resolve("__pyronaut__/daemon");
+        Path metadata = daemonDirectory.resolve("daemon.properties");
+        if (!Files.isRegularFile(metadata)) {
+            Path log = daemonDirectory.resolve("daemon.log");
+            fail("No running compiler daemon. Processor output:\n" + output
+                + "\nDaemon log:\n" + (Files.isRegularFile(log) ? Files.readString(log) : "<none>"));
+        }
         Properties properties = new Properties();
-        try (InputStream input = Files.newInputStream(
-            project.resolve("__pyronaut__/daemon/daemon.properties")
-        )) {
+        try (InputStream input = Files.newInputStream(metadata)) {
             properties.load(input);
         }
         return Long.parseLong(properties.getProperty("pid"));

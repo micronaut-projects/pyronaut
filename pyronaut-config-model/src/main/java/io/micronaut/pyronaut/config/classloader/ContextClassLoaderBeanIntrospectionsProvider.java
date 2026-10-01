@@ -94,21 +94,6 @@ public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanI
         return List.copyOf(references.values());
     }
 
-    /**
-     * A discovery result, valid while the context class loader it was made with is still the current
-     * one. The context class loader is part of what was walked, so a different one means a different
-     * answer; it is held weakly so that caching a result does not keep a class loader alive.
-     *
-     * @param contextClassLoader The context class loader the walk used, weakly
-     * @param references The references found
-     */
-    private record Discovered(WeakReference<ClassLoader> contextClassLoader,
-                              List<BeanIntrospectionReference<Object>> references) {
-        boolean matches(@Nullable ClassLoader current) {
-            return contextClassLoader.get() == current;
-        }
-    }
-
     private static List<BeanIntrospectionReference<Object>> discoverLauncherReferences(ClassLoader classLoader) {
         List<BeanIntrospectionReference<Object>> references = new ArrayList<>();
         try {
@@ -230,6 +215,21 @@ public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanI
             return type == null ? null : type.getDeclaredConstructor().newInstance();
         } catch (Throwable e) {
             return null;
+        }
+    }
+
+    /**
+     * A discovery result, valid while the context class loader it was made with is still the current
+     * one. The context class loader is part of what was walked, so a different one means a different
+     * answer; it is held weakly so that caching a result does not keep a class loader alive.
+     *
+     * @param contextClassLoader The context class loader the walk used, weakly
+     * @param references The references found
+     */
+    private record Discovered(WeakReference<ClassLoader> contextClassLoader,
+                              List<BeanIntrospectionReference<Object>> references) {
+        boolean matches(@Nullable ClassLoader current) {
+            return contextClassLoader.get() == current;
         }
     }
 }
