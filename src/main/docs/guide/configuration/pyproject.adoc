@@ -168,3 +168,21 @@ Development builds can use `distribution = "dev"` with a `release-tag` or explic
 Use `type = "native"` to route supported CLI lifecycle commands through the native `pyronaut-dev` uber CLI.
 It selects how CLI tooling executes; it does not select the output of
 `pyronaut build`. Use `[tool.pyronaut.packaging]` for the build default.
+
+=== AOT cache
+
+With the JVM toolchain on JDK 25 or later, Pyronaut can start its JVMs from a Leyden AOT cache (JEP 483).
+It is disabled by default:
+
+[source,toml]
+----
+[tool.pyronaut.toolchain]
+type = "jvm"
+aot-cache = true
+----
+
+The first launch of each JVM, whether the application or test JVM of `pyronaut dev`, `run` and `test`, or a tool such as the processor, configuration validator, installer or Test Resources client, is a training run.
+It starts more slowly and prints `AOTConfiguration recorded` as it exits.
+The cache is then created in the background under `~/.pyronaut/caches/aot`, and later launches start from it.
+A cache is replaced when the JDK, the JVM options or a class path JAR changes, so a dependency change means one more training run.
+Each cache takes up to a few hundred megabytes; delete `~/.pyronaut/caches/aot` to reclaim the space.

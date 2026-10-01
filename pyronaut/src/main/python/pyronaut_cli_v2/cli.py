@@ -33,6 +33,7 @@ from .progress import LaunchIndicator as _LaunchIndicator
 from .progress import console as _progress_console
 from .progress import format_bytes as _format_bytes
 from .progress import progress_epoch_ms as _progress_epoch_ms
+from . import aot_cache as _aot_cache
 from . import doctor as _doctor
 
 SUCCESS = 0
@@ -188,6 +189,9 @@ _PYRONAUT_CREATE_DENYLIST_BY_MINOR: dict[tuple[int, int], frozenset[str]] = {
 }
 _allow_draft_release = False
 _validated_setup_manifest: dict[str, object] | None = None
+# The project whose pyproject.toml enabled tool.pyronaut.toolchain.aot-cache
+# for this invocation, or None when JVM launches run without an AOT cache.
+_aot_cache_project_dir: Path | None = None
 
 
 def _read_version_properties() -> dict[str, str]:
@@ -286,7 +290,7 @@ def run(
     input_reader: Callable[[float | None], str | None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    global _allow_draft_release, _validated_setup_manifest
+    global _allow_draft_release, _validated_setup_manifest, _aot_cache_project_dir
     _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
     _validated_setup_manifest = None
     option_argv, application_argv = _split_application_args(argv)
@@ -325,6 +329,7 @@ def run(
         return SUCCESS
 
     command = argv[0]
+    _aot_cache_project_dir = _aot_cache_project(argv[1:])
     if command == "setup":
         setup_args = list(argv[1:])
         if _extract_flag(setup_args, "--help") or _extract_flag(setup_args, "-h"):
@@ -5981,7 +5986,9 @@ def _control_panel_dependency_declared(project_dir: Path) -> bool:
 def _stop_managed_process(process: ManagedProcess) -> bool:
     try:
         process.terminate()
-        process.wait(timeout=3)
+        # A JVM training an AOT cache writes its configuration as it exits.
+        timeout = process.stop_timeout if isinstance(process, _aot_cache.ManagedProcess) else 3
+        process.wait(timeout=timeout)
         return True
     except Exception:
         try:
@@ -6165,6 +6172,8 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
 
 
 def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> ManagedProcess:
+    aot = _prepare_aot_launch(command_line, env)
+    command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
         options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
@@ -6173,7 +6182,33 @@ def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None
         launch.abandon()
         raise
     launch.spawned()
-    return process
+    return _aot_cache.ManagedProcess(process, aot) if aot.training is not None else process
+
+
+def _aot_cache_project(args: Sequence[str]) -> Path | None:
+    """The project directory when its pyproject.toml enables JVM AOT caches."""
+    try:
+        project_dir = (
+            Path.cwd() if _looks_like_direct_source_invocation(args) else Path(_extract_project_dir(args))
+        ).resolve()
+        pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    except Exception:
+        return None
+    toolchain = pyronaut.get("toolchain") if isinstance(pyronaut, dict) else None
+    if not isinstance(toolchain, dict):
+        return None
+    enabled = toolchain.get("aot-cache", toolchain.get("aotCache", False))
+    return project_dir if enabled is True else None
+
+
+def _prepare_aot_launch(command_line: list[str], env: dict[str, str] | None) -> _aot_cache.Launch:
+    if _aot_cache_project_dir is not None:
+        try:
+            return _aot_cache.prepare(command_line, env, project_dir=_aot_cache_project_dir)
+        except Exception:
+            # The cache is an optimization; never fail a launch over it.
+            pass
+    return _aot_cache.Launch(list(command_line), env)
 
 
 # Launch indicator labels by tool. Tools missing here (pip, docker, a nested
@@ -7945,6 +7980,8 @@ def _filter_create_features(output: str, version: str) -> str:
 
 
 def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> int:
+    aot = _prepare_aot_launch(command_line, env)
+    command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
         options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
@@ -7958,22 +7995,35 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
         try:
             return int(process.wait())
         except KeyboardInterrupt:
+            if aot.training is not None:
+                # The child got the same SIGINT; let a training JVM finish
+                # writing its AOT configuration before giving up on it.
+                try:
+                    process.wait(timeout=_aot_cache.TRAINING_STOP_TIMEOUT_SECONDS)
+                except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                    aot.abandon()
+            else:
+                aot.abandon()
             # wait() already gave the child a moment to act on its own SIGINT.
             process.kill()
             return 130
+        finally:
+            aot.finish()
 
 
 def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:
+    aot = _prepare_aot_launch(command_line, env)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        options = {"shell": True} if _uses_windows_batch_shell(aot.command_line) else {}
         completed = subprocess.run(
-            command_line,
+            aot.command_line,
             check=False,
-            env=env,
+            env=aot.env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             **options,
         )
+        aot.finish()
         return int(completed.returncode)
     except KeyboardInterrupt:
         return 130
