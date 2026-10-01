@@ -1319,7 +1319,7 @@ def _run_direct_source_with_auto_restart(
                 snapshot = next_snapshot
                 break
         except KeyboardInterrupt:
-            _stop_managed_process(process)
+            _stop_managed_process(process, interrupted=True)
             return 130
 
 
@@ -5562,7 +5562,7 @@ def _run_with_auto_restart(
                 initial_preflight_done = True
                 break
         except KeyboardInterrupt:
-            _stop_managed_process(process)
+            _stop_managed_process(process, interrupted=True)
             return 130
 
 
@@ -5983,12 +5983,20 @@ def _control_panel_dependency_declared(project_dir: Path) -> bool:
     )
 
 
-def _stop_managed_process(process: ManagedProcess) -> bool:
+def _stop_managed_process(process: ManagedProcess, *, interrupted: bool = False) -> bool:
+    training = isinstance(process, _aot_cache.ManagedProcess)
+    if training and interrupted:
+        # The child got the same Ctrl-C (SIGINT, or the console event on
+        # Windows). Let a JVM training an AOT cache finish writing its
+        # configuration as it exits before terminating it.
+        try:
+            process.wait(timeout=process.stop_timeout)
+            return True
+        except Exception:
+            pass
     try:
         process.terminate()
-        # A JVM training an AOT cache writes its configuration as it exits.
-        timeout = process.stop_timeout if isinstance(process, _aot_cache.ManagedProcess) else 3
-        process.wait(timeout=timeout)
+        process.wait(timeout=process.stop_timeout if training else 3)
         return True
     except Exception:
         try:

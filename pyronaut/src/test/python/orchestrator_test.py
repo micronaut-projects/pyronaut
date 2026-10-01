@@ -4515,6 +4515,15 @@ additional-test-resources = ["test-fixtures"]
         self.assertTrue(cli._stop_managed_process(plain))  # noqa: SLF001
         plain.wait.assert_called_once_with(timeout=3)
 
+    def test_interrupted_training_process_is_allowed_to_exit_on_its_own(self):
+        process = MagicMock()
+        managed = cli._aot_cache.ManagedProcess(process, cli._aot_cache.Launch(["java"], None))  # noqa: SLF001
+
+        self.assertTrue(cli._stop_managed_process(managed, interrupted=True))  # noqa: SLF001
+
+        process.wait.assert_called_once_with(cli._aot_cache.TRAINING_STOP_TIMEOUT_SECONDS)  # noqa: SLF001
+        process.terminate.assert_not_called()
+
     def test_launcher_jvm_options_use_the_launcher_opts_variable_and_keep_user_options_last(self):
         env = cli._with_launcher_jvm_options(  # noqa: SLF001
             {"PYRONAUT_DEV_OPTS": "-XX:+UseSerialGC"},

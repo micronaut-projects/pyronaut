@@ -6,7 +6,7 @@ import time
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 _PACKAGE_DIR = Path(__file__).resolve().parents[2] / "main" / "python" / "pyronaut_cli_v2"
 if "pyronaut_cli_v2" not in sys.modules:
@@ -19,7 +19,6 @@ sys.modules[_SPEC.name] = aot_cache
 _SPEC.loader.exec_module(aot_cache)
 
 
-@unittest.skipUnless(os.name == "posix", "AOT caches are only used on macOS and Linux")
 class AotCacheTest(unittest.TestCase):
     def setUp(self):
         self._temp = tempfile.TemporaryDirectory()
@@ -172,7 +171,9 @@ class AotCacheTest(unittest.TestCase):
     def test_finish_creates_the_cache_in_the_background_under_its_final_name(self):
         training = self._prepare(self._java_command()).training
         training.configuration.write_bytes(b"configuration")
-        training.create_command = ["/bin/sh", "-c", 'printf cache > "$1"', "sh", "{cache}"]
+        training.create_command = [
+            sys.executable, "-c", "import pathlib, sys; pathlib.Path(sys.argv[1]).write_text('cache')", "{cache}",
+        ]
 
         training.finish()
 
@@ -185,11 +186,12 @@ class AotCacheTest(unittest.TestCase):
             time.sleep(0.05)
         self.assertFalse(training.configuration.exists())
         self.assertEqual([], list(training.cache.parent.glob("*.tmp-*")))
+        self.assertEqual([], list(training.cache.parent.glob("*.json")))
 
     def test_failed_creation_is_recorded(self):
         training = self._prepare(self._java_command()).training
         training.configuration.write_bytes(b"configuration")
-        training.create_command = ["/bin/sh", "-c", "exit 1"]
+        training.create_command = [sys.executable, "-c", "raise SystemExit(1)"]
 
         training.finish()
 
@@ -202,12 +204,68 @@ class AotCacheTest(unittest.TestCase):
 
     def test_finish_without_a_configuration_creates_nothing(self):
         training = self._prepare(self._java_command()).training
-        training.create_command = ["/bin/sh", "-c", "exit 1"]
+        training.create_command = [sys.executable, "-c", "raise SystemExit(1)"]
 
         training.finish()
 
         time.sleep(0.2)
         self.assertEqual([], list(training.cache.parent.iterdir()))
+
+    def test_windows_launcher_script_gets_options_through_its_opts_variable(self):
+        script = self._launcher_script(
+            "pyronaut-processor.bat",
+            "@if \"%DEBUG%\"==\"\" @echo off\r\n"
+            "set CLASSPATH=%APP_HOME%\\..\\shared\\lib\\app.jar;%APP_HOME%\\..\\shared\\lib\\other.jar\r\n"
+            "\"%JAVA_EXE%\" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %PYRONAUT_PROCESSOR_OPTS% -classpath \"%CLASSPATH%\" Main %*\r\n",
+        )
+        env = {"JAVA_HOME": str(self.java.parent.parent)}
+
+        launch = self._prepare([str(script), "--project-dir", "."], env)
+
+        self.assertEqual([str(script), "--project-dir", "."], launch.command_line)
+        self.assertIn("-XX:AOTMode=record", launch.env["PYRONAUT_PROCESSOR_OPTS"].split())
+        self.assertNotIn("PYRONAUT_PROCESSOR.BAT_OPTS", launch.env)
+        self.assertEqual([str(script)], launch.training.create_command)
+
+    def test_java_exe_is_a_direct_java_launch(self):
+        java = self.java.with_name("java.exe")
+        self.java.rename(java)
+
+        launch = self._prepare(self._java_command(java))
+
+        self.assertIn("-XX:AOTMode=record", launch.command_line)
+
+    def test_launcher_options_with_spaces_are_quoted(self):
+        script = self._launcher_script()
+        env = {"JAVA_HOME": str(self.java.parent.parent)}
+        root = self.root / "home with spaces"
+
+        launch = aot_cache.prepare([str(script)], env, project_dir=self.project_dir, root=root)
+
+        options = launch.env["PYRONAUT_PROCESSOR_OPTS"]
+        self.assertIn(f'"-XX:AOTConfiguration={launch.training.configuration}"', options)
+
+    def test_terminating_a_training_process_on_windows_discards_its_configuration(self):
+        launch = self._prepare(self._java_command())
+        launch.training.configuration.write_bytes(b"partial")
+        process = MagicMock()
+        managed = aot_cache.ManagedProcess(process, launch)
+
+        with patch.object(aot_cache, "_WINDOWS", True):
+            managed.terminate()
+
+        process.terminate.assert_called_once()
+        self.assertFalse(launch.training.configuration.exists())
+
+    def test_terminating_a_training_process_on_posix_keeps_its_configuration(self):
+        launch = self._prepare(self._java_command())
+        launch.training.configuration.write_bytes(b"configuration")
+        managed = aot_cache.ManagedProcess(MagicMock(), launch)
+
+        with patch.object(aot_cache, "_WINDOWS", False):
+            managed.terminate()
+
+        self.assertTrue(launch.training.configuration.exists())
 
     def test_killed_training_process_discards_its_configuration(self):
         launch = self._prepare(self._java_command())

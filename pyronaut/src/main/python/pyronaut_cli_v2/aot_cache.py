@@ -8,16 +8,22 @@ class path start from it (``-XX:AOTCache``). Caches live in
 application JVMs of ``dev``, ``run`` and ``test``); a slot keeps only the cache
 for its current key.
 
-Requires JDK 25 or later on macOS or Linux; other launches run unchanged.
+Requires JDK 25 or later; other launches run unchanged.
+
+Run as a script, this module creates a cache from a training run's
+configuration (see ``Training.finish``); it imports only the standard library
+so that it runs detached from the CLI.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,11 +36,17 @@ QUIET_FLAGS = ("-Xlog:aot*=off,cds*=off",)
 # A training JVM writes its AOT configuration as it exits, which takes seconds
 # for an application JVM; stopping it sooner discards the training run.
 TRAINING_STOP_TIMEOUT_SECONDS = 30.0
+_WINDOWS = os.name == "nt"
 _MINIMUM_JAVA_MAJOR = 25
 _CLASSPATH_OPTIONS = ("-cp", "-classpath", "--class-path")
+_BATCH_SUFFIXES = (".bat", ".cmd")
 _CREATION_IN_PROGRESS_SECONDS = 600
 _STALE_FILE_SECONDS = 86400
-_CLASSPATH_LINE = re.compile(r"^CLASSPATH=(.*)$", re.MULTILINE)
+# Launcher scripts list their class path on one line, relative to APP_HOME:
+# CLASSPATH=$APP_HOME/... in the shell script, set CLASSPATH=%APP_HOME%\... in
+# the batch file.
+_SHELL_CLASSPATH_LINE = re.compile(r"^CLASSPATH=(.*)$", re.MULTILINE)
+_BATCH_CLASSPATH_LINE = re.compile(r"^set CLASSPATH=(.*)$", re.MULTILINE | re.IGNORECASE)
 _JAVA_VERSION_LINE = re.compile(r'^JAVA_VERSION="(\d+)', re.MULTILINE)
 
 
@@ -57,7 +69,7 @@ class Training:
         if self._finished:
             return
         self._finished = True
-        self.configuration.unlink(missing_ok=True)
+        _remove(self.configuration)
 
     def finish(self) -> None:
         if self._finished:
@@ -65,38 +77,35 @@ class Training:
         self._finished = True
         try:
             if not self.configuration.is_file() or self.configuration.stat().st_size == 0:
-                self.configuration.unlink(missing_ok=True)
+                _remove(self.configuration)
                 return
         except OSError:
             return
         temporary = self.cache.with_name(f"{self.cache.name}.tmp-{os.getpid()}")
-        failed = self.cache.with_suffix(".failed")
-        # The cache appears under its final name only once complete; a failure
-        # is recorded so that later launches do not train again for nothing.
-        script = (
-            'tmp=$1 final=$2 conf=$3 failed=$4; shift 4; '
-            '"$@" >/dev/null 2>&1 && mv -f "$tmp" "$final" || touch "$failed"; '
-            'rm -f "$tmp" "$conf"'
-        )
-        command = [
-            "/bin/sh", "-c", script, "sh",
-            str(temporary), str(self.cache), str(self.configuration), str(failed),
-            *[value.replace("{cache}", str(temporary)) for value in self.create_command],
-        ]
+        request = self.configuration.with_suffix(".json")
         env = None
         if self.create_env is not None:
             env = {key: value.replace("{cache}", str(temporary)) for key, value in self.create_env.items()}
         try:
+            # A file rather than arguments: the class path of an application
+            # JVM can approach the Windows command line length limit.
+            request.write_text(json.dumps({
+                "command": [value.replace("{cache}", str(temporary)) for value in self.create_command],
+                "temporary": str(temporary),
+                "cache": str(self.cache),
+                "configuration": str(self.configuration),
+            }), encoding="utf-8")
             subprocess.Popen(
-                command,
+                [sys.executable, str(Path(__file__).resolve()), str(request)],
                 env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True,
+                **_detached(),
             )
         except OSError:
-            self.configuration.unlink(missing_ok=True)
+            _remove(request)
+            _remove(self.configuration)
 
 
 @dataclass
@@ -135,6 +144,10 @@ class ManagedProcess:
         return code
 
     def terminate(self) -> None:
+        if _WINDOWS:
+            # TerminateProcess ends the JVM at once, without the exit in which
+            # it writes its AOT configuration (SIGTERM on POSIX lets it run).
+            self._launch.abandon()
         self._process.terminate()
 
     def kill(self) -> None:
@@ -154,7 +167,7 @@ def prepare(
 ) -> Launch:
     """Add AOT cache options to a JVM launch, or return it unchanged."""
     unchanged = Launch(list(command_line), env)
-    if os.name != "posix" or not command_line:
+    if not command_line:
         return unchanged
     effective_env = dict(os.environ if env is None else env)
     if any("AOTCache" in value or "AOTMode" in value for value in _jvm_option_sources(command_line, effective_env)):
@@ -209,7 +222,7 @@ class _Target:
     command_line: list[str]
     env: dict[str, str]
     original_env: dict[str, str] | None
-    # Direct java launches: index after the java executable, and the class path.
+    # Direct java launches: the class path.
     classpath: str | None = None
     # Launcher scripts: the variable the script reads JVM options from.
     options_variable: str | None = None
@@ -217,9 +230,7 @@ class _Target:
     def with_options(self, options: Sequence[str]) -> Launch:
         if self.options_variable is None:
             return Launch([self.command_line[0], *options, *self.command_line[1:]], self.original_env)
-        env = dict(self.env)
-        env[self.options_variable] = " ".join([*options, env.get(self.options_variable, "")]).strip()
-        return Launch(list(self.command_line), env)
+        return Launch(list(self.command_line), self._env_with(options))
 
     def create(self, options: Sequence[str]) -> tuple[list[str], dict[str, str] | None]:
         if self.options_variable is None:
@@ -227,14 +238,20 @@ class _Target:
             return [self.command_line[0], *jvm_options, *options, "-cp", self.classpath or ""], self.original_env
         # In create mode the JVM writes the cache and exits without running the
         # main class, so the launcher script needs no arguments.
+        return [self.command_line[0]], self._env_with(options)
+
+    def _env_with(self, options: Sequence[str]) -> dict[str, str]:
         env = dict(self.env)
-        env[self.options_variable] = " ".join([*options, env.get(self.options_variable, "")]).strip()
-        return [self.command_line[0]], env
+        # Both launcher scripts split the variable on whitespace and honor
+        # double quotes, so quote paths that contain spaces.
+        quoted = [f'"{value}"' if any(character.isspace() for character in value) else value for value in options]
+        env[self.options_variable] = " ".join([*quoted, env.get(self.options_variable, "")]).strip()
+        return env
 
 
 def _direct_java(command_line: Sequence[str], env: dict[str, str] | None, project_dir: Path) -> _Target | None:
     executable = Path(command_line[0])
-    if executable.name != "java":
+    if executable.name.lower() not in {"java", "java.exe"}:
         return None
     index = _classpath_index(command_line)
     if index < 0 or index + 2 >= len(command_line):
@@ -261,24 +278,32 @@ def _launcher_script(command_line: Sequence[str], env: dict[str, str]) -> _Targe
     script = Path(command_line[0])
     if not script.name.startswith("pyronaut-"):
         return None
+    batch = script.suffix.lower() in _BATCH_SUFFIXES
     try:
         script = script.resolve()
-        with script.open("rb") as stream:
-            if stream.read(2) != b"#!":
-                # A native image: there is no JVM to cache.
-                return None
+        if not batch:
+            with script.open("rb") as stream:
+                if stream.read(2) != b"#!":
+                    # A native image: there is no JVM to cache.
+                    return None
         text = script.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    match = _CLASSPATH_LINE.search(text)
+    match = (_BATCH_CLASSPATH_LINE if batch else _SHELL_CLASSPATH_LINE).search(text)
     if match is None:
         return None
     java_home = _script_java_home(env)
     if java_home is None:
         return None
     app_home = str(script.parent.parent)
-    entries = [entry.replace("$APP_HOME", app_home) for entry in match.group(1).strip().split(":") if entry]
-    options_variable = script.name.upper().replace("-", "_") + "_OPTS"
+    placeholder, separator = ("%APP_HOME%", ";") if batch else ("$APP_HOME", ":")
+    entries = [
+        entry.replace(placeholder, app_home)
+        for entry in match.group(1).strip().strip('"').split(separator)
+        if entry
+    ]
+    name = script.name[: -len(script.suffix)] if batch else script.name
+    options_variable = name.upper().replace("-", "_") + "_OPTS"
     options = [
         value
         for variable in ("JAVA_OPTS", options_variable, "JAVA_TOOL_OPTIONS")
@@ -357,10 +382,71 @@ def _creation_in_progress(slot: Path, key: str) -> bool:
 def _remove_superseded(slot: Path, key: str) -> None:
     now = time.time()
     for entry in slot.iterdir():
-        if entry.name.startswith(f"{key}."):
-            continue
         try:
-            if entry.suffix in {".aot", ".failed"} or now - entry.stat().st_mtime > _STALE_FILE_SECONDS:
+            age = now - entry.stat().st_mtime
+            if entry.name.startswith(f"{key}.") and age <= _STALE_FILE_SECONDS:
+                continue
+            if entry.suffix in {".aot", ".failed"} or age > _STALE_FILE_SECONDS:
+                # On Windows a cache another JVM has open cannot be removed yet.
                 entry.unlink()
         except OSError:
             continue
+
+
+def _remove(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        # On Windows the JVM may still have the file open.
+        pass
+
+
+def _detached() -> dict[str, object]:
+    if _WINDOWS:
+        return {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _create(request_file: Path) -> int:
+    """Create a cache from a finished training run (the detached helper)."""
+    try:
+        request = json.loads(request_file.read_text(encoding="utf-8"))
+    finally:
+        _remove(request_file)
+    command = request["command"]
+    temporary = Path(request["temporary"])
+    cache = Path(request["cache"])
+    configuration = Path(request["configuration"])
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            # The CLI runs Windows launcher scripts through the shell as well.
+            shell=Path(command[0]).suffix.lower() in _BATCH_SUFFIXES,
+        )
+        created = completed.returncode == 0 and temporary.is_file()
+    except OSError:
+        created = False
+    try:
+        if not created:
+            # Record the failure so that later launches do not train again for nothing.
+            cache.with_suffix(".failed").touch()
+            return 1
+        try:
+            # The cache appears under its final name only once complete.
+            os.replace(temporary, cache)
+        except OSError:
+            # On Windows a concurrent run may hold the previous cache open;
+            # the next training run replaces it.
+            return 1
+        return 0
+    finally:
+        _remove(temporary)
+        _remove(configuration)
+
+
+if __name__ == "__main__":
+    sys.exit(_create(Path(sys.argv[1])))
