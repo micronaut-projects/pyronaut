@@ -90,11 +90,7 @@ class PyronautProcessorJvmSmokeTest extends AbstractPyronautProcessorSmokeTest {
     void jvmProcessReusesCompilerDaemonAcrossRunsAndShutsDownWhenIdle() throws Exception {
         Path project = tempDir.resolve("daemon-project");
         String pyproject = daemonIncrementalPyproject("processor-jvm-daemon");
-        List<String> jvmOptions = List.of(
-            "-Dpyronaut.processor.daemon.idle-timeout-seconds=3",
-            // The daemon is slow to start on the 2-CPU GitHub-hosted runners.
-            "-Dpyronaut.processor.daemon.start-timeout-seconds=120"
-        );
+        List<String> jvmOptions = List.of("-Dpyronaut.processor.daemon.idle-timeout-seconds=3");
 
         ProcessResult first = runJvmProcessor(
             project,
