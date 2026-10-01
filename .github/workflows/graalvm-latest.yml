@@ -24,9 +24,6 @@ jobs:
       DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
       GH_TOKEN_PUBLIC_REPOS_READONLY: ${{ secrets.GH_TOKEN_PUBLIC_REPOS_READONLY }}
       GH_USERNAME: ${{ secrets.GH_USERNAME }}
-      PYRONAUT_GIT_TOKEN: ${{ secrets.PYRONAUT_GIT_TOKEN || secrets.GH_TOKEN }}
-      PYRONAUT_GIT_USERNAME: ${{ secrets.PYRONAUT_GIT_USERNAME || secrets.GH_USERNAME || 'x-access-token' }}
-      PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GRAALVM_QUICK_BUILD: true
       ORG_GRADLE_PROJECT_pyronautNativeImageCiArgs: "--parallelism=1"
@@ -46,9 +43,6 @@ jobs:
           java-version: '25'
           version: '25.4'
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: "💾 Cache source dependency checkouts"
-        uses: ./.github/actions/cache-source-dependencies
 
       - name: "🔧 Setup GraalPy pyenv virtualenv"
         uses: ./.github/actions/setup-graalpy-pyenv
