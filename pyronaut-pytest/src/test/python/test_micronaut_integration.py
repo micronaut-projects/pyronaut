@@ -10,10 +10,8 @@ from pyronaut.test import *
 import java
 from micronaut.context.env import Environment
 from micronaut.context import ApplicationContext
-from typing import List, Dict, Annotated
 from test import Foo, Baz
 from Bar import Bar
-from jakarta.inject import Named
 
 @pytest.fixture
 def my_context(request):
@@ -50,11 +48,6 @@ def foo(my_context : ApplicationContext) -> Foo:
 def bar(my_context : ApplicationContext) -> Bar:
     return my_context[Bar]
 
-# TODO: support named injection
-# @pytest.fixture
-# def baz(my_context : ApplicationContext) -> Baz:
-#     return my_context[Annotated[Baz, Named("test")]]
-
 def test_micronaut_context_creation(
         my_context: ApplicationContext,
         env: Environment,
@@ -73,14 +66,20 @@ def test_micronaut_context_creation(
     assert env is not None
     assert foo is not None
     assert bar is not None
-    # TODO: support named injection
-    # assert baz is not None
     assert ctx.isRunning() is True
 
     # Verify environments are set
     assert "test" in env.getActiveNames()
     assert "test" in ctx.getEnvironment().getActiveNames()
     assert "foo" in ctx.getEnvironment().getActiveNames()
+
+
+def test_named_python_bean_lookup(my_context: ApplicationContext):
+    assert my_context[Foo] is not None
+    bean = my_context.get_bean(Baz, name="test")
+    assert bean is not None, "qualified lookup did not resolve the @Named('test') bean"
+    with pytest.raises(KeyError):
+        my_context.get_bean(Baz, name="missing")
 
 
 def test_micronaut_context_creation2(my_context):
