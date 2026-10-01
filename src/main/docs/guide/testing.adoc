@@ -212,7 +212,8 @@ The development runtime needs Micronaut 5.3 or later: `pyronaut install` adds
 `micronaut-dev`, `micronaut-dev-test-report` and `micronaut-dev-livereload` to
 the project's development runtime. Pyronaut keeps the earlier behaviour, which
 processes the project and starts a new test process for every run, for the
-native toolchain, for external Maven and Gradle builds, for options test mode
+native toolchain, whose `pyronaut-dev` image runs the development runtime for
+`pyronaut dev` but not its test mode yet, for external Maven and Gradle builds, for options test mode
 does not support such as `--select-class`, and when configured:
 
 [source,toml]
