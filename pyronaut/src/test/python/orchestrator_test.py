@@ -4441,7 +4441,98 @@ additional-test-resources = ["test-fixtures"]
 
         self.assertEqual(0, exit_code)
         self._assert_test_delegate(executed[3][0], "/tmp/demo", ["--debug-vm"])
-        self.assertEqual(self._JDWP_FLAG, executed[3][0][3])
+        jvm_args = executed[3][0][: executed[3][0].index("-cp")]
+        self.assertIn(self._JDWP_FLAG, jvm_args)
+        for flag in cli._SHORT_LIVED_JVM_FLAGS:  # noqa: SLF001
+            self.assertIn(flag, jvm_args)
+
+    def test_run_jvm_delegate_keeps_jit_enabled(self):
+        project_dir = Path("/tmp/demo")
+        (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+        self._write_manifests(project_dir)
+
+        command_line, _ = cli._build_java_delegate_invocation(  # noqa: SLF001
+            "run",
+            ["--project-dir", "/tmp/demo"],
+            self._resolver(),
+        )
+
+        for flag in cli._SHORT_LIVED_JVM_FLAGS:  # noqa: SLF001
+            self.assertNotIn(flag, command_line)
+
+    def test_jvm_dev_delegate_uses_short_lived_jvm_flags(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._write_disabled_test_resources_project(Path(temp_dir), toolchain="jvm")
+            command_line, _ = cli._build_dev_delegate_invocation(  # noqa: SLF001
+                ["--project-dir", str(project_dir)],
+                self._resolver(),
+                debug_vm=False,
+                env_overrides=None,
+                java_home_provider=None,
+            )
+
+        jvm_args = command_line[: command_line.index("-cp")]
+        for flag in cli._SHORT_LIVED_JVM_FLAGS:  # noqa: SLF001
+            self.assertIn(flag, jvm_args)
+
+    def test_launcher_jvm_options_use_the_launcher_opts_variable_and_keep_user_options_last(self):
+        env = cli._with_launcher_jvm_options(  # noqa: SLF001
+            {"PYRONAUT_DEV_OPTS": "-XX:+UseSerialGC"},
+            "/opt/pyronaut/tools/pyronaut-dev/bin/pyronaut-dev",
+            ["-XX:+UseParallelGC", "-Dexample=true"],
+        )
+
+        self.assertEqual("-XX:+UseParallelGC -Dexample=true -XX:+UseSerialGC", env["PYRONAUT_DEV_OPTS"])
+        self.assertEqual(
+            "-Dexample=true",
+            cli._with_launcher_jvm_options({}, "/opt/pyronaut/tools/pyronaut-test/bin/pyronaut-test.bat", ["-Dexample=true"])[  # noqa: SLF001
+                "PYRONAUT_TEST_OPTS"
+            ],
+        )
+
+    def test_direct_source_jvm_test_passes_short_lived_flags_to_launcher(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "test_controller.py"
+            source.write_text("def test_ok():\n    pass\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                return 0
+
+            exit_code = cli.run(
+                ["test", "--jvm", str(source)],
+                runner_with_env=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/java-home",
+            )
+
+        self.assertEqual(0, exit_code)
+        command_line, env = executed[-1]
+        self.assertEqual(str(self._fake_dev_delegate_root / "bin" / "pyronaut-dev"), command_line[0])
+        self.assertEqual(list(cli._SHORT_LIVED_JVM_FLAGS), env["PYRONAUT_DEV_OPTS"].split())  # noqa: SLF001
+
+    def test_direct_source_run_keeps_jit_enabled(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "controller.py"
+            source.write_text("print('ok')\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                return 0
+
+            exit_code = cli.run(
+                ["run", "--jvm", str(source)],
+                runner_with_env=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/java-home",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertNotIn("PYRONAUT_DEV_OPTS", executed[-1][1])
 
     def test_debug_vm_fails_fast_when_port_busy(self):
         stderr = io.StringIO()
