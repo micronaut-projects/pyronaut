@@ -120,6 +120,30 @@ production-enabled = false
 
 The command-line option `--control-panel` enables it for that invocation and overrides this setting. `pyronaut dev --control-panel` also works for direct-source execution.
 When you enable development Control Panel support, Pyronaut also adds Micronaut Management and the Control Panel management integration to the development runtime so health and diagnostic panels are available.
+Pyronaut also adds the optional Control Panel modules that match the application's dependencies. It adds a module only when the application uses the library that the panel inspects:
+
+[cols="1,1"]
+|===
+|Application dependency |Control Panel module
+
+|`io.micronaut.sql:micronaut-jdbc`
+|`micronaut-control-panel-datasource`
+
+|`org.hibernate.orm:hibernate-core`
+|`micronaut-control-panel-hibernate`
+
+|`io.micronaut.kafka:micronaut-kafka`
+|`micronaut-control-panel-kafka`
+
+|`io.micronaut.objectstorage:micronaut-object-storage-core`
+|`micronaut-control-panel-object-storage`
+
+|A Micronaut Cache implementation, such as `micronaut-cache-caffeine`
+|`micronaut-control-panel-cache`
+|===
+
+The Caffeine cache that Pyronaut adds to the development runtime by default does not enable the cache panel. Direct-source execution selects the same modules from the dependencies that the sources declare.
+
 Pyronaut writes the implicitly enabled development Control Panel dependencies only to the `development-runtime` dependency manifest, so `pyronaut build` does not package them.
 Applications can declare their own development-only runtime dependencies with `development-runtime = [...]` under `[tool.pyronaut.dependencies]`.
 

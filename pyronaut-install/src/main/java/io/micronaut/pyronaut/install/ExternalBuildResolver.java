@@ -91,7 +91,8 @@ final class ExternalBuildResolver {
                 ? resolveClasspath(root, kind, "testResources", offline, localRepository) : List.of();
             List<Path> managedDevelopmentSupport = managedResolver.resolveManagedDevelopmentSupport(
                 localRepository == null ? MavenClasspathResolver.resolveLocalMavenRepository() : localRepository,
-                offline
+                offline,
+                runtime
             );
             List<Path> developmentRuntime = mergeClasspath(runtime, managedDevelopmentSupport);
             return new ExternalProjectLayout(kind, mainSources, testSources, mainResources, testResources,

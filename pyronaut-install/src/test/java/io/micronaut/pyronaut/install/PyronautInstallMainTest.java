@@ -365,11 +365,75 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void addsControlPanelFeaturesDetectedInDevelopmentRuntimeDependencies() throws Exception {
+        Path repository = tempDir.resolve("repo-control-panel-features");
+        String controlPanelVersion = PyronautManagedVersions.micronautControlPanelVersion();
+        writeArtifact(repository, "io.micronaut.sql", "micronaut-jdbc", "1.0.0");
+        writeArtifactWithDependencies(repository, "com.example", "data-dep", "1.0.0",
+            List.of(new DependencyCoordinate("io.micronaut.sql", "micronaut-jdbc", "1.0.0")));
+        writeArtifact(repository, "io.micronaut", "micronaut-management", "1.2.3");
+        writeArtifact(repository, "io.micronaut.cache", "micronaut-cache-caffeine", "1.2.3");
+        writeArtifact(repository, "io.micronaut.controlpanel", "micronaut-control-panel-datasource", controlPanelVersion);
+        writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
+        writeBom(
+            repository,
+            "io.micronaut.platform",
+            "micronaut-platform",
+            "1.0.0",
+            List.of(
+                new ManagedDependency("io.micronaut", "micronaut-management", "1.2.3"),
+                new ManagedDependency("io.micronaut.cache", "micronaut-cache-caffeine", "1.2.3")
+            )
+        );
+
+        Path project = tempDir.resolve("project-control-panel-features");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.core]
+            version = "1.0.0"
+
+            [tool.pyronaut.platform]
+            version = "1.0.0"
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:data-dep:1.0.0"]
+            build = []
+            test = []
+
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        Path cacheDir = project.resolve("__pyronaut__");
+        List<String> runtimeEntries = Files.readAllLines(cacheDir.resolve("resolved-runtime-dependencies"), StandardCharsets.UTF_8);
+        List<String> developmentEntries = Files.readAllLines(cacheDir.resolve("resolved-development-runtime-dependencies"), StandardCharsets.UTF_8);
+        assertTrue(runtimeEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-datasource")));
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-datasource")));
+        // The Caffeine fallback is injected by Pyronaut, not used by the application.
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-cache-caffeine")));
+        assertTrue(developmentEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-cache")));
+        assertTrue(developmentEntries.stream().noneMatch(entry -> entry.contains("micronaut-control-panel-kafka")));
+    }
+
+    @Test
     void doesNotInjectCaffeineWhenCacheImplementationIsAlreadyPresent() throws Exception {
         Path repository = tempDir.resolve("repo-management-existing-cache");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
         writeArtifact(repository, "io.micronaut", "micronaut-management", "1.2.3");
         writeArtifact(repository, "io.micronaut.cache", "micronaut-cache-ehcache", "1.2.3");
+        writeArtifact(repository, "io.micronaut.controlpanel", "micronaut-control-panel-cache",
+            PyronautManagedVersions.micronautControlPanelVersion());
         writeBom(repository, "io.micronaut", "micronaut-core-bom", "1.0.0", List.of());
         writeBom(
             repository,
@@ -420,6 +484,8 @@ class PyronautInstallMainTest {
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-management")));
         assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-cache-ehcache")));
         assertTrue(developmentEntries.stream().noneMatch(entry -> entry.contains("micronaut-cache-caffeine")));
+        // An application cache implementation enables the cache panel.
+        assertTrue(developmentEntries.stream().anyMatch(entry -> entry.contains("micronaut-control-panel-cache")));
     }
 
     @Test

@@ -836,6 +836,80 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("-Dpyronaut.dev.control.panel.class.path=/tmp/control-panel.jar", captured["command"])
         self.assertIn("-Djava.class.path=/tmp/control-panel.jar", captured["command"])
 
+    def test_optional_control_panels_are_selected_from_application_dependencies(self):
+        bundled = [
+            "/tools/lib/control-panel/micronaut-control-panel-ui-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-datasource-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-hibernate-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-kafka-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-object-storage-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-cache-2.1.0.jar",
+        ]
+
+        self.assertEqual(
+            [bundled[0]],
+            cli._select_control_panel_entries(bundled, ["/m2/micronaut-jdbc-hikari-7.2.0.jar"]),  # noqa: SLF001
+        )
+        self.assertEqual(
+            [bundled[0], bundled[1], bundled[3]],
+            cli._select_control_panel_entries(bundled, [  # noqa: SLF001
+                "/m2/io/micronaut/sql/micronaut-jdbc/7.2.0/micronaut-jdbc-7.2.0.jar",
+                "/gradle/io.micronaut.kafka/micronaut-kafka/6.0.0/hash/micronaut-kafka-6.0.0.jar",
+                "/project/__pyronaut__/classes",
+            ]),
+        )
+        self.assertEqual(
+            bundled,
+            cli._select_control_panel_entries(bundled, [  # noqa: SLF001
+                "/m2/micronaut-jdbc-7.2.0.jar",
+                "/m2/hibernate-core-7.1.0.Final.jar",
+                "/m2/micronaut-kafka-6.0.0.jar",
+                "/m2/micronaut-object-storage-core-3.0.0.jar",
+                "/m2/micronaut-cache-caffeine-6.1.1.jar",
+            ]),
+        )
+
+    def test_direct_control_panel_adds_only_detected_optional_panels(self):
+        captured = {}
+        bundled = [
+            "/tmp/micronaut-control-panel-ui-2.1.0.jar",
+            "/tmp/micronaut-control-panel-datasource-2.1.0.jar",
+            "/tmp/micronaut-control-panel-kafka-2.1.0.jar",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(temp_dir)
+                (Path(temp_dir) / "app.py").write_text("", encoding="utf-8")
+                def capture(command, env=None):
+                    captured["command"] = command
+                    return 0
+                with patch.object(cli, "_resolve_direct_source_dev_executable", return_value="/tmp/pyronaut-dev"), \
+                        patch.object(cli, "_direct_control_panel_classpath_entries", return_value=bundled), \
+                        patch.object(cli, "_control_panel_application_entries",
+                                     return_value=["/m2/micronaut-jdbc-7.2.0.jar"]):
+                    exit_code = cli._delegate_direct_source(
+                        "dev",
+                        ["--control-panel", "app.py"],
+                        capture,
+                        lambda _: "/tmp/pyronaut-dev",
+                        java_home_provider=lambda: "/tmp/java-home",
+                    )
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(0, exit_code)
+        self.assertIn(
+            "-Djava.class.path=" + os.pathsep.join(bundled[:2]),
+            captured["command"],
+        )
+        # pyronaut-dev reselects optional panels after resolving direct-source
+        # dependency declarations, so it receives every bundled module.
+        self.assertIn(
+            "-Dpyronaut.dev.control.panel.class.path=" + os.pathsep.join(bundled),
+            captured["command"],
+        )
+
     def test_control_panel_is_not_enabled_by_generated_schema_or_development_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir)
