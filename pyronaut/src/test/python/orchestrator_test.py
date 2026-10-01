@@ -3881,6 +3881,124 @@ additional-resources = ["views"]
             watched_files = {entry[0] for entry in cli._snapshot_watched_files(project_dir.resolve())}  # noqa: SLF001
             self.assertIn("views/ssr-components.mjs", watched_files)
 
+    def _reload_project(self, temp_dir: str, *, toolchain: str = "jvm", reload: str | None = None, dev_jar: bool = True) -> Path:
+        project_dir = Path(temp_dir) / "demo"
+        (project_dir / "src").mkdir(parents=True, exist_ok=True)
+        (project_dir / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+        dev_section = f'\n[tool.pyronaut.dev]\nreload = "{reload}"\n' if reload else ""
+        (project_dir / "pyproject.toml").write_text(
+            f"""
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.toolchain]
+type = "{toolchain}"
+{dev_section}""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        cache_dir = project_dir / "__pyronaut__"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        entries = ["/repo/io/micronaut/micronaut-context-5.3.0.jar", "/repo/io/micronaut/micronaut-dev-livereload-5.3.0.jar"]
+        if dev_jar:
+            entries.append("/repo/io/micronaut/micronaut-dev-5.3.0.jar")
+        (cache_dir / "resolved-development-runtime-dependencies").write_text("\n".join(entries) + "\n", encoding="utf-8")
+        return project_dir.resolve()
+
+    def test_dev_reloads_in_process_on_the_jvm_toolchain_with_micronaut_dev(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project(temp_dir)
+            self.assertTrue(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+
+    def test_dev_restarts_the_process_on_the_native_toolchain(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project(temp_dir, toolchain="native")
+            self.assertFalse(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+            self.assertTrue(cli._dev_reload_in_process(project_dir, ["--jvm"]))  # noqa: SLF001
+
+    def test_dev_restarts_the_process_when_configured_or_without_micronaut_dev(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project(temp_dir, reload="process")
+            self.assertFalse(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Micronaut before 5.3 has no micronaut-dev; livereload alone does not count
+            project_dir = self._reload_project(temp_dir, dev_jar=False)
+            self.assertFalse(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+
+    def test_reloading_dev_puts_only_the_compiler_on_the_launch_classpath(self):
+        entries = [
+            "/repo/io/micronaut/micronaut-inject-python/5.3.0/micronaut-inject-python-5.3.0.jar",
+            "/repo/io/micronaut/micronaut-inject-java/5.3.0/micronaut-inject-java-5.3.0.jar",
+            "/repo/io/micronaut/micronaut-core-processor/5.3.0/micronaut-core-processor-5.3.0.jar",
+            "/repo/io/micronaut/sourcegen/micronaut-sourcegen-generator-java/2.1.0/micronaut-sourcegen-generator-java-2.1.0.jar",
+            "/repo/com/github/javaparser/javaparser-core/3.27.0/javaparser-core-3.27.0.jar",
+            "/repo/org/ow2/asm/asm-tree/9.9/asm-tree-9.9.jar",
+            "/repo/org/ow2/asm/asm/9.9/asm-9.9.jar",
+            # annotation processors stay on the processor path
+            "/repo/io/micronaut/serde/micronaut-serde-processor/3.2.2/micronaut-serde-processor-3.2.2.jar",
+            "/repo/io/micronaut/data/micronaut-data-processor/5.0.0/micronaut-data-processor-5.0.0.jar",
+            "/repo/io/micronaut/micronaut-http-validation/5.3.0/micronaut-http-validation-5.3.0.jar",
+        ]
+        self.assertEqual(entries[:7], cli._dev_compiler_entries(entries))  # noqa: SLF001
+
+    def test_reloading_dev_restarts_for_processor_options_and_refreshes_other_configuration(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project(temp_dir)
+            (project_dir / "__pyronaut__" / "annotation-processor-options.properties").write_text(
+                "options=micronaut.openapi.enabled,micronaut.openapi.target.file\n", encoding="utf-8"
+            )
+            config = project_dir / "config"
+            config.mkdir()
+            toml = config / "application.toml"
+            toml.write_text("[micronaut.application]\nname = 'demo'\n[micronaut.openapi]\nenabled = true\n", encoding="utf-8")
+            snapshot = cli._snapshot_dependency_inputs(project_dir)  # noqa: SLF001
+            self.assertIn(("option:micronaut.openapi.enabled=True", 0, 0), snapshot)
+            # a configuration edit is refreshed in place
+            toml.write_text("[micronaut.application]\nname = 'other'\n[micronaut.openapi]\nenabled = true\n", encoding="utf-8")
+            self.assertEqual(snapshot, cli._snapshot_dependency_inputs(project_dir))  # noqa: SLF001
+            # a processor option needs a new process
+            toml.write_text("[micronaut.application]\nname = 'other'\n[micronaut.openapi]\nenabled = false\n", encoding="utf-8")
+            self.assertNotEqual(snapshot, cli._snapshot_dependency_inputs(project_dir))  # noqa: SLF001
+
+    def test_dev_restarts_the_process_for_an_exclusion_inside_a_watched_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project(temp_dir)
+            pyproject = project_dir / "pyproject.toml"
+            base = pyproject.read_text(encoding="utf-8")
+            pyproject.write_text(base + '\n[tool.pyronaut.dev]\nrestart-excludes = ["views"]\n', encoding="utf-8")
+            self.assertTrue(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+            pyproject.write_text(base + '\n[tool.pyronaut.dev]\nrestart-excludes = ["src/generated"]\n', encoding="utf-8")
+            self.assertFalse(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+
+    def test_reloading_dev_adds_only_the_pyronaut_dev_jar_of_that_distribution(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tool = Path(temp_dir) / "pyronaut-dev"
+            (tool / "bin").mkdir(parents=True)
+            (tool / "lib").mkdir()
+            launcher = tool / "bin" / "pyronaut-dev"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            jars = ["micronaut-pyronaut-dev-0.0.7.jar", "micronaut-pyronaut-processor-0.0.7.jar", "micronaut-pyronaut-dev-tools-0.0.7.jar"]
+            for jar in jars:
+                (tool / "lib" / jar).write_text("", encoding="utf-8")
+            (tool / "bin" / "pyronaut-classpath.txt").write_text("\n".join(jars) + "\n", encoding="utf-8")
+            found = cli._pyronaut_dev_jar(lambda name: str(launcher) if name == "pyronaut-dev" else None)  # noqa: SLF001
+            self.assertEqual("micronaut-pyronaut-dev-0.0.7.jar", Path(found).name)
+            self.assertIsNone(cli._pyronaut_dev_jar(lambda name: None))  # noqa: SLF001
+
+    def test_reloading_dev_watches_only_the_dependency_inputs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project(temp_dir)
+            (project_dir / "requirements.txt").write_text("requests\n", encoding="utf-8")
+            snapshot = cli._snapshot_dependency_inputs(project_dir)  # noqa: SLF001
+            watched = {entry[0] for entry in snapshot if not entry[0].startswith("dir:")}
+            self.assertEqual({"pyproject.toml", "requirements.txt"}, watched)
+            # a source edit is the development runtime's; a source directory created later needs a new process
+            (project_dir / "src" / "main.py").write_text("print('changed')\n", encoding="utf-8")
+            self.assertEqual(snapshot, cli._snapshot_dependency_inputs(project_dir))  # noqa: SLF001
+            (project_dir / "src-java").mkdir()
+            self.assertNotEqual(snapshot, cli._snapshot_dependency_inputs(project_dir))  # noqa: SLF001
+
     def test_snapshot_watched_files_honors_configured_layout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"

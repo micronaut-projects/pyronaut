@@ -58,6 +58,24 @@ class MavenClasspathResolverScopeTest {
         }
     }
 
+    private static final String MICRONAUT_DEV = "io.micronaut:micronaut-dev";
+
+    private static List<String> projectCoordinates(PyprojectModel.Project project, InstallScope scope) {
+        PyprojectModel base = model();
+        return new MavenClasspathResolver().coordinatesForScope(
+            new PyprojectModel(project, null, base.pyronaut()), scope, Map.of(MICRONAUT_DEV, "5.3.0"));
+    }
+
+    @Test
+    void addsTheReloadingRuntimeToTheDevelopmentRuntimeOfAProjectOnly() {
+        PyprojectModel.Project project = new PyprojectModel.Project("demo", "1.0.0", List.of());
+        assertTrue(projectCoordinates(project, InstallScope.DEVELOPMENT_RUNTIME).contains(MICRONAUT_DEV + ":5.3.0"));
+        assertFalse(projectCoordinates(project, InstallScope.RUNTIME).stream().anyMatch(c -> c.startsWith(MICRONAUT_DEV + ":")));
+        assertFalse(projectCoordinates(project, InstallScope.TEST).stream().anyMatch(c -> c.startsWith(MICRONAUT_DEV + ":")));
+        // the development support resolved for an external build has no [project]
+        assertFalse(projectCoordinates(null, InstallScope.DEVELOPMENT_RUNTIME).stream().anyMatch(c -> c.startsWith(MICRONAUT_DEV + ":")));
+    }
+
     @Test
     void neverAddsTheNativeWatchServiceToTheRuntime() {
         // Development runtime is seeded from runtime, so the addition has to sit strictly after that

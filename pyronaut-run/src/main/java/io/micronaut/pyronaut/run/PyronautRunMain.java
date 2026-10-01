@@ -63,6 +63,12 @@ public class PyronautRunMain implements Callable<Integer> {
     private static final String PACKAGED_JAR_PROPERTY = "pyronaut.packaged.jar";
     private static final String APPLICATION_CLASSES_INDEX = "META-INF/pyronaut/application-classes.idx";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
+    /**
+     * Set by the CLI on the JVM toolchain to run the application in the reloading development runtime.
+     */
+    private static final String DEV_RELOAD_PROPERTY = "pyronaut.dev.reload";
+    private static final String DEV_RUNTIME_MAIN = "io.micronaut.dev.MicronautDevMain";
+    private static final String DEV_RELOAD_CLASS = "io.micronaut.pyronaut.dev.PyronautDevReload";
     private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
     private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
@@ -217,7 +223,7 @@ public class PyronautRunMain implements Callable<Integer> {
             ApplicationArgs applicationArgs = new ApplicationArgs(
                     model == null ? Boolean.TRUE : model.pyronaut().run().bannerEnabled(), appArgs, verboseLogger != null
             );
-            if (startApplication(layout, applicationArgs)) {
+            if (launch(root, layout, model, applicationArgs)) {
                 blockUntilInterrupted();
             }
             return 0;
@@ -279,6 +285,51 @@ public class PyronautRunMain implements Callable<Integer> {
 
     private static void printTestResourcesLine(TestResourcesLogMirror.Entry entry) {
         System.err.println(entry.message());
+    }
+
+    /**
+     * Starts the application in the project's class loader, the thread context class loader when this
+     * is called. Development mode replaces it with the reloading development runtime.
+     *
+     * @param root The project directory
+     * @param layout The project layout
+     * @param model The project model, null for a packaged or external application without one
+     * @param applicationArgs The application's arguments
+     * @return Whether the application started and the launcher must block until interrupted
+     * @throws Exception if the application fails to start
+     */
+    protected boolean launch(Path root, ResolvedProjectLayout layout, PyprojectModel model, ApplicationArgs applicationArgs) throws Exception {
+        DevelopmentRuntime development = model == null || ExternalProjectLayout.isExternal(root) ? null : developmentRuntime();
+        if (development == null) {
+            return startApplication(layout, applicationArgs);
+        }
+        // every generation starts as the run command starts the application, with its progress and the Test
+        // Resources log, in the generation's loader, the thread context loader then
+        development.start(root, layout, model, applicationArgs.appArgs(), () -> startApplication(layout, applicationArgs));
+        return true;
+    }
+
+    /**
+     * The reloading development runtime, when the CLI asked for it on the JVM toolchain. It lives in
+     * {@code pyronaut-dev}, whose jar the CLI adds to the classpath then, and is loaded by name, so that
+     * neither this production launcher nor its native image depends on it or on {@code micronaut-dev}.
+     *
+     * @return The runtime, null when not asked for
+     */
+    static DevelopmentRuntime developmentRuntime() {
+        if (!Boolean.getBoolean(DEV_RELOAD_PROPERTY) || System.getProperty("org.graalvm.nativeimage.imagecode") != null) {
+            return null;
+        }
+        ClassLoader loader = PyronautRunMain.class.getClassLoader();
+        if (!io.micronaut.core.reflect.ClassUtils.isPresent(DEV_RUNTIME_MAIN, loader) || !io.micronaut.core.reflect.ClassUtils.isPresent(DEV_RELOAD_CLASS, loader)) {
+            throw new IllegalStateException("Reloading in dev mode needs micronaut-dev (Micronaut 5.3 or later) on the development runtime classpath and pyronaut-dev beside it. "
+                + "Set tool.pyronaut.dev.reload = \"process\" to restart the process for every change instead.");
+        }
+        try {
+            return (DevelopmentRuntime) Class.forName(DEV_RELOAD_CLASS, true, loader).getDeclaredConstructor().newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Cannot create the development runtime: " + e.getMessage(), e);
+        }
     }
 
     protected void configureEnv(Map<String, String> env) {
@@ -478,6 +529,23 @@ public class PyronautRunMain implements Callable<Integer> {
     }
 
     @FunctionalInterface
+    /**
+     * Runs the application in the reloading development runtime.
+     */
+    public interface DevelopmentRuntime {
+        /**
+         * Starts the application, returning once its first generation started.
+         *
+         * @param root The project directory
+         * @param layout The layout the run command resolved
+         * @param model The project model
+         * @param appArgs The application's arguments
+         * @param launcher Starts the application in a generation, its loader the thread context loader
+         * @throws Exception if the application does not start
+         */
+        void start(Path root, ResolvedProjectLayout layout, PyprojectModel model, List<String> appArgs, Callable<Boolean> launcher) throws Exception;
+    }
+
     interface ContextBootstrapper {
         void bootstrap(ClassLoader classLoader) throws Exception;
     }
@@ -487,7 +555,14 @@ public class PyronautRunMain implements Callable<Integer> {
         boolean start(Path resolvedClassesDir, ApplicationArgs args) throws Exception;
     }
 
-    record ApplicationArgs(Boolean bannerEnabled, List<String> appArgs, boolean verbose) {
+    /**
+     * The arguments an application is started with.
+     *
+     * @param bannerEnabled Whether the banner is shown
+     * @param appArgs The command line arguments
+     * @param verbose Whether verbose logging was requested
+     */
+    public record ApplicationArgs(Boolean bannerEnabled, List<String> appArgs, boolean verbose) {
     }
 
     @FunctionalInterface
