@@ -16,6 +16,7 @@
 package io.micronaut.core.io.service;
 
 import io.micronaut.core.annotation.Internal;
+import io.micronaut.pyronaut.config.classloader.NativeLauncherServices;
 import org.graalvm.nativeimage.hosted.Feature;
 
 import java.util.LinkedHashMap;
@@ -53,5 +54,13 @@ public final class PyronautDevServiceLoaderFeature extends ServiceLoaderFeature 
         Map<String, Set<String>> filtered = new LinkedHashMap<>(definitions.serviceTypeMap());
         DYNAMIC_SERVICES.forEach(filtered::remove);
         return new ServiceScanner.ExclusiveStaticServiceDefinitions(filtered);
+    }
+
+    @Override
+    protected void addImageSingleton(ServiceScanner.ExclusiveStaticServiceDefinitions definitions) {
+        super.addImageSingleton(definitions);
+        // Runtime application loading disables Micronaut's ImageSingletons lookups. Keep the
+        // already-filtered launcher names without requiring a resource filesystem scan instead.
+        NativeLauncherServices.initialize(definitions.serviceTypeMap());
     }
 }
