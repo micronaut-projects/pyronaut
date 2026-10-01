@@ -115,7 +115,17 @@ _DELEGATE_JVM_FLAGS = [
     "--sun-misc-unsafe-memory-access=allow",
     "--enable-native-access=ALL-UNNAMED",
 ]
-_JDWP_FLAGS = "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
+# `pyronaut dev` and `pyronaut test` JVMs live too briefly, and restart too
+# often, for the Graal host JIT to pay off: it competes with startup for CPU.
+# Compile host code with C2, which compiles far less eagerly, and collect with
+# ParallelGC, as micronaut-core does for its Python test JVMs. Truffle keeps
+# compiling Python code, so options configured under graalpy.engine still apply.
+_SHORT_LIVED_JVM_FLAGS = (
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:-UseJVMCICompiler",
+    "-XX:+UseParallelGC",
+)
+_JDWP_FLAGS ="-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
 _TEST_RESOURCES_ENV_TO_PROPERTY = {
     "MICRONAUT_TEST_RESOURCES_SERVER_URI": "micronaut.test.resources.server.uri",
     "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN": "micronaut.test.resources.server.access.token",
@@ -921,6 +931,8 @@ def _delegate(
             env = _merge_env_overrides(env, env_overrides)
             env = _apply_project_virtualenv(env, project_dir)
             env = _apply_test_resources_disabled_java_tool_options(env, project_dir, args, env_overrides)
+            if command == "test":
+                env = _with_launcher_jvm_options(env, executable_path, _SHORT_LIVED_JVM_FLAGS)
             forwarded_args = _strip_orchestrator_only_args(
                 [value for value in args if value not in {"--jvm", "--native"}]
             )
@@ -949,6 +961,7 @@ def _delegate(
             project_dir = Path(_extract_project_dir(args)).resolve()
             env = _apply_project_virtualenv(env, project_dir)
             env = _apply_test_resources_disabled_java_tool_options(env, project_dir, args, env_overrides)
+            env = _with_launcher_jvm_options(env, executable_path, _SHORT_LIVED_JVM_FLAGS)
             return runner(command_line, env) or SUCCESS
 
     if command in {"dev", "run", "test"}:
@@ -1028,6 +1041,7 @@ def _delegate_direct_source(
         return PRECONDITION_FAILED
     if debug_vm:
         env = _apply_debug_vm_env(env)
+    env = _apply_direct_source_jvm_options(env, executable_path, command, args, debug_vm=debug_vm)
     jvm_args = _build_direct_source_native_jvm_args(
         executable_path,
         env,
@@ -1087,6 +1101,7 @@ def _run_direct_source(
         return PRECONDITION_FAILED
     if debug_vm:
         env = _apply_debug_vm_env(env)
+    env = _apply_direct_source_jvm_options(env, executable_path, command, args, debug_vm=debug_vm)
     if command == "dev":
         env = _apply_project_virtualenv(env, Path.cwd())
     snapshot = _snapshot_direct_source_inputs(args)
@@ -1118,16 +1133,33 @@ def _resolve_direct_source_dev_executable(
     debug_vm: bool = False,
 ) -> str | None:
     """Select the direct-source launcher, honoring the command-line override."""
-    mode = _extract_build_mode_flag(args)
-    if mode is None and (Path.cwd() / "pyproject.toml").is_file():
-        mode = _read_pyproject_toolchain_type(Path.cwd())
-    if debug_vm:
-        # JDWP needs a HotSpot JVM; the native launcher cannot load the agent.
-        mode = TOOLCHAIN_TYPE_JVM
-    if mode == TOOLCHAIN_TYPE_JVM:
+    if _direct_source_uses_jvm(args, debug_vm=debug_vm):
         bundled = _bundled_executable(DEV_NATIVE_EXECUTABLE)
         return str(bundled) if bundled is not None and bundled.exists() else resolver(DEV_NATIVE_EXECUTABLE)
     return _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
+
+
+def _direct_source_uses_jvm(args: Sequence[str], *, debug_vm: bool = False) -> bool:
+    if debug_vm:
+        # JDWP needs a HotSpot JVM; the native launcher cannot load the agent.
+        return True
+    mode = _extract_build_mode_flag(args)
+    if mode is None and (Path.cwd() / "pyproject.toml").is_file():
+        mode = _read_pyproject_toolchain_type(Path.cwd())
+    return mode == TOOLCHAIN_TYPE_JVM
+
+
+def _apply_direct_source_jvm_options(
+    env: dict[str, str] | None,
+    executable_path: str,
+    command: str,
+    args: Sequence[str],
+    *,
+    debug_vm: bool = False,
+) -> dict[str, str] | None:
+    if command not in {"dev", "test"} or not _direct_source_uses_jvm(args, debug_vm=debug_vm):
+        return env
+    return _with_launcher_jvm_options(env, executable_path, _SHORT_LIVED_JVM_FLAGS)
 
 def _apply_debug_vm_env(env: dict[str, str] | None) -> dict[str, str]:
     """Enable JDWP for launcher-script delegates through JAVA_TOOL_OPTIONS."""
@@ -1423,6 +1455,7 @@ def _delegate_via_java(
             debug_vm=debug_vm,
             env_overrides=env_overrides,
             java_home_provider=java_home_provider,
+            short_lived=command in {"dev", "test"},
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
@@ -1440,6 +1473,7 @@ def _build_java_delegate_invocation(
     debug_vm: bool = False,
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
+    short_lived: bool = False,
 ) -> tuple[list[str], dict[str, str] | None]:
     project_dir = Path(_extract_project_dir(args)).resolve()
     env = _build_non_test_resources_env(command, java_home_provider)
@@ -1447,7 +1481,7 @@ def _build_java_delegate_invocation(
     env = _apply_project_virtualenv(env, project_dir)
     java_exec = _resolve_java_executable(env)
     classpath = _build_delegate_classpath(command, project_dir, resolver, env_overrides)
-    jvm_args = _build_delegate_jvm_args(debug_vm)
+    jvm_args = _build_delegate_jvm_args(debug_vm, short_lived=short_lived)
     if (environment := _default_environment(command, args)) is not None:
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
@@ -5834,6 +5868,7 @@ def _build_dev_delegate_invocation(
         debug_vm=debug_vm,
         env_overrides=env_overrides,
         java_home_provider=java_home_provider,
+        short_lived=True,
     )
     classpath_index = command_line.index("-cp") + 1
     classpath = _build_delegate_classpath("dev", project_dir, resolver, env_overrides)
@@ -6245,11 +6280,35 @@ def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | No
     return env
 
 
-def _build_delegate_jvm_args(debug_vm: bool) -> list[str]:
+def _build_delegate_jvm_args(debug_vm: bool, *, short_lived: bool = False) -> list[str]:
     jvm_args = list(_DELEGATE_JVM_FLAGS)
+    if short_lived:
+        jvm_args.extend(_SHORT_LIVED_JVM_FLAGS)
     if debug_vm:
         jvm_args.append(_JDWP_FLAGS)
     return jvm_args
+
+
+def _with_launcher_jvm_options(
+    env: dict[str, str] | None,
+    executable_path: str,
+    options: Sequence[str],
+) -> dict[str, str]:
+    """Pass JVM options to a bundled launcher script.
+
+    The launcher scripts read JVM options from ``<TOOL>_OPTS`` (for example
+    ``PYRONAUT_DEV_OPTS``); leading ``-D`` arguments on their command line are
+    application arguments. Options the user already set there come last, so
+    they win.
+    """
+    name = Path(executable_path).name
+    for suffix in (".bat", ".cmd"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+    variable = name.upper().replace("-", "_") + "_OPTS"
+    updated = dict(os.environ if env is None else env)
+    updated[variable] = " ".join([*options, updated.get(variable, "")]).strip()
+    return updated
 
 
 def _build_test_resources_jvm_args(env_overrides: dict[str, str] | None) -> list[str]:
