@@ -156,6 +156,7 @@ final class FastApiTutorialSmokeTest {
     private static List<String> smokeCommand(Path projectDirectory) throws URISyntaxException {
         List<String> command = new ArrayList<>();
         command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+        command.addAll(inheritedJitOptions());
         command.add("-Dpyronaut.dev.project.dir=" + projectDirectory);
         String compilerClasspath = System.getProperty("pyronaut.dev.compiler.class.path");
         if (compilerClasspath != null) {
@@ -169,6 +170,19 @@ final class FastApiTutorialSmokeTest {
         command.add(testProcessClasspath());
         command.add(SmokeLauncher.class.getName());
         return command;
+    }
+
+
+    // Forwards the JIT and Truffle settings the build gives the test JVM, so the child JVM
+    // spends as little CPU on compilation as the test JVM does
+    private static List<String> inheritedJitOptions() {
+        return java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments().stream()
+            .filter(arg -> arg.equals("-XX:+UnlockExperimentalVMOptions")
+                || arg.equals("-XX:-UseJVMCICompiler")
+                || arg.equals("-XX:+UseParallelGC")
+                || arg.startsWith("-Dtruffle.TruffleRuntime=")
+                || arg.startsWith("-Dpolyglot.engine.WarnInterpreterOnly="))
+            .toList();
     }
 
     private static String testProcessClasspath() throws URISyntaxException {

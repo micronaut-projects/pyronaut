@@ -65,7 +65,8 @@ jobs:
       - name: "🔧 Setup Gradle"
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: false
+          # Saving the Gradle home takes up to a minute; pull requests reuse the branch caches
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
           gradle-home-cache-includes: |
             caches
             notifications
@@ -140,7 +141,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # The build job already runs the same :micronaut-pyronaut:check on Linux
+        os: [macos-latest]
     env:
       DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
       DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
@@ -169,7 +171,7 @@ jobs:
       - name: "🔧 Setup Gradle"
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: false
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
           gradle-home-cache-includes: |
             caches
             notifications

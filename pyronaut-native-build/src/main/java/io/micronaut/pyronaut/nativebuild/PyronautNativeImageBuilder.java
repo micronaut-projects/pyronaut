@@ -23,8 +23,7 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 
 /**
  * Builds a Crema native image capable of loading an already compiled Pyronaut
@@ -699,13 +698,12 @@ public final class PyronautNativeImageBuilder {
                     }
                 }
             } else if (Files.isRegularFile(entry) && entry.getFileName().toString().endsWith(".jar")) {
-                try (ZipInputStream input = new ZipInputStream(Files.newInputStream(entry))) {
-                    ZipEntry zipEntry;
-                    while ((zipEntry = input.getNextEntry()) != null) {
-                        if (!zipEntry.isDirectory() && zipEntry.getName().startsWith(prefix)
-                            && zipEntry.getName().endsWith(".class")) {
-                            return true;
-                        }
+                // ZipFile reads only the central directory; streaming the jar would inflate every entry
+                try (ZipFile zip = new ZipFile(entry.toFile())) {
+                    if (zip.stream().anyMatch(zipEntry -> !zipEntry.isDirectory()
+                        && zipEntry.getName().startsWith(prefix)
+                        && zipEntry.getName().endsWith(".class"))) {
+                        return true;
                     }
                 } catch (IOException ignored) {
                     // Native-image will report unreadable classpath entries itself.
