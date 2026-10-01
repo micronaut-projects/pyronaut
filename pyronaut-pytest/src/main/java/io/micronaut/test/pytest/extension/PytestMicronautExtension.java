@@ -74,15 +74,14 @@ import javax.sql.DataSource;
 @SuppressWarnings("checkstyle:InnerTypeLast")
 public final class PytestMicronautExtension extends AbstractMicronautExtension<Value> {
 
+    public static final String ID = "_micronaut_test_extension";
+    private static final Logger LOG = LoggerFactory.getLogger(PytestMicronautExtension.class);
+
     // The extension serving the test that is running right now. pytest runs a test on the thread that
     // built its fixture, and the fixture is function-scoped, so a thread-local is the whole of the
     // bookkeeping: PytestFunctionInvoker needs to find the extension to run the test body inside the
     // TestMethodInterceptor chain, and it is handed only the Python callable.
     private static final ThreadLocal<PytestMicronautExtension> CURRENT = new ThreadLocal<>();
-
-
-    public static final String ID = "_micronaut_test_extension";
-    private static final Logger LOG = LoggerFactory.getLogger(PytestMicronautExtension.class);
     private final List<SqlConfig> sqlConfigs;
     @Nullable
     private BeanIntrospectionsProvider previousBeanIntrospectionsProvider;
