@@ -123,6 +123,15 @@ dependencies {
         exclude(group = "io.micronaut", module = "micronaut-management")
         exclude(group = "io.micronaut.reactor", module = "micronaut-reactor")
     }
+    // Optional panels added to a --control-panel launch only when the
+    // application depends on the library they inspect (see
+    // ControlPanelFeature). Their remaining runtime dependencies are part of
+    // pyronaut-dev's own runtime, so bundle the panel modules only.
+    listOf("cache", "datasource", "hibernate", "kafka", "object-storage").forEach { panel ->
+        "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-$panel:${libs.versions.micronaut.control.panel.get()}") {
+            isTransitive = false
+        }
+    }
 
 
     // runtime build in modules

@@ -15,7 +15,7 @@ Pyronaut writes generated state such as processed classes, dependency manifests,
 
 == Development control panel
 
-Pyronaut disables the Micronaut Control Panel by default. For Maven/Gradle projects, `pyronaut dev --control-panel` enables it for that invocation; `pyronaut run` never enables it automatically. Python projects can opt in through `[tool.pyronaut.control-panel].enabled`, and `--control-panel` always overrides configuration.
+Pyronaut disables the Micronaut Control Panel by default. For Maven/Gradle projects, `pyronaut dev --control-panel` enables it for that invocation; `pyronaut run` never enables it automatically. Python projects can opt in through `[tool.pyronaut.control-panel].enabled`, and `--control-panel` always overrides configuration. Pyronaut adds the optional Control Panel modules, such as the datasource or Kafka panel, that match the build's runtime dependencies. See <<pyproject,Configuring pyproject.toml>> for the full mapping.
 
 == Test resources
 

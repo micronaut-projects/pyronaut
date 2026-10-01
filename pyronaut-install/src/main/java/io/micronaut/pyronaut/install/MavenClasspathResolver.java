@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.pyronaut.config.model.ControlPanelFeature;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
@@ -172,8 +173,12 @@ final class MavenClasspathResolver {
      * Resolves the development-only Control Panel support using the platform
      * packaged with Pyronaut. External Maven/Gradle builds intentionally do
      * not contribute their dependency-management version to this resolution.
+     * Optional panel modules are added for the libraries found on the
+     * application runtime classpath.
      */
-    List<Path> resolveManagedDevelopmentSupport(Path localRepositoryPath, boolean offline) {
+    List<Path> resolveManagedDevelopmentSupport(Path localRepositoryPath,
+                                                boolean offline,
+                                                List<Path> applicationRuntime) {
         boolean enabled = "true".equalsIgnoreCase(envReader.apply("PYRONAUT_CONTROL_PANEL_ENABLED"));
         if (!enabled) {
             // An external Maven or Gradle project owns its runtime dependency
@@ -183,12 +188,15 @@ final class MavenClasspathResolver {
             // application's JVM development classpath.
             return List.of();
         }
+        List<String> features = ControlPanelFeature.detectClasspath(applicationRuntime).stream()
+            .map(feature -> controlPanelCoordinate(feature.moduleKey()))
+            .toList();
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
             null,
             PyronautManagedVersions.micronautPlatformVersion(),
             List.of(),
             null,
-            new PyprojectModel.Dependencies(List.of(), List.of(), List.of(), List.of()),
+            new PyprojectModel.Dependencies(List.of(), features, List.of(), List.of()),
             null,
             new PyprojectModel.ControlPanel(enabled, "/control-panel", false),
             null,
@@ -422,6 +430,38 @@ final class MavenClasspathResolver {
 
             DependencyResult result = repositorySystem.resolveDependencies(session, dependencyRequest);
             if (forceUpdates && !offline && evictResolvedArtifacts(localRepositoryPath, result)) {
+                result = repositorySystem.resolveDependencies(session, dependencyRequest);
+            }
+            List<String> featureCoordinates = scope == InstallScope.DEVELOPMENT_RUNTIME
+                && coordinates.contains(controlPanelUiCoordinate())
+                ? controlPanelFeatureCoordinates(model, result)
+                : List.of();
+            if (!featureCoordinates.isEmpty()) {
+                // Optional panels are only useful when the application uses
+                // the library they inspect, which is known only once the
+                // application graph has been resolved.
+                for (String coordinate : featureCoordinates) {
+                    collectRequest.addDependency(toDependency(model, scope, coordinate, managedVersions));
+                }
+                collected = repositorySystem.collectDependencies(session, collectRequest);
+                if (progressListener != null) {
+                    collected.getRoot().accept(new DependencyVisitor() {
+                        @Override
+                        public boolean visitEnter(DependencyNode node) {
+                            if (node.getArtifact() != null) progressListener.artifactPlanned(node.getArtifact().toString());
+                            return true;
+                        }
+
+                        @Override
+                        public boolean visitLeave(DependencyNode node) {
+                            return true;
+                        }
+                    });
+                }
+                dependencyRequest = new DependencyRequest(
+                    collected.getRoot(),
+                    DependencyFilterUtils.classpathFilter(JavaScopes.RUNTIME)
+                );
                 result = repositorySystem.resolveDependencies(session, dependencyRequest);
             }
             List<Path> classpath = result.getArtifactResults().stream()
@@ -793,6 +833,55 @@ final class MavenClasspathResolver {
         return model.pyronaut() != null
             && model.pyronaut().controlPanel() != null
             && Boolean.TRUE.equals(model.pyronaut().controlPanel().productionEnabled());
+    }
+
+    /**
+     * Detects the optional Control Panel modules for the application graph.
+     * Development defaults injected by Pyronaut, such as the fallback Caffeine
+     * cache, are not application dependencies and do not enable a panel.
+     */
+    private static List<String> controlPanelFeatureCoordinates(PyprojectModel model, DependencyResult result) {
+        PyprojectModel.Dependencies dependencies = model.pyronaut().dependencies();
+        Set<String> declared = new LinkedHashSet<>();
+        dependencies.runtime().forEach(coordinate -> declared.add(moduleKey(coordinate)));
+        dependencies.developmentRuntime().forEach(coordinate -> declared.add(moduleKey(coordinate)));
+        Set<String> resolved = new LinkedHashSet<>();
+        Set<String> application = new LinkedHashSet<>();
+        for (DependencyNode child : result.getRoot().getChildren()) {
+            boolean injected = child.getArtifact() != null && isDevelopmentDefault(child.getArtifact())
+                && !declared.contains(child.getArtifact().getGroupId() + ":" + child.getArtifact().getArtifactId());
+            child.accept(new DependencyVisitor() {
+                @Override
+                public boolean visitEnter(DependencyNode node) {
+                    Artifact artifact = node.getArtifact();
+                    if (artifact != null) {
+                        String module = artifact.getGroupId() + ":" + artifact.getArtifactId();
+                        resolved.add(module);
+                        if (!injected) {
+                            application.add(module);
+                        }
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean visitLeave(DependencyNode node) {
+                    return true;
+                }
+            });
+        }
+        return ControlPanelFeature.detectModules(application).stream()
+            .filter(feature -> !resolved.contains(feature.moduleKey()))
+            .map(feature -> controlPanelCoordinate(feature.moduleKey()))
+            .toList();
+    }
+
+    private static boolean isDevelopmentDefault(Artifact artifact) {
+        String module = artifact.getGroupId() + ":" + artifact.getArtifactId();
+        return ControlPanelFeature.GROUP.equals(artifact.getGroupId())
+            || MICRONAUT_CACHE_CAFFEINE_MODULE.equals(module)
+            || MICRONAUT_MANAGEMENT_MODULE.equals(module)
+            || MICRONAUT_RUNTIME_OSX_MODULE.equals(module);
     }
 
     private static String controlPanelUiCoordinate() {

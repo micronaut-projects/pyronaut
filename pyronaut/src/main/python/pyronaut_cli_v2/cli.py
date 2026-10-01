@@ -1338,13 +1338,20 @@ def _build_direct_source_native_jvm_args(
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
         if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
             # Resolve Control Panel artifacts bundled with the launcher wheel;
-            # do not infer dependencies from project manifests or Maven local.
-            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            # do not resolve them from project manifests or Maven local. The
+            # project's dependencies only select which optional panels apply.
+            bundled_control_panel = _direct_control_panel_classpath_entries(executable_path)
+            control_panel = _select_control_panel_entries(
+                bundled_control_panel,
+                _control_panel_application_entries(project_dir),
+            )
             if control_panel:
                 existing = classpath.split(os.pathsep) if classpath else []
                 classpath = os.pathsep.join(dict.fromkeys([*existing, *control_panel]))
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
-                jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}")
+                # Pass every bundled module: pyronaut-dev selects the optional
+                # panels again once direct-source dependencies are resolved.
+                jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(bundled_control_panel)}")
         if classpath:
             # PyronautDevMain creates the runtime classloader from the
             # java.class.path property in the native image. Control Panel is
@@ -2221,6 +2228,43 @@ def _is_native_test_resources_client_artifact(file_name: str) -> bool:
 
 def _is_control_panel_artifact(file_name: str) -> bool:
     return file_name.startswith("micronaut-control-panel-")
+
+
+# Optional Control Panel modules and the application artifacts that enable
+# them. Keep in sync with io.micronaut.pyronaut.config.model.ControlPanelFeature.
+_CONTROL_PANEL_FEATURES: dict[str, frozenset[str]] = {
+    "micronaut-control-panel-datasource": frozenset({"micronaut-jdbc"}),
+    "micronaut-control-panel-hibernate": frozenset({"hibernate-core"}),
+    "micronaut-control-panel-kafka": frozenset({"micronaut-kafka"}),
+    "micronaut-control-panel-object-storage": frozenset({"micronaut-object-storage-core"}),
+    "micronaut-control-panel-cache": frozenset({
+        "micronaut-cache-caffeine",
+        "micronaut-cache-ehcache",
+        "micronaut-cache-hazelcast",
+        "micronaut-cache-infinispan",
+    }),
+}
+
+
+def _select_control_panel_entries(bundled: Sequence[str], application_entries: Iterable[str]) -> list[str]:
+    """Keep optional panel modules only when the application uses the library they inspect."""
+    application_artifact_ids = _versioned_jar_artifact_ids(Path(entry).name for entry in application_entries)
+    selected: list[str] = []
+    for entry in bundled:
+        triggers = _CONTROL_PANEL_FEATURES.get(_versioned_jar_artifact_id(Path(entry).name) or "")
+        if triggers is None or triggers & application_artifact_ids:
+            selected.append(entry)
+    return selected
+
+
+def _control_panel_application_entries(project_dir: Path) -> list[str]:
+    """Return the unfiltered dev classpath used to detect optional panels."""
+    if not _pyronaut_output_dir(project_dir).is_dir():
+        return []
+    try:
+        return _build_native_application_classpath_entries("dev", project_dir)
+    except RuntimeError:
+        return []
 
 
 def _is_test_launcher_provided_artifact(entry: str) -> bool:
@@ -5743,7 +5787,10 @@ def _build_dev_delegate_invocation(
         # Do not leak them into native picocli parsing.
         if _control_panel_requested(project_dir, args):
             executable_path = _resolve_pyronaut_dev_native_executable(resolver)
-            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            control_panel = _select_control_panel_entries(
+                _direct_control_panel_classpath_entries(executable_path),
+                _control_panel_application_entries(project_dir),
+            )
             if control_panel:
                 classpath_property = next((i for i, value in enumerate(dev_command_line) if value.startswith("-Djava.class.path=")), None)
                 if classpath_property is not None:

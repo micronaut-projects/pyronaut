@@ -71,7 +71,7 @@ class ExternalBuildResolverTest {
             new ProxyConfigurationLoader(), name -> null);
 
         assertTrue(resolver.resolveManagedDevelopmentSupport(
-            Files.createTempDirectory("pyronaut-managed-development"), true).isEmpty());
+            Files.createTempDirectory("pyronaut-managed-development"), true, java.util.List.of()).isEmpty());
     }
 
     @Test
