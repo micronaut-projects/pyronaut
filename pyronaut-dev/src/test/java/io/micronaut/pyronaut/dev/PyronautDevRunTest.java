@@ -10,9 +10,19 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautDevRunTest {
+    @Test
+    void nativeLauncherSkipsMacOsWatchServiceJars() {
+        assertTrue(PyronautDevRun.isNativeUnsupportedJar("micronaut-runtime-osx-5.2.10.jar"));
+        assertTrue(PyronautDevRun.isNativeUnsupportedJar("directory-watcher-0.19.1.jar"));
+        assertFalse(PyronautDevRun.isNativeUnsupportedJar("micronaut-runtime-5.2.10.jar"));
+        // On the JVM the jars stay on the classpath.
+        assertFalse(new PyronautDevRun().includeClasspathEntry("/repo/micronaut-runtime-osx-5.2.10.jar"));
+    }
+
     @Test
     void developmentRunUsesDevelopmentManifest(@TempDir Path project) throws Exception {
         Path pyronautDir = project.resolve("__pyronaut__");

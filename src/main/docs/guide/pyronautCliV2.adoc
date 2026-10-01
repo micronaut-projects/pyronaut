@@ -511,9 +511,9 @@ Use `-t` or `--continuous` to rerun direct tests after source changes:
 pyronaut test -t Foo.java -- FooTest.java
 ----
 
-Direct-source runs show each stage on the console: `Compiling main.py, test_main.py`, the dependency
+Direct-source runs show each stage on the console: `Processing main.py, test_main.py`, the dependency
 declarations found in the sources (`Found 1 dependency declaration …` with each coordinate beneath it),
-one row per resolved scope while Maven fetches declared dependencies, the final compilation and, for
+one row per resolved scope while Maven fetches declared dependencies, the final processing pass and, for
 `run`/`dev`, `Starting application` until the context is up. Direct test output then includes per-test
 progress and a final execution summary. Direct mode writes JUnit XML and HTML reports to
 `__pyronaut__/reports/tests` and prints a terminal link to the HTML report. The

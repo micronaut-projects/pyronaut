@@ -123,6 +123,15 @@ dependencies {
         exclude(group = "io.micronaut", module = "micronaut-management")
         exclude(group = "io.micronaut.reactor", module = "micronaut-reactor")
     }
+    // Optional panels added to a --control-panel launch only when the
+    // application depends on the library they inspect (see
+    // ControlPanelFeature). Their remaining runtime dependencies are part of
+    // pyronaut-dev's own runtime, so bundle the panel modules only.
+    listOf("cache", "datasource", "hibernate", "kafka", "object-storage").forEach { panel ->
+        "controlPanelRuntime"("io.micronaut.controlpanel:micronaut-control-panel-$panel:${libs.versions.micronaut.control.panel.get()}") {
+            isTransitive = false
+        }
+    }
 
 
     // runtime build in modules
@@ -548,6 +557,9 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
     "-H:Preserve=package=com.google.gson.*",
     "-H:Preserve=package=org.slf4j.*",
+    // jcl-over-slf4j shadows an application's commons-logging, so Commons Logging
+    // callers such as spring-core reach LogFactory methods the image never compiled.
+    "-H:Preserve=package=org.apache.commons.logging.*",
     "-H:Preserve=package=org.w3c.dom.bootstrap",
     "-H:Preserve=package=org.w3c.dom.events",
     "-H:Preserve=package=org.w3c.dom.ls",

@@ -836,6 +836,80 @@ class OrchestratorTest(unittest.TestCase):
         self.assertIn("-Dpyronaut.dev.control.panel.class.path=/tmp/control-panel.jar", captured["command"])
         self.assertIn("-Djava.class.path=/tmp/control-panel.jar", captured["command"])
 
+    def test_optional_control_panels_are_selected_from_application_dependencies(self):
+        bundled = [
+            "/tools/lib/control-panel/micronaut-control-panel-ui-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-datasource-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-hibernate-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-kafka-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-object-storage-2.1.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-cache-2.1.0.jar",
+        ]
+
+        self.assertEqual(
+            [bundled[0]],
+            cli._select_control_panel_entries(bundled, ["/m2/micronaut-jdbc-hikari-7.2.0.jar"]),  # noqa: SLF001
+        )
+        self.assertEqual(
+            [bundled[0], bundled[1], bundled[3]],
+            cli._select_control_panel_entries(bundled, [  # noqa: SLF001
+                "/m2/io/micronaut/sql/micronaut-jdbc/7.2.0/micronaut-jdbc-7.2.0.jar",
+                "/gradle/io.micronaut.kafka/micronaut-kafka/6.0.0/hash/micronaut-kafka-6.0.0.jar",
+                "/project/__pyronaut__/classes",
+            ]),
+        )
+        self.assertEqual(
+            bundled,
+            cli._select_control_panel_entries(bundled, [  # noqa: SLF001
+                "/m2/micronaut-jdbc-7.2.0.jar",
+                "/m2/hibernate-core-7.1.0.Final.jar",
+                "/m2/micronaut-kafka-6.0.0.jar",
+                "/m2/micronaut-object-storage-core-3.0.0.jar",
+                "/m2/micronaut-cache-caffeine-6.1.1.jar",
+            ]),
+        )
+
+    def test_direct_control_panel_adds_only_detected_optional_panels(self):
+        captured = {}
+        bundled = [
+            "/tmp/micronaut-control-panel-ui-2.1.0.jar",
+            "/tmp/micronaut-control-panel-datasource-2.1.0.jar",
+            "/tmp/micronaut-control-panel-kafka-2.1.0.jar",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(temp_dir)
+                (Path(temp_dir) / "app.py").write_text("", encoding="utf-8")
+                def capture(command, env=None):
+                    captured["command"] = command
+                    return 0
+                with patch.object(cli, "_resolve_direct_source_dev_executable", return_value="/tmp/pyronaut-dev"), \
+                        patch.object(cli, "_direct_control_panel_classpath_entries", return_value=bundled), \
+                        patch.object(cli, "_control_panel_application_entries",
+                                     return_value=["/m2/micronaut-jdbc-7.2.0.jar"]):
+                    exit_code = cli._delegate_direct_source(
+                        "dev",
+                        ["--control-panel", "app.py"],
+                        capture,
+                        lambda _: "/tmp/pyronaut-dev",
+                        java_home_provider=lambda: "/tmp/java-home",
+                    )
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(0, exit_code)
+        self.assertIn(
+            "-Djava.class.path=" + os.pathsep.join(bundled[:2]),
+            captured["command"],
+        )
+        # pyronaut-dev reselects optional panels after resolving direct-source
+        # dependency declarations, so it receives every bundled module.
+        self.assertIn(
+            "-Dpyronaut.dev.control.panel.class.path=" + os.pathsep.join(bundled),
+            captured["command"],
+        )
+
     def test_control_panel_is_not_enabled_by_generated_schema_or_development_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir)
@@ -1761,6 +1835,37 @@ type = "native"
             "micronaut-serde-support-3.1.0.jar",
             "micrometer-core-1.16.5.jar",
         )))
+
+    def test_native_application_classpath_drops_macos_watch_service_jars(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            (native_dev.parent / "native-provided-classpath.txt").write_text(
+                "io.micronaut:micronaut-context\n",
+                encoding="utf-8",
+            )
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "classes").mkdir()
+            (cache_dir / "resolved-development-runtime-dependencies").write_text(
+                "\n".join(
+                    [
+                        "/tmp/micronaut-runtime-osx-5.2.10.jar",
+                        "/tmp/directory-watcher-0.19.1.jar",
+                        "/tmp/micronaut-views-core-6.0.0.jar",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classpath = cli._build_native_application_classpath("dev", project_dir, str(native_dev))  # noqa: SLF001
+
+        entries = classpath.split(os.pathsep)
+        self.assertFalse(any("micronaut-runtime-osx" in entry for entry in entries))
+        self.assertFalse(any("directory-watcher" in entry for entry in entries))
+        self.assertIn("/tmp/micronaut-views-core-6.0.0.jar", entries)
 
     def test_native_application_classpath_keeps_control_panel_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4380,7 +4485,147 @@ additional-test-resources = ["test-fixtures"]
 
         self.assertEqual(0, exit_code)
         self._assert_test_delegate(executed[3][0], "/tmp/demo", ["--debug-vm"])
-        self.assertEqual(self._JDWP_FLAG, executed[3][0][3])
+        jvm_args = executed[3][0][: executed[3][0].index("-cp")]
+        self.assertIn(self._JDWP_FLAG, jvm_args)
+        for flag in cli._SHORT_LIVED_JVM_FLAGS:  # noqa: SLF001
+            self.assertIn(flag, jvm_args)
+
+    def test_run_jvm_delegate_keeps_jit_enabled(self):
+        project_dir = Path("/tmp/demo")
+        (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+        self._write_manifests(project_dir)
+
+        command_line, _ = cli._build_java_delegate_invocation(  # noqa: SLF001
+            "run",
+            ["--project-dir", "/tmp/demo"],
+            self._resolver(),
+        )
+
+        for flag in cli._SHORT_LIVED_JVM_FLAGS:  # noqa: SLF001
+            self.assertNotIn(flag, command_line)
+
+    def test_jvm_dev_delegate_uses_short_lived_jvm_flags(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._write_disabled_test_resources_project(Path(temp_dir), toolchain="jvm")
+            command_line, _ = cli._build_dev_delegate_invocation(  # noqa: SLF001
+                ["--project-dir", str(project_dir)],
+                self._resolver(),
+                debug_vm=False,
+                env_overrides=None,
+                java_home_provider=None,
+            )
+
+        jvm_args = command_line[: command_line.index("-cp")]
+        for flag in cli._SHORT_LIVED_JVM_FLAGS:  # noqa: SLF001
+            self.assertIn(flag, jvm_args)
+
+    def test_aot_cache_is_opt_in_through_the_toolchain_table(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir).resolve()
+            pyproject = project_dir / "pyproject.toml"
+            args = ["--project-dir", str(project_dir)]
+            self.assertIsNone(cli._aot_cache_project(args))  # noqa: SLF001
+            pyproject.write_text("[tool.pyronaut.toolchain]\ntype = 'jvm'\n", encoding="utf-8")
+            self.assertIsNone(cli._aot_cache_project(args))  # noqa: SLF001
+            pyproject.write_text("[tool.pyronaut.toolchain]\naot-cache = true\n", encoding="utf-8")
+            self.assertEqual(project_dir, cli._aot_cache_project(args))  # noqa: SLF001
+            pyproject.write_text("[tool.pyronaut.toolchain]\naotCache = true\n", encoding="utf-8")
+            self.assertEqual(project_dir, cli._aot_cache_project(args))  # noqa: SLF001
+            pyproject.write_text("[tool.pyronaut.toolchain]\naot-cache = false\n", encoding="utf-8")
+            self.assertIsNone(cli._aot_cache_project(args))  # noqa: SLF001
+
+    def test_aot_launches_are_unchanged_unless_enabled(self):
+        previous = cli._aot_cache_project_dir  # noqa: SLF001
+        cli._aot_cache_project_dir = None  # noqa: SLF001
+        try:
+            with patch.object(cli._aot_cache, "prepare") as prepare:  # noqa: SLF001
+                launch = cli._prepare_aot_launch(["java", "-cp", "a.jar", "Main"], {"A": "1"})  # noqa: SLF001
+        finally:
+            cli._aot_cache_project_dir = previous  # noqa: SLF001
+
+        prepare.assert_not_called()
+        self.assertEqual(["java", "-cp", "a.jar", "Main"], launch.command_line)
+        self.assertEqual({"A": "1"}, launch.env)
+
+    def test_training_processes_get_longer_to_stop(self):
+        process = MagicMock()
+        launch = cli._aot_cache.Launch(["java"], None)  # noqa: SLF001
+        managed = cli._aot_cache.ManagedProcess(process, launch)  # noqa: SLF001
+
+        self.assertTrue(cli._stop_managed_process(managed))  # noqa: SLF001
+        process.wait.assert_called_once_with(cli._aot_cache.TRAINING_STOP_TIMEOUT_SECONDS)  # noqa: SLF001
+
+        plain = MagicMock()
+        self.assertTrue(cli._stop_managed_process(plain))  # noqa: SLF001
+        plain.wait.assert_called_once_with(timeout=3)
+
+    def test_interrupted_training_process_is_allowed_to_exit_on_its_own(self):
+        process = MagicMock()
+        managed = cli._aot_cache.ManagedProcess(process, cli._aot_cache.Launch(["java"], None))  # noqa: SLF001
+
+        self.assertTrue(cli._stop_managed_process(managed, interrupted=True))  # noqa: SLF001
+
+        process.wait.assert_called_once_with(cli._aot_cache.TRAINING_STOP_TIMEOUT_SECONDS)  # noqa: SLF001
+        process.terminate.assert_not_called()
+
+    def test_launcher_jvm_options_use_the_launcher_opts_variable_and_keep_user_options_last(self):
+        env = cli._with_launcher_jvm_options(  # noqa: SLF001
+            {"PYRONAUT_DEV_OPTS": "-XX:+UseSerialGC"},
+            "/opt/pyronaut/tools/pyronaut-dev/bin/pyronaut-dev",
+            ["-XX:+UseParallelGC", "-Dexample=true"],
+        )
+
+        self.assertEqual("-XX:+UseParallelGC -Dexample=true -XX:+UseSerialGC", env["PYRONAUT_DEV_OPTS"])
+        self.assertEqual(
+            "-Dexample=true",
+            cli._with_launcher_jvm_options({}, "/opt/pyronaut/tools/pyronaut-test/bin/pyronaut-test.bat", ["-Dexample=true"])[  # noqa: SLF001
+                "PYRONAUT_TEST_OPTS"
+            ],
+        )
+
+    def test_direct_source_jvm_test_passes_short_lived_flags_to_launcher(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "test_controller.py"
+            source.write_text("def test_ok():\n    pass\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                return 0
+
+            exit_code = cli.run(
+                ["test", "--jvm", str(source)],
+                runner_with_env=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/java-home",
+            )
+
+        self.assertEqual(0, exit_code)
+        command_line, env = executed[-1]
+        self.assertEqual(str(self._fake_dev_delegate_root / "bin" / "pyronaut-dev"), command_line[0])
+        self.assertEqual(list(cli._SHORT_LIVED_JVM_FLAGS), env["PYRONAUT_DEV_OPTS"].split())  # noqa: SLF001
+
+    def test_direct_source_run_keeps_jit_enabled(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "controller.py"
+            source.write_text("print('ok')\n", encoding="utf-8")
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                return 0
+
+            exit_code = cli.run(
+                ["run", "--jvm", str(source)],
+                runner_with_env=runner,
+                resolver=self._resolver(),
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/java-home",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertNotIn("PYRONAUT_DEV_OPTS", executed[-1][1])
 
     def test_debug_vm_fails_fast_when_port_busy(self):
         stderr = io.StringIO()

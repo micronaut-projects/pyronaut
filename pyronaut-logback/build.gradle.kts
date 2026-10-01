@@ -14,7 +14,7 @@ dependencies {
     runtimeOnly(mnLogging.slf4j.jcl.over.slf4j)
 
     testImplementation(mnTest.junit.jupiter.api)
-    testImplementation("org.awaitility:awaitility:4.2.0")
+    testImplementation("org.awaitility:awaitility:4.3.0")
     testImplementation(mn.micronaut.context.python)
     testImplementation(mn.graalpy) {
         artifact {

@@ -81,7 +81,7 @@ public final class PhaseReporter implements AutoCloseable {
     /**
      * Start a phase.
      *
-     * @param label the row's label, for example {@code Compiling sources}
+     * @param label the row's label, for example {@code Processing sources}
      * @return the phase, to be finished with {@link Phase#done(String)} or {@link Phase#fail(String)}
      */
     public Phase start(String label) {

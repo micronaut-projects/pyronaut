@@ -7,11 +7,15 @@ package io.micronaut.pyronaut.config.classloader;
 
 import io.micronaut.context.BeanContext;
 import io.micronaut.context.BeanResolutionContext;
+import io.micronaut.context.annotation.Requires;
+import io.micronaut.core.annotation.AnnotationMetadata;
+import io.micronaut.core.annotation.AnnotationValue;
 import io.micronaut.inject.BeanDefinition;
 import io.micronaut.inject.BeanDefinitionReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.lang.annotation.Annotation;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
@@ -21,6 +25,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ContextClassLoaderBeanDefinitionsProviderTest {
@@ -69,7 +74,73 @@ class ContextClassLoaderBeanDefinitionsProviderTest {
         }
     }
 
-    public static final class TestBeanDefinitionReference implements BeanDefinitionReference<TestBean> {
+    @Test
+    void dropsLauncherReferencesWhoseMissingClassIsOnTheRuntimeClasspath() throws Exception {
+        ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
+        try (URLClassLoader runtimeClassLoader = new URLClassLoader(new URL[0], getClass().getClassLoader())) {
+            Thread.currentThread().setContextClassLoader(runtimeClassLoader);
+
+            List<String> names = new ContextClassLoaderBeanDefinitionsProvider().provide(runtimeClassLoader).stream()
+                .map(BeanDefinitionReference::getBeanDefinitionName)
+                .toList();
+
+            assertFalse(names.contains(RuntimeReplacedReference.NAME));
+            assertTrue(names.contains(StillMissingReference.NAME));
+        } finally {
+            Thread.currentThread().setContextClassLoader(previousContextClassLoader);
+        }
+    }
+
+    /**
+     * Stands in for the image's default {@code WatchServiceFactory}, which requires a class that only
+     * {@code micronaut-runtime-osx} on the runtime classpath provides.
+     */
+    public static final class RuntimeReplacedReference extends MissingClassReference {
+        static final String NAME = "test.RuntimeReplaced";
+
+        public RuntimeReplacedReference() {
+            super(NAME, TestBean.class.getName());
+        }
+    }
+
+    public static final class StillMissingReference extends MissingClassReference {
+        static final String NAME = "test.StillMissing";
+
+        public StillMissingReference() {
+            super(NAME, "io.micronaut.pyronaut.test.DoesNotExist");
+        }
+    }
+
+    abstract static class MissingClassReference extends TestBeanDefinitionReference {
+        private final String name;
+        private final AnnotationMetadata metadata;
+
+        MissingClassReference(String name, String missingClass) {
+            this.name = name;
+            AnnotationValue<Requires> requirement = AnnotationValue.builder(Requires.class)
+                .member("missingClasses", missingClass)
+                .build();
+            this.metadata = new AnnotationMetadata() {
+                @Override
+                @SuppressWarnings("unchecked")
+                public <T extends Annotation> List<AnnotationValue<T>> getAnnotationValuesByType(Class<T> annotationType) {
+                    return annotationType == Requires.class ? List.of((AnnotationValue<T>) requirement) : List.of();
+                }
+            };
+        }
+
+        @Override
+        public String getBeanDefinitionName() {
+            return name;
+        }
+
+        @Override
+        public AnnotationMetadata getAnnotationMetadata() {
+            return metadata;
+        }
+    }
+
+    public static class TestBeanDefinitionReference implements BeanDefinitionReference<TestBean> {
         @Override
         public String getBeanDefinitionName() {
             return TestBean.class.getName();

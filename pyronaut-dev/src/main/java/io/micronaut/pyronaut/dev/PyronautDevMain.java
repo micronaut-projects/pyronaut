@@ -30,6 +30,7 @@ import io.micronaut.pyronaut.install.InstallProgressReporter;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
+import io.micronaut.pyronaut.config.model.ControlPanelFeature;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.JvmOptionsFile;
 import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
@@ -648,7 +649,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             System.err.println(e.getMessage());
             return PRECONDITION_FAILED;
         } catch (Exception e) {
-            System.err.println("Direct source launch failed: " + e);
+            System.err.println(failureMessage(e));
             return INTERNAL_ERROR;
         } finally {
             if (testResourcesSession != null) {
@@ -724,10 +725,10 @@ public final class PyronautDevMain implements Callable<Integer> {
         int sourceCount = invocation.sources().size() + invocation.testSources().size();
         String sources = sourceCount + (sourceCount == 1 ? " source" : " sources");
         try (PhaseReporter progress = PhaseReporter.create(invocation.verbose())) {
-            PhaseReporter.Phase phase = progress.start("Compiling " + describeSources(invocation));
+            PhaseReporter.Phase phase = progress.start("Processing " + describeSources(invocation));
             try {
                 ClassLoader loader = builder.build().buildClassLoader();
-                phase.done("Compiled " + sources);
+                phase.done("Processed " + sources);
                 return loader;
             } catch (DirectSourceDeclarationRequest request) {
                 List<DirectSourceDeclarations.Dependency> dependencies = request.declarations().dependencies();
@@ -738,10 +739,20 @@ public final class PyronautDevMain implements Callable<Integer> {
                 }
                 throw request;
             } catch (RuntimeException e) {
-                phase.fail("Compilation of " + sources + " failed");
+                phase.fail("Processing of " + sources + " failed");
                 throw e;
             }
         }
+    }
+
+    /**
+     * The message to show for a failed direct-source launch: the exception's own
+     * message (for example the processor's diagnostics) without the exception
+     * class prefix, falling back to the exception itself when it has none.
+     */
+    static String failureMessage(Throwable e) {
+        String message = e.getMessage();
+        return message == null || message.isBlank() ? e.toString() : message;
     }
 
     private static String describeSources(DirectSourceInvocation invocation) {
@@ -1519,11 +1530,13 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (controlPanelRequested(invocation)) {
             String bundled = System.getProperty("pyronaut.dev.control.panel.class.path", "");
             if (!bundled.isBlank()) {
-                for (String entry : bundled.split(Pattern.quote(File.pathSeparator))) {
-                    if (!entry.isBlank()) {
-                        runtimeClasspath.add(Path.of(entry));
-                    }
-                }
+                List<Path> bundledEntries = Arrays.stream(bundled.split(Pattern.quote(File.pathSeparator)))
+                    .filter(entry -> !entry.isBlank())
+                    .map(Path::of)
+                    .toList();
+                // Optional panels, such as datasource or Kafka, apply only
+                // when the application uses the library they inspect.
+                runtimeClasspath.addAll(ControlPanelFeature.select(bundledEntries, runtimeClasspath));
             }
         }
         return new DirectSourceClasspaths(

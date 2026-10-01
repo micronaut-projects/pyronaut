@@ -54,6 +54,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 final class PyronautDevMainTest {
     @Test
+    void directSourceFailureMessageOmitsExceptionClass() {
+        assertEquals(
+            "Pyronaut processing failed: main.py:3: unknown name 'foo'",
+            PyronautDevMain.failureMessage(new RuntimeException("Pyronaut processing failed: main.py:3: unknown name 'foo'"))
+        );
+        assertEquals("java.lang.IllegalStateException", PyronautDevMain.failureMessage(new IllegalStateException()));
+    }
+
+    @Test
     void dispatchesCoveredToolCommandsInProcess() {
         List<String> calls = new ArrayList<>();
         PyronautDevMain.DelegateInvoker invoker = (command, args) -> {
