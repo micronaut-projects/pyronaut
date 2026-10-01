@@ -99,6 +99,7 @@ final class MavenClasspathResolver {
     private static final String MICRONAUT_INJECT_PYTHON_MODULE = "io.micronaut:micronaut-inject-python";
     private static final String MICRONAUT_MANAGEMENT_MODULE = "io.micronaut:micronaut-management";
     private static final String MICRONAUT_RUNTIME_OSX_MODULE = "io.micronaut:micronaut-runtime-osx";
+    private static final String MICRONAUT_DEV_MODULE = "io.micronaut:micronaut-dev";
     private static final String MICRONAUT_CACHE_CAFFEINE_MODULE = "io.micronaut.cache:micronaut-cache-caffeine";
     private static final String CONTROL_PANEL_MANAGEMENT_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-management";
     private static final String CONTROL_PANEL_UI_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-ui";
@@ -676,6 +677,12 @@ final class MavenClasspathResolver {
             addDefaultCoordinate(runtime, dependencies, MICRONAUT_MANAGEMENT_MODULE, managedVersions);
             if (isMacOs()) {
                 addDefaultCoordinate(runtime, dependencies, MICRONAUT_RUNTIME_OSX_MODULE, managedVersions);
+            }
+            if (model.project() != null) {
+                // the reloading development runtime of dev mode on the JVM toolchain, managed from Micronaut 5.3 on,
+                // for a Pyronaut project only: the development support resolved for an external Maven or Gradle
+                // build has no [project], and that build's versions must not be mixed with the SDK's
+                addDefaultCoordinate(runtime, dependencies, MICRONAUT_DEV_MODULE, managedVersions);
             }
             addDefaultCacheImplementationIfMissing(runtime, managedVersions);
             if (!model.pyronaut().controlPanelConfigured() || controlPanelEnabled(model)) {
