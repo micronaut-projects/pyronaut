@@ -939,6 +939,103 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void testResourcesServerManifestIncludesTransitiveRuntimeJdbcDriver() throws Exception {
+        Path repository = tempDir.resolve("repo-test-resources-transitive-jdbc-driver");
+        writeArtifact(repository, "com.oracle.database.jdbc", "ojdbc11", "23.26.3.0.0");
+        writeArtifactWithDependencies(
+            repository,
+            "io.micronaut.oraclecloud",
+            "micronaut-oraclecloud-atp",
+            "6.1.3",
+            List.of(new DependencyCoordinate("com.oracle.database.jdbc", "ojdbc11", "23.26.3.0.0"))
+        );
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-jdbc-oracle-free", "2.9.0");
+        writeTestResourcesServerDefaultsBom(repository);
+
+        Path project = tempDir.resolve("project-test-resources-transitive-jdbc-driver");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["io.micronaut.oraclecloud:micronaut-oraclecloud-atp:6.1.3"]
+            build = []
+            test = []
+            boms = ["com.example:test-resources-server-defaults-bom:1.0.0"]
+
+            [tool.pyronaut.testResources]
+            enabled = true
+            version = "2.9.0"
+            additionalModules = ["jdbc-oracle-free"]
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+        command.scope = "test-resources-server";
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        List<String> serverEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-test-resources-server-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-jdbc-oracle-free")));
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("ojdbc11-23.26.3.0.0")),
+            "The server needs the JDBC driver resolved transitively on the application runtime classpath: " + serverEntries);
+    }
+
+    @Test
+    void disabledTestResourcesInferenceDoesNotResolveApplicationDependencies() throws Exception {
+        Path repository = tempDir.resolve("repo-test-resources-inference-disabled");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-server", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-testcontainers", "2.9.0");
+        writeArtifact(repository, "io.micronaut.testresources", "micronaut-test-resources-jdbc-oracle-free", "2.9.0");
+        writeTestResourcesServerDefaultsBom(repository);
+
+        Path project = tempDir.resolve("project-test-resources-inference-disabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "install-test"
+            version = "1.0.0"
+
+            [tool.pyronaut]
+            repositories = ["%s"]
+
+            [tool.pyronaut.dependencies]
+            runtime = ["com.example:missing-runtime:1.0.0"]
+            build = []
+            test = []
+            boms = ["com.example:test-resources-server-defaults-bom:1.0.0"]
+
+            [tool.pyronaut.testResources]
+            enabled = true
+            version = "2.9.0"
+            inferClasspath = false
+            additionalModules = ["jdbc-oracle-free", "testcontainers"]
+            """.formatted(repository.toUri()));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+        command.scope = "test-resources-server";
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        List<String> serverEntries = Files.readAllLines(
+            project.resolve("__pyronaut__").resolve("resolved-test-resources-server-dependencies"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(serverEntries.stream().anyMatch(entry -> entry.contains("micronaut-test-resources-jdbc-oracle-free")));
+        assertTrue(serverEntries.stream().noneMatch(entry -> entry.contains("missing-runtime")));
+    }
+
+    @Test
     void doesNotInjectTestResourcesClientWhenConfiguredButDisabled() throws Exception {
         Path repository = tempDir.resolve("repo-test-resources-disabled");
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
