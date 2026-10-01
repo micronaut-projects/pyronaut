@@ -100,7 +100,14 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
     private static final String DEFAULT_METADATA_VERSION = loadDefaultMetadataVersion();
     private static final String DEFAULT_METADATA_URL = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/" + DEFAULT_METADATA_VERSION + "/graalvm-reachability-metadata-" + DEFAULT_METADATA_VERSION + "-repository.zip";
     private static final String VERSIONED_METADATA_URL_TEMPLATE = "https://repo1.maven.org/maven2/org/graalvm/buildtools/graalvm-reachability-metadata/%s/graalvm-reachability-metadata-%s-repository.zip";
-    private static final Pattern NATIVE_IMAGE_STAGE = Pattern.compile("^\\[(\\d+)/(\\d+)\\]\\s+(.+?)\\.{3}.*$");
+    // Metadata the repository tested against Netty 4.2.x, keyed by module. See pinnedMetadataVersion.
+    private static final Map<String, String> NETTY_4_2_METADATA_VERSIONS = Map.of(
+        "io.netty:netty-common", "4.1.115.Final",
+        "io.netty:netty-transport", "4.1.115.Final",
+        "io.netty:netty-transport-classes-epoll", "4.1.99.Final",
+        "io.netty:netty-resolver-dns-classes-macos", "4.1.74.Final"
+    );
+    private static final Pattern NATIVE_IMAGE_STAGE =Pattern.compile("^\\[(\\d+)/(\\d+)\\]\\s+(.+?)\\.{3}.*$");
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
@@ -622,7 +629,17 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
 
         GraalVMReachabilityMetadataRepository repository = new FileSystemRepository(repositoryRoot);
         Set<Path> selected = repository.findConfigurationsFor(query -> {
-            query.forArtifacts(gavs);
+            for (String gav : gavs) {
+                String configVersion = pinnedMetadataVersion(repositoryRoot, gav);
+                if (configVersion == null) {
+                    query.forArtifacts(gav);
+                } else {
+                    query.forArtifact(artifact -> {
+                        artifact.gav(gav);
+                        artifact.forceConfigVersion(configVersion);
+                    });
+                }
+            }
             query.useLatestConfigWhenVersionIsUntested();
         }).stream().map(configuration -> configuration.getDirectory().toAbsolutePath().normalize()).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         Set<String> selectedModules = selected.stream()
@@ -630,6 +647,33 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             .filter(module -> module != null && !module.isBlank())
             .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         return new MetadataSelection(List.copyOf(selected), Set.copyOf(selectedModules));
+    }
+
+    /**
+     * The metadata version to use for a Netty 4.2 module the repository has not tested yet.
+     *
+     * <p>The repository matches a library against each entry's tested versions and otherwise falls
+     * back to the entry marked latest. For {@code netty-common} and {@code netty-transport} that is
+     * the 5.0.0 alpha metadata, which has none of the 4.2 line's reflection entries (the shaded
+     * JCTools queue fields, for example), so a Netty release newer than the repository fails at run
+     * time. Temporary until the repository lists the release, tracked by
+     * <a href="https://github.com/micronaut-projects/pyronaut/issues/252">pyronaut#252</a>; see
+     * <a href="https://github.com/oracle/graalvm-reachability-metadata">graalvm-reachability-metadata</a>.
+     */
+    private static String pinnedMetadataVersion(Path repositoryRoot, String gav) {
+        int versionSeparator = gav.lastIndexOf(':');
+        String module = gav.substring(0, versionSeparator);
+        String configVersion = NETTY_4_2_METADATA_VERSIONS.get(module);
+        if (configVersion == null || !gav.substring(versionSeparator + 1).startsWith("4.2.")) {
+            return null;
+        }
+        Path moduleDirectory = Path.of(module.replace(':', '/'));
+        for (Path candidate : List.of(repositoryRoot, repositoryRoot.resolve("metadata"))) {
+            if (Files.isDirectory(candidate.resolve(moduleDirectory).resolve(configVersion))) {
+                return configVersion;
+            }
+        }
+        return null;
     }
 
     private static String moduleFromMetadataDirectory(Path repositoryRoot, Path metadataDir) {

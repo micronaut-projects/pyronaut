@@ -49,6 +49,19 @@ pluginManager.withPlugin("org.graalvm.buildtools.native") {
     }.orElse([])
     graalvmNative {
         toolchainDetection = true
+        // The metadata repository has not tested the Netty 4.2 release we build with, so it would
+        // apply its 5.0.0 alpha metadata, which lacks the 4.2 reflection entries (the shaded JCTools
+        // queue fields, for one). Pin the metadata tested with 4.2.x until the repository catches
+        // up; PyronautNativeBuildMain does the same for the Crema runtimes and applications.
+        // Remove with https://github.com/micronaut-projects/pyronaut/issues/252.
+        metadataRepository {
+            moduleToConfigVersion.putAll([
+                "io.netty:netty-common"                    : "4.1.115.Final",
+                "io.netty:netty-transport"                 : "4.1.115.Final",
+                "io.netty:netty-transport-classes-epoll"   : "4.1.99.Final",
+                "io.netty:netty-resolver-dns-classes-macos": "4.1.74.Final",
+            ])
+        }
         binaries.configureEach {
             buildArgs.addAll(ciNativeImageArgs)
         }

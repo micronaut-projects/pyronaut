@@ -69,6 +69,45 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
+    void usesNetty42MetadataForAnUntestedNetty42Release() throws Exception {
+        Path project = prepareProject("""
+            [project]
+            name = "demo"
+
+            [tool.pyronaut]
+            """);
+        overwriteRuntimeManifest(project, List.of(
+            "/repo/m2-repository/io/netty/netty-common/4.2.99.Final/netty-common-4.2.99.Final.jar",
+            "/repo/m2-repository/io/netty/netty-buffer/4.2.99.Final/netty-buffer-4.2.99.Final.jar"
+        ));
+
+        List<List<String>> executed = new ArrayList<>();
+        var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
+            executed.add(List.copyOf(command));
+            return 0;
+        };
+        var downloader = (PyronautNativeBuildMain.MetadataRepositoryDownloader) (source, extractedRoot) -> {
+            createRequiredSchemas(extractedRoot);
+            createModuleMetadata(extractedRoot, "io.netty", "netty-common", "5.0.0.Alpha2", Set.of("5.0.0.Alpha2"), true);
+            createModuleMetadata(extractedRoot, "io.netty", "netty-common", "4.1.115.Final", Set.of("4.1.115.Final", "4.2.17.Final"), false);
+            createModuleMetadata(extractedRoot, "io.netty", "netty-buffer", "5.0.0.Alpha2", Set.of("5.0.0.Alpha2"), true);
+        };
+
+        PyronautNativeBuildMain command = new PyronautNativeBuildMain(new PyprojectModelReader(), invoker, downloader);
+        int exit = new CommandLine(command).execute("--project-dir", project.toString(), "--native-image-executable", "/tmp/native-image");
+
+        assertEquals(0, exit);
+        String directories = executed.getFirst().stream()
+            .filter(flag -> flag.startsWith("-H:ConfigurationFileDirectories="))
+            .findFirst()
+            .orElseThrow();
+        assertTrue(directories.contains("io.netty/netty-common/4.1.115.Final"));
+        assertFalse(directories.contains("io.netty/netty-common/5.0.0.Alpha2"));
+        // Only the modules known to be affected are pinned.
+        assertTrue(directories.contains("io.netty/netty-buffer/5.0.0.Alpha2"));
+    }
+
+    @Test
     void buildsNativeImageWithFixedPyronautRunMainEntryPoint() throws Exception {
         Path project = prepareProject("""
             [project]

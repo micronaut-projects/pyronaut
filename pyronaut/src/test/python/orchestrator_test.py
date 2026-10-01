@@ -1718,6 +1718,37 @@ type = "native"
             "micrometer-core-1.16.5.jar",
         )))
 
+    def test_native_application_classpath_drops_macos_watch_service_jars(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            (native_dev.parent / "native-provided-classpath.txt").write_text(
+                "io.micronaut:micronaut-context\n",
+                encoding="utf-8",
+            )
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "classes").mkdir()
+            (cache_dir / "resolved-development-runtime-dependencies").write_text(
+                "\n".join(
+                    [
+                        "/tmp/micronaut-runtime-osx-5.2.10.jar",
+                        "/tmp/directory-watcher-0.19.1.jar",
+                        "/tmp/micronaut-views-core-6.0.0.jar",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            classpath = cli._build_native_application_classpath("dev", project_dir, str(native_dev))  # noqa: SLF001
+
+        entries = classpath.split(os.pathsep)
+        self.assertFalse(any("micronaut-runtime-osx" in entry for entry in entries))
+        self.assertFalse(any("directory-watcher" in entry for entry in entries))
+        self.assertIn("/tmp/micronaut-views-core-6.0.0.jar", entries)
+
     def test_native_application_classpath_keeps_control_panel_jars(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             native_dev = Path(temp_dir) / "pyronaut-dev"
