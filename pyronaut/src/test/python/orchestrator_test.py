@@ -5517,6 +5517,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("-t", docker_command)
         self.assertIn("demo-app:1.2.3", docker_command)
         self.assertIn('ENTRYPOINT ["/app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", "--project-dir", "/app"]', captured["dockerfile"])
+        self.assertIn("WORKDIR /app\nEXPOSE 8080\n", captured["dockerfile"])
         self.assertIn("COPY app/__pyronaut__/tools/shared /app/__pyronaut__/tools/shared", captured["dockerfile"])
         self.assertEqual("__pyronaut__/m2-repository/example/runtime.jar\n", captured["manifest"])
         self.assertIn("app/__pyronaut__/m2-repository/example/runtime.jar", captured["context_files"])
@@ -5755,7 +5756,7 @@ additional-test-resources = ["test-fixtures"]
             )
             self.assertEqual(0, exit_code_jvm)
             self.assertEqual("Dockerfile.jvm", captured["dockerfile_name"])
-            self.assertIn("ARG PYRONAUT_PROJECT_NAME", captured["dockerfile"])
+            self.assertEqual("FROM ${PYRONAUT_JVM_BASE_IMAGE}\nARG PYRONAUT_PROJECT_NAME\n", captured["dockerfile"])
             self.assertIn("PYRONAUT_JVM_BASE_IMAGE=container-registry.oracle.com/graalvm/jdk:25i4", captured["docker_command"])
 
             captured.clear()
@@ -5769,7 +5770,7 @@ additional-test-resources = ["test-fixtures"]
 
         self.assertEqual(0, exit_code_native)
         self.assertEqual("Dockerfile.native", captured["dockerfile_name"])
-        self.assertIn("ARG PYRONAUT_NATIVE_STATIC", captured["dockerfile"])
+        self.assertEqual("FROM ${PYRONAUT_NATIVE_BUILDER_IMAGE} AS builder\nARG PYRONAUT_NATIVE_STATIC\n", captured["dockerfile"])
         self.assertIn("PYRONAUT_NATIVE_BUILDER_IMAGE=container-registry.oracle.com/graalvm/native-image:25i4", captured["docker_command"])
 
     def test_build_docker_reuses_configured_base_with_custom_runtime_dockerfile(self):
@@ -5825,7 +5826,7 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(0, exit_code)
         self.assertEqual("DockerfileNative", captured["dockerfile_name"])
         self.assertIn("PYRONAUT_BASE_IMAGE=registry.example.com/acme/runtime:1", captured["docker_command"])
-        self.assertIn("FROM ${PYRONAUT_BASE_IMAGE}", captured["dockerfile"])
+        self.assertEqual("ARG PYRONAUT_BASE_IMAGE\nFROM ${PYRONAUT_BASE_IMAGE}\nCOPY app/__pyronaut__/classes /app/__pyronaut__/classes\n", captured["dockerfile"])
         self.assertIn("app/__pyronaut__/classes", captured["context_files"])
         self.assertNotIn("app/__pyronaut__/tools/pyronaut-native-build", captured["context_files"])
 
@@ -6600,6 +6601,7 @@ additional-test-resources = ["test-fixtures"]
 
             content = dockerfile.read_text(encoding="utf-8")
             self.assertIn("COPY bundled-base/ /opt/pyronaut/bin/", content)
+            self.assertIn("WORKDIR /app\nEXPOSE 8080\n", content)
             self.assertIn("COPY app/pyproject.toml /app/pyproject.toml", content)
             self.assertIn("COPY app/__pyronaut__/m2-repository/ /app/__pyronaut__/m2-repository/", content)
             self.assertIn("COPY app/views/ /app/views/", content)
@@ -6614,7 +6616,9 @@ additional-test-resources = ["test-fixtures"]
                 resource_copies=["COPY app/views/ /app/views/"],
             )
 
-            self.assertIn("COPY app/views/ /app/views/", dockerfile.read_text(encoding="utf-8"))
+            content = dockerfile.read_text(encoding="utf-8")
+            self.assertIn("COPY app/views/ /app/views/", content)
+            self.assertIn("WORKDIR /app\nEXPOSE 8080\n", content)
 
     def test_crema_base_dockerfile_includes_additional_resources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -6631,7 +6635,9 @@ additional-test-resources = ["test-fixtures"]
                 resource_copies=["COPY app/views/ /app/views/"],
             )
 
-            self.assertIn("COPY app/views/ /app/views/", dockerfile.read_text(encoding="utf-8"))
+            content = dockerfile.read_text(encoding="utf-8")
+            self.assertIn("COPY app/views/ /app/views/", content)
+            self.assertIn("WORKDIR /app\nEXPOSE 8080\n", content)
 
     def test_native_dockerfile_layers_language_resources_separately(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -6653,6 +6659,7 @@ additional-test-resources = ["test-fixtures"]
             content = dockerfile.read_text(encoding="utf-8")
             self.assertIn("mv /workspace/app/__pyronaut__/native/resources /workspace/native-language-resources", content)
             self.assertIn("COPY --from=builder /workspace/native-language-resources/ /app/resources/", content)
+            self.assertIn("WORKDIR /app\nEXPOSE 8080\n", content)
 
     def test_bundled_docker_context_stages_runtime_dependencies(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -751,6 +751,10 @@ The matrix writes results, command logs, and `follow-up-issues.md` to
 [[custom-dockerfiles]]
 ==== Custom Dockerfiles with a reusable base
 
+Generated application Dockerfiles expose the default HTTP port, `8080/tcp`.
+For a different port, use a custom Dockerfile with the matching `EXPOSE` instruction.
+Custom Dockerfiles are used unchanged.
+
 Custom Dockerfiles receive `PYRONAUT_BASE_IMAGE` as a build argument. A
 runtime-only application Dockerfile can therefore keep the reusable launcher
 and application code in distinct layers:
@@ -760,6 +764,7 @@ and application code in distinct layers:
 ARG PYRONAUT_BASE_IMAGE
 FROM ${PYRONAUT_BASE_IMAGE}
 WORKDIR /app
+EXPOSE 8080
 COPY app/config /app/config
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/schemas /app/__pyronaut__/schemas

@@ -4172,6 +4172,7 @@ def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str,
     dockerfile = f"""\
 FROM {base_image}
 WORKDIR /app
+EXPOSE 8080
 COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/tools/shared /app/__pyronaut__/tools/shared
@@ -4230,6 +4231,7 @@ RUN if [ -d /workspace/app/__pyronaut__/native/resources ]; then mv /workspace/a
 
 FROM {runtime_image}
 WORKDIR /app
+EXPOSE 8080
 COPY --from=builder /workspace/app/__pyronaut__/native/ /app/
 COPY --from=builder /workspace/native-language-resources/ /app/resources/
 COPY app/pyproject.toml /app/pyproject.toml
@@ -4285,6 +4287,7 @@ COPY --from=builder /workspace/base/ /opt/pyronaut/bin/
 
 FROM pyronaut-base
 WORKDIR /app
+EXPOSE 8080
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 {chr(10).join(resource_copies)}
@@ -4307,6 +4310,7 @@ COPY bundled-base/ /opt/pyronaut/bin/
 
 FROM pyronaut-base
 WORKDIR /app
+EXPOSE 8080
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 {chr(10).join(runtime_copies)}
@@ -4325,6 +4329,7 @@ def _write_crema_application_dockerfile(
     dockerfile = f"""\\
 FROM {base_image}
 WORKDIR /app
+EXPOSE 8080
 # Older Crema base images may contain the native-build distribution under the
 # application directory. It is only needed while producing the image, never
 # at runtime, so remove it from the final application layer.
