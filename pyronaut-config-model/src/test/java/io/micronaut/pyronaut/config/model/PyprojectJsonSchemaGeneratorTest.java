@@ -46,6 +46,7 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"fail-on-not-present\""));
         assertTrue(schema.contains("\"validate-dependency-injection\""));
         assertTrue(schema.contains("\"client-timeout\""));
+        assertTrue(schema.contains("\"aot-cache\""));
         assertTrue(schema.contains("\"additionalProperties\": false"));
         assertTrue(schema.contains("\"default\": \"wheel-jvm\""));
         assertTrue(schema.contains("\"enum\": [\"fat-jar\", \"wheel-jvm\", \"wheel-native\", \"wheel-crema\", \"docker-jvm\", \"docker-native\", \"docker-crema\"]"));
@@ -68,6 +69,7 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"excludePatterns\""));
         assertTrue(schema.contains("\"dockerfileNative\""));
         assertTrue(schema.contains("\"baseImage\""));
+        assertTrue(schema.contains("\"aotCache\""));
         assertTrue(schema.contains("\"deprecated\": true"));
         assertTrue(schema.contains("\"x-taplo\""));
         assertTrue(schema.contains("\"hidden\": true"));

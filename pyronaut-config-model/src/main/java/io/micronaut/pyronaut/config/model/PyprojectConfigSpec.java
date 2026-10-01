@@ -332,6 +332,13 @@ public final class PyprojectConfigSpec {
         "jvm",
         List.of("jvm", "native")
     );
+    public static final FieldSpec PYRONAUT_TOOLCHAIN_AOT_CACHE = bool(
+        "tool.pyronaut.toolchain.aot-cache",
+        "Whether JVM tool launches train and use Leyden AOT caches under ~/.pyronaut/caches/aot (JDK 25+).",
+        false,
+        List.of(),
+        List.of("tool.pyronaut.toolchain.aotCache")
+    );
     public static final FieldSpec PYRONAUT_TOOLCHAIN_VERSION = string(
         "tool.pyronaut.toolchain.version",
         "Desired GraalVM version string."
@@ -846,6 +853,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_SOURCES_ADDITIONAL_TEST_RESOURCES,
         PYRONAUT_TOOLCHAIN_DISTRIBUTION,
         PYRONAUT_TOOLCHAIN_TYPE,
+        PYRONAUT_TOOLCHAIN_AOT_CACHE,
         PYRONAUT_TOOLCHAIN_VERSION,
         PYRONAUT_TOOLCHAIN_JAVA_VERSION,
         PYRONAUT_TOOLCHAIN_RELEASE_TAG,

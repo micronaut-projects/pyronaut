@@ -4475,6 +4475,55 @@ additional-test-resources = ["test-fixtures"]
         for flag in cli._SHORT_LIVED_JVM_FLAGS:  # noqa: SLF001
             self.assertIn(flag, jvm_args)
 
+    def test_aot_cache_is_opt_in_through_the_toolchain_table(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir).resolve()
+            pyproject = project_dir / "pyproject.toml"
+            args = ["--project-dir", str(project_dir)]
+            self.assertIsNone(cli._aot_cache_project(args))  # noqa: SLF001
+            pyproject.write_text("[tool.pyronaut.toolchain]\ntype = 'jvm'\n", encoding="utf-8")
+            self.assertIsNone(cli._aot_cache_project(args))  # noqa: SLF001
+            pyproject.write_text("[tool.pyronaut.toolchain]\naot-cache = true\n", encoding="utf-8")
+            self.assertEqual(project_dir, cli._aot_cache_project(args))  # noqa: SLF001
+            pyproject.write_text("[tool.pyronaut.toolchain]\naotCache = true\n", encoding="utf-8")
+            self.assertEqual(project_dir, cli._aot_cache_project(args))  # noqa: SLF001
+            pyproject.write_text("[tool.pyronaut.toolchain]\naot-cache = false\n", encoding="utf-8")
+            self.assertIsNone(cli._aot_cache_project(args))  # noqa: SLF001
+
+    def test_aot_launches_are_unchanged_unless_enabled(self):
+        previous = cli._aot_cache_project_dir  # noqa: SLF001
+        cli._aot_cache_project_dir = None  # noqa: SLF001
+        try:
+            with patch.object(cli._aot_cache, "prepare") as prepare:  # noqa: SLF001
+                launch = cli._prepare_aot_launch(["java", "-cp", "a.jar", "Main"], {"A": "1"})  # noqa: SLF001
+        finally:
+            cli._aot_cache_project_dir = previous  # noqa: SLF001
+
+        prepare.assert_not_called()
+        self.assertEqual(["java", "-cp", "a.jar", "Main"], launch.command_line)
+        self.assertEqual({"A": "1"}, launch.env)
+
+    def test_training_processes_get_longer_to_stop(self):
+        process = MagicMock()
+        launch = cli._aot_cache.Launch(["java"], None)  # noqa: SLF001
+        managed = cli._aot_cache.ManagedProcess(process, launch)  # noqa: SLF001
+
+        self.assertTrue(cli._stop_managed_process(managed))  # noqa: SLF001
+        process.wait.assert_called_once_with(cli._aot_cache.TRAINING_STOP_TIMEOUT_SECONDS)  # noqa: SLF001
+
+        plain = MagicMock()
+        self.assertTrue(cli._stop_managed_process(plain))  # noqa: SLF001
+        plain.wait.assert_called_once_with(timeout=3)
+
+    def test_interrupted_training_process_is_allowed_to_exit_on_its_own(self):
+        process = MagicMock()
+        managed = cli._aot_cache.ManagedProcess(process, cli._aot_cache.Launch(["java"], None))  # noqa: SLF001
+
+        self.assertTrue(cli._stop_managed_process(managed, interrupted=True))  # noqa: SLF001
+
+        process.wait.assert_called_once_with(cli._aot_cache.TRAINING_STOP_TIMEOUT_SECONDS)  # noqa: SLF001
+        process.terminate.assert_not_called()
+
     def test_launcher_jvm_options_use_the_launcher_opts_variable_and_keep_user_options_last(self):
         env = cli._with_launcher_jvm_options(  # noqa: SLF001
             {"PYRONAUT_DEV_OPTS": "-XX:+UseSerialGC"},
