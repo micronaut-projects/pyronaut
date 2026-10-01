@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -304,6 +305,47 @@ class PytestMicronautExtensionTest {
             assertTrue(events.contains("java.lang.IllegalStateException: host method detail"));
             assertFalse(events.contains("ForeignException"));
             assertFalse(events.contains("exceptions must be classes or instances deriving from BaseException"));
+        } finally {
+            PythonContextRuntime.setReuseContext(false);
+            PythonContextRuntime.resetContext();
+        }
+    }
+
+    @Test
+    void pytestRunCanLookUpNamedPythonBeanByType() throws Exception {
+        Path reportsDir = tempDir.resolve("__pyronaut__/reports/tests");
+        Path eventsReport = reportsDir.resolve("events.ndjson");
+        Path junitXml = reportsDir.resolve("junit.xml");
+
+        PythonContextRuntime.setReuseContext(false);
+        PythonContextRuntime.resetContext();
+        try (Context context = GraalPyContextFactory.bootstrapReusableContext(
+            PytestMicronautExtensionTest.class.getClassLoader()
+        )) {
+            JUnitPytestTestListener listener = new JUnitPytestTestListener(
+                EngineExecutionListener.NOOP,
+                Set.of(),
+                reportsDir.resolve("index.html").toString(),
+                reportsDir.resolve(".pyronaut-last-nodeid.txt").toString(),
+                eventsReport.toString()
+            );
+            Value runPytest = context.eval(
+                "python",
+                """
+                from pyronaut.test import run_pytest
+                run_pytest
+                """
+            );
+
+            Value exitCode = runPytest.execute(
+                new String[] {"src/test/python/test_micronaut_integration.py::test_named_python_bean_lookup"},
+                listener,
+                junitXml.toString()
+            );
+
+            assertTrue(exitCode.fitsInInt());
+            assertEquals(0, exitCode.asInt(), Files.readString(junitXml, StandardCharsets.UTF_8));
+            assertTrue(Files.readString(eventsReport, StandardCharsets.UTF_8).contains("\"status\":\"SUCCESSFUL\""));
         } finally {
             PythonContextRuntime.setReuseContext(false);
             PythonContextRuntime.resetContext();

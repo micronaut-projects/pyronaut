@@ -2896,6 +2896,7 @@ class PyronautInstallMainTest {
         assertTrue(pyronautTestStub.contains("class ApplicationContextWrapper(ApplicationContext):"));
         assertTrue(pyronautTestStub.contains("def stop(self) -> ApplicationContextWrapper: ..."));
         assertTrue(pyronautTestStub.contains("def close(self) -> ApplicationContextWrapper: ..."));
+        assertTrue(pyronautTestStub.contains("def get_bean(self, key: Any, *, name: str | None = ...) -> Any: ..."));
         assertTrue(pyronautTestStub.contains("def micronaut_test_fixture(request: Any, micronaut_test: MicronautTest | None = ...) -> ApplicationContextWrapper: ..."));
     }
 

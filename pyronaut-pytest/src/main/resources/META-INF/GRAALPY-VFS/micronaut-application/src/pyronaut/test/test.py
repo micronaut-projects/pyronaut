@@ -191,10 +191,18 @@ class ApplicationContextWrapper:
     def __getitem__(self, key):
         """
         Supports ctx["Foo"] notation.
-        Delegates to the Java method (e.g., getBean(String)) and raises KeyError if not found.
+        Delegates to get_bean and raises KeyError if not found.
         """
+        return self.get_bean(key)
+
+    def get_bean(self, key, *, name=None):
+        """Return a bean by type or class name, optionally qualified by @Named."""
         bean_class, lookup_key = self._resolve_bean_key(key)
-        result = self._find_bean(bean_class, lookup_key)
+        qualifier = (
+            java.type('io.micronaut.inject.qualifiers.Qualifiers').byName(name)
+            if name is not None else None
+        )
+        result = self._find_bean(bean_class, lookup_key, qualifier)
         if hasattr(result, 'asPolyglotValue'):
             return result.asPolyglotValue()
         return result
@@ -282,16 +290,19 @@ class ApplicationContextWrapper:
         match = JAVA_CLASS_RE.search(repr(key))
         return match.group(1) if match is not None else None
 
-    def _find_bean(self, bean_class, lookup_key):
+    def _find_bean(self, bean_class, lookup_key, qualifier=None):
         try:
             findBean = getattr(self.java_ctx, 'findBean', None)
             if findBean is not None:
-                opt = findBean(bean_class)
+                opt = findBean(bean_class) if qualifier is None else findBean(bean_class, qualifier)
                 present = opt is not None and (not hasattr(opt, 'isPresent') or opt.isPresent())
                 if not present:
                     raise KeyError(f"Key '{lookup_key}' not found in context")
                 return opt.get() if hasattr(opt, 'get') else opt
-            return self.java_ctx.getBean(bean_class)
+            return (
+                self.java_ctx.getBean(bean_class)
+                if qualifier is None else self.java_ctx.getBean(bean_class, qualifier)
+            )
         except BaseException:
             raise KeyError(f"Key '{lookup_key}' not found in context")
 
