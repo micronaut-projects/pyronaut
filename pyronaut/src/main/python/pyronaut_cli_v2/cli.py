@@ -5593,7 +5593,7 @@ def _run_with_auto_restart(
     # runtime, which watches and compiles the sources itself: only a change to
     # the dependencies needs a new process.
     source_snapshotter = snapshotter
-    reload_in_process = _dev_reload_in_process(project_root, run_args, debug_vm=debug_vm)
+    reload_in_process = _dev_reload_in_process(project_root, run_args, debug_vm=debug_vm, resolver=resolver)
     snapshotter = _snapshot_dependency_inputs if reload_in_process else source_snapshotter
     snapshot = snapshotter(project_root)
 
@@ -5617,7 +5617,7 @@ def _run_with_auto_restart(
         # A change to pyproject.toml may switch the toolchain, the reload mode or
         # the dependencies that provide micronaut-dev: decide again, and watch
         # the sources again when the next process cannot reload them itself.
-        reload_now = _dev_reload_in_process(project_root, run_args, debug_vm=debug_vm)
+        reload_now = _dev_reload_in_process(project_root, run_args, debug_vm=debug_vm, resolver=resolver)
         if reload_now != reload_in_process:
             reload_in_process = reload_now
             snapshotter = _snapshot_dependency_inputs if reload_in_process else source_snapshotter
@@ -5639,6 +5639,8 @@ def _run_with_auto_restart(
         if _delegation_trace_enabled():
             print(shlex.join(command_line), file=sys.stderr)
 
+        relaunch_marker = _pyronaut_output_dir(project_root).joinpath(*_DEV_RELAUNCH_MARKER)
+        relaunch_marker.unlink(missing_ok=True)
         try:
             process = process_runner(command_line, env)
         except OSError as exception:
@@ -5651,6 +5653,14 @@ def _run_with_auto_restart(
             while True:
                 code = process.poll()
                 if code is not None:
+                    if reload_in_process and int(code) == DEV_RELAUNCH_STATUS and relaunch_marker.is_file():
+                        relaunch_marker.unlink(missing_ok=True)
+                        # The development runtime spent its generation budget and
+                        # closed: start it again, from the classes it compiled.
+                        print("Dev mode: the generation budget is spent, relaunching the application.", file=sys.stderr)
+                        snapshot = snapshotter(project_root)
+                        initial_preflight_done = False
+                        break
                     return int(code)
 
                 sleep(poll_interval)
@@ -6305,6 +6315,16 @@ def _build_dev_delegate_invocation(
                     "-Dmicronaut.control-panel.security.access=ANONYMOUS",
                     f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}",
                 ]
+        command_index = dev_command_line.index("run")
+        # A native image reads no JAVA_TOOL_OPTIONS: the convenience properties
+        # (--port, --property, -D) go on its command line, ahead of the command.
+        native_properties = [*dev_jvm_args]
+        if reload_in_process:
+            # The image holds the development runtime of micronaut-dev: the
+            # application reloads in this process, each generation's classes
+            # defined at runtime, until the generation budget is spent.
+            native_properties.append(f"-D{DEV_RELOAD_PROPERTY}=true")
+        dev_command_line[command_index:command_index] = native_properties
         env = _build_non_test_resources_env("dev", java_home_provider)
         if dev_jvm_args:
             env["JAVA_TOOL_OPTIONS"] = " ".join(dev_jvm_args)
@@ -6491,6 +6511,15 @@ def _stop_managed_process(process: ManagedProcess, *, interrupted: bool = False)
 DEV_RELOAD_PROPERTY = "pyronaut.dev.reload"
 DEV_RELOAD_RESTART = "restart"
 DEV_RELOAD_PROCESS = "process"
+# The status the development runtime exits with once its generation budget
+# (micronaut.dev.max-generations) is spent: MicronautDevMain.RELAUNCH. The
+# native image never unloads a generation's classes, so it has a budget by
+# default, and the CLI starts the process again.
+DEV_RELAUNCH_STATUS = 3
+# Written by the runtime under __pyronaut__ before it exits with that status, so
+# that an application exiting with status 3 itself is not started again.
+_DEV_RELAUNCH_MARKER = ("micronaut-dev", "relaunch")
+_NATIVE_DEV_RUNTIME_ARTIFACT = "io.micronaut:micronaut-dev"
 _MICRONAUT_DEV_JAR = re.compile(r"^micronaut-dev-\d[^/\\]*\.jar$")
 
 
@@ -6504,15 +6533,23 @@ def _read_dev_reload(project_dir: Path) -> str:
     return value if value in {DEV_RELOAD_RESTART, DEV_RELOAD_PROCESS} else DEV_RELOAD_RESTART
 
 
-def _dev_reload_in_process(project_dir: Path, args: Sequence[str], *, debug_vm: bool = False) -> bool:
+def _dev_reload_in_process(
+    project_dir: Path,
+    args: Sequence[str],
+    *,
+    debug_vm: bool = False,
+    resolver: Callable[[str], str | None] | None = None,
+) -> bool:
     """
     Whether dev mode runs the application in the reloading development runtime of
     micronaut-dev rather than restarting the process for every change.
 
-    Only the JVM toolchain can: a native image cannot define the classes of a new
-    generation. The project must be a Pyronaut project, not an external build,
-    and its development runtime must hold micronaut-dev, which Micronaut 5.3 and
-    later provide.
+    The project must be a Pyronaut project, not an external build. On the JVM
+    toolchain its development runtime must hold micronaut-dev, which Micronaut
+    5.3 and later provide. On the native toolchain the pyronaut-dev image must
+    hold it: the image is the runtime's parent tier and defines each
+    generation's classes at runtime; an image built without it restarts the
+    process.
     """
     if _is_external_build_project(project_dir) or _read_dev_reload(project_dir) == DEV_RELOAD_PROCESS:
         return False
@@ -6521,10 +6558,12 @@ def _dev_reload_in_process(project_dir: Path, args: Sequence[str], *, debug_vm: 
         # whole; an exclusion inside one is honored by restarting the process.
         return False
     try:
-        if _use_pyronaut_dev_native_toolchain("dev", project_dir, debug_vm=debug_vm, args=args):
-            return False
+        native = _use_pyronaut_dev_native_toolchain("dev", project_dir, debug_vm=debug_vm, args=args)
     except ValueError:
         return False
+    if native:
+        executable = _resolve_pyronaut_dev_native_executable(resolver or _resolve_executable)
+        return executable is not None and _NATIVE_DEV_RUNTIME_ARTIFACT in _native_launcher_provided_artifact_coordinates(executable)
     manifest = _pyronaut_output_dir(project_dir) / "resolved-development-runtime-dependencies"
     try:
         entries = _read_manifest_entries(manifest)

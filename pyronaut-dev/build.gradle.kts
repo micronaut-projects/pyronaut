@@ -71,9 +71,12 @@ dependencies {
     // cannot be loaded later through a native URLClassLoader.
     implementation("io.micronaut.openapi:micronaut-openapi-adoc")
 
-    // the reloading development runtime of dev mode on the JVM toolchain: the project's development runtime
-    // provides it, at the project's Micronaut version, so neither the distribution nor the native image holds it
-    compileOnly("io.micronaut:micronaut-dev:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
+    // the reloading development runtime of dev mode. On the JVM toolchain the project's development runtime
+    // provides it, at the project's Micronaut version, and only this module's jar joins it. The native image holds
+    // it, with its LiveReload server, as part of the image's parent tier: dev mode reloads in process there too,
+    // each generation's classes defined at runtime (-H:+RuntimeClassLoading)
+    implementation("io.micronaut:micronaut-dev:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
+    implementation("io.micronaut:micronaut-dev-livereload:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
     testImplementation("io.micronaut:micronaut-dev:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
 
     // CLI modules
@@ -536,6 +539,9 @@ val nativeImageRuntimeArgs = listOf(
     "-H:Preserve=package=io.micronaut.toml.*",
     "-H:Preserve=package=io.micronaut.views.*",
     "-H:Preserve=package=io.micronaut.web.router.*",
+    // the development runtime: its ApplicationContextConfigurer is a dynamic service, created reflectively. Not its
+    // subpackages: the embedded Kotlin and Groovy compilers there reference compilers the image does not hold
+    "-H:Preserve=package=io.micronaut.dev",
 
 
     /* netty.* */

@@ -299,7 +299,7 @@ public class PyronautRunMain implements Callable<Integer> {
      * @throws Exception if the application fails to start
      */
     protected boolean launch(Path root, ResolvedProjectLayout layout, PyprojectModel model, ApplicationArgs applicationArgs) throws Exception {
-        DevelopmentRuntime development = model == null || ExternalProjectLayout.isExternal(root) ? null : developmentRuntime();
+        DevelopmentRuntime development = model == null || ExternalProjectLayout.isExternal(root) ? null : createDevelopmentRuntime();
         if (development == null) {
             return startApplication(layout, applicationArgs);
         }
@@ -307,6 +307,25 @@ public class PyronautRunMain implements Callable<Integer> {
         // Resources log, in the generation's loader, the thread context loader then
         development.start(root, layout, model, applicationArgs.appArgs(), () -> startApplication(layout, applicationArgs));
         return true;
+    }
+
+    /**
+     * The reloading development runtime, when the CLI asked for it. The native {@code pyronaut-dev} image, which
+     * holds the runtime, overrides this to create it directly; the JVM launcher loads it by name.
+     *
+     * @return The runtime, null when not asked for
+     */
+    protected DevelopmentRuntime createDevelopmentRuntime() {
+        return developmentRuntime();
+    }
+
+    /**
+     * Whether the CLI asked for the reloading development runtime, {@code -Dpyronaut.dev.reload=true}.
+     *
+     * @return True when dev mode reloads in process
+     */
+    protected static boolean isDevelopmentRuntimeRequested() {
+        return Boolean.getBoolean(DEV_RELOAD_PROPERTY);
     }
 
     /**
