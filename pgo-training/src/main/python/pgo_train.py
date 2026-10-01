@@ -27,6 +27,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 IMAGES = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
@@ -136,6 +137,24 @@ def _venv_python(venv: Path, *, windows: bool = os.name == "nt") -> Path:
 
 
 def pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        # On Windows os.kill(pid, 0) sends CTRL_C; it is not a liveness probe.
+        import _winapi
+
+        if pid <= 0:
+            return False
+        try:
+            handle = _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, pid)
+        except PermissionError:
+            return True
+        except OSError as error:
+            if getattr(error, "winerror", None) == 87:  # ERROR_INVALID_PARAMETER: the PID no longer exists.
+                return False
+            raise
+        try:
+            return _winapi.WaitForSingleObject(handle, 0) == _winapi.WAIT_TIMEOUT
+        finally:
+            _winapi.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -151,13 +170,24 @@ class Client:
     def __init__(self, port: int):
         self.port = port
         self.local = threading.local()
+        self.connections = []
+        self.lock = threading.Lock()
 
     def _connection(self) -> http.client.HTTPConnection:
         connection = getattr(self.local, "connection", None)
         if connection is None:
             connection = http.client.HTTPConnection("localhost", self.port, timeout=120)
             self.local.connection = connection
+            with self.lock:
+                self.connections.append(connection)
         return connection
+
+    def close(self) -> None:
+        # Workers have finished before closing; GraalPy cannot rely on refcounted socket cleanup.
+        for connection in self.connections:
+            connection.close()
+        self.connections.clear()
+        self.local = threading.local()
 
     def request(self, method: str, path: str, body=None, content_type: str = "application/json") -> tuple[int, bytes]:
         headers = {}
@@ -209,11 +239,14 @@ class Workload:
             timings[f"concurrency-{concurrency}"] = round(time.monotonic() - start, 1)
         return timings
 
-    def _parallel(self, concurrency: int, count: int, action) -> list:
-        if concurrency == 1:
-            return [action(i) for i in range(count)]
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            return list(pool.map(action, range(count)))
+    def _parallel(self, client: Client, concurrency: int, count: int, action) -> list:
+        try:
+            if concurrency == 1:
+                return [action(i) for i in range(count)]
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                return list(pool.map(action, range(count)))
+        finally:
+            client.close()
 
     def _pet(self, i: int) -> dict:
         return {
@@ -224,8 +257,8 @@ class Workload:
         }
 
     def _phase(self, client: Client, concurrency: int) -> None:
-        self._parallel(concurrency, self.count(3000), lambda i: client.expect("GET", "/hello", 200))
-        created = self._parallel(concurrency, self.count(1500), lambda i: client.expect("POST", "/pets", 201, self._pet(i)))
+        self._parallel(client, concurrency, self.count(3000), lambda i: client.expect("GET", "/hello", 200))
+        created = self._parallel(client, concurrency, self.count(1500), lambda i: client.expect("POST", "/pets", 201, self._pet(i)))
         ids = [pet["id"] for pet in created]
 
         def read(i: int) -> None:
@@ -243,9 +276,9 @@ class Workload:
             else:
                 client.expect("GET", f"/pets/{ids[-1 - i % len(ids)]}", 200)
 
-        self._parallel(concurrency, self.count(3000), read)
+        self._parallel(client, concurrency, self.count(3000), read)
         update_count = min(len(ids), self.count(600))
-        self._parallel(concurrency, update_count, lambda i: client.expect(
+        self._parallel(client, concurrency, update_count, lambda i: client.expect(
             "PUT", f"/pets/{ids[i]}", 200, dict(self._pet(i + 7), name=f"Updated {i}")))
 
         def errors(i: int) -> None:
@@ -259,16 +292,16 @@ class Workload:
             else:
                 client.expect("DELETE", "/pets/999999999", 404)
 
-        self._parallel(concurrency, self.count(300), errors)
+        self._parallel(client, concurrency, self.count(300), errors)
         if self.has_summary:
             small = self._summary_document(20, 40)
-            self._parallel(concurrency, self.count(1500), lambda i: client.expect(
+            self._parallel(client, concurrency, self.count(1500), lambda i: client.expect(
                 "POST", "/pets/summary", 200, small, "text/plain"))
             large = self._summary_document(1500, 20000)
-            self._parallel(concurrency, self.count(100), lambda i: client.expect(
+            self._parallel(client, concurrency, self.count(100), lambda i: client.expect(
                 "POST", "/pets/summary", 200, large, "text/plain"))
         delete_count = min(len(ids), self.count(1500))
-        self._parallel(concurrency, delete_count, lambda i: client.expect("DELETE", f"/pets/{ids[i]}", 204))
+        self._parallel(client, concurrency, delete_count, lambda i: client.expect("DELETE", f"/pets/{ids[i]}", 204))
 
     def _summary_document(self, visits: int, words: int) -> str:
         vocabulary = ("fed", "walked", "groomed", "vaccinated", "weighed", "checked", "played", "slept")
@@ -500,14 +533,16 @@ class Trainer:
             try:
                 self._wait_ready(port, process, log_file)
                 details["ready-seconds"] = round(time.monotonic() - started, 1)
-                client = Client(port)
-                if workload is None:
-                    client.expect("GET", "/hello", 200)
-                else:
-                    details["workload-seconds"] = workload.run(client)
+                with closing(Client(port)) as client:
+                    if workload is None:
+                        client.expect("GET", "/hello", 200)
+                    else:
+                        details["workload-seconds"] = workload.run(client)
             finally:
-                self._stop(name, process)
-                output.close()
+                try:
+                    self._stop(name, process)
+                finally:
+                    output.close()
             self._record(name, **details)
 
     def _wait_ready(self, port: int, process: subprocess.Popen, log_file: Path) -> None:
@@ -517,10 +552,10 @@ class Trainer:
                 raise TrainingError(f"Server exited with {process.returncode} before it was ready; see {log_file}\n"
                                     + self._log_contents(log_file))
             try:
-                connection = http.client.HTTPConnection("localhost", port, timeout=5)
-                connection.request("GET", "/hello")
-                if connection.getresponse().status == 200:
-                    return
+                with closing(http.client.HTTPConnection("localhost", port, timeout=5)) as connection:
+                    connection.request("GET", "/hello")
+                    if connection.getresponse().status == 200:
+                        return
             except OSError:
                 pass
             time.sleep(0.5)
