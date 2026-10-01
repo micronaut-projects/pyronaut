@@ -82,8 +82,27 @@ public class PyronautDevRun extends PyronautRunMain {
 
     @Override
     protected boolean includeClasspathEntry(String name) {
-        return !Boolean.getBoolean("micronaut.control-panel.enabled")
-                && Path.of(name).getFileName().toString().startsWith("micronaut-control-panel-");
+        String fileName = Path.of(name).getFileName().toString();
+        if (!Boolean.getBoolean("micronaut.control-panel.enabled") && fileName.startsWith("micronaut-control-panel-")) {
+            return true;
+        }
+        return isNativeImageRuntime() && isNativeUnsupportedJar(fileName);
+    }
+
+    /**
+     * Whether a jar cannot run in the native launcher when it is loaded at runtime.
+     *
+     * <p>The macOS watch service in {@code micronaut-runtime-osx} calls into JNA, whose native
+     * dispatch library fails in a Crema image ({@code NoClassDefFoundError: java/lang/Object}), and
+     * the failure stops the application context. Without these jars the image's default
+     * {@code WatchService} is used. The CLI drops them from {@code java.class.path} as well.
+     */
+    static boolean isNativeUnsupportedJar(String fileName) {
+        return fileName.startsWith("micronaut-runtime-osx-") || fileName.startsWith("directory-watcher-");
+    }
+
+    private static boolean isNativeImageRuntime() {
+        return "runtime".equals(System.getProperty("org.graalvm.nativeimage.imagecode"));
     }
 
     @Override

@@ -100,6 +100,17 @@ class PyronautNativeImageBuilderTest {
     }
 
     @Test
+    void preservesDirectNettyCodecClasses() throws Exception {
+        Path classpathEntry = tempDir.resolve("netty-handler");
+        Files.createDirectories(classpathEntry.resolve("io/netty/handler/codec"));
+        Files.createFile(classpathEntry.resolve("io/netty/handler/codec/ByteToMessageDecoder.class"));
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=io.netty.handler.codec"));
+    }
+
+    @Test
     void preservesMicronautPackagesInstantiatedByRuntimeLoadedBeanDefinitions() throws Exception {
         Path classpathEntry = tempDir.resolve("micronaut-runtime.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {

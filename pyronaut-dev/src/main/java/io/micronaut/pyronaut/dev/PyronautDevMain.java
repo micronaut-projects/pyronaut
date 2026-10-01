@@ -30,6 +30,7 @@ import io.micronaut.pyronaut.install.InstallProgressReporter;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderApplicationContextConfigurers;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanDefinitionsProvider;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
+import io.micronaut.pyronaut.config.model.ControlPanelFeature;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.JvmOptionsFile;
 import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
@@ -1532,11 +1533,13 @@ public final class PyronautDevMain implements Callable<Integer> {
         if (controlPanelRequested(invocation)) {
             String bundled = System.getProperty("pyronaut.dev.control.panel.class.path", "");
             if (!bundled.isBlank()) {
-                for (String entry : bundled.split(Pattern.quote(File.pathSeparator))) {
-                    if (!entry.isBlank()) {
-                        runtimeClasspath.add(Path.of(entry));
-                    }
-                }
+                List<Path> bundledEntries = Arrays.stream(bundled.split(Pattern.quote(File.pathSeparator)))
+                    .filter(entry -> !entry.isBlank())
+                    .map(Path::of)
+                    .toList();
+                // Optional panels, such as datasource or Kafka, apply only
+                // when the application uses the library they inspect.
+                runtimeClasspath.addAll(ControlPanelFeature.select(bundledEntries, runtimeClasspath));
             }
         }
         return new DirectSourceClasspaths(

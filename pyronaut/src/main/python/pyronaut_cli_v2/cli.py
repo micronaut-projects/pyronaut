@@ -33,6 +33,7 @@ from .progress import LaunchIndicator as _LaunchIndicator
 from .progress import console as _progress_console
 from .progress import format_bytes as _format_bytes
 from .progress import progress_epoch_ms as _progress_epoch_ms
+from . import aot_cache as _aot_cache
 from . import doctor as _doctor
 
 SUCCESS = 0
@@ -97,6 +98,11 @@ _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/release
 _NATIVE_IMAGE_BUNDLE_FORMAT = 5
 _NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
 _SETUP_IMAGE_COMMANDS = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
+# Jars a native launcher cannot run when they are loaded at runtime. The macOS watch
+# service in micronaut-runtime-osx calls into JNA, whose native dispatch library fails
+# in a Crema image (NoClassDefFoundError: java/lang/Object), and the failure stops the
+# application context. Without them the image's default WatchService is used.
+_NATIVE_UNSUPPORTED_ARTIFACT_IDS = frozenset({"micronaut-runtime-osx", "directory-watcher"})
 _SETUP_SCHEMA_VERSION = 1
 _SETUP_REQUIRED_MESSAGE = "Pyronaut setup is missing or stale. Run pyronaut setup."
 _NATIVE_IMAGE_SETTINGS_TABLE = "native-images"
@@ -110,7 +116,17 @@ _DELEGATE_JVM_FLAGS = [
     "--sun-misc-unsafe-memory-access=allow",
     "--enable-native-access=ALL-UNNAMED",
 ]
-_JDWP_FLAGS = "-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
+# `pyronaut dev` and `pyronaut test` JVMs live too briefly, and restart too
+# often, for the Graal host JIT to pay off: it competes with startup for CPU.
+# Compile host code with C2, which compiles far less eagerly, and collect with
+# ParallelGC, as micronaut-core does for its Python test JVMs. Truffle keeps
+# compiling Python code, so options configured under graalpy.engine still apply.
+_SHORT_LIVED_JVM_FLAGS = (
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:-UseJVMCICompiler",
+    "-XX:+UseParallelGC",
+)
+_JDWP_FLAGS ="-Xrunjdwp:transport=dt_socket,server=y,suspend=y,address=5005"
 _TEST_RESOURCES_ENV_TO_PROPERTY = {
     "MICRONAUT_TEST_RESOURCES_SERVER_URI": "micronaut.test.resources.server.uri",
     "MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN": "micronaut.test.resources.server.access.token",
@@ -173,6 +189,9 @@ _PYRONAUT_CREATE_DENYLIST_BY_MINOR: dict[tuple[int, int], frozenset[str]] = {
 }
 _allow_draft_release = False
 _validated_setup_manifest: dict[str, object] | None = None
+# The project whose pyproject.toml enabled tool.pyronaut.toolchain.aot-cache
+# for this invocation, or None when JVM launches run without an AOT cache.
+_aot_cache_project_dir: Path | None = None
 
 
 def _read_version_properties() -> dict[str, str]:
@@ -271,7 +290,7 @@ def run(
     input_reader: Callable[[float | None], str | None] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
 ) -> int:
-    global _allow_draft_release, _validated_setup_manifest
+    global _allow_draft_release, _validated_setup_manifest, _aot_cache_project_dir
     _allow_draft_release = _extract_flag(argv, "--allow-draft-release")
     _validated_setup_manifest = None
     option_argv, application_argv = _split_application_args(argv)
@@ -310,6 +329,7 @@ def run(
         return SUCCESS
 
     command = argv[0]
+    _aot_cache_project_dir = _aot_cache_project(argv[1:])
     if command == "setup":
         setup_args = list(argv[1:])
         if _extract_flag(setup_args, "--help") or _extract_flag(setup_args, "-h"):
@@ -916,6 +936,8 @@ def _delegate(
             env = _merge_env_overrides(env, env_overrides)
             env = _apply_project_virtualenv(env, project_dir)
             env = _apply_test_resources_disabled_java_tool_options(env, project_dir, args, env_overrides)
+            if command == "test":
+                env = _with_launcher_jvm_options(env, executable_path, _SHORT_LIVED_JVM_FLAGS)
             forwarded_args = _strip_orchestrator_only_args(
                 [value for value in args if value not in {"--jvm", "--native"}]
             )
@@ -944,6 +966,7 @@ def _delegate(
             project_dir = Path(_extract_project_dir(args)).resolve()
             env = _apply_project_virtualenv(env, project_dir)
             env = _apply_test_resources_disabled_java_tool_options(env, project_dir, args, env_overrides)
+            env = _with_launcher_jvm_options(env, executable_path, _SHORT_LIVED_JVM_FLAGS)
             return runner(command_line, env) or SUCCESS
 
     if command in {"dev", "run", "test"}:
@@ -1023,6 +1046,7 @@ def _delegate_direct_source(
         return PRECONDITION_FAILED
     if debug_vm:
         env = _apply_debug_vm_env(env)
+    env = _apply_direct_source_jvm_options(env, executable_path, command, args, debug_vm=debug_vm)
     jvm_args = _build_direct_source_native_jvm_args(
         executable_path,
         env,
@@ -1082,6 +1106,7 @@ def _run_direct_source(
         return PRECONDITION_FAILED
     if debug_vm:
         env = _apply_debug_vm_env(env)
+    env = _apply_direct_source_jvm_options(env, executable_path, command, args, debug_vm=debug_vm)
     if command == "dev":
         env = _apply_project_virtualenv(env, Path.cwd())
     snapshot = _snapshot_direct_source_inputs(args)
@@ -1113,16 +1138,33 @@ def _resolve_direct_source_dev_executable(
     debug_vm: bool = False,
 ) -> str | None:
     """Select the direct-source launcher, honoring the command-line override."""
-    mode = _extract_build_mode_flag(args)
-    if mode is None and (Path.cwd() / "pyproject.toml").is_file():
-        mode = _read_pyproject_toolchain_type(Path.cwd())
-    if debug_vm:
-        # JDWP needs a HotSpot JVM; the native launcher cannot load the agent.
-        mode = TOOLCHAIN_TYPE_JVM
-    if mode == TOOLCHAIN_TYPE_JVM:
+    if _direct_source_uses_jvm(args, debug_vm=debug_vm):
         bundled = _bundled_executable(DEV_NATIVE_EXECUTABLE)
         return str(bundled) if bundled is not None and bundled.exists() else resolver(DEV_NATIVE_EXECUTABLE)
     return _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
+
+
+def _direct_source_uses_jvm(args: Sequence[str], *, debug_vm: bool = False) -> bool:
+    if debug_vm:
+        # JDWP needs a HotSpot JVM; the native launcher cannot load the agent.
+        return True
+    mode = _extract_build_mode_flag(args)
+    if mode is None and (Path.cwd() / "pyproject.toml").is_file():
+        mode = _read_pyproject_toolchain_type(Path.cwd())
+    return mode == TOOLCHAIN_TYPE_JVM
+
+
+def _apply_direct_source_jvm_options(
+    env: dict[str, str] | None,
+    executable_path: str,
+    command: str,
+    args: Sequence[str],
+    *,
+    debug_vm: bool = False,
+) -> dict[str, str] | None:
+    if command not in {"dev", "test"} or not _direct_source_uses_jvm(args, debug_vm=debug_vm):
+        return env
+    return _with_launcher_jvm_options(env, executable_path, _SHORT_LIVED_JVM_FLAGS)
 
 def _apply_debug_vm_env(env: dict[str, str] | None) -> dict[str, str]:
     """Enable JDWP for launcher-script delegates through JAVA_TOOL_OPTIONS."""
@@ -1277,7 +1319,7 @@ def _run_direct_source_with_auto_restart(
                 snapshot = next_snapshot
                 break
         except KeyboardInterrupt:
-            _stop_managed_process(process)
+            _stop_managed_process(process, interrupted=True)
             return 130
 
 
@@ -1338,13 +1380,20 @@ def _build_direct_source_native_jvm_args(
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
         if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
             # Resolve Control Panel artifacts bundled with the launcher wheel;
-            # do not infer dependencies from project manifests or Maven local.
-            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            # do not resolve them from project manifests or Maven local. The
+            # project's dependencies only select which optional panels apply.
+            bundled_control_panel = _direct_control_panel_classpath_entries(executable_path)
+            control_panel = _select_control_panel_entries(
+                bundled_control_panel,
+                _control_panel_application_entries(project_dir),
+            )
             if control_panel:
                 existing = classpath.split(os.pathsep) if classpath else []
                 classpath = os.pathsep.join(dict.fromkeys([*existing, *control_panel]))
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
-                jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}")
+                # Pass every bundled module: pyronaut-dev selects the optional
+                # panels again once direct-source dependencies are resolved.
+                jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(bundled_control_panel)}")
         if classpath:
             # PyronautDevMain creates the runtime classloader from the
             # java.class.path property in the native image. Control Panel is
@@ -1412,6 +1461,7 @@ def _delegate_via_java(
             debug_vm=debug_vm,
             env_overrides=env_overrides,
             java_home_provider=java_home_provider,
+            short_lived=command in {"dev", "test"},
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
@@ -1429,6 +1479,7 @@ def _build_java_delegate_invocation(
     debug_vm: bool = False,
     env_overrides: dict[str, str] | None = None,
     java_home_provider: JavaHomeProvider | None = None,
+    short_lived: bool = False,
 ) -> tuple[list[str], dict[str, str] | None]:
     project_dir = Path(_extract_project_dir(args)).resolve()
     env = _build_non_test_resources_env(command, java_home_provider)
@@ -1436,7 +1487,7 @@ def _build_java_delegate_invocation(
     env = _apply_project_virtualenv(env, project_dir)
     java_exec = _resolve_java_executable(env)
     classpath = _build_delegate_classpath(command, project_dir, resolver, env_overrides)
-    jvm_args = _build_delegate_jvm_args(debug_vm)
+    jvm_args = _build_delegate_jvm_args(debug_vm, short_lived=short_lived)
     if (environment := _default_environment(command, args)) is not None:
         jvm_args.append(f"-Dmicronaut.environments={environment}")
     jvm_args.extend(_build_test_resources_jvm_args(env_overrides))
@@ -2166,6 +2217,8 @@ def _is_native_launcher_provided_artifact(
         return False
     if _is_native_test_resources_client_artifact(file_name):
         return True
+    if _versioned_jar_artifact_id(file_name) in _NATIVE_UNSUPPORTED_ARTIFACT_IDS:
+        return True
     if file_name in launcher_provided_names:
         return True
     artifact_id = _versioned_jar_artifact_id(file_name)
@@ -2233,6 +2286,43 @@ def _is_native_test_resources_client_artifact(file_name: str) -> bool:
 
 def _is_control_panel_artifact(file_name: str) -> bool:
     return file_name.startswith("micronaut-control-panel-")
+
+
+# Optional Control Panel modules and the application artifacts that enable
+# them. Keep in sync with io.micronaut.pyronaut.config.model.ControlPanelFeature.
+_CONTROL_PANEL_FEATURES: dict[str, frozenset[str]] = {
+    "micronaut-control-panel-datasource": frozenset({"micronaut-jdbc"}),
+    "micronaut-control-panel-hibernate": frozenset({"hibernate-core"}),
+    "micronaut-control-panel-kafka": frozenset({"micronaut-kafka"}),
+    "micronaut-control-panel-object-storage": frozenset({"micronaut-object-storage-core"}),
+    "micronaut-control-panel-cache": frozenset({
+        "micronaut-cache-caffeine",
+        "micronaut-cache-ehcache",
+        "micronaut-cache-hazelcast",
+        "micronaut-cache-infinispan",
+    }),
+}
+
+
+def _select_control_panel_entries(bundled: Sequence[str], application_entries: Iterable[str]) -> list[str]:
+    """Keep optional panel modules only when the application uses the library they inspect."""
+    application_artifact_ids = _versioned_jar_artifact_ids(Path(entry).name for entry in application_entries)
+    selected: list[str] = []
+    for entry in bundled:
+        triggers = _CONTROL_PANEL_FEATURES.get(_versioned_jar_artifact_id(Path(entry).name) or "")
+        if triggers is None or triggers & application_artifact_ids:
+            selected.append(entry)
+    return selected
+
+
+def _control_panel_application_entries(project_dir: Path) -> list[str]:
+    """Return the unfiltered dev classpath used to detect optional panels."""
+    if not _pyronaut_output_dir(project_dir).is_dir():
+        return []
+    try:
+        return _build_native_application_classpath_entries("dev", project_dir)
+    except RuntimeError:
+        return []
 
 
 def _is_test_launcher_provided_artifact(entry: str) -> bool:
@@ -5484,7 +5574,7 @@ def _run_with_auto_restart(
                 initial_preflight_done = True
                 break
         except KeyboardInterrupt:
-            _stop_managed_process(process)
+            _stop_managed_process(process, interrupted=True)
             return 130
 
 
@@ -5755,7 +5845,10 @@ def _build_dev_delegate_invocation(
         # Do not leak them into native picocli parsing.
         if _control_panel_requested(project_dir, args):
             executable_path = _resolve_pyronaut_dev_native_executable(resolver)
-            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            control_panel = _select_control_panel_entries(
+                _direct_control_panel_classpath_entries(executable_path),
+                _control_panel_application_entries(project_dir),
+            )
             if control_panel:
                 classpath_property = next((i for i, value in enumerate(dev_command_line) if value.startswith("-Djava.class.path=")), None)
                 if classpath_property is not None:
@@ -5792,6 +5885,7 @@ def _build_dev_delegate_invocation(
         debug_vm=debug_vm,
         env_overrides=env_overrides,
         java_home_provider=java_home_provider,
+        short_lived=True,
     )
     classpath_index = command_line.index("-cp") + 1
     classpath = _build_delegate_classpath("dev", project_dir, resolver, env_overrides)
@@ -5901,10 +5995,20 @@ def _control_panel_dependency_declared(project_dir: Path) -> bool:
     )
 
 
-def _stop_managed_process(process: ManagedProcess) -> bool:
+def _stop_managed_process(process: ManagedProcess, *, interrupted: bool = False) -> bool:
+    training = isinstance(process, _aot_cache.ManagedProcess)
+    if training and interrupted:
+        # The child got the same Ctrl-C (SIGINT, or the console event on
+        # Windows). Let a JVM training an AOT cache finish writing its
+        # configuration as it exits before terminating it.
+        try:
+            process.wait(timeout=process.stop_timeout)
+            return True
+        except Exception:
+            pass
     try:
         process.terminate()
-        process.wait(timeout=3)
+        process.wait(timeout=process.stop_timeout if training else 3)
         return True
     except Exception:
         try:
@@ -6088,6 +6192,8 @@ def _snapshot_direct_source_inputs(args: Sequence[str]) -> tuple[tuple[str, int,
 
 
 def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> ManagedProcess:
+    aot = _prepare_aot_launch(command_line, env)
+    command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
         command_line, options = _windows_launch(command_line)
@@ -6096,7 +6202,33 @@ def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None
         launch.abandon()
         raise
     launch.spawned()
-    return process
+    return _aot_cache.ManagedProcess(process, aot) if aot.training is not None else process
+
+
+def _aot_cache_project(args: Sequence[str]) -> Path | None:
+    """The project directory when its pyproject.toml enables JVM AOT caches."""
+    try:
+        project_dir = (
+            Path.cwd() if _looks_like_direct_source_invocation(args) else Path(_extract_project_dir(args))
+        ).resolve()
+        pyronaut = _read_pyproject_pyronaut_table(project_dir)
+    except Exception:
+        return None
+    toolchain = pyronaut.get("toolchain") if isinstance(pyronaut, dict) else None
+    if not isinstance(toolchain, dict):
+        return None
+    enabled = toolchain.get("aot-cache", toolchain.get("aotCache", False))
+    return project_dir if enabled is True else None
+
+
+def _prepare_aot_launch(command_line: list[str], env: dict[str, str] | None) -> _aot_cache.Launch:
+    if _aot_cache_project_dir is not None:
+        try:
+            return _aot_cache.prepare(command_line, env, project_dir=_aot_cache_project_dir)
+        except Exception:
+            # The cache is an optimization; never fail a launch over it.
+            pass
+    return _aot_cache.Launch(list(command_line), env)
 
 
 # Launch indicator labels by tool. Tools missing here (pip, docker, a nested
@@ -6203,11 +6335,35 @@ def _build_java_home_env(command: str, java_home_provider: JavaHomeProvider | No
     return env
 
 
-def _build_delegate_jvm_args(debug_vm: bool) -> list[str]:
+def _build_delegate_jvm_args(debug_vm: bool, *, short_lived: bool = False) -> list[str]:
     jvm_args = list(_DELEGATE_JVM_FLAGS)
+    if short_lived:
+        jvm_args.extend(_SHORT_LIVED_JVM_FLAGS)
     if debug_vm:
         jvm_args.append(_JDWP_FLAGS)
     return jvm_args
+
+
+def _with_launcher_jvm_options(
+    env: dict[str, str] | None,
+    executable_path: str,
+    options: Sequence[str],
+) -> dict[str, str]:
+    """Pass JVM options to a bundled launcher script.
+
+    The launcher scripts read JVM options from ``<TOOL>_OPTS`` (for example
+    ``PYRONAUT_DEV_OPTS``); leading ``-D`` arguments on their command line are
+    application arguments. Options the user already set there come last, so
+    they win.
+    """
+    name = Path(executable_path).name
+    for suffix in (".bat", ".cmd"):
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+    variable = name.upper().replace("-", "_") + "_OPTS"
+    updated = dict(os.environ if env is None else env)
+    updated[variable] = " ".join([*options, updated.get(variable, "")]).strip()
+    return updated
 
 
 def _build_test_resources_jvm_args(env_overrides: dict[str, str] | None) -> list[str]:
@@ -7844,6 +8000,8 @@ def _filter_create_features(output: str, version: str) -> str:
 
 
 def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) -> int:
+    aot = _prepare_aot_launch(command_line, env)
+    command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
         command_line, options = _windows_launch(command_line)
@@ -7857,22 +8015,35 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
         try:
             return int(process.wait())
         except KeyboardInterrupt:
+            if aot.training is not None:
+                # The child got the same SIGINT; let a training JVM finish
+                # writing its AOT configuration before giving up on it.
+                try:
+                    process.wait(timeout=_aot_cache.TRAINING_STOP_TIMEOUT_SECONDS)
+                except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                    aot.abandon()
+            else:
+                aot.abandon()
             # wait() already gave the child a moment to act on its own SIGINT.
             process.kill()
             return 130
+        finally:
+            aot.finish()
 
 
 def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:
+    aot = _prepare_aot_launch(command_line, env)
     try:
-        command_line, options = _windows_launch(command_line)
+        command_line, options = _windows_launch(aot.command_line)
         completed = subprocess.run(
             command_line,
             check=False,
-            env=env,
+            env=aot.env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             **options,
         )
+        aot.finish()
         return int(completed.returncode)
     except KeyboardInterrupt:
         return 130

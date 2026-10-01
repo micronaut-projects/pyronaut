@@ -23,6 +23,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The test-resources-server scope infers which Test Resources modules the server needs from the
@@ -37,9 +38,9 @@ class TestResourcesServerCoordinateTest {
 
     private static final String WITH_CLASSIFIER = "com.example:thing:jar:linux-amd64:1.0.0";
 
-    private static PyprojectModel modelWithRuntime(List<String> runtime) {
+    private static PyprojectModel modelWithRuntime(List<String> runtime, boolean inferClasspath) {
         PyprojectModel.TestResources testResources = new PyprojectModel.TestResources(
-            true, Boolean.TRUE, "2.9.0", null, Boolean.TRUE, List.of(), null, null, null, null,
+            true, Boolean.TRUE, "2.9.0", null, inferClasspath, List.of(), null, null, null, null,
             null, Map.of(), Map.of(), null, null, null, List.of());
         return new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
             null, null, List.of(),
@@ -49,8 +50,12 @@ class TestResourcesServerCoordinateTest {
     }
 
     private static List<String> serverCoordinates(List<String> runtime) {
+        return serverCoordinates(runtime, true);
+    }
+
+    private static List<String> serverCoordinates(List<String> runtime, boolean inferClasspath) {
         return new MavenClasspathResolver().coordinatesForScope(
-            modelWithRuntime(runtime), InstallScope.TEST_RESOURCES_SERVER,
+            modelWithRuntime(runtime, inferClasspath), InstallScope.TEST_RESOURCES_SERVER,
             Map.of("io.micronaut.testresources:micronaut-test-resources-server", "2.9.0"));
     }
 
@@ -69,5 +74,16 @@ class TestResourcesServerCoordinateTest {
     void resolvesTheServerScopeWithAClassifiedDependency() {
         assertDoesNotThrow(() -> serverCoordinates(List.of(WITH_CLASSIFIER)),
             "the five-part form is equally valid and must not fail this scope");
+    }
+
+    @Test
+    void honorsDisabledClasspathInferenceForApplicationDependencies() {
+        List<String> runtime = List.of("io.micronaut.discovery:micronaut-discovery-client");
+        String vaultModule = "io.micronaut.testresources:micronaut-test-resources-hashicorp-vault";
+
+        assertFalse(serverCoordinates(runtime, false).stream().anyMatch(c -> c.startsWith(vaultModule)),
+            "disabled inference must not add the Vault provider: " + serverCoordinates(runtime, false));
+        assertTrue(serverCoordinates(runtime, true).stream().anyMatch(c -> c.startsWith(vaultModule)),
+            "enabled inference should preserve the Test Resources mapping");
     }
 }

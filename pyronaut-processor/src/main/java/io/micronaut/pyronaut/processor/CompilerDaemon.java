@@ -27,6 +27,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -428,15 +429,29 @@ final class CompilerDaemon {
         boolean nativeImage = System.getProperty("org.graalvm.nativeimage.imagecode") != null;
         String[] processArguments = nativeImage
             ? new String[0]
-            : info.arguments().orElseThrow(
-                () -> new UnavailableException("Unable to determine JVM launch arguments")
-            );
+            : info.arguments().orElseGet(CompilerDaemon::jvmLaunchArguments);
         return daemonCommand(
             executable,
             processArguments,
             nativeImage,
             System.getProperty(COMMAND_PREFIX)
         );
+    }
+
+    // The OS does not always report the arguments of the current process (on Linux
+    // they are missing for a long command line, such as one with a large -cp), so
+    // rebuild them from the running JVM.
+    private static String[] jvmLaunchArguments() {
+        String command = System.getProperty("sun.java.command");
+        String classpath = System.getProperty("java.class.path");
+        if (command == null || command.isBlank() || classpath == null) {
+            throw new UnavailableException("Unable to determine JVM launch arguments");
+        }
+        List<String> arguments = new ArrayList<>(ManagementFactory.getRuntimeMXBean().getInputArguments());
+        arguments.add("-cp");
+        arguments.add(classpath);
+        arguments.add(command.split(" ", 2)[0]);
+        return arguments.toArray(String[]::new);
     }
 
     static List<String> daemonCommand(String executable,

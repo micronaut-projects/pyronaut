@@ -24,7 +24,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
-        <micronaut.core.version>5.2.10</micronaut.core.version>
+        <micronaut.core.version>5.2.11</micronaut.core.version>
         <micronaut.serde.version>3.2.4</micronaut.serde.version>
         <micronaut.validation.version>5.2.1</micronaut.validation.version>
     </properties>
