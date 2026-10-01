@@ -71,6 +71,11 @@ dependencies {
     // cannot be loaded later through a native URLClassLoader.
     implementation("io.micronaut.openapi:micronaut-openapi-adoc")
 
+    // the reloading development runtime of dev mode on the JVM toolchain: the project's development runtime
+    // provides it, at the project's Micronaut version, so neither the distribution nor the native image holds it
+    compileOnly("io.micronaut:micronaut-dev:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
+    testImplementation("io.micronaut:micronaut-dev:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
+
     // CLI modules
     implementation(project(":micronaut-pyronaut-install"))
     implementation(project(":micronaut-pyronaut-config-model"))
