@@ -97,6 +97,11 @@ _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/release
 _NATIVE_IMAGE_BUNDLE_FORMAT = 5
 _NATIVE_IMAGE_COMMANDS = {"pyronaut-dev", "pyronaut-run", "pyronaut-run-python"}
 _SETUP_IMAGE_COMMANDS = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
+# Jars a native launcher cannot run when they are loaded at runtime. The macOS watch
+# service in micronaut-runtime-osx calls into JNA, whose native dispatch library fails
+# in a Crema image (NoClassDefFoundError: java/lang/Object), and the failure stops the
+# application context. Without them the image's default WatchService is used.
+_NATIVE_UNSUPPORTED_ARTIFACT_IDS = frozenset({"micronaut-runtime-osx", "directory-watcher"})
 _SETUP_SCHEMA_VERSION = 1
 _SETUP_REQUIRED_MESSAGE = "Pyronaut setup is missing or stale. Run pyronaut setup."
 _NATIVE_IMAGE_SETTINGS_TABLE = "native-images"
@@ -2160,6 +2165,8 @@ def _is_native_launcher_provided_artifact(
         # application still needs SimpleMeterRegistry at runtime.
         return False
     if _is_native_test_resources_client_artifact(file_name):
+        return True
+    if _versioned_jar_artifact_id(file_name) in _NATIVE_UNSUPPORTED_ARTIFACT_IDS:
         return True
     if file_name in launcher_provided_names:
         return True

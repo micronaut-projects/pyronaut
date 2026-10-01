@@ -19,10 +19,16 @@ import io.micronaut.context.env.PropertyExpressionResolver;
 import io.micronaut.core.convert.ConversionService;
 import io.micronaut.core.value.PropertyResolver;
 
+import java.util.Map;
 import java.util.Optional;
 
 public final class TestResourcesClientPropertyExpressionResolver implements PropertyExpressionResolver {
     private static final String PREFIX = "auto.test.resources.";
+    // Like Mailpit's SMTP host and port, each of these requires the other.
+    private static final Map<String, String> REQUIRED = Map.of(
+        "mail.host", "mail.port",
+        "mail.port", "mail.host"
+    );
 
     @Override
     public <T> Optional<T> resolve(PropertyResolver propertyResolver,
@@ -32,6 +38,12 @@ public final class TestResourcesClientPropertyExpressionResolver implements Prop
         if (!expression.startsWith(PREFIX) || requiredType != String.class) {
             return Optional.empty();
         }
-        return Optional.of(requiredType.cast("resolved:" + expression.substring(PREFIX.length())));
+        String property = expression.substring(PREFIX.length());
+        String required = REQUIRED.get(property);
+        if (required != null) {
+            String requiredValue = propertyResolver.getProperty(required, String.class).orElse("absent");
+            return Optional.of(requiredType.cast("resolved:" + property + "[" + required + "=" + requiredValue + "]"));
+        }
+        return Optional.of(requiredType.cast("resolved:" + property));
     }
 }

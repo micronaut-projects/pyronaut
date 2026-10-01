@@ -16,6 +16,9 @@
 package io.micronaut.pyronaut.config.classloader;
 
 import io.micronaut.context.BeanDefinitionsProvider;
+import io.micronaut.context.RequiresCondition;
+import io.micronaut.context.annotation.Requires;
+import io.micronaut.core.annotation.AnnotationValue;
 import io.micronaut.core.io.service.MicronautMetaServiceLoaderUtils;
 import io.micronaut.core.reflect.ClassUtils;
 import io.micronaut.inject.BeanDefinitionReference;
@@ -45,6 +48,7 @@ import java.util.stream.Stream;
  */
 public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefinitionsProvider {
     private static final String SERVICE_PATH = "META-INF/micronaut/" + BeanDefinitionReference.class.getName();
+    private static final List<String> MISSING_CLASSES_MEMBERS = List.of("missingClasses", RequiresCondition.MEMBER_MISSING_CLASSES);
 
     @Override
     public List<BeanDefinitionReference<?>> provide(ClassLoader classLoader) {
@@ -60,6 +64,8 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
         for (BeanDefinitionReference<?> reference : discoverRuntimeReferences(runtimeClassLoader)) {
             references.put(reference.getBeanDefinitionName(), reference);
         }
+        ClassLoader requirementsClassLoader = runtimeClassLoader;
+        references.values().removeIf(reference -> requiresMissingClassPresentAt(reference, requirementsClassLoader));
         return List.copyOf(references.values());
     }
 
@@ -76,6 +82,42 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
             throw new IllegalStateException("Unable to discover bean definitions from launcher classloader", e);
         }
         return references;
+    }
+
+    /**
+     * Whether a definition is disabled by {@code @Requires(missingClasses = ...)} once the runtime
+     * classpath is taken into account.
+     *
+     * <p>A native launcher evaluates that requirement in compiled code, which can only see classes
+     * that were in the image. A class that arrives with an application jar stays absent to it, so
+     * the definition stays enabled beside the one the jar contributes: the image's default
+     * {@code WatchServiceFactory} next to {@code micronaut-runtime-osx}'s, for example. Checking the
+     * names against the runtime classloader gives the answer the JVM would.
+     */
+    private static boolean requiresMissingClassPresentAt(BeanDefinitionReference<?> reference, ClassLoader classLoader) {
+        try {
+            for (AnnotationValue<Requires> requirement : reference.getAnnotationMetadata().getAnnotationValuesByType(Requires.class)) {
+                for (String member : MISSING_CLASSES_MEMBERS) {
+                    for (String className : requirement.stringValues(member)) {
+                        if (isLoadable(className, classLoader)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // Leave the definition to its own condition when its metadata cannot be read.
+        }
+        return false;
+    }
+
+    private static boolean isLoadable(String className, ClassLoader classLoader) {
+        try {
+            Class.forName(className, false, classLoader);
+            return true;
+        } catch (ClassNotFoundException | LinkageError e) {
+            return false;
+        }
     }
 
     private static List<BeanDefinitionReference<?>> discoverRuntimeReferences(ClassLoader classLoader) {

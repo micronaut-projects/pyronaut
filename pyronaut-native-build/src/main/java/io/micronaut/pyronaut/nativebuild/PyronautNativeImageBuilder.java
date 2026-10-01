@@ -189,6 +189,9 @@ public final class PyronautNativeImageBuilder {
             "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
             "-H:Preserve=package=com.google.gson.*",
             "-H:Preserve=package=org.slf4j.*",
+            // jcl-over-slf4j shadows an application's commons-logging, so Commons Logging
+            // callers such as spring-core reach LogFactory methods the image never compiled.
+            "-H:Preserve=package=org.apache.commons.logging.*",
             "-H:Preserve=package=org.w3c.dom.bootstrap",
             "-H:Preserve=package=org.w3c.dom.events",
             "-H:Preserve=package=org.w3c.dom.ls",

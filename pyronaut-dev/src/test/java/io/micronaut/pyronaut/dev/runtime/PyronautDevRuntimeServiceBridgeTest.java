@@ -17,9 +17,14 @@ package io.micronaut.pyronaut.dev.runtime;
 
 import io.micronaut.context.env.PropertyExpressionResolver;
 import io.micronaut.context.env.PropertySourceLoader;
+import io.micronaut.core.convert.ArgumentConversionContext;
 import io.micronaut.core.convert.ConversionService;
+import io.micronaut.core.value.PropertyResolver;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 import java.util.ServiceLoader;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -40,6 +45,38 @@ class PyronautDevRuntimeServiceBridgeTest {
         assertEquals(
             "resolved:datasources.default.url",
             resolver.resolve(null, ConversionService.SHARED, "auto.test.resources.datasources.default.url", String.class).orElseThrow()
+        );
+    }
+
+    @Test
+    void mutuallyRequiredTestResourcesPropertiesDoNotRecurse() {
+        PyronautDevTestResourcesPropertyExpressionResolver resolver = new PyronautDevTestResourcesPropertyExpressionResolver();
+        // Stands in for the environment, where both properties are test-resources placeholders.
+        PropertyResolver environment = new PropertyResolver() {
+            @Override
+            public boolean containsProperty(String name) {
+                return name.startsWith("mail.");
+            }
+
+            @Override
+            public boolean containsProperties(String name) {
+                return false;
+            }
+
+            @Override
+            public <T> Optional<T> getProperty(String name, ArgumentConversionContext<T> conversionContext) {
+                return resolver.resolve(this, ConversionService.SHARED, "auto.test.resources." + name, conversionContext.getArgument().getType());
+            }
+
+            @Override
+            public Collection<List<String>> getPropertyPathMatches(String pathPattern) {
+                return List.of();
+            }
+        };
+
+        assertEquals(
+            "resolved:mail.host[mail.port=resolved:mail.port[mail.host=absent]]",
+            environment.getProperty("mail.host", String.class).orElseThrow()
         );
     }
 
