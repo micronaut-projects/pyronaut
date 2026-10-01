@@ -17,6 +17,7 @@ micronaut-http-server-netty = { module = "io.micronaut:micronaut-http-server-net
 micronaut-http-validation = { module = "io.micronaut:micronaut-http-validation", version.ref = "micronaut" }
 micronaut-inject-java = { module = "io.micronaut:micronaut-inject-java", version.ref = "micronaut" }
 micronaut-inject-python = { module = "io.micronaut:micronaut-inject-python", version.ref = "micronaut" }
+micronaut-jackson-core = { module = "io.micronaut:micronaut-jackson-core", version.ref = "micronaut" }
 micronaut-jackson-databind = { module = "io.micronaut:micronaut-jackson-databind", version.ref = "micronaut" }
 micronaut-json-core = { module = "io.micronaut:micronaut-json-core", version.ref = "micronaut" }
 micronaut-management = { module = "io.micronaut:micronaut-management", version.ref = "micronaut" }
