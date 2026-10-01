@@ -80,6 +80,17 @@ public class PyronautDevRun extends PyronautRunMain {
         return pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST);
     }
 
+    /**
+     * The reloading development runtime is part of this image: dev mode reloads in process on the native toolchain
+     * too, each generation's classes defined at runtime.
+     *
+     * @return The runtime when the CLI asked for it
+     */
+    @Override
+    protected DevelopmentRuntime createDevelopmentRuntime() {
+        return isDevelopmentRuntimeRequested() ? new PyronautDevReload() : null;
+    }
+
     @Override
     protected boolean includeClasspathEntry(String name) {
         String fileName = Path.of(name).getFileName().toString();
