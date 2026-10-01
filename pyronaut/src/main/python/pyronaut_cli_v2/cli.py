@@ -1380,25 +1380,23 @@ def _build_direct_source_native_jvm_args(
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
         if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
             # Resolve Control Panel artifacts bundled with the launcher wheel;
-            # do not resolve them from project manifests or Maven local. The
-            # project's dependencies only select which optional panels apply.
+            # do not resolve them from project manifests or Maven local.
+            # pyronaut-dev adds them to the direct-source runtime classloader,
+            # selecting optional panels once declared dependencies resolve.
+            # Keep every panel module on that one loader: the core module
+            # reads each panel's default configuration through its own
+            # classloader, and optional panels must see the application's
+            # libraries (for example, Hikari for the datasource panel).
             bundled_control_panel = _direct_control_panel_classpath_entries(executable_path)
-            control_panel = _select_control_panel_entries(
-                bundled_control_panel,
-                _control_panel_application_entries(project_dir),
-            )
-            if control_panel:
-                existing = classpath.split(os.pathsep) if classpath else []
-                classpath = os.pathsep.join(dict.fromkeys([*existing, *control_panel]))
-                jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
-                # Pass every bundled module: pyronaut-dev selects the optional
-                # panels again once direct-source dependencies are resolved.
+            if bundled_control_panel:
                 jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(bundled_control_panel)}")
+                classpath = os.pathsep.join(
+                    entry for entry in classpath.split(os.pathsep)
+                    if entry and not _is_control_panel_artifact(Path(entry).name)
+                )
         if classpath:
             # PyronautDevMain creates the runtime classloader from the
-            # java.class.path property in the native image. Control Panel is
-            # intentionally outside that image and must be added here at
-            # runtime when explicitly requested.
+            # java.class.path property in the native image.
             jvm_args.append(f"-Djava.class.path={classpath}")
     return jvm_args
 
