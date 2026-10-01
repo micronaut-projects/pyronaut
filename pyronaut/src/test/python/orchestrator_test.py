@@ -834,7 +834,8 @@ class OrchestratorTest(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         self.assertIn("-Dpyronaut.dev.control.panel.class.path=/tmp/control-panel.jar", captured["command"])
-        self.assertIn("-Djava.class.path=/tmp/control-panel.jar", captured["command"])
+        # pyronaut-dev loads the panels with the direct-source runtime classloader.
+        self.assertFalse(any(value.startswith("-Djava.class.path=") for value in captured["command"]))
 
     def test_optional_control_panels_are_selected_from_application_dependencies(self):
         bundled = [
@@ -869,25 +870,35 @@ class OrchestratorTest(unittest.TestCase):
             ]),
         )
 
-    def test_direct_control_panel_adds_only_detected_optional_panels(self):
+    def test_direct_control_panel_keeps_every_panel_off_the_launcher_classpath(self):
+        # Control Panel core reads each panel's default configuration through
+        # its own classloader, and optional panels need the application's
+        # libraries. Splitting them between java.class.path and the
+        # direct-source runtime classloader left the datasource panel without
+        # its "micronaut.control-panel.panels.datasource" configuration.
         captured = {}
         bundled = [
+            "/tmp/micronaut-control-panel-core-2.1.0.jar",
             "/tmp/micronaut-control-panel-ui-2.1.0.jar",
             "/tmp/micronaut-control-panel-datasource-2.1.0.jar",
             "/tmp/micronaut-control-panel-kafka-2.1.0.jar",
         ]
+        application = os.pathsep.join([
+            "/m2/micronaut-jdbc-7.2.0.jar",
+            "/m2/micronaut-control-panel-core-2.1.0.jar",
+        ])
         with tempfile.TemporaryDirectory() as temp_dir:
             previous_cwd = Path.cwd()
             try:
                 os.chdir(temp_dir)
                 (Path(temp_dir) / "app.py").write_text("", encoding="utf-8")
+                (Path(temp_dir) / "__pyronaut__").mkdir()
                 def capture(command, env=None):
                     captured["command"] = command
                     return 0
                 with patch.object(cli, "_resolve_direct_source_dev_executable", return_value="/tmp/pyronaut-dev"), \
                         patch.object(cli, "_direct_control_panel_classpath_entries", return_value=bundled), \
-                        patch.object(cli, "_control_panel_application_entries",
-                                     return_value=["/m2/micronaut-jdbc-7.2.0.jar"]):
+                        patch.object(cli, "_build_native_application_classpath", return_value=application):
                     exit_code = cli._delegate_direct_source(
                         "dev",
                         ["--control-panel", "app.py"],
@@ -899,11 +910,9 @@ class OrchestratorTest(unittest.TestCase):
                 os.chdir(previous_cwd)
 
         self.assertEqual(0, exit_code)
-        self.assertIn(
-            "-Djava.class.path=" + os.pathsep.join(bundled[:2]),
-            captured["command"],
-        )
-        # pyronaut-dev reselects optional panels after resolving direct-source
+        self.assertIn("-Djava.class.path=/m2/micronaut-jdbc-7.2.0.jar", captured["command"])
+        self.assertIn("-Dpyronaut.dev.application.class.path=" + application, captured["command"])
+        # pyronaut-dev selects optional panels after resolving direct-source
         # dependency declarations, so it receives every bundled module.
         self.assertIn(
             "-Dpyronaut.dev.control.panel.class.path=" + os.pathsep.join(bundled),
