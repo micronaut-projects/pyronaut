@@ -78,6 +78,9 @@ public final class PyronautTestRunner implements TestRunner {
     private static final Logger LOG = LoggerFactory.getLogger(PyronautTestRunner.class);
     private static final String CONTEXT_ERROR = "initializationError";
     private static final Source PURGE_TEST_MODULES = Source.newBuilder("python", """
+        def _pyronaut_is_test_file(name):
+            return name == "conftest.py" or (name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")))
+
         def _pyronaut_purge_test_modules(roots, kept):
             import importlib
             import os
@@ -110,6 +113,9 @@ public final class PyronautTestRunner implements TestRunner {
                     if any(under(keep, root) and keep != root and under(path, keep) for keep in kept):
                         continue
                     if "site-packages" in path.split(os.sep):
+                        continue
+                    # the application's sources in the test root itself: only what pytest collects is a test module
+                    if root in kept and not _pyronaut_is_test_file(os.path.basename(path)):
                         continue
                     del sys.modules[name]
                     purged.append(name)
