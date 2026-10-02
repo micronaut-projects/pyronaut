@@ -24,7 +24,7 @@ SDK for Windows x64.
 
 [source,bash]
 ----
-pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
+pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|clean|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]
 ----
 
 == Quick-start workflow
@@ -402,6 +402,24 @@ Default processing outputs:
 
 - configured `python` + configured `java` -> `__pyronaut__/classes`
 - merged source+test pass -> `__pyronaut__/test-classes`
+
+=== `pyronaut clean`
+
+Removes generated project output.
+
+[source,bash]
+----
+pyronaut clean [--project-dir <dir>] [-f|--full]
+----
+
+By default `pyronaut clean` removes only what `pyronaut process` produces: `classes`, `test-classes`, `test-sources`, the incremental compiler state under `incremental`, and the processor input digests.
+Dependency manifests, the project-local Maven repository, schemas, IDE stubs, and reports are kept, so the next `run`, `test`, or `process` reprocesses the sources without reinstalling.
+
+`-f` or `--full` removes the entire `__pyronaut__` directory (all generated state and caches) and the project `.venv`.
+Run `pyronaut install` again afterwards to recreate them.
+
+For Maven and Gradle projects the command cleans `target/pyronaut` or `build/pyronaut` instead of `__pyronaut__`.
+The command refuses to run in a directory without a `pyproject.toml`, `pom.xml`, or Gradle build file.
 
 === `pyronaut dev`
 
