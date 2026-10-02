@@ -218,6 +218,45 @@ class PyronautTestRunnerTest {
         }
     }
 
+    @Test
+    void whenTheApplicationAndTheTestsShareARootOnlyTheTestFilesAreImportedAgain(@org.junit.jupiter.api.io.TempDir Path project) throws Exception {
+        java.nio.file.Files.writeString(project.resolve("test_shared.py"), "value = 1\n");
+        java.nio.file.Files.writeString(project.resolve("shared_app.py"), "value = 1\n");
+        System.setProperty(PyronautTestReload.PYTHON_SOURCES_PROPERTY, project.toString());
+        TestRunRequest request = new TestRunRequest("run-2", generation, List.of(), List.of(new SourceRoot(SourceKind.PYTHON, project)), TestSelection.all(), Map.of());
+        List<Context> contexts = new ArrayList<>();
+        TestRunner platform = new TestRunner() {
+            @Override
+            public String id() {
+                return "junit-platform";
+            }
+
+            @Override
+            public TestRunSummary run(TestRunRequest request, TestEventListener listener, Cancellation cancellation) {
+                return new TestRunSummary(request.runId(), 1, 0, 0, 0, Duration.ZERO, false, true);
+            }
+        };
+        PyronautTestRunner runner = new PyronautTestRunner(platform, loader -> {
+            Context context = Context.newBuilder("python").allowAllAccess(true).build();
+            contexts.add(context);
+            context.eval("python", "import sys\nsys.path[0:0] = [" + pythonString(project) + "]\nimport test_shared\nimport shared_app\n");
+            return context;
+        });
+        try {
+            runner.run(request, new TestEventListener() { }, new Cancellation());
+            runner.run(request, new TestEventListener() { }, new Cancellation());
+            Context context = contexts.get(0);
+            assertFalse(context.eval("python", "'test_shared' in sys.modules").asBoolean());
+            assertTrue(context.eval("python", "'shared_app' in sys.modules").asBoolean());
+        } finally {
+            System.clearProperty(PyronautTestReload.PYTHON_SOURCES_PROPERTY);
+            runner.closeContext();
+            for (Context context : contexts) {
+                context.close(true);
+            }
+        }
+    }
+
     private static String pythonString(Path path) {
         return "'" + path.toAbsolutePath().toString().replace("\\", "\\\\") + "'";
     }
