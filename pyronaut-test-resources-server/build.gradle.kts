@@ -40,9 +40,16 @@ dependencies {
         exclude(group = "org.openjdk.nashorn", module = "nashorn-core")
     }
     testImplementation(libs.micronaut.test.resources.server)
-    testImplementation(mnLogging.logback.classic)
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
+}
+
+configurations.testRuntimeClasspath {
+    // micronaut-test-resources-server is a fat jar that embeds its own
+    // logback-classic and logback-core. A separate logback on the test
+    // classpath mixes classes from two logback versions (the build aligns
+    // logback to 1.6.x for CVE-2026-19880), so tests use the embedded copy.
+    exclude(group = "ch.qos.logback")
 }
 
 application {

@@ -85,7 +85,7 @@ final class AnnotationProcessorOptionDiscovery {
                     }
                     // skip micronaut data since it uses Micronaut's service loader which causes issues and doesn't define any options anyway
                     String processorName = provider.type().getName();
-                    if (!processorName.startsWith("io.micronaut.data") && !processorName.startsWith("io.micronaut.python.processing")) {
+                    if (!processorName.startsWith("io.micronaut.data")) {
                         try {
                             Object visitor = provider.get();
                             Object supported = visitorType.getMethod("getSupportedOptions").invoke(visitor);
