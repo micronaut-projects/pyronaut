@@ -1,9 +1,10 @@
-# Tells setup-pyronaut about a new release.
+# Tells setup-pyronaut and pyronaut-examples about a new release.
 #
 # micronaut-projects/setup-pyronaut keeps the default of its `pyronaut-version`
-# input on the newest Pyronaut release. Its update workflow opens the pull
-# request; this only sends it the `pyronaut-release` repository dispatch that
-# starts it. It lives outside release.yml because that file is synced from the
+# input on the newest Pyronaut release, and micronaut-projects/pyronaut-examples
+# runs its examples against it. Their update workflows open the pull requests;
+# this only sends each the `pyronaut-release` repository dispatch that starts
+# it. It lives outside release.yml because that file is synced from the
 # Micronaut project template.
 name: Release setup-pyronaut
 on:
@@ -35,7 +36,9 @@ jobs:
             echo "Not a release version: ${RELEASE_TAG}"
             exit 1
           fi
-          gh api --method POST /repos/micronaut-projects/setup-pyronaut/dispatches \
-            -f event_type=pyronaut-release \
-            -f "client_payload[version]=${version}"
-          echo "Sent pyronaut-release ${version} to micronaut-projects/setup-pyronaut" >> "${GITHUB_STEP_SUMMARY}"
+          for repo in micronaut-projects/setup-pyronaut micronaut-projects/pyronaut-examples; do
+            gh api --method POST "/repos/${repo}/dispatches" \
+              -f event_type=pyronaut-release \
+              -f "client_payload[version]=${version}"
+            echo "Sent pyronaut-release ${version} to ${repo}" >> "${GITHUB_STEP_SUMMARY}"
+          done
