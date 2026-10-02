@@ -78,6 +78,10 @@ public final class PyronautTestReload extends MicronautDevMain {
      * Set by the CLI on the native image's test command to run it in test mode, in process.
      */
     static final String TEST_RELOAD_PROPERTY = "pyronaut.test.reload";
+    /**
+     * The application's Python source root, whose modules the test runner patches rather than imports again.
+     */
+    static final String PYTHON_SOURCES_PROPERTY = "pyronaut.dev.test.python-sources";
 
     private static final String TEST_DIR = "test";
     private static final String CLASSES_DIR = "classes";
@@ -129,6 +133,7 @@ public final class PyronautTestReload extends MicronautDevMain {
         Path manifest = prepare(layout, arguments.tests());
         System.setProperty(EVENTS_PROPERTY, layout.reports().resolve("events.ndjson").toString());
         System.setProperty(PROJECT_DIR_PROPERTY, root.toString());
+        System.setProperty(PYTHON_SOURCES_PROPERTY, layout.python().toString());
         System.setProperty(TESTS_ROOT_PROPERTY, relative(root, layout.pythonTests()));
         System.setProperty(APPLICATION_MAIN_PROPERTY, PyronautTestMain.applicationMain(layout.pythonTests()));
         System.setProperty(ENGINES_PROPERTY, String.join(",", engines(model.pyronaut().test().engine())));

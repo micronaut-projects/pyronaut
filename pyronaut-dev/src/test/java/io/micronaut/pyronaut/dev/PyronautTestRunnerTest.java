@@ -177,10 +177,12 @@ class PyronautTestRunnerTest {
 
     @Test
     void theTestModulesOfTheTestRootsAreRemovedFromSysModules(@org.junit.jupiter.api.io.TempDir Path project) throws Exception {
-        Path tests = java.nio.file.Files.createDirectories(project.resolve("tests"));
+        // a test root holding the application's sources, as python-test = "." does
+        Path tests = project;
         java.nio.file.Files.writeString(tests.resolve("test_purged.py"), "value = 1\n");
         Path app = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(app.resolve("kept_app.py"), "value = 1\n");
+        System.setProperty(PyronautTestReload.PYTHON_SOURCES_PROPERTY, app.toString());
         TestRunRequest request = new TestRunRequest("run-2", generation, List.of(), List.of(new SourceRoot(SourceKind.PYTHON, tests)), TestSelection.all(), Map.of());
         List<Context> contexts = new ArrayList<>();
         TestRunner platform = new TestRunner() {
@@ -205,8 +207,10 @@ class PyronautTestRunnerTest {
             runner.run(request, new TestEventListener() { }, new Cancellation());
             Context context = contexts.get(0);
             assertFalse(context.eval("python", "'test_purged' in sys.modules").asBoolean());
+            // the application's modules, patched in place, are never imported again
             assertTrue(context.eval("python", "'kept_app' in sys.modules").asBoolean());
         } finally {
+            System.clearProperty(PyronautTestReload.PYTHON_SOURCES_PROPERTY);
             runner.closeContext();
             for (Context context : contexts) {
                 context.close(true);
