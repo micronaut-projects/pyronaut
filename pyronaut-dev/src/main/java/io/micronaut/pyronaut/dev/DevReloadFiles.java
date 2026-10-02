@@ -22,8 +22,11 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * The files the launchers of the development runtime share: the project's paths, the classpath
@@ -37,6 +40,10 @@ final class DevReloadFiles {
     static final String DEV_DIR = "micronaut-dev";
     static final String BUILD_DEPENDENCIES_MANIFEST = "resolved-build-dependencies";
     static final String PROCESSOR_OPTIONS = "resolved-processor-options";
+    /**
+     * The coordinates of the artifacts a native image holds, which the CLI passes to a native launch.
+     */
+    static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
 
     private DevReloadFiles() {
     }
@@ -100,6 +107,50 @@ final class DevReloadFiles {
      */
     static void writeLines(Path file, List<String> lines) throws IOException {
         Files.write(file, lines, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * A path without the jars of the artifacts the native image holds, as {@code pyronaut process} runs in a native
+     * launch: a processor the image holds runs from the image, not from a jar loaded at runtime. Outside a native
+     * launch the CLI names none, and the path is kept as it is.
+     *
+     * @param paths The path
+     * @return The path without those jars
+     */
+    static List<Path> withoutNativeProvidedArtifacts(List<Path> paths) {
+        return withoutNativeProvidedArtifacts(System.getProperty(NATIVE_PROVIDED_ARTIFACTS, ""), paths);
+    }
+
+    /**
+     * Whether a jar is the one of an artifact: its name, a dash and its version, so that {@code micronaut-inject}
+     * does not match {@code micronaut-inject-java}.
+     */
+    private static boolean isJarOf(String jarName, String artifactId) {
+        int length = artifactId.length();
+        return jarName.length() > length + 1 && jarName.startsWith(artifactId) && jarName.charAt(length) == '-'
+            && Character.isDigit(jarName.charAt(length + 1));
+    }
+
+    static List<Path> withoutNativeProvidedArtifacts(String providedArtifacts, List<Path> paths) {
+        Set<String> artifactIds = new TreeSet<>();
+        for (String coordinate : providedArtifacts.split(",")) {
+            String trimmed = coordinate.strip();
+            if (!trimmed.isEmpty()) {
+                artifactIds.add(trimmed.substring(trimmed.lastIndexOf(':') + 1));
+            }
+        }
+        if (artifactIds.isEmpty()) {
+            return paths;
+        }
+        List<Path> kept = new ArrayList<>(paths.size());
+        for (Path path : paths) {
+            Path fileName = path.getFileName();
+            String name = fileName == null ? "" : fileName.toString();
+            if (!name.endsWith(".jar") || artifactIds.stream().noneMatch(artifactId -> isJarOf(name, artifactId))) {
+                kept.add(path);
+            }
+        }
+        return kept;
     }
 
     /**

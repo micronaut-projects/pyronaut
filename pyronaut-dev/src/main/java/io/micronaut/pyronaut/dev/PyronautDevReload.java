@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -38,7 +39,7 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 
 /**
- * Development mode on the JVM toolchain: the application runs in the reloading development runtime
+ * Development mode: the application runs in the reloading development runtime
  * of {@code micronaut-dev}, which watches the Python and Java sources and the configuration,
  * compiles what changed in process with the Pyronaut compiler, and starts the application again in a
  * new class loader generation, without a new JVM. The runtime jars, the GraalPy engine and what the
@@ -48,13 +49,23 @@ import java.util.concurrent.Callable;
  * and the configuration directories are read live. A change to the dependencies needs a new process,
  * which the CLI starts when {@code pyproject.toml} changes.</p>
  *
- * <p>The native toolchain cannot do this: a native image has no instrumentation API and defines no
- * class at runtime, so there the CLI keeps restarting the process. {@code micronaut-dev} is on the
- * classpath only when the CLI runs this mode, which puts this module's jar beside the run command's
- * classpath; the run command loads this class by name, so that neither launcher nor native image
- * depends on {@code micronaut-dev}.</p>
+ * <p>On the JVM toolchain {@code micronaut-dev} is on the classpath only when the CLI runs this mode,
+ * which puts this module's jar beside the run command's classpath, and the run command loads this class
+ * by name, so that the production launcher does not depend on {@code micronaut-dev}. The native
+ * {@code pyronaut-dev} image holds {@code micronaut-dev} and creates this class directly
+ * ({@link PyronautDevRun}): the image is the parent tier, and each generation's classes are defined at
+ * runtime by GraalVM's runtime class loading. A native image never unloads them, so there the runtime
+ * keeps a generation budget ({@code micronaut.dev.max-generations}) and exits with
+ * {@link MicronautDevMain#RELAUNCH} when it is spent, for the CLI to start the process again.</p>
  */
 public final class PyronautDevReload extends MicronautDevMain implements PyronautRunMain.DevelopmentRuntime {
+
+    /**
+     * The file written before the process exits with {@link MicronautDevMain#RELAUNCH}, under
+     * {@code __pyronaut__/micronaut-dev}: the CLI relaunches a process that exited with that status only when it
+     * finds the file, so that an application that exits with the same status itself is not started again.
+     */
+    static final String RELAUNCH_MARKER = "relaunch";
 
     private static final String MAIN_CLASS = "pyronaut_application.PyronautMain";
     private static final String PROCESSOR_MAIN_HASH = "processor-main.sha256";
@@ -62,6 +73,7 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
 
     private ClassLoader parent;
     private Path generations;
+    private Path relaunchMarker;
     private Callable<Boolean> launcher;
 
     /**
@@ -118,9 +130,13 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         DevReloadFiles.deleteRecursively(pyronautDir.resolve(PROCESSOR_MAIN_INCREMENTAL));
         Path devDir = Files.createDirectories(pyronautDir.resolve(DevReloadFiles.DEV_DIR));
         this.generations = devDir.resolve("generations");
+        this.relaunchMarker = devDir.resolve(RELAUNCH_MARKER);
+        Files.deleteIfExists(relaunchMarker);
         List<String> options = DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS));
-        Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, runtime,
-            DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST)), options);
+        // in a native image the processors the image holds run from it, as pyronaut process runs them there
+        List<Path> processorPath = DevReloadFiles.withoutNativeProvidedArtifacts(
+            DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST)));
+        Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, runtime, processorPath, options);
 
         DevRuntime devRuntime = launch(DevManifest.load(manifestFile), appArgs.toArray(String[]::new));
         Runtime.getRuntime().addShutdownHook(new Thread(devRuntime::close, "pyronaut-dev-shutdown"));
@@ -203,6 +219,21 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
     @Override
     protected ClassLoader parentClassLoader() {
         return parent;
+    }
+
+    /**
+     * Marks the exit as the runtime's, then exits with {@link MicronautDevMain#RELAUNCH}.
+     *
+     * @param runtime The closed runtime
+     */
+    @Override
+    protected void relaunch(DevRuntime runtime) {
+        try {
+            Files.writeString(relaunchMarker, "generation budget of " + runtime.manifest().maxGenerations() + " spent\n", StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            System.err.println("Cannot mark the relaunch in " + relaunchMarker + ": " + e.getMessage());
+        }
+        super.relaunch(runtime);
     }
 
     @Override

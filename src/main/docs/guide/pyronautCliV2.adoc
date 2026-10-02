@@ -444,6 +444,20 @@ Behavior:
 - Uses the development runtime classpath manifest plus processed classes.
 - Includes the configured resources directory, any `additional-resources` directories, the configured test resources directory, and any `additional-test-resources` directories on the classpath when present.
 
+Reloading:
+
+- In project mode the application runs in Micronaut's development runtime, `micronaut-dev`, which watches the Python and Java sources and the configuration, compiles a change in process with the Pyronaut compiler, and starts the application again on a new class loader generation in the same process. The dependencies and the GraalPy engine stay loaded. Only a change to `pyproject.toml`, to the dependencies, to an annotation processor option, or a source directory created after the start makes the CLI start a new process.
+- On the JVM toolchain, `pyronaut install` adds `micronaut-dev` to the development runtime, which needs Micronaut 5.3 or later.
+- On the native toolchain, the `pyronaut-dev` image holds the development runtime: the image is the parent tier, and each generation's classes are defined at runtime by GraalVM's runtime class loading and run in its interpreter. A native image never unloads those classes, so the runtime keeps a budget of 10 generations per process, each of which costs about 110 MB of resident memory in a GraalPy application (`micronaut.dev.max-generations`, for example `pyronaut dev -Dmicronaut.dev.max-generations=20`). When a change would exceed it, the process exits with status 3 and the CLI processes the project and starts it again, which is transparent apart from the time a start takes. An image built without `micronaut-dev` restarts the process for every change. The JVM toolchain remains the faster one for development: it compiles the application's code with the JIT and unloads retired generations.
+- Set `reload = "process"` under `[tool.pyronaut.dev]` to restart the process for every change instead, on either toolchain:
++
+[source,toml]
+----
+[tool.pyronaut.dev]
+reload = "process" # restart (default) | process
+----
+- Direct-source mode (`pyronaut dev main.py`) and external Maven and Gradle builds restart the process for every change.
+
 === `pyronaut run`
 
 Runs the processed application via the production runtime image in runtime-only

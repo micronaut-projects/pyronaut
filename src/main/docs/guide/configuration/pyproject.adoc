@@ -182,6 +182,7 @@ version = "25i4"
 
 Development builds can use `distribution = "dev"` with a `release-tag` or explicit `download-url`.
 Use `type = "native"` to route supported CLI lifecycle commands through the native `pyronaut-dev` uber CLI.
+On the native toolchain `pyronaut dev` reloads the application in process, as on the JVM, under a budget of generations per process; see the `pyronaut dev` command.
 It selects how CLI tooling executes; it does not select the output of
 `pyronaut build`. Use `[tool.pyronaut.packaging]` for the build default.
 
