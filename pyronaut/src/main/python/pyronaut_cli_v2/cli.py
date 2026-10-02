@@ -6269,6 +6269,25 @@ def _is_system_property_arg(value: str) -> bool:
     return value.startswith("-D") and len(value) > 2
 
 
+def _native_parent_tier_class_path(command_line: Sequence[str]) -> list[str]:
+    """
+    The command line of a native pyronaut-dev process that reloads in process,
+    with only the jars on its java.class.path. The image's application class
+    loader reads that property at run time and is the parent of every
+    generation, so a processed classes or resource directory on it would be
+    found there first, parent first: every generation would get the classes
+    the first one loaded, and a route added by an edit would not be served.
+    """
+    command_line = list(command_line)
+    for index, value in enumerate(command_line):
+        if value.startswith("-Djava.class.path="):
+            entries = value.split("=", 1)[1].split(os.pathsep)
+            command_line[index] = "-Djava.class.path=" + os.pathsep.join(
+                entry for entry in entries if entry and Path(entry).suffix == ".jar"
+            )
+    return command_line
+
+
 def _native_test_reload_invocation(
     command_line: list[str],
     project_dir: Path,
@@ -6282,13 +6301,7 @@ def _native_test_reload_invocation(
     directories are the reloadable tier, read through each generation, which
     a parent-first class path would hide.
     """
-    command_line = list(command_line)
-    for index, value in enumerate(command_line):
-        if value.startswith("-Djava.class.path="):
-            entries = value.split("=", 1)[1].split(os.pathsep)
-            command_line[index] = "-Djava.class.path=" + os.pathsep.join(
-                entry for entry in entries if entry and Path(entry).suffix == ".jar"
-            )
+    command_line = _native_parent_tier_class_path(command_line)
     # The image holds the development runtime: the tests run in this process,
     # each generation's classes defined at runtime, until the generation
     # budget is spent.
@@ -6447,6 +6460,9 @@ def _build_dev_delegate_invocation(
             # application reloads in this process, each generation's classes
             # defined at runtime, until the generation budget is spent.
             native_properties.append(f"-D{DEV_RELOAD_PROPERTY}=true")
+            # The processed classes and the resource directories are the
+            # reloadable tier, read through each generation's loader.
+            dev_command_line = _native_parent_tier_class_path(dev_command_line)
         dev_command_line[command_index:command_index] = native_properties
         env = _build_non_test_resources_env("dev", java_home_provider)
         if dev_jvm_args:
