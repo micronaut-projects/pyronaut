@@ -97,12 +97,12 @@ The test engine defaults to `both`. Use `junit` for JUnit Jupiter tests, `pytest
 captured into the test reports rather than shown. Set it to `true`, or pass
 `--verbose` to `pyronaut test`, to stream it to the terminal instead.
 
-`continuous` defaults to `restart`: on the JVM toolchain, `pyronaut test -t`
-runs the tests in one JVM, in the test mode of the Micronaut development
-runtime, which compiles each change in process and runs the tests it affects on
-a new class loader generation. `process` processes the project and starts a new
-test process for every run instead, as the native toolchain and external
-Maven or Gradle builds always do. `report-path` is the path, `/tests/` by
+`continuous` defaults to `restart`: `pyronaut test -t` runs the tests in one
+process, in the test mode of the Micronaut development runtime, which compiles
+each change in process, patches an edit of Python bodies into the live GraalPy
+context and runs the tests it affects, on a new class loader generation for any
+other change. `process` processes the project and starts a new test process for
+every run instead, as external Maven or Gradle builds always do. `report-path` is the path, `/tests/` by
 default, at which the LiveReload server serves the live HTML report of those
 runs, `http://localhost:35729/tests/`.
 
