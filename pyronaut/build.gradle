@@ -13,6 +13,7 @@ def wheelDistDir = layout.buildDirectory.dir("wheel/dist")
 def e2eFixtureSourceDir = layout.projectDirectory.dir("src/test/resources/e2e-app")
 def e2eFixtureDir = layout.buildDirectory.dir("e2e-fixture/app")
 def e2eFixtureRepositoryDir = project(":micronaut-functional-test").layout.buildDirectory.dir("fixture-repo")
+def e2eLocalRepositoryDir = layout.buildDirectory.dir("e2e-m2")
 def wheelVersion = providers.provider {
     def configuredVersion = project.findProperty("projectVersion")?.toString() ?: project.version.toString()
     configuredVersion.replace("-SNAPSHOT", ".dev0")
@@ -522,6 +523,9 @@ tasks.register("buildSdkWheel", Exec) {
     inputs.dir(wheelStagingDir)
     outputs.dir(wheelDistDir)
     doFirst {
+        // GraalPy's pip appends an unrecorded GRAALPY_MARKER after building.
+        // This platform-independent SDK wheel needs no GraalPy package patches.
+        environment("PIP_GRAALPY_DISABLE_PATCHING", "true")
         // Prefer the configured pyenv interpreter, but allow environments
         // without pyenv to build with the system Python.
         if (usesPyenv.get()) {
@@ -662,12 +666,6 @@ tasks.register("installSdkWheel", Exec) {
 tasks.register("testPythonOrchestrator", Exec) {
     group = "verification"
     description = "Runs Python tests for pyronaut orchestrator"
-    onlyIf {
-        if (!dockerEnabled.get()) {
-            logger.lifecycle("Skipping Python orchestrator tests: Docker/Test Resources require -Pdocker=true.")
-        }
-        dockerEnabled.get()
-    }
     commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "*_test.py")
     environment("PYTHONPATH", file("src/main/python").absolutePath)
     // Unit tests must not inherit a developer's active virtual environment or
@@ -683,6 +681,15 @@ tasks.register("testPythonOrchestrator", Exec) {
             environment.remove(it)
         }
     }
+}
+
+// The e2e fixtures resolve through ~/.m2. Publishing into it while they resolve
+// leaves half-written SNAPSHOT entries (jar without pom) that Maven Resolver
+// rejects, so run the e2e tasks only after any publishToMavenLocal in the build.
+def mavenLocalPublishingTasks = {
+    rootProject.subprojects
+        .collect { it.tasks.findByName("publishToMavenLocal") }
+        .findAll { it != null }
 }
 
 tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
@@ -715,21 +722,17 @@ tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
 tasks.register("testPythonOrchestratorE2E", Exec) {
     group = "verification"
     description = "Runs fast smoke orchestrator e2e checks"
-    onlyIf {
-        if (!dockerEnabled.get()) {
-            logger.lifecycle("Skipping orchestrator E2E: Docker/Test Resources require -Pdocker=true.")
-        }
-        dockerEnabled.get()
-    }
 
     if (graalVmProvisionTask != null) {
         dependsOn(graalVmProvisionTask)
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
+    mustRunAfter(mavenLocalPublishingTasks)
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-run-python").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-validate-config").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"))
@@ -740,6 +743,10 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     environment("PYRONAUT_E2E_FULL", "false")
     environment("PYRONAUT_E2E_MYSQL", "false")
     environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment(
+        "PYRONAUT_DEV_EXECUTABLE",
+        project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
+    )
     environment(
         "PYRONAUT_DEV_NATIVE_EXECUTABLE",
         project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
@@ -757,6 +764,10 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
         project(":micronaut-pyronaut-run").layout.buildDirectory.file("install/micronaut-pyronaut-run/bin/pyronaut-run").get().asFile.absolutePath
     )
     environment(
+        "PYRONAUT_RUN_PYTHON_EXECUTABLE",
+        project(":micronaut-pyronaut-run-python").layout.buildDirectory.file("install/micronaut-pyronaut-run-python/bin/pyronaut-run-python").get().asFile.absolutePath
+    )
+    environment(
         "PYRONAUT_TEST_EXECUTABLE",
         project(":micronaut-pyronaut-test").layout.buildDirectory.file("install/micronaut-pyronaut-test/bin/pyronaut-test").get().asFile.absolutePath
     )
@@ -770,6 +781,10 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     )
     doFirst {
         environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
+        // Other fixture builds in the same Gradle run cache the same SNAPSHOTs in
+        // ~/.m2 under different repository ids, which Maven Resolver then refuses
+        // to serve ("present, but unavailable"). Give the e2e fixture its own.
+        environment("PYRONAUT_LOCAL_REPOSITORY", e2eLocalRepositoryDir.get().asFile.absolutePath)
         if (graalVmHomeProvider.present) {
             def graalVmHome = graalVmHomeProvider.get()
             PyronautGraalVmDevBuilds.ensureNativeImageLauncherIsUsable(file(graalVmHome))
@@ -783,6 +798,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
 tasks.register("testPythonOrchestratorExternalE2E", Exec) {
     group = "verification"
     description = "Runs opt-in Maven and Gradle external-build orchestrator e2e checks"
+    mustRunAfter(mavenLocalPublishingTasks)
 
     if (graalVmProvisionTask != null) {
         dependsOn(graalVmProvisionTask)
@@ -838,10 +854,12 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
         dependsOn(graalVmProvisionTask)
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
+    mustRunAfter(mavenLocalPublishingTasks)
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-run-python").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-validate-config").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"))
@@ -852,6 +870,10 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     environment("PYRONAUT_E2E_FULL", "true")
     environment("PYRONAUT_E2E_MYSQL", "true")
     environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment(
+        "PYRONAUT_DEV_EXECUTABLE",
+        project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
+    )
     environment(
         "PYRONAUT_DEV_NATIVE_EXECUTABLE",
         project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
@@ -869,6 +891,10 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
         project(":micronaut-pyronaut-run").layout.buildDirectory.file("install/micronaut-pyronaut-run/bin/pyronaut-run").get().asFile.absolutePath
     )
     environment(
+        "PYRONAUT_RUN_PYTHON_EXECUTABLE",
+        project(":micronaut-pyronaut-run-python").layout.buildDirectory.file("install/micronaut-pyronaut-run-python/bin/pyronaut-run-python").get().asFile.absolutePath
+    )
+    environment(
         "PYRONAUT_TEST_EXECUTABLE",
         project(":micronaut-pyronaut-test").layout.buildDirectory.file("install/micronaut-pyronaut-test/bin/pyronaut-test").get().asFile.absolutePath
     )
@@ -882,6 +908,10 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     )
     doFirst {
         environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
+        // Other fixture builds in the same Gradle run cache the same SNAPSHOTs in
+        // ~/.m2 under different repository ids, which Maven Resolver then refuses
+        // to serve ("present, but unavailable"). Give the e2e fixture its own.
+        environment("PYRONAUT_LOCAL_REPOSITORY", e2eLocalRepositoryDir.get().asFile.absolutePath)
         Process dockerProcess
         try {
             dockerProcess = new ProcessBuilder("docker", "info")
@@ -923,6 +953,9 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
 tasks.named("check") {
     dependsOn(tasks.named("testPythonOrchestrator"))
     dependsOn(tasks.named("testPythonOrchestratorE2E"))
+    if (dockerEnabled.get()) {
+        dependsOn(tasks.named("testPythonOrchestratorE2EFull"))
+    }
 }
 
 tasks.named("checkstyleMain") {

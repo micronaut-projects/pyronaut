@@ -100,6 +100,12 @@ final class DirectSourceTestResourcesSessionTest {
             session.close();
             assertEquals(0, manager.stopCalls);
             assertTrue(Files.exists(projectRoot.resolve(".micronaut/test-resources/test-resources.properties")));
+            // The parent CLI stops the retained server with this owner token.
+            String token = ServerUtils.readServerSettings(projectRoot.resolve(".micronaut/test-resources"))
+                .flatMap(ServerSettings::getAccessToken)
+                .orElseThrow();
+            String sessionJson = Files.readString(projectRoot.resolve("__pyronaut__/test-resources-session.json"));
+            assertTrue(sessionJson.contains("\"ownerToken\": \"" + token + "\""), sessionJson);
         } finally {
             if (previous == null) {
                 System.clearProperty("pyronaut.dev.direct.restartable");

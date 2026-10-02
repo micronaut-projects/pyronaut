@@ -20,6 +20,26 @@ configurations.configureEach {
     exclude(group: "org.graalvm.python", module: "python-bouncycastle-support")
 }
 
+// micronaut-logging 2.1.0 manages logback 1.5.37, which is affected by
+// CVE-2026-19880. The fix only exists in the 1.6.x line, so align every
+// module's logback-classic/logback-core with the catalog version (the
+// pyronaut-logback API constraint carries this to consumers).
+def logbackVersion = versionCatalogs.named("libs").findVersion("logback").get().requiredVersion
+configurations.configureEach {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == "ch.qos.logback" && details.requested.name in ["logback-classic", "logback-core"]) {
+            details.useVersion(logbackVersion)
+            details.because("CVE-2026-19880")
+        }
+    }
+}
+
+ossIndexAudit {
+    // HdrHistogram (pulled in by micrometer-core) has no release fixing these
+    // low-severity CVEs yet; 2.2.2 is the latest version.
+    excludeVulnerabilityIds = ["CVE-2026-14683", "CVE-2026-14686"]
+}
+
 micronautBuild {
     descriptor {
         parentModuleId = "io.micronaut.pyronaut:micronaut-pyronaut"

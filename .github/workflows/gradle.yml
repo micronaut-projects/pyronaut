@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 0
 
       - name: "🔧 Setup GraalVM CE"
-        uses: graalvm/setup-graalvm@v1.6.6
+        uses: graalvm/setup-graalvm@v1.6.7
         with:
           distribution: 'graalvm'
           java-version: ${{ matrix.java }}
@@ -65,7 +65,8 @@ jobs:
       - name: "🔧 Setup Gradle"
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: false
+          # Saving the Gradle home takes up to a minute; pull requests reuse the branch caches
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
           gradle-home-cache-includes: |
             caches
             notifications
@@ -135,12 +136,11 @@ jobs:
         run: |
           [ -f ./cleanup.sh ] && ./cleanup.sh || [ ! -f ./cleanup.sh ]
 
-  e2e-parity:
+  e2e-docker:
     if: github.repository != 'micronaut-projects/micronaut-project-template'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    # Docker-backed suites (Test Resources/MySQL); GitHub's Linux runners
+    # provide a Docker engine, macOS runners do not.
+    runs-on: ubuntu-latest
     env:
       DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
       DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
@@ -150,13 +150,20 @@ jobs:
       TESTCONTAINERS_RYUK_DISABLED: true
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: "🗑 Free disk space"
+        run: |
+         sudo rm -rf "/usr/local/share/boost"
+         sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+         sudo apt-get clean
+         df -h
+
       - name: "📥 Checkout repository"
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: "🔧 Setup GraalVM CE"
-        uses: graalvm/setup-graalvm@v1.6.6
+        uses: graalvm/setup-graalvm@v1.6.7
         with:
           distribution: 'graalvm'
           java-version: '25'
@@ -169,13 +176,13 @@ jobs:
       - name: "🔧 Setup Gradle"
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: false
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
           gradle-home-cache-includes: |
             caches
             notifications
             wrapper/dists
             jdks
 
-      - name: "🧪 Run CLI v2 E2E parity checks"
+      - name: "🧪 Run Docker-backed E2E and functional tests"
         run: |
-          ./gradlew :micronaut-pyronaut:check -PpyronautE2E=true --no-daemon
+          ./gradlew :micronaut-pyronaut:testPythonOrchestratorE2EFull :micronaut-functional-test-docker:test -Pdocker=true --no-daemon --continue

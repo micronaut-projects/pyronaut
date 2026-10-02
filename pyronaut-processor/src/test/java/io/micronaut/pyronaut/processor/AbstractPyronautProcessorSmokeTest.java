@@ -45,6 +45,7 @@ abstract class AbstractPyronautProcessorSmokeTest {
         prepareProject(project, projectFiles, pyproject);
         List<String> command = new java.util.ArrayList<>();
         command.add(javaExecutable().toString());
+        command.addAll(inheritedJitOptions());
         command.addAll(jvmOptions);
         command.add("-cp");
         command.add(System.getProperty("java.class.path", ""));
@@ -59,6 +60,19 @@ abstract class AbstractPyronautProcessorSmokeTest {
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int exitCode = process.waitFor();
         return new ProcessResult(project, output, exitCode);
+    }
+
+
+    // Forwards the JIT and Truffle settings the build gives the test JVM, so the child JVM
+    // spends as little CPU on compilation as the test JVM does
+    private static List<String> inheritedJitOptions() {
+        return java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments().stream()
+            .filter(arg -> arg.equals("-XX:+UnlockExperimentalVMOptions")
+                || arg.equals("-XX:-UseJVMCICompiler")
+                || arg.equals("-XX:+UseParallelGC")
+                || arg.startsWith("-Dtruffle.TruffleRuntime=")
+                || arg.startsWith("-Dpolyglot.engine.WarnInterpreterOnly="))
+            .toList();
     }
 
     protected ProcessResult runNativeProcessor(String binaryPath, Path project, Map<String, String> projectFiles) throws Exception {

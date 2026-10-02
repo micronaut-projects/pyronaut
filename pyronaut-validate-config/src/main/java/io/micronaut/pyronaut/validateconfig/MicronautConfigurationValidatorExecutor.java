@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.validateconfig;
 
+import io.micronaut.context.env.EnvironmentPropertySource;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.json.JsonMapper;
@@ -46,6 +47,7 @@ import java.util.Set;
 final class MicronautConfigurationValidatorExecutor implements PyronautValidateConfigMain.ConfigurationValidatorExecutor {
     private static final String DEFAULT_ENVIRONMENT_LOGGER = "org.slf4j.simpleLogger.log.io.micronaut.context.env.DefaultEnvironment";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
+    private static final String PROPERTY_NOT_PRESENT = "Property not present in schema";
 
     @Override
     public PyronautValidateConfigMain.ValidationExecutionResult validate(PyronautValidateConfigMain.ValidationSettings settings) throws Exception {
@@ -89,7 +91,7 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
             validator
         );
 
-        Set<ConfigurationError> errors = facade.validate();
+        Set<ConfigurationError> errors = withoutAmbiguousEnvironmentKeys(facade.validate());
         Set<DependencyInjectionError> dependencyInjectionErrors = Set.of();
 
         if (settings.validateDependencyInjection()) {
@@ -127,6 +129,26 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
             printSuppressionSnippet(System.err, suppressionPatterns(errors));
         }
         return new PyronautValidateConfigMain.ValidationExecutionResult(hasErrors);
+    }
+
+    /**
+     * Drops "not present in schema" errors for keys derived from environment variables.
+     * Micronaut maps a variable such as {@code MICRONAUT_SERVER_PORT} to every candidate
+     * name ({@code micronaut.server.port}, {@code micronaut.server-port}, ...), so all
+     * but the one the application binds are reported as unknown. Value errors from
+     * environment variables are kept. Remove once
+     * https://github.com/micronaut-projects/micronaut-json-schema/issues/419 is fixed.
+     */
+    static Set<ConfigurationError> withoutAmbiguousEnvironmentKeys(Set<ConfigurationError> errors) {
+        Set<ConfigurationError> retained = new LinkedHashSet<>(errors.size());
+        for (ConfigurationError error : errors) {
+            boolean fromEnvironment = EnvironmentPropertySource.ORIGIN.location().equals(error.originLocation());
+            boolean unknownKey = error.message() != null && error.message().startsWith(PROPERTY_NOT_PRESENT);
+            if (!(fromEnvironment && unknownKey)) {
+                retained.add(error);
+            }
+        }
+        return retained;
     }
 
     static List<URL> validationClasspath(String classpath, List<Path> resourcesDirs) throws java.net.MalformedURLException {

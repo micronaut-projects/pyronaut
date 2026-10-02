@@ -144,14 +144,19 @@ class PackagingMatrixRunner:
         image = f"pyronaut-e2e-{_slug(fixture)}-{_slug(scenario)}"
         self._configure_docker(project, image, language)
         if scenario in {"custom-base-wheel", "custom-base-docker"}:
+            # --native-base=<path|image> builds the custom base and records it
+            # in pyproject.toml; direct-source builds have no persistent
+            # pyproject.toml, so the base is configured explicitly below.
+            docker = scenario.endswith("docker")
             base = project / "__pyronaut__" / "e2e-base" / language
-            base_args = self._build_args(project, direct, language, "native", docker=scenario.endswith("docker"), base=True, output=base)
+            base_image = f"{image}-base:0.1.0"
+            base_args = self._build_args(project, direct, language, None, docker=docker, base=base_image if docker else str(base))
             self._build(base_args, project, log, 3600)
-            if scenario.endswith("wheel"):
+            if not docker:
                 self._configure_base(project, base)
                 self._build(self._build_args(project, direct, language, None), project, log, 3600)
                 return self._wheel(project, fixture, language, log, setup=direct)
-            self._configure_docker_base(project, f"{image}:0.1.0-native-base")
+            self._configure_docker_base(project, base_image)
             self._build(self._build_args(project, direct, language, None), project, log, 3600)
             return f"{image}:0.1.0-native", self._docker(f"{image}:0.1.0-native", project, log)
         if scenario == "default-base-wheel":
@@ -177,7 +182,7 @@ class PackagingMatrixRunner:
         self._build(self._build_args(project, direct, language, mode), project, log, 3600)
         return self._wheel(project, fixture, language, log, setup=False)
 
-    def _build_args(self, project: Path, direct: bool, language: str, mode: str | None, *, docker: bool = False, base: bool = False, default_base: bool = False, output: Path | None = None) -> list[str]:
+    def _build_args(self, project: Path, direct: bool, language: str, mode: str | None, *, docker: bool = False, base: str | None = None, default_base: bool = False) -> list[str]:
         args = ["build"]
         if direct:
             args += ["App.py" if language == "python" else "App.java", "--name", _project_name(project), "--version", "0.1.0"]
@@ -185,12 +190,10 @@ class PackagingMatrixRunner:
             args.append(f"--{mode}")
         if docker:
             args.append("--docker")
-        if base:
-            args.append("--native-base")
+        if base is not None:
+            args.append(f"--native-base={base}")
         if default_base:
-            args.append("--native-base=default")
-        if output is not None:
-            args += ["--native-base-output", str(output)]
+            args.append("--native-base")
         args += ["--project-dir", str(project), "--local-repository", str(project / "__pyronaut__" / "m2-repository"), "--no-validate"]
         setup = project / "pyproject.toml"
         if direct and setup.exists():
@@ -203,7 +206,7 @@ class PackagingMatrixRunner:
         with log.open("a", encoding="utf-8") as stream:
             stream.write(f"$ {self.cli} {' '.join(args)}\n{completed.stdout}\n{completed.stderr}\n")
         if completed.returncode != 0:
-            if "--native-base" in args and "--native-base=default" not in args:
+            if any(arg.startswith("--native-base=") for arg in args):
                 raise BlockedScenario(f"base prerequisite failed with exit code {completed.returncode}")
             raise RuntimeError(f"build failed with exit code {completed.returncode}")
 

@@ -10,6 +10,7 @@ import importlib.metadata
 import json
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import sysconfig
@@ -42,7 +43,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"setup", "update", "doctor", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "update", "doctor", "clean", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -359,6 +360,13 @@ def run(
             _print_doctor_usage()
             return SUCCESS
         return _run_doctor(doctor_args)
+
+    if command == "clean":
+        clean_args = list(argv[1:])
+        if _extract_flag(clean_args, "--help") or _extract_flag(clean_args, "-h"):
+            _print_clean_usage()
+            return SUCCESS
+        return _run_clean(clean_args)
 
     option_args = argv[: argv.index("--")] if "--" in argv else argv
     if "-V" in option_args[1:] or (
@@ -1110,25 +1118,26 @@ def _run_direct_source(
     if command == "dev":
         env = _apply_project_virtualenv(env, Path.cwd())
     snapshot = _snapshot_direct_source_inputs(args)
-    return _run_direct_source_with_auto_restart(
-        executable_path,
-        command,
-        args,
-        env,
-        runner,
-        resolver,
-        process_runner,
-        snapshot,
-        monotonic=monotonic,
-        sleep=sleep,
-        watch_poll_interval=watch_poll_interval,
-        watch_debounce_seconds=watch_debounce_seconds,
-        # Direct development must also keep the watcher alive when the
-        # compiler exits with an error. This allows a subsequent source
-        # change to start a fresh compilation and resume the application.
-        keep_watching_after_exit=command == "test",
-        keep_watching_after_failure=command == "dev",
-    )
+    with _sigterm_as_keyboard_interrupt():
+        return _run_direct_source_with_auto_restart(
+            executable_path,
+            command,
+            args,
+            env,
+            runner,
+            resolver,
+            process_runner,
+            snapshot,
+            monotonic=monotonic,
+            sleep=sleep,
+            watch_poll_interval=watch_poll_interval,
+            watch_debounce_seconds=watch_debounce_seconds,
+            # Direct development must also keep the watcher alive when the
+            # compiler exits with an error. This allows a subsequent source
+            # change to start a fresh compilation and resume the application.
+            keep_watching_after_exit=command == "test",
+            keep_watching_after_failure=command == "dev",
+        )
 
 
 def _resolve_direct_source_dev_executable(
@@ -1172,6 +1181,28 @@ def _apply_debug_vm_env(env: dict[str, str] | None) -> dict[str, str]:
     existing = updated.get("JAVA_TOOL_OPTIONS", "").strip()
     updated["JAVA_TOOL_OPTIONS"] = f"{existing} {_JDWP_FLAGS}".strip()
     return updated
+
+
+@contextlib.contextmanager
+def _sigterm_as_keyboard_interrupt() -> Iterator[None]:
+    """Route SIGTERM through the Ctrl-C path so child processes and atexit cleanup run.
+
+    The default SIGTERM action terminates the interpreter without running atexit
+    handlers, which leaks the Test Resources server retained across direct-source
+    restarts when an IDE, process manager or ``kill`` stops ``pyronaut dev``.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _interrupt(signum, frame):  # noqa: ARG001
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def _stop_direct_source_test_resources_server(
@@ -1380,25 +1411,23 @@ def _build_direct_source_native_jvm_args(
                 jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
         if "--control-panel" in args or any(value == "-Dmicronaut.control-panel.enabled=true" for value in args):
             # Resolve Control Panel artifacts bundled with the launcher wheel;
-            # do not resolve them from project manifests or Maven local. The
-            # project's dependencies only select which optional panels apply.
+            # do not resolve them from project manifests or Maven local.
+            # pyronaut-dev adds them to the direct-source runtime classloader,
+            # selecting optional panels once declared dependencies resolve.
+            # Keep every panel module on that one loader: the core module
+            # reads each panel's default configuration through its own
+            # classloader, and optional panels must see the application's
+            # libraries (for example, Hikari for the datasource panel).
             bundled_control_panel = _direct_control_panel_classpath_entries(executable_path)
-            control_panel = _select_control_panel_entries(
-                bundled_control_panel,
-                _control_panel_application_entries(project_dir),
-            )
-            if control_panel:
-                existing = classpath.split(os.pathsep) if classpath else []
-                classpath = os.pathsep.join(dict.fromkeys([*existing, *control_panel]))
-                jvm_args.append(f"-Dpyronaut.dev.application.class.path={classpath}")
-                # Pass every bundled module: pyronaut-dev selects the optional
-                # panels again once direct-source dependencies are resolved.
+            if bundled_control_panel:
                 jvm_args.append(f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(bundled_control_panel)}")
+                classpath = os.pathsep.join(
+                    entry for entry in classpath.split(os.pathsep)
+                    if entry and not _is_control_panel_artifact(Path(entry).name)
+                )
         if classpath:
             # PyronautDevMain creates the runtime classloader from the
-            # java.class.path property in the native image. Control Panel is
-            # intentionally outside that image and must be added here at
-            # runtime when explicitly requested.
+            # java.class.path property in the native image.
             jvm_args.append(f"-Djava.class.path={classpath}")
     return jvm_args
 
@@ -2549,7 +2578,7 @@ def _looks_like_direct_build_invocation(args: Sequence[str]) -> bool:
 
 def _direct_build_source_selectors(args: Sequence[str]) -> list[str]:
     value_options = {
-        "--project-dir", "--project", "--mode", "--main-class", "--native-base-output",
+        "--project-dir", "--project", "--mode", "--main-class",
         "--name", "--version", "--setup", "--local-repository", "--local-repo",
         "--include-native-binary",
     }
@@ -2610,8 +2639,9 @@ def _direct_build_source_files(root: Path, selectors: Sequence[str]) -> tuple[st
     return languages.pop(), files
 
 
-def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Path, language: str) -> list[str]:
+def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Path) -> list[str]:
     selectors = set(_direct_build_source_selectors(args))
+    docker = _extract_build_docker(args)
     value_options = {"--project-dir", "--project", "--name", "--version", "--setup"}
     result: list[str] = []
     index = 0
@@ -2628,27 +2658,28 @@ def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Pa
             )
             index += 1
             continue
-        if token == "--native-base-output" and index + 1 < len(args):
-            output = Path(args[index + 1])
-            result.extend([token, str(output if output.is_absolute() else (root / output).resolve())])
-            index += 2
-            continue
-        if token.startswith("--native-base-output="):
-            output = Path(token.split("=", 1)[1])
-            result.append("--native-base-output=" + str(output if output.is_absolute() else (root / output).resolve()))
-            index += 1
-            continue
         if token.startswith("--native-base="):
             configured = token.split("=", 1)[1]
-            parsed = urllib.parse.urlparse(configured)
-            if configured.lower() == "default" or parsed.scheme in {"http", "https"}:
-                result.append(token)
-            else:
+            # A custom base is a launcher path for host builds; with --docker
+            # it names an image and is passed through unchanged.
+            if _is_custom_native_base_build(configured) and not docker:
                 native_base = Path(configured).expanduser()
                 result.append(
                     "--native-base="
                     + str(native_base if native_base.is_absolute() else (root / native_base).resolve())
                 )
+            else:
+                result.append(token)
+            index += 1
+            continue
+        if token.startswith("--pgo="):
+            profiles = []
+            for profile in token.split("=", 1)[1].split(","):
+                path = Path(profile.strip()).expanduser()
+                profiles.append(
+                    profile if _is_http_url(profile) or path.is_absolute() else str((root / path).resolve())
+                )
+            result.append("--pgo=" + ",".join(profiles))
             index += 1
             continue
         if token in value_options:
@@ -2663,9 +2694,6 @@ def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Pa
         result.append(token)
         index += 1
     result.extend(["--project-dir", str(staging_project)])
-    if _extract_build_native_base(args) and _extract_build_native_base_output(args) is None:
-        launcher = PYTHON_RUN_EXECUTABLE if language == "python" else COMMAND_TO_EXECUTABLE["run"]
-        result.extend(["--native-base-output", str(root / "__pyronaut__" / "native" / "base" / launcher)])
     return result
 
 
@@ -2842,7 +2870,7 @@ def _run_direct_source_build(
                 )
 
         return _run_build(
-            args=_direct_build_arguments(args, staging_project, root, language),
+            args=_direct_build_arguments(args, staging_project, root),
             runner=runner,
             resolver=resolver,
             no_cache=no_cache,
@@ -2852,6 +2880,8 @@ def _run_direct_source_build(
             preflight_install=False,
             platform_name=platform_name,
             dist_dir=root / "dist",
+            # The staged pyproject.toml is regenerated for every direct build.
+            record_native_base=False,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
@@ -2869,6 +2899,7 @@ def _run_build(
     preflight_install: bool = True,
     platform_name: str | None = None,
     dist_dir: Path | None = None,
+    record_native_base: bool = True,
 ) -> int:
     if _extract_flag(args, "--help") or _extract_flag(args, "-h"):
         _print_build_usage()
@@ -2888,42 +2919,43 @@ def _run_build(
     mode = "jvm" if packaging_format in {"fat-jar", "wheel-jvm", "docker-jvm"} else "native"
     docker_build = packaging_format.startswith("docker-")
     static_native = _extract_build_static(args)
-    native_base_build = _extract_build_native_base(args)
-    native_base_output = _extract_build_native_base_output(args)
-    cli_native_base = _extract_build_native_base_value(args)
+    # Bare --native-base selects the bundled default. A path (or, with
+    # --docker, an image name) builds that custom base and records it in
+    # pyproject.toml; an HTTP(S) URL packages against an existing launcher.
+    cli_native_base = _extract_build_native_base(args)
+    custom_native_base_build = _is_custom_native_base_build(cli_native_base)
     try:
         additional_native_binaries = _extract_build_native_binary_includes(args)
+        pgo_profile_values = _extract_build_pgo_profiles(args)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
+    if pgo_profile_values and not custom_native_base_build:
+        print(
+            "--pgo requires a custom native base build: --native-base=<path>, or --docker --native-base=<image>",
+            file=sys.stderr,
+        )
+        return USAGE_ERROR
     configured_native_base = _read_pyproject_build_native_base(project_dir)
     configured_docker_base_image = None
-    explicit_docker_base_image = None
     if docker_build:
-        docker_config = _read_pyproject_build_docker_config(project_dir)
-        explicit_docker_base_image = docker_config.get("base_image")
-        configured_docker_base_image = _configured_docker_base_image(project_dir, docker_config)
+        configured_docker_base_image = _read_pyproject_build_docker_config(project_dir).get("base_image")
     selected_native_base = cli_native_base if cli_native_base is not None else configured_native_base
     if packaging_format == "wheel-crema":
-        default_native_base = selected_native_base is None or selected_native_base.strip().lower() == "default"
+        default_native_base = selected_native_base is None or _is_default_native_base(selected_native_base)
     elif packaging_format == "docker-crema":
-        if cli_native_base is not None:
-            selected_native_base = cli_native_base
-        elif explicit_docker_base_image is not None:
+        if cli_native_base is None and configured_docker_base_image is not None:
             selected_native_base = None
-        elif configured_native_base is not None:
-            selected_native_base = configured_native_base
-        elif configured_docker_base_image is not None:
-            selected_native_base = None
-        default_native_base = selected_native_base is not None and selected_native_base.strip().lower() == "default"
-        if selected_native_base is None and configured_docker_base_image is None:
-            default_native_base = True
+        default_native_base = _is_default_native_base(selected_native_base) or (
+            selected_native_base is None and configured_docker_base_image is None
+        )
     else:
         default_native_base = False
         selected_native_base = None
     if additional_native_binaries and (
         not docker_build
         or mode != "native"
+        or custom_native_base_build
         or not (default_native_base or selected_native_base is not None)
     ):
         print(
@@ -2931,20 +2963,10 @@ def _run_build(
             file=sys.stderr,
         )
         return USAGE_ERROR
-    if (
-        native_base_build
-        and native_base_output is None
-        and configured_native_base is not None
-        and configured_native_base.strip().lower() == "default"
-    ):
-        print("Bare --native-base cannot use native-base = 'default' as its output", file=sys.stderr)
-        return USAGE_ERROR
-    if native_base_build:
-        mode = "native"
     reusable_base_configured = configured_native_base is not None or (
         packaging_format == "docker-native" and configured_docker_base_image is not None
     )
-    if packaging_format in {"wheel-native", "docker-native"} and reusable_base_configured and not native_base_build:
+    if packaging_format in {"wheel-native", "docker-native"} and reusable_base_configured:
         print(
             f"{packaging_format} cannot use a configured native base; select "
             f"{'docker-crema' if docker_build else 'wheel-crema'} instead",
@@ -2992,15 +3014,29 @@ def _run_build(
     if preflight != SUCCESS:
         return preflight
 
-    if native_base_build and not docker_build:
-        return _run_native_base_build(
+    try:
+        pgo_profiles = _resolve_pgo_profiles(
+            pgo_profile_values, project_dir=project_dir, offline=_extract_offline(args)
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+
+    if custom_native_base_build and not docker_build:
+        native_base_exit = _run_native_base_build(
             args=args,
             runner=runner,
             resolver=resolver,
             project_dir=project_dir,
+            output=_resolve_native_base_output(project_dir, cli_native_base),
+            pgo_profiles=pgo_profiles,
             verbose=verbose,
             java_home_provider=java_home_provider,
         )
+        if native_base_exit != SUCCESS:
+            return native_base_exit
+        if record_native_base:
+            _record_native_base_configuration(project_dir, "wheel-crema", ("build", "native-base"), cli_native_base)
 
     if fat_jar:
         return _run_fat_jar_build(
@@ -3025,7 +3061,9 @@ def _run_build(
             main_class=main_class,
             verbose=verbose,
             static_native=static_native,
-            native_base_build=native_base_build,
+            custom_base_image=cli_native_base if custom_native_base_build else None,
+            pgo_profiles=pgo_profiles,
+            record_native_base=record_native_base,
             default_native_base=default_native_base,
             selected_native_base=selected_native_base,
             additional_native_binaries=additional_native_binaries,
@@ -3587,8 +3625,82 @@ def _extract_build_static(args: Sequence[str]) -> bool:
     return any(token == "--static" for token in args)
 
 
-def _extract_build_native_base(args: Sequence[str]) -> bool:
-    return any(token == "--native-base" for token in args)
+def _extract_build_native_base(args: Sequence[str]) -> str | None:
+    """Return the selected native base; bare ``--native-base`` means ``default``."""
+    selected: str | None = None
+    for token in args:
+        if token == "--":
+            break
+        if token == "--native-base":
+            value = "default"
+        elif token.startswith("--native-base="):
+            value = token.split("=", 1)[1].strip()
+            if not value:
+                raise ValueError("Invalid empty value for --native-base")
+        else:
+            continue
+        if selected is not None and selected != value:
+            raise ValueError("Conflicting --native-base values; select only one native base")
+        selected = value
+    return selected
+
+
+def _is_default_native_base(value: str | None) -> bool:
+    return value is not None and value.strip().lower() == "default"
+
+
+def _is_http_url(value: str) -> bool:
+    return urllib.parse.urlparse(value).scheme in {"http", "https"}
+
+
+def _is_custom_native_base_build(value: str | None) -> bool:
+    """Whether ``--native-base=<value>`` names a custom base that the build must create."""
+    return value is not None and not _is_default_native_base(value) and not _is_http_url(value)
+
+
+def _extract_build_pgo_profiles(args: Sequence[str]) -> list[str]:
+    """Return the ``--pgo=<profile>[,<profile>...]`` values, which may be repeated."""
+    profiles: list[str] = []
+    for token in args:
+        if token == "--":
+            break
+        if token == "--pgo":
+            raise ValueError("--pgo requires a profile: --pgo=<profile.iprof>[,<profile.iprof>...]")
+        if token.startswith("--pgo="):
+            values = [value.strip() for value in token.split("=", 1)[1].split(",")]
+            if not all(values):
+                raise ValueError("Invalid empty value for --pgo")
+            profiles.extend(values)
+    return profiles
+
+
+def _resolve_pgo_profiles(profiles: Sequence[str], *, project_dir: Path, offline: bool) -> list[Path]:
+    """Resolve local PGO profiles and download HTTP(S) ones under ``__pyronaut__/pgo``."""
+    resolved: list[Path] = []
+    for index, profile in enumerate(profiles):
+        parsed = urllib.parse.urlparse(profile)
+        if _is_http_url(profile):
+            if not parsed.netloc:
+                raise RuntimeError(f"Invalid PGO profile URL: {profile}")
+            if offline:
+                raise RuntimeError(f"Cannot download PGO profile while offline: {profile}")
+            name = Path(parsed.path).name or "profile.iprof"
+            path = project_dir / "__pyronaut__" / "pgo" / f"{index}-{name}"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                _download_url_with_progress(profile, path, "Downloading PGO profile")
+            except Exception as exc:
+                path.unlink(missing_ok=True)
+                raise RuntimeError(f"Failed downloading PGO profile from {profile}: {exc}") from exc
+        elif parsed.scheme and len(parsed.scheme) > 1:
+            raise RuntimeError(f"PGO profile must be a local path or HTTP(S) URL: {profile}")
+        else:
+            path = Path(profile).expanduser()
+            path = path if path.is_absolute() else (project_dir / path).resolve()
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError(f"PGO profile does not exist or is empty: {path}")
+        resolved.append(path)
+    return resolved
 
 
 def _extract_build_native_binary_includes(args: Sequence[str]) -> list[str]:
@@ -3622,33 +3734,6 @@ def _resolve_native_binary_include(value: str, root: Path) -> str:
         return value
     path = Path(value).expanduser()
     return str(path if path.is_absolute() else (root / path).resolve())
-
-
-def _extract_build_native_base_value(args: Sequence[str]) -> str | None:
-    for token in args:
-        if token.startswith("--native-base="):
-            value = token.split("=", 1)[1].strip()
-            if not value:
-                raise ValueError("Invalid empty value for --native-base")
-            return value
-    return None
-
-
-def _extract_build_native_base_output(args: Sequence[str]) -> str | None:
-    for index, token in enumerate(args):
-        if token == "--native-base-output":
-            if index + 1 >= len(args):
-                raise ValueError("Missing value for --native-base-output")
-            value = args[index + 1].strip()
-            if not value:
-                raise ValueError("Invalid empty value for --native-base-output")
-            return value
-        if token.startswith("--native-base-output="):
-            value = token.split("=", 1)[1].strip()
-            if not value:
-                raise ValueError("Invalid empty value for --native-base-output")
-            return value
-    return None
 
 
 def _read_pyproject_build_native_base(project_dir: Path) -> str | None:
@@ -3736,7 +3821,7 @@ def _stage_native_base_executable_into(
         source = source if source.is_absolute() else (project_dir / source).resolve()
         if not source.is_file():
             raise RuntimeError(
-                f"Configured native base does not exist: {source}. Run pyronaut build --native-base first."
+                f"Configured native base does not exist: {source}. Build it with: pyronaut build --native-base={configured}"
             )
         if source.resolve() != target.resolve():
             if source.parent.resolve() != target.parent.resolve():
@@ -3761,34 +3846,80 @@ def _native_user_package_args(project_dir: Path) -> list[str]:
     return [argument for package in sorted(packages) if package for argument in ("--user-package", package)]
 
 
-def _docker_base_marker(project_dir: Path) -> Path:
-    return project_dir / "__pyronaut__" / "native" / "base" / "docker-image"
+_TOML_TABLE_HEADER = re.compile(r"^\s*\[\s*([A-Za-z0-9_.-]+)\s*\]\s*(?:#.*)?$")
 
 
-def _configured_docker_base_image(project_dir: Path, docker_config: dict[str, str]) -> str | None:
-    configured = docker_config.get("base_image")
-    if configured:
-        return configured
-    marker = _docker_base_marker(project_dir)
-    if marker.is_file():
-        value = marker.read_text(encoding="utf-8").strip()
-        return value or None
-    return None
+def _set_toml_string(text: str, table: str, key: str, value: str) -> str:
+    """Set ``key = "value"`` in ``[table]``, preserving the rest of the document."""
+    assignment = f"{key} = {json.dumps(value)}\n"
+    lines = text.splitlines(keepends=True)
+    header_index = next(
+        (index for index, line in enumerate(lines)
+         if (match := _TOML_TABLE_HEADER.match(line)) and match.group(1) == table),
+        None,
+    )
+    if header_index is None:
+        prefix = text if not text or text.endswith("\n") else text + "\n"
+        return prefix + ("\n" if prefix.strip() else "") + f"[{table}]\n" + assignment
+    end = next(
+        (index for index in range(header_index + 1, len(lines)) if lines[index].lstrip().startswith("[")),
+        len(lines),
+    )
+    key_pattern = re.compile(rf"^\s*(?:{re.escape(key)}|\"{re.escape(key)}\")\s*=")
+    for index in range(header_index + 1, end):
+        if key_pattern.match(lines[index]):
+            lines[index] = assignment
+            return "".join(lines)
+    insert_at = end
+    while insert_at > header_index + 1 and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    if insert_at > 0 and not lines[insert_at - 1].endswith("\n"):
+        lines[insert_at - 1] += "\n"
+    lines.insert(insert_at, assignment)
+    return "".join(lines)
 
 
-def _record_docker_base_image(project_dir: Path, image_name: str) -> None:
-    marker = _docker_base_marker(project_dir)
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(image_name + "\n", encoding="utf-8")
+def _record_native_base_configuration(
+    project_dir: Path, packaging_format: str, key_path: Sequence[str], value: str
+) -> None:
+    """Point ``pyproject.toml`` at a freshly built custom native base.
+
+    Later ``pyronaut build`` invocations then reuse the base without rebuilding
+    it. The edit is verified by re-parsing the document; if the existing layout
+    cannot be updated safely, the file is left untouched and the user is told
+    which settings to add.
+    """
+    import copy
+    import tomllib
+
+    pyproject = project_dir / "pyproject.toml"
+    updates = [
+        (("tool", "pyronaut", "packaging"), "format", packaging_format),
+        (("tool", "pyronaut", *key_path[:-1]), key_path[-1], value),
+    ]
+    settings = ", ".join(f"{'.'.join((*table, key))} = {json.dumps(item)}" for table, key, item in updates)
+    console = _progress_console()
+    try:
+        original = pyproject.read_text(encoding="utf-8") if pyproject.is_file() else ""
+        expected = copy.deepcopy(tomllib.loads(original))
+        updated = original
+        for table, key, item in updates:
+            updated = _set_toml_string(updated, ".".join(table), key, item)
+            target = expected
+            for part in table:
+                target = target.setdefault(part, {})
+            target[key] = item
+        if tomllib.loads(updated) != expected:
+            raise ValueError("unexpected pyproject.toml layout")
+    except (OSError, ValueError) as exc:
+        console.warn(f"Could not update {_display_path(pyproject)} ({exc}); set {settings} to reuse the native base")
+        return
+    if updated != original:
+        pyproject.write_text(updated, encoding="utf-8")
+        console.note(f"Configured {_display_path(pyproject)}: {settings}")
 
 
-def _resolve_native_base_output(project_dir: Path, args: Sequence[str]) -> Path:
-    configured = _extract_build_native_base_output(args) or _read_pyproject_build_native_base(project_dir)
-    if configured is None:
-        launcher = "pyronaut-run-python" if _is_python_runtime_project(project_dir) else "pyronaut-run"
-        return project_dir / "__pyronaut__" / "native" / "base" / launcher
-    if urllib.parse.urlparse(configured).scheme:
-        raise ValueError("A URL native-base cannot be used as a build output; set --native-base-output")
+def _resolve_native_base_output(project_dir: Path, configured: str) -> Path:
     path = Path(configured).expanduser()
     return path if path.is_absolute() else (project_dir / path).resolve()
 
@@ -3799,14 +3930,15 @@ def _run_native_base_build(
     runner: RunnerWithEnv,
     resolver: Callable[[str], str | None],
     project_dir: Path,
+    output: Path,
     verbose: bool,
     java_home_provider: JavaHomeProvider | None,
+    pgo_profiles: Sequence[Path] = (),
 ) -> int:
     try:
         env = _build_non_test_resources_env("build", java_home_provider)
         _build_native_classpath(project_dir)
-        output = _resolve_native_base_output(project_dir, args)
-    except (RuntimeError, ValueError) as exc:
+    except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -3820,6 +3952,8 @@ def _run_native_base_build(
         "--output", str(output),
         "--native-base",
     ]
+    if pgo_profiles:
+        command.append("--pgo=" + ",".join(str(profile) for profile in pgo_profiles))
     if _is_python_runtime_project(project_dir):
         command.append("--include-python")
     if verbose:
@@ -4186,6 +4320,7 @@ def _write_jvm_dockerfile(*, target: Path, base_image: str, runner_name: str,
     dockerfile = f"""\
 FROM {base_image}
 WORKDIR /app
+EXPOSE 8080
 COPY app/config/ /app/config/
 COPY app/__pyronaut__/classes /app/__pyronaut__/classes
 COPY app/__pyronaut__/tools/shared /app/__pyronaut__/tools/shared
@@ -4244,6 +4379,7 @@ RUN if [ -d /workspace/app/__pyronaut__/native/resources ]; then mv /workspace/a
 
 FROM {runtime_image}
 WORKDIR /app
+EXPOSE 8080
 COPY --from=builder /workspace/app/__pyronaut__/native/ /app/
 COPY --from=builder /workspace/native-language-resources/ /app/resources/
 COPY app/pyproject.toml /app/pyproject.toml
@@ -4268,6 +4404,7 @@ def _write_crema_base_dockerfile(
     passthrough_args: Sequence[str],
     resource_copies: Sequence[str],
     bundled_only: bool = False,
+    pgo_profiles: Sequence[str] = (),
 ) -> None:
     output_binary = f"/workspace/base/{runner_name}"
     build_command = [
@@ -4278,6 +4415,8 @@ def _write_crema_base_dockerfile(
     ]
     if bundled_only:
         build_command.append("--default-native-base")
+    if pgo_profiles:
+        build_command.append("--pgo=" + ",".join(pgo_profiles))
     if include_python:
         build_command.append("--include-python")
     if verbose:
@@ -4299,6 +4438,7 @@ COPY --from=builder /workspace/base/ /opt/pyronaut/bin/
 
 FROM pyronaut-base
 WORKDIR /app
+EXPOSE 8080
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 {chr(10).join(resource_copies)}
@@ -4321,6 +4461,7 @@ COPY bundled-base/ /opt/pyronaut/bin/
 
 FROM pyronaut-base
 WORKDIR /app
+EXPOSE 8080
 COPY app/pyproject.toml /app/pyproject.toml
 COPY app/config/ /app/config/
 {chr(10).join(runtime_copies)}
@@ -4339,6 +4480,7 @@ def _write_crema_application_dockerfile(
     dockerfile = f"""\\
 FROM {base_image}
 WORKDIR /app
+EXPOSE 8080
 # Older Crema base images may contain the native-build distribution under the
 # application directory. It is only needed while producing the image, never
 # at runtime, so remove it from the final application layer.
@@ -4391,7 +4533,9 @@ def _run_docker_build(
     main_class: str,
     verbose: bool,
     static_native: bool,
-    native_base_build: bool = False,
+    custom_base_image: str | None = None,
+    pgo_profiles: Sequence[Path] = (),
+    record_native_base: bool = True,
     default_native_base: bool = False,
     selected_native_base: str | None = None,
     additional_native_binaries: Sequence[str] = (),
@@ -4427,12 +4571,20 @@ def _run_docker_build(
             build_args["PYRONAUT_NATIVE_BUILDER_IMAGE"] = builder_image
             build_args["PYRONAUT_NATIVE_BASE_IMAGE"] = runtime_image
             runner_name = PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else "pyronaut-run"
-            if native_base_build:
-                base_image = docker_config.get("base_image") or f"{image_name}:{project_version}-native-base"
+            if custom_base_image is not None:
+                base_image = custom_base_image
                 build_args["PYRONAUT_BASE_IMAGE"] = base_image
                 dockerfile = context_dir / "DockerfileNativeBase"
                 with _preparing_docker_context():
                     _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+                # Profiles are only needed by the builder stage, which sees
+                # the context's app/ directory as /workspace/app.
+                container_pgo_profiles = []
+                for index, profile in enumerate(pgo_profiles):
+                    staged = Path("__pyronaut__") / "pgo" / f"{index}-{profile.name}"
+                    (context_dir / "app" / staged).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(profile, context_dir / "app" / staged)
+                    container_pgo_profiles.append(f"/workspace/app/{staged.as_posix()}")
                 _write_crema_base_dockerfile(
                     target=dockerfile,
                     builder_image=builder_image,
@@ -4442,6 +4594,7 @@ def _run_docker_build(
                     verbose=verbose,
                     static_native=static_native,
                     passthrough_args=_extract_native_build_passthrough_args(args),
+                    pgo_profiles=container_pgo_profiles,
                     resource_copies=_additional_resource_docker_copy_lines(context_dir),
                     bundled_only=False,
                 )
@@ -4458,7 +4611,10 @@ def _run_docker_build(
                 base_exit = _run_docker_command(runner, base_command, image_tag=base_image)
                 if base_exit != SUCCESS:
                     return base_exit
-                _record_docker_base_image(project_dir, base_image)
+                if record_native_base:
+                    _record_native_base_configuration(
+                        project_dir, "docker-crema", ("build", "docker", "base-image"), base_image
+                    )
             elif default_native_base:
                 # Docker contexts require a Linux launcher even when the CLI
                 # is running on another operating system.
@@ -4527,7 +4683,7 @@ def _run_docker_build(
                     runtime_copies=_manifest_docker_copy_lines(context_dir),
                     resource_copies=_additional_resource_docker_copy_lines(context_dir),
                 )
-            elif (base_image := _configured_docker_base_image(project_dir, docker_config)) is not None:
+            elif (base_image := docker_config.get("base_image")) is not None:
                 with _preparing_docker_context():
                     _prepare_crema_native_docker_context(
                         project_dir=project_dir, context_dir=context_dir, resolver=resolver
@@ -4775,33 +4931,28 @@ def _resolve_packaging_format(project_dir: Path, args: Sequence[str]) -> str:
     # Parse and validate the configured value even when command-line flags
     # override it. This keeps removed keys and invalid enum values rejected
     # when lifecycle validation is explicitly disabled.
-    removed_options = ("--base-image", "--base-image-output")
-    if any(token == option or token.startswith(option + "=") for token in args for option in removed_options):
-        raise ValueError("Unsupported base-image option; use --native-base or --native-base-output")
+    def present(option: str) -> bool:
+        return any(token == option or token.startswith(option + "=") for token in args)
+
+    if present("--base-image") or present("--base-image-output"):
+        raise ValueError("Unsupported base-image option; use --native-base=<default|path|image|url>")
+    if present("--native-base-output"):
+        raise ValueError(
+            "Unsupported option --native-base-output; use --native-base=<path> "
+            "(or --native-base=<image> with --docker) to build a custom native base"
+        )
     configured = _read_pyproject_packaging_format(project_dir)
     jar = _extract_flag(args, "--jar")
     explicit_mode = _extract_build_mode_flag(args)
     docker = _extract_build_docker(args)
     static = _extract_build_static(args)
-    native_base_build = _extract_build_native_base(args)
-    native_base_value = _extract_build_native_base_value(args)
-    native_base_output = _extract_build_native_base_output(args)
-
-    if native_base_build and native_base_value is not None:
-        raise ValueError("Bare --native-base cannot be combined with --native-base=<value>")
-    if native_base_output is not None and not native_base_build:
-        raise ValueError("--native-base-output requires bare --native-base")
+    native_base_value = _extract_build_native_base(args)
 
     if jar:
-        conflicts = explicit_mode is not None or docker or static or native_base_build or native_base_value is not None or _has_main_class_option(args)
+        conflicts = explicit_mode is not None or docker or static or native_base_value is not None or _has_main_class_option(args)
         if conflicts:
             raise ValueError("--jar cannot be combined with --main-class, JVM/native, Docker, static, or native-base options")
         return "fat-jar"
-
-    if native_base_build:
-        if explicit_mode == "jvm":
-            raise ValueError("--native-base cannot be combined with JVM mode")
-        return "docker-native" if docker else "wheel-native"
 
     if explicit_mode is not None or docker or static or native_base_value is not None:
         mode = explicit_mode or ("native" if native_base_value is not None else "jvm")
@@ -5369,10 +5520,10 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token == "--":
             passthrough.extend(args[index + 1:])
             break
-        if token in {"--native", "--jvm", "--jar", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--native-base"} or token.startswith("--native-base="):
+        if token in {"--native", "--jvm", "--jar", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--native-base"} or token.startswith(("--native-base=", "--pgo=")):
             index += 1
             continue
-        if token in {"--mode", "--main-class", "--project-dir", "--native-base-output", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src", "--include-native-binary"}:
+        if token in {"--mode", "--main-class", "--project-dir", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src", "--include-native-binary"}:
             index += 1
             if index < len(args):
                 index += 1
@@ -5384,7 +5535,6 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
             or token.startswith("--no-cache=")
             or token.startswith("--docker=")
             or token.startswith("--static=")
-            or token.startswith("--native-base-output=")
             or token.startswith("--local-repository=")
             or token.startswith("--local-repo=")
             or token.startswith("--setup=")
@@ -8393,8 +8543,8 @@ def _pyronaut_dev_native_command_line(
         if provided_jars:
             # Metadata consumers inspect these shipped JARs directly; they are
             # deliberately not part of the application's runtime classpath.
-            # Pass directories rather than individual JARs to keep the
-            # command line short; the resolver lists each directory.
+            # Pass the containing directories to keep the argument short on
+            # Windows; NativeProvidedJarResolver lists the JARs in each one.
             provided_jar_dirs = sorted({str(Path(jar).parent) for jar in provided_jars})
             jvm_args.append(f"-Dpyronaut.dev.native.provided.jars={os.pathsep.join(provided_jar_dirs)}")
     selected_environment = (
@@ -8840,7 +8990,7 @@ def _is_supported_project_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|clean|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_create_usage(stream=None) -> None:
@@ -10212,6 +10362,104 @@ def _run_doctor(args: Sequence[str]) -> int:
     return PRECONDITION_FAILED if _doctor.overall_status(results) == _doctor.FAIL else SUCCESS
 
 
+# Outputs written by ``pyronaut process`` under the project's generated-output
+# directory. Dependency manifests, the project-local Maven repository, schemas,
+# IDE stubs and the compiler daemon's endpoint belong to ``pyronaut install`` or
+# other commands and survive a default ``pyronaut clean``.
+_PROCESS_OUTPUTS = (
+    "classes",
+    "test-classes",
+    "test-sources",
+    "incremental",
+    "processor.inputs",
+    "external-python",
+    "external-test-python",
+    "external-main-sources",
+    "external-test-sources",
+)
+_PROCESS_OUTPUT_PATTERNS = ("classes-native-runtime-*",)
+
+
+def _print_clean_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write("Usage: pyronaut clean [--project-dir <dir>] [-f|--full]\n")
+    stream.write("Remove the output of pyronaut process (processed classes and incremental state).\n")
+    stream.write("  --project-dir <dir>       Project to clean (default: the current directory).\n")
+    stream.write("  -f, --full                Also remove all generated Pyronaut state and caches and the\n")
+    stream.write("                            project .venv; run pyronaut install again afterwards.\n")
+    stream.write("  -h, --help                Show this help message and exit.\n")
+
+
+def _clean_targets(project_dir: Path, full: bool) -> list[Path]:
+    output_dir = _pyronaut_output_dir(project_dir)
+    if full:
+        candidates = [output_dir, project_dir / "__pyronaut__", project_dir / ".venv"]
+    else:
+        candidates = [output_dir / name for name in _PROCESS_OUTPUTS]
+        for pattern in _PROCESS_OUTPUT_PATTERNS:
+            candidates.extend(sorted(output_dir.glob(pattern)))
+    targets: list[Path] = []
+    for candidate in candidates:
+        if (candidate.exists() or candidate.is_symlink()) and candidate not in targets:
+            targets.append(candidate)
+    return targets
+
+
+def _remove_path(path: Path) -> None:
+    # Never follow a symlinked .venv or output directory into its target.
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
+def _run_clean(args: Sequence[str]) -> int:
+    args = _normalize_project_flag(list(args))
+    full = False
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"-f", "--full"}:
+            full = True
+        elif token == "--project-dir":
+            if index + 1 >= len(args):
+                return _usage_error("Missing value for --project-dir")
+            index += 1
+        elif not token.startswith("--project-dir="):
+            return _usage_error(f"Unknown pyronaut clean option: {token}")
+        index += 1
+
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    if not project_dir.is_dir():
+        print(f"Project directory does not exist: {project_dir}", file=sys.stderr)
+        return PRECONDITION_FAILED
+    if not (project_dir / "pyproject.toml").is_file() and not _is_external_build_project(project_dir):
+        # Guard --full in particular: never delete a .venv outside a project.
+        print(f"No pyproject.toml in {project_dir}: not a Pyronaut project (use --project-dir)", file=sys.stderr)
+        return PRECONDITION_FAILED
+
+    progress = _progress_console()
+    targets = _clean_targets(project_dir, full)
+    if not targets:
+        progress.note("Nothing to clean")
+        return SUCCESS
+    for target in targets:
+        try:
+            _remove_path(target)
+        except OSError as exc:
+            progress.fail(f"Unable to remove {target}: {exc}")
+            return INTERNAL_ERROR
+        try:
+            shown = target.relative_to(project_dir)
+        except ValueError:
+            shown = target
+        progress.success(f"Removed {shown}")
+    if full:
+        progress.hint("Run pyronaut install to recreate .venv and the dependency manifests")
+    return SUCCESS
+
+
 def _doctor_platform() -> str:
     try:
         return _setup_platform()
@@ -11495,7 +11743,7 @@ def _print_build_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--native-base[=<default|path|url>]] [--include-native-binary <name|path>]... [--native-base-output <path>] [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
+        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--native-base[=<default|path|image|url>]] [--pgo=<profile>[,<profile>...]] [--include-native-binary <name|path>]... [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
     )
 
 
