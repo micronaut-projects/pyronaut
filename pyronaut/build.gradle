@@ -523,6 +523,9 @@ tasks.register("buildSdkWheel", Exec) {
     inputs.dir(wheelStagingDir)
     outputs.dir(wheelDistDir)
     doFirst {
+        // GraalPy's pip appends an unrecorded GRAALPY_MARKER after building.
+        // This platform-independent SDK wheel needs no GraalPy package patches.
+        environment("PIP_GRAALPY_DISABLE_PATCHING", "true")
         // Prefer the configured pyenv interpreter, but allow environments
         // without pyenv to build with the system Python.
         if (usesPyenv.get()) {

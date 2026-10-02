@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import csv
+import hashlib
 import io
 import re
 import urllib.parse
@@ -11,6 +14,50 @@ from typing import Iterable
 
 class WheelAuditError(RuntimeError):
     pass
+
+
+def _validate_record(archive: zipfile.ZipFile) -> None:
+    entries = archive.infolist()
+    names = [entry.filename for entry in entries]
+    if len(names) != len(set(names)):
+        raise WheelAuditError("Wheel contains duplicate ZIP entries")
+    files = {entry.filename for entry in entries if not entry.is_dir()}
+    record_files = [name for name in files if name.endswith(".dist-info/RECORD")]
+    if len(record_files) != 1:
+        raise WheelAuditError("Wheel must contain exactly one .dist-info/RECORD")
+    record = record_files[0]
+    rows = {}
+    try:
+        with archive.open(record) as stream, io.TextIOWrapper(stream, encoding="utf-8", newline="") as text:
+            for row in csv.reader(text, strict=True):
+                if len(row) != 3 or row[0] in rows:
+                    raise WheelAuditError(f"Invalid or duplicate wheel RECORD row: {row!r}")
+                rows[row[0]] = row[1:]
+    except (UnicodeDecodeError, csv.Error) as exc:
+        raise WheelAuditError("Invalid wheel RECORD encoding or CSV") from exc
+    signatures = {f"{record}.jws", f"{record}.p7s"}
+    missing = files - signatures - rows.keys()
+    extra = rows.keys() - files
+    if missing or extra:
+        raise WheelAuditError(f"Wheel RECORD file list mismatch: missing={sorted(missing)}, extra={sorted(extra)}")
+    if rows[record] != ["", ""]:
+        raise WheelAuditError("Wheel RECORD must not hash or size itself")
+    for name, (checksum, size) in rows.items():
+        if name == record:
+            continue
+        algorithm, separator, expected = checksum.partition("=")
+        payload = archive.read(name)
+        try:
+            digest = hashlib.new(algorithm, payload)
+        except ValueError as exc:
+            raise WheelAuditError(f"Invalid wheel RECORD hash algorithm: {name}") from exc
+        if not separator or digest.digest_size < 32:
+            raise WheelAuditError(f"Missing or insecure wheel RECORD hash: {name}")
+        actual = base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii")
+        if actual != expected:
+            raise WheelAuditError(f"Wheel RECORD hash mismatch: {name}")
+        if size != str(len(payload)):
+            raise WheelAuditError(f"Wheel RECORD size mismatch: {name}")
 
 
 def _path_variants(path: str) -> set[bytes]:
@@ -126,12 +173,13 @@ def audit_wheel(
     try:
         with zipfile.ZipFile(wheel) as archive:
             _scan_zip(archive, forbidden, owned_jar_names=owned_jars)
+            _validate_record(archive)
     except zipfile.BadZipFile as exc:
         raise WheelAuditError(f"Invalid wheel archive: {wheel}") from exc
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Audit a Pyronaut wheel for build-machine path leaks")
+    parser = argparse.ArgumentParser(description="Audit Pyronaut wheel paths and RECORD integrity")
     parser.add_argument(
         "--owned-jar",
         dest="owned_jar_names",
