@@ -16,6 +16,9 @@
 package io.micronaut.pyronaut.dev;
 
 import io.micronaut.dev.MicronautDevMain;
+import io.micronaut.dev.compile.SourceCompiler;
+import io.micronaut.dev.compile.SourceKind;
+import io.micronaut.dev.manifest.DevManifest;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
@@ -32,6 +35,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
@@ -150,6 +154,11 @@ public final class PyronautTestReload extends MicronautDevMain {
             return RELAUNCH;
         }
         return status == 0 ? 0 : TESTS_FAILED;
+    }
+
+    @Override
+    protected Map<SourceKind, SourceCompiler> createCompilers(DevManifest manifest) {
+        return LauncherProcessorState.releasingAfterCompilation(super.createCompilers(manifest));
     }
 
     /**

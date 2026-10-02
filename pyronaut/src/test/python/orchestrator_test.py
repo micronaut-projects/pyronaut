@@ -3972,6 +3972,19 @@ type = "{toolchain}"
             self.assertNotIn(value, reloading[run:])
         self.assertNotIn("-Dpyronaut.dev.reload=true", restarting)
         self.assertIn("-Dmicronaut.server.port=9000", restarting[:restarting.index("run")])
+        # the image's application loader, the parent of every generation, sees only the jars: the processed
+        # classes there would be found first, and every generation would get the first one's classes
+        classes = str((project_dir / "__pyronaut__" / "classes").resolve())
+
+        def class_path(command_line):
+            value = next(value for value in command_line if value.startswith("-Djava.class.path="))
+            return value.split("=", 1)[1].split(os.pathsep)
+
+        self.assertNotIn(classes, class_path(reloading))
+        self.assertTrue(all(entry.endswith(".jar") for entry in class_path(reloading)), class_path(reloading))
+        self.assertIn("/tmp/development-runtime.jar", class_path(reloading))
+        # restarting the process for every change keeps the run command's class path
+        self.assertIn(classes, class_path(restarting))
 
     def _relaunch_cycle(
         self, temp_dir: str, *, reload_in_process: bool, statuses: list[int], marked: bool = True
