@@ -170,15 +170,21 @@ Streaming disables the live progress display; Pyronaut reports tests as plain li
 == Continuous testing
 
 `pyronaut test -t` (or `--continuous`) keeps testing a project as it changes.
-On the JVM toolchain it validates the configuration and processes the
-application once, then runs the tests in the test mode of the Micronaut
-development runtime, in a single JVM. The runtime watches the Python and Java
-sources, the tests and the configuration directories, compiles a change in
-process, and runs the tests again on a new class loader generation. The
-dependencies, the compilers, the JIT-compiled code and the GraalPy runtime stay
-loaded from one run to the next, so a run after an edit takes seconds rather
-than a new process. Each run gets a fresh GraalPy context built over its own
-generation, so the Python modules a test imports are always the edited ones.
+It validates the configuration and processes the application once, then runs
+the tests in the test mode of the Micronaut development runtime, in a single
+process. The runtime watches the Python and Java sources, the tests and the
+configuration directories, and compiles a change in process. The dependencies,
+the compilers, the JIT-compiled code and the GraalPy context stay loaded from
+one run to the next.
+
+An edit that changes only the bodies of Python code, which leaves the classes
+generated for it as they were, is reloaded in place: the edited application
+modules are patched into the live GraalPy context, keeping their module, class
+and function objects, and the test modules are imported again, so a run after
+such an edit, the first of a session included, takes about a second plus the
+compilation. Any other change, such as a new route, a changed class field or a
+Java edit, runs the tests on a new class loader generation, with a new GraalPy
+context built over it, still in the same process.
 
 A change to a pytest test, or to the application while the project has pytest
 tests, runs every test; a change that only reaches Java tests runs the test
@@ -208,13 +214,17 @@ with:
 report-path = "/tests/"
 ----
 
-The development runtime needs Micronaut 5.3 or later: `pyronaut install` adds
-`micronaut-dev`, `micronaut-dev-test-report` and `micronaut-dev-livereload` to
-the project's development runtime. Pyronaut keeps the earlier behaviour, which
-processes the project and starts a new test process for every run, for the
-native toolchain, whose `pyronaut-dev` image runs the development runtime for
-`pyronaut dev` but not its test mode yet, for external Maven and Gradle builds, for options test mode
-does not support such as `--select-class`, and when configured:
+The development runtime needs Micronaut 5.3 or later: on the JVM toolchain
+`pyronaut install` adds `micronaut-dev`, `micronaut-dev-test-report` and
+`micronaut-dev-livereload` to the project's development runtime. On the native
+toolchain the `pyronaut-dev` image holds them, and defines each generation's
+classes at runtime. It never unloads them, so it keeps a budget of generations
+(`micronaut.dev.max-generations`, 10 by default) and starts the test process
+again when it is spent; an edit patched in place takes none. Pyronaut keeps
+the earlier behaviour, which processes the project and starts a new test
+process for every run, with a `pyronaut-dev` image built without test mode,
+for external Maven and Gradle builds, for options test mode does not support
+such as `--select-class`, and when configured:
 
 [source,toml]
 ----

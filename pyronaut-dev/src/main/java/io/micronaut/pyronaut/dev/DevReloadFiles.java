@@ -15,6 +15,9 @@
  */
 package io.micronaut.pyronaut.dev;
 
+import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.python.processing.PythonAnnotationProcessor;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URISyntaxException;
@@ -41,11 +44,46 @@ final class DevReloadFiles {
     static final String BUILD_DEPENDENCIES_MANIFEST = "resolved-build-dependencies";
     static final String PROCESSOR_OPTIONS = "resolved-processor-options";
     /**
+     * The compiler option that sets whether the Python compiler writes a bytecode cache for every module.
+     */
+    static final String PYTHON_BYTECODE_OPTION = "-A" + PythonAnnotationProcessor.BYTECODE_OPTION + "=";
+    /**
      * The coordinates of the artifacts a native image holds, which the CLI passes to a native launch.
      */
     static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
 
     private DevReloadFiles() {
+    }
+
+    /**
+     * The compiler options of the Python compilation, with the Python bytecode setting of the project, which
+     * {@code pyronaut process} compiles with: the development runtime compiles the project again in process, and
+     * writes the same resources and file list only with the same setting, so that the first edit of a session changes
+     * the edited module alone, which the runtime patches in place.
+     *
+     * @param options The processor options recorded by {@code pyronaut process}
+     * @param model The project
+     * @return The options, with the bytecode setting unless they hold one already
+     */
+    static List<String> withPythonBytecode(List<String> options, PyprojectModel model) {
+        // as pyronaut process decides it
+        return withPythonBytecode(options, Boolean.TRUE.equals(model.pyronaut().build().pythonBytecodeEnabled()));
+    }
+
+    /**
+     * The compiler options of the Python compilation, with a Python bytecode setting.
+     *
+     * @param options The processor options
+     * @param enabled Whether every module gets a bytecode cache
+     * @return The options, with the setting unless they hold one already
+     */
+    static List<String> withPythonBytecode(List<String> options, boolean enabled) {
+        if (options.stream().anyMatch(option -> option.startsWith(PYTHON_BYTECODE_OPTION))) {
+            return options;
+        }
+        List<String> withBytecode = new ArrayList<>(options);
+        withBytecode.add(PYTHON_BYTECODE_OPTION + enabled);
+        return List.copyOf(withBytecode);
     }
 
     /**
