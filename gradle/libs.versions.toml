@@ -10,6 +10,7 @@ icu4j = "78.3"
 graalvm-icu4j = "25.4.4.1.1"
 gradle-tapi = "9.8.0"
 tamboui = "0.5.0"
+jline = "3.30.17"
 maven-resolver = "2.0.23"
 maven = "3.9.16"
 slf4j = "2.0.20"
@@ -45,6 +46,7 @@ icu4j = { module = "com.ibm.icu:icu4j", version.ref = "icu4j" }
 graalvm-icu4j = { module = "org.graalvm.shadowed:icu4j", version.ref = "graalvm-icu4j" }
 gradle-tapi = { module = "org.gradle:gradle-tooling-api", version.ref = "gradle-tapi" }
 tamboui = { module = "dev.tamboui:tamboui-toolkit", version.ref = "tamboui"}
+jline = { module = "org.jline:jline", version.ref = "jline" }
 tamboui-jline = { module = "dev.tamboui:tamboui-jline3-backend", version.ref = "tamboui"}
 tamboui-panama = { module = "dev.tamboui:tamboui-panama-backend", version.ref = "tamboui"}
 tamboui-annotations = { module = "dev.tamboui:tamboui-annotations", version.ref = "tamboui"}
