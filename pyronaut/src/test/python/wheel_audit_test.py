@@ -1,9 +1,29 @@
+import base64
+import csv
+import hashlib
+import io
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
 from pyronaut_cli_v2.wheel_audit import WheelAuditError, audit_wheel
+
+
+RECORD = "pyronaut-0.0.8.dist-info/RECORD"
+
+
+def write_record(archive, rows=None):
+    if rows is None:
+        rows = []
+        for entry in archive.infolist():
+            payload = archive.read(entry)
+            digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=").decode("ascii")
+            rows.append([entry.filename, f"sha256={digest}", str(len(payload))])
+        rows.append([RECORD, "", ""])
+    contents = io.StringIO(newline="")
+    csv.writer(contents).writerows(rows)
+    archive.writestr(RECORD, contents.getvalue())
 
 
 class WheelAuditTest(unittest.TestCase):
@@ -20,6 +40,7 @@ class WheelAuditTest(unittest.TestCase):
                 wheel = root / f"leak-{index}.whl"
                 with zipfile.ZipFile(wheel, "w") as archive:
                     archive.writestr("package/data.txt", leak)
+                    write_record(archive)
                 with self.assertRaises(WheelAuditError):
                     audit_wheel(wheel, [forbidden])
 
@@ -32,6 +53,7 @@ class WheelAuditTest(unittest.TestCase):
             wheel = root / "nested.whl"
             with zipfile.ZipFile(wheel, "w") as archive:
                 archive.write(nested, "package/lib/micronaut-pyronaut-runtime.jar")
+                write_record(archive)
             with self.assertRaises(WheelAuditError):
                 audit_wheel(
                     wheel,
@@ -42,11 +64,13 @@ class WheelAuditTest(unittest.TestCase):
             external = root / "external.whl"
             with zipfile.ZipFile(external, "w") as archive:
                 archive.write(nested, "package/lib/chromeinspector-tool-25.2.4.jar")
+                write_record(archive)
             audit_wheel(external, ["/Users/builder", "/Users/builder/.gradle"])
 
             named = root / "named.whl"
             with zipfile.ZipFile(named, "w") as archive:
                 archive.writestr("home/builder/work/package.txt", "portable")
+                write_record(archive)
             with self.assertRaises(WheelAuditError):
                 audit_wheel(named, ["home/builder/work"])
 
@@ -59,6 +83,7 @@ class WheelAuditTest(unittest.TestCase):
                     "package/native-compile-classpath.txt",
                     "/Users/builder/.gradle/caches/example.jar\n",
                 )
+                write_record(archive)
             with self.assertRaisesRegex(
                 WheelAuditError,
                 r"Invalid native classpath descriptor in wheel: package/native-compile-classpath\.txt "
@@ -73,7 +98,44 @@ class WheelAuditTest(unittest.TestCase):
                     "maven\tio.micronaut\tmicronaut-runtime\t5.0.0\tjar\t\tmicronaut-runtime-5.0.0.jar\n",
                 )
                 archive.writestr("package/origins.txt", "runtime.jar\t:micronaut-runtime\n")
+                write_record(archive)
             audit_wheel(portable, ["/Users/builder", r"C:\Users\builder"])
+
+    def test_rejects_record_file_list_hash_size_and_duplicate_mismatches(self):
+        name, payload = "package/lib/dependency.jar", b"portable"
+        digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=").decode("ascii")
+        valid = [name, f"sha256={digest}", str(len(payload))]
+        record = [RECORD, "", ""]
+        cases = (
+            ("missing", [record], "file list mismatch"),
+            ("extra", [valid, ["absent.txt", "", ""], record], "file list mismatch"),
+            ("hash", [[name, "sha256=incorrect", valid[2]], record], "hash mismatch"),
+            ("size", [[name, valid[1], "999"], record], "size mismatch"),
+            ("duplicate", [valid, valid, record], "duplicate wheel RECORD row"),
+            ("self-hash", [valid, [RECORD, valid[1], "1"]], "must not hash or size itself"),
+            ("weak-hash", [[name, "sha1=incorrect", valid[2]], record], "insecure wheel RECORD hash"),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for label, rows, error in cases:
+                with self.subTest(label=label):
+                    wheel = Path(temp_dir) / f"{label}.whl"
+                    with zipfile.ZipFile(wheel, "w") as archive:
+                        archive.writestr(name, payload)
+                        write_record(archive, rows)
+                    with self.assertRaisesRegex(WheelAuditError, error):
+                        audit_wheel(wheel, ["/unrelated/home"])
+
+    def test_rejects_graalpy_marker_appended_after_record(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            wheel = Path(temp_dir) / "marked.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("package/__init__.py", "")
+                write_record(archive)
+            audit_wheel(wheel, ["/unrelated/home"])
+            with zipfile.ZipFile(wheel, "a") as archive:
+                archive.writestr("pyronaut-0.0.8.dist-info/GRAALPY_MARKER", "")
+            with self.assertRaisesRegex(WheelAuditError, "file list mismatch.*GRAALPY_MARKER"):
+                audit_wheel(wheel, ["/unrelated/home"])
 
 
 if __name__ == "__main__":
