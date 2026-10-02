@@ -291,6 +291,22 @@ class PyronautTestResourcesServerMainTest {
     }
 
     @Test
+    void stopsOwnedDirectSourceServerWithoutPyproject() throws Exception {
+        Path project = tempDir.resolve("direct-source");
+        Path sessionFile = project.resolve("__pyronaut__").resolve("test-resources-session.json");
+        Files.createDirectories(sessionFile.getParent());
+        Files.writeString(sessionFile, "{\"ownerToken\": \"owner-expected\", \"ownerCommand\": \"direct-source\"}\n");
+        RecordingServerManager manager = new RecordingServerManager();
+        PyronautTestResourcesServerMain command = new PyronautTestResourcesServerMain(new PyprojectModelReader(), manager);
+
+        int exit = new CommandLine(command).execute("stop", "--project-dir", project.toString(), "--owner-token", "owner-expected");
+
+        assertEquals(0, exit);
+        assertEquals(1, manager.stopInvocations);
+        assertFalse(Files.exists(sessionFile));
+    }
+
+    @Test
     void stopDeletesSessionWhenOwnerTokenMatches() throws Exception {
         Path project = prepareProject("");
         Path sessionFile = project.resolve("__pyronaut__").resolve("test-resources-session.json");

@@ -10,6 +10,7 @@ import importlib.metadata
 import json
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import sysconfig
@@ -1117,25 +1118,26 @@ def _run_direct_source(
     if command == "dev":
         env = _apply_project_virtualenv(env, Path.cwd())
     snapshot = _snapshot_direct_source_inputs(args)
-    return _run_direct_source_with_auto_restart(
-        executable_path,
-        command,
-        args,
-        env,
-        runner,
-        resolver,
-        process_runner,
-        snapshot,
-        monotonic=monotonic,
-        sleep=sleep,
-        watch_poll_interval=watch_poll_interval,
-        watch_debounce_seconds=watch_debounce_seconds,
-        # Direct development must also keep the watcher alive when the
-        # compiler exits with an error. This allows a subsequent source
-        # change to start a fresh compilation and resume the application.
-        keep_watching_after_exit=command == "test",
-        keep_watching_after_failure=command == "dev",
-    )
+    with _sigterm_as_keyboard_interrupt():
+        return _run_direct_source_with_auto_restart(
+            executable_path,
+            command,
+            args,
+            env,
+            runner,
+            resolver,
+            process_runner,
+            snapshot,
+            monotonic=monotonic,
+            sleep=sleep,
+            watch_poll_interval=watch_poll_interval,
+            watch_debounce_seconds=watch_debounce_seconds,
+            # Direct development must also keep the watcher alive when the
+            # compiler exits with an error. This allows a subsequent source
+            # change to start a fresh compilation and resume the application.
+            keep_watching_after_exit=command == "test",
+            keep_watching_after_failure=command == "dev",
+        )
 
 
 def _resolve_direct_source_dev_executable(
@@ -1179,6 +1181,28 @@ def _apply_debug_vm_env(env: dict[str, str] | None) -> dict[str, str]:
     existing = updated.get("JAVA_TOOL_OPTIONS", "").strip()
     updated["JAVA_TOOL_OPTIONS"] = f"{existing} {_JDWP_FLAGS}".strip()
     return updated
+
+
+@contextlib.contextmanager
+def _sigterm_as_keyboard_interrupt() -> Iterator[None]:
+    """Route SIGTERM through the Ctrl-C path so child processes and atexit cleanup run.
+
+    The default SIGTERM action terminates the interpreter without running atexit
+    handlers, which leaks the Test Resources server retained across direct-source
+    restarts when an IDE, process manager or ``kill`` stops ``pyronaut dev``.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _interrupt(signum, frame):  # noqa: ARG001
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def _stop_direct_source_test_resources_server(
@@ -8425,9 +8449,10 @@ def _pyronaut_dev_native_command_line(
         if provided_jars:
             # Metadata consumers inspect these shipped JARs directly; they are
             # deliberately not part of the application's runtime classpath.
-            provided_jar_dirs = sorted({Path(jar).parent for jar in provided_jars})
-            provided_jar_wildcards = [str(d / "*") for d in provided_jar_dirs]
-            jvm_args.append(f"-Dpyronaut.dev.native.provided.jars={os.pathsep.join(provided_jar_wildcards)}")
+            # Pass the containing directories to keep the argument short on
+            # Windows; NativeProvidedJarResolver lists the JARs in each one.
+            provided_jar_dirs = sorted({str(Path(jar).parent) for jar in provided_jars})
+            jvm_args.append(f"-Dpyronaut.dev.native.provided.jars={os.pathsep.join(provided_jar_dirs)}")
     selected_environment = (
         environment if environment is not None and not _has_micronaut_environments_property(args)
         else _default_environment(command, args)

@@ -136,13 +136,11 @@ jobs:
         run: |
           [ -f ./cleanup.sh ] && ./cleanup.sh || [ ! -f ./cleanup.sh ]
 
-  e2e-parity:
+  e2e-docker:
     if: github.repository != 'micronaut-projects/micronaut-project-template'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        # The build job already runs the same :micronaut-pyronaut:check on Linux
-        os: [macos-latest]
+    # Docker-backed suites (Test Resources/MySQL); GitHub's Linux runners
+    # provide a Docker engine, macOS runners do not.
+    runs-on: ubuntu-latest
     env:
       DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
       DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
@@ -152,6 +150,13 @@ jobs:
       TESTCONTAINERS_RYUK_DISABLED: true
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: "🗑 Free disk space"
+        run: |
+         sudo rm -rf "/usr/local/share/boost"
+         sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+         sudo apt-get clean
+         df -h
+
       - name: "📥 Checkout repository"
         uses: actions/checkout@v6
         with:
@@ -178,6 +183,6 @@ jobs:
             wrapper/dists
             jdks
 
-      - name: "🧪 Run CLI v2 E2E parity checks"
+      - name: "🧪 Run Docker-backed E2E and functional tests"
         run: |
-          ./gradlew :micronaut-pyronaut:check -PpyronautE2E=true --no-daemon
+          ./gradlew :micronaut-pyronaut:testPythonOrchestratorE2EFull :micronaut-functional-test-docker:test -Pdocker=true --no-daemon --continue
