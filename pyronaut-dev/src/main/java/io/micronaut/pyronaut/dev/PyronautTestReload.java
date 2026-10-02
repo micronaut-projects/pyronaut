@@ -158,7 +158,7 @@ public final class PyronautTestReload extends MicronautDevMain {
 
     @Override
     protected Map<SourceKind, SourceCompiler> createCompilers(DevManifest manifest) {
-        return ImageProcessorState.releasingAfterCompilation(super.createCompilers(manifest));
+        return LauncherProcessorState.releasingAfterCompilation(super.createCompilers(manifest));
     }
 
     /**
