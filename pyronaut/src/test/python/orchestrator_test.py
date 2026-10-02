@@ -6437,6 +6437,153 @@ additional-test-resources = ["test-fixtures"]
             pyproject,
         )
 
+    def _write_native_base_project(self, project_dir: Path) -> None:
+        (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
+        (project_dir / "__pyronaut__" / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+        (project_dir / "pyproject.toml").write_text(
+            "[project]\nname = \"demo\"\nversion = \"1.0\"\n", encoding="utf-8"
+        )
+
+    def test_custom_native_base_passes_local_and_downloaded_pgo_profiles(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            if command_line and command_line[0] == "/tmp/pyronaut-native-build":
+                output = Path(command_line[command_line.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("base", encoding="utf-8")
+            return 0
+
+        def download(url, destination, label, headers=None):
+            destination.write_bytes(b"downloaded-profile")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "pgo-base"
+            self._write_native_base_project(project_dir)
+            (project_dir / "profiles").mkdir()
+            (project_dir / "profiles" / "a.iprof").write_bytes(b"a")
+            (project_dir / "profiles" / "b.iprof").write_bytes(b"b")
+
+            with patch.object(cli, "_download_url_with_progress", side_effect=download) as downloader:
+                exit_code = cli.run(
+                    [
+                        "build", "--native-base=runtime/base",
+                        "--pgo=profiles/a.iprof,profiles/b.iprof",
+                        "--pgo=https://example.test/releases/pyronaut-run.iprof",
+                        "--project-dir", str(project_dir),
+                    ],
+                    runner_with_env=runner_with_env,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                )
+            downloaded = project_dir / "__pyronaut__" / "pgo" / "2-pyronaut-run.iprof"
+            downloaded_exists = downloaded.is_file()
+
+        self.assertEqual(0, exit_code)
+        downloader.assert_called_once()
+        self.assertTrue(downloaded_exists)
+        native_command = next(command for command in executed if command[0] == "/tmp/pyronaut-native-build")
+        pgo_arguments = [argument for argument in native_command if argument.startswith("--pgo")]
+        resolved = project_dir.resolve()
+        self.assertEqual(
+            [
+                "--pgo="
+                + ",".join([
+                    str(resolved / "profiles" / "a.iprof"),
+                    str(resolved / "profiles" / "b.iprof"),
+                    str(resolved / "__pyronaut__" / "pgo" / "2-pyronaut-run.iprof"),
+                ])
+            ],
+            pgo_arguments,
+        )
+
+    def test_pgo_requires_custom_native_base_and_existing_profiles(self):
+        executed = []
+
+        def runner_with_env(command_line, env):
+            executed.append(command_line)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "pgo-validation"
+            self._write_native_base_project(project_dir)
+            for args, expected_code, message in (
+                (["--native", "--pgo=a.iprof"], cli.USAGE_ERROR, "--pgo requires a custom native base build"),
+                (["--native-base", "--pgo=a.iprof"], cli.USAGE_ERROR, "--pgo requires a custom native base build"),
+                (["--native-base=runtime/base", "--pgo"], cli.USAGE_ERROR, "--pgo requires a profile"),
+                (["--native-base=runtime/base", "--pgo=a.iprof,"], cli.USAGE_ERROR, "Invalid empty value for --pgo"),
+                (["--native-base=runtime/base", "--pgo=missing.iprof"], cli.PRECONDITION_FAILED, "PGO profile does not exist"),
+            ):
+                executed.clear()
+                stderr = io.StringIO()
+                with self.subTest(args=args), redirect_stderr(stderr):
+                    exit_code = cli.run(
+                        ["build", *args, "--project-dir", str(project_dir)],
+                        runner_with_env=runner_with_env,
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                        java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                    )
+                    self.assertEqual(expected_code, exit_code)
+                    self.assertIn(message, stderr.getvalue())
+                    self.assertFalse(any(command[0] == "/tmp/pyronaut-native-build" for command in executed))
+
+    def test_pgo_profile_urls_are_not_downloaded_offline(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli, "_download_url_with_progress") as downloader:
+            with self.assertRaisesRegex(RuntimeError, "Cannot download PGO profile while offline"):
+                cli._resolve_pgo_profiles(  # noqa: SLF001
+                    ["https://example.test/pyronaut-run.iprof"], project_dir=Path(temp_dir), offline=True
+                )
+        downloader.assert_not_called()
+
+    def test_docker_custom_native_base_stages_pgo_profiles_for_builder(self):
+        captured: dict[str, object] = {}
+
+        def runner_with_env(command_line, env):
+            if len(command_line) >= 2 and command_line[1] == "build" and "pyronaut-base" in command_line:
+                context_dir = Path(command_line[-1])
+                dockerfile = Path(command_line[command_line.index("-f") + 1])
+                captured["dockerfile"] = dockerfile.read_text(encoding="utf-8")
+                captured["profile"] = (context_dir / "app" / "__pyronaut__" / "pgo" / "0-run.iprof").read_bytes()
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.shutil, "which", return_value="/usr/bin/docker"):
+            root_dir = Path(temp_dir)
+            project_dir = root_dir / "pgo-docker"
+            self._write_native_base_project(project_dir)
+            (project_dir / "run.iprof").write_bytes(b"profile")
+            native_executable = self._write_fake_install_dist(root_dir, "pyronaut-native-build")
+
+            def resolver(command_name):
+                return native_executable if command_name == "pyronaut-native-build" else f"/tmp/{command_name}"
+
+            exit_code = cli.run(
+                [
+                    "build", "--docker", "--native-base=acme/runtime:3", "--pgo=run.iprof",
+                    "--project-dir", str(project_dir),
+                ],
+                runner_with_env=runner_with_env,
+                resolver=resolver,
+                platform_name="linux",
+            )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(b"profile", captured["profile"])
+        self.assertIn("--pgo=/workspace/app/__pyronaut__/pgo/0-run.iprof", captured["dockerfile"])
+        self.assertEqual(1, captured["dockerfile"].count("--pgo"))
+
+    def test_direct_build_resolves_pgo_profiles_from_source_project(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir).resolve()
+            rewritten = cli._direct_build_arguments(  # noqa: SLF001
+                ["App.py", "--native-base=base", "--pgo=profiles/run.iprof,https://example.test/run.iprof"],
+                root / "staging",
+                root,
+            )
+        self.assertIn(f"--pgo={root / 'profiles' / 'run.iprof'},https://example.test/run.iprof", rewritten)
+
     def test_java_source_tree_wins_over_transitive_python_runtime(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "java-project"

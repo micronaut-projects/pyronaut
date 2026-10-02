@@ -287,6 +287,53 @@ The final image then adds only the application configuration, processed
 classes, and schemas on top of the shared production runtime layer. For a
 custom layering arrangement, see <<custom-dockerfiles,Custom Dockerfiles with a reusable base>>.
 
+[[native-base-pgo]]
+=== Profile-guided optimization
+
+A custom native base can be compiled with profile-guided optimization (PGO).
+Pass one or more `.iprof` profiles with `--pgo` when you build the base:
+
+[source,bash]
+----
+pyronaut build --native-base=build/pyronaut-base/pyronaut-run --pgo=profiles/pyronaut-run.iprof
+pyronaut build --docker --native-base=acme/pyronaut-runtime:1 --pgo=profiles/pyronaut-run.iprof
+----
+
+Each value is a local path, relative to the project directory, or an HTTP(S)
+URL. Separate several profiles with commas or repeat the option; native-image
+merges them:
+
+[source,bash]
+----
+pyronaut build --native-base=build/pyronaut-base/pyronaut-run-python \
+  --pgo=https://example.com/profiles/pyronaut-run-python.iprof \
+  --pgo=profiles/my-workload.iprof
+----
+
+Pyronaut downloads URL profiles under `__pyronaut__/pgo` using the configured
+proxy settings and shows download progress; they are unavailable with
+`--offline`. Every profile must exist and be non-empty before the native-image
+build starts.
+
+`--pgo` applies only to a custom base build, `--native-base=<path>` or
+`--docker --native-base=<image>`. The bundled default runtime is already
+optimized, and a closed-world `--native` build rejects the option.
+The profiles are not recorded in `pyproject.toml`: pass them again when you
+rebuild the base.
+
+PGO requires Oracle GraalVM. For a host build, `JAVA_HOME` must point to Oracle
+GraalVM; GraalVM Community Edition cannot build with `--pgo`. Docker builds
+use the default Oracle GraalVM builder images unless
+`build.docker.native-builder-image` selects another one.
+
+A profile is most effective for the image it was collected from. Choose the
+profile for the launcher that your project uses, `pyronaut-run` for Java or
+`pyronaut-run-python` for Python, collected on the target operating system and
+architecture for the same Pyronaut version. A custom base also contains your
+application's dependencies. Code that the profile does not cover is still
+compiled, but without profile information. An older or mismatched profile does
+not fail the build, but most of the benefit is lost.
+
 == Direct-source applications
 
 `pyronaut build` packages standalone sources through the same JVM, native,

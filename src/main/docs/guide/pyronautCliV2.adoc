@@ -568,6 +568,7 @@ Common options:
 - `--native-base=<path>`: build a custom Crema runtime at that path, package against it, and record it as `tool.pyronaut.build.native-base` (with `format = "wheel-crema"`) in `pyproject.toml`
 - `--docker --native-base=<image>`: build and tag a custom Crema base image, build the application image on it, and record it as `tool.pyronaut.build.docker.base-image` (with `format = "docker-crema"`) in `pyproject.toml`
 - `--native-base=<HTTP(S)-URL>`: package against an existing native launcher without building or recording a base
+- `--pgo=<profile>[,<profile>...]`: compile a custom native base with profile-guided optimization using local or HTTP(S) `.iprof` profiles; repeatable, requires Oracle GraalVM, and only valid with `--native-base=<path>` or `--docker --native-base=<image>` (see <<native-base-pgo,Profile-guided optimization>>)
 - `--name <name>` / `--version <version>`: package metadata for direct Java or Python sources
 - `--verbose`: run `native-image --verbose` and print the exclusion summary (native mode)
 - `--no-validate`: explicitly bypasses lifecycle config validation
@@ -691,6 +692,9 @@ format = "wheel-crema"
 [tool.pyronaut.build]
 native-base = "build/pyronaut-base/pyronaut-run"
 ----
+
+Add `--pgo=<profile>` to compile the custom base with profile-guided
+optimization; see <<native-base-pgo,Profile-guided optimization>>.
 
 Pyronaut updates only these two settings and preserves the rest of
 `pyproject.toml`. If the file defines them in a layout it cannot update safely

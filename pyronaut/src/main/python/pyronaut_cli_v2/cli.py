@@ -2629,6 +2629,16 @@ def _direct_build_arguments(args: Sequence[str], staging_project: Path, root: Pa
                 result.append(token)
             index += 1
             continue
+        if token.startswith("--pgo="):
+            profiles = []
+            for profile in token.split("=", 1)[1].split(","):
+                path = Path(profile.strip()).expanduser()
+                profiles.append(
+                    profile if _is_http_url(profile) or path.is_absolute() else str((root / path).resolve())
+                )
+            result.append("--pgo=" + ",".join(profiles))
+            index += 1
+            continue
         if token in value_options:
             index += 2
             continue
@@ -2873,8 +2883,15 @@ def _run_build(
     custom_native_base_build = _is_custom_native_base_build(cli_native_base)
     try:
         additional_native_binaries = _extract_build_native_binary_includes(args)
+        pgo_profile_values = _extract_build_pgo_profiles(args)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
+    if pgo_profile_values and not custom_native_base_build:
+        print(
+            "--pgo requires a custom native base build: --native-base=<path>, or --docker --native-base=<image>",
+            file=sys.stderr,
+        )
         return USAGE_ERROR
     configured_native_base = _read_pyproject_build_native_base(project_dir)
     configured_docker_base_image = None
@@ -2954,6 +2971,14 @@ def _run_build(
     if preflight != SUCCESS:
         return preflight
 
+    try:
+        pgo_profiles = _resolve_pgo_profiles(
+            pgo_profile_values, project_dir=project_dir, offline=_extract_offline(args)
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+
     if custom_native_base_build and not docker_build:
         native_base_exit = _run_native_base_build(
             args=args,
@@ -2961,6 +2986,7 @@ def _run_build(
             resolver=resolver,
             project_dir=project_dir,
             output=_resolve_native_base_output(project_dir, cli_native_base),
+            pgo_profiles=pgo_profiles,
             verbose=verbose,
             java_home_provider=java_home_provider,
         )
@@ -2993,6 +3019,7 @@ def _run_build(
             verbose=verbose,
             static_native=static_native,
             custom_base_image=cli_native_base if custom_native_base_build else None,
+            pgo_profiles=pgo_profiles,
             record_native_base=record_native_base,
             default_native_base=default_native_base,
             selected_native_base=selected_native_base,
@@ -3579,13 +3606,58 @@ def _is_default_native_base(value: str | None) -> bool:
     return value is not None and value.strip().lower() == "default"
 
 
-def _is_url_native_base(value: str) -> bool:
+def _is_http_url(value: str) -> bool:
     return urllib.parse.urlparse(value).scheme in {"http", "https"}
 
 
 def _is_custom_native_base_build(value: str | None) -> bool:
     """Whether ``--native-base=<value>`` names a custom base that the build must create."""
-    return value is not None and not _is_default_native_base(value) and not _is_url_native_base(value)
+    return value is not None and not _is_default_native_base(value) and not _is_http_url(value)
+
+
+def _extract_build_pgo_profiles(args: Sequence[str]) -> list[str]:
+    """Return the ``--pgo=<profile>[,<profile>...]`` values, which may be repeated."""
+    profiles: list[str] = []
+    for token in args:
+        if token == "--":
+            break
+        if token == "--pgo":
+            raise ValueError("--pgo requires a profile: --pgo=<profile.iprof>[,<profile.iprof>...]")
+        if token.startswith("--pgo="):
+            values = [value.strip() for value in token.split("=", 1)[1].split(",")]
+            if not all(values):
+                raise ValueError("Invalid empty value for --pgo")
+            profiles.extend(values)
+    return profiles
+
+
+def _resolve_pgo_profiles(profiles: Sequence[str], *, project_dir: Path, offline: bool) -> list[Path]:
+    """Resolve local PGO profiles and download HTTP(S) ones under ``__pyronaut__/pgo``."""
+    resolved: list[Path] = []
+    for index, profile in enumerate(profiles):
+        parsed = urllib.parse.urlparse(profile)
+        if _is_http_url(profile):
+            if not parsed.netloc:
+                raise RuntimeError(f"Invalid PGO profile URL: {profile}")
+            if offline:
+                raise RuntimeError(f"Cannot download PGO profile while offline: {profile}")
+            name = Path(parsed.path).name or "profile.iprof"
+            path = project_dir / "__pyronaut__" / "pgo" / f"{index}-{name}"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                _download_url_with_progress(profile, path, "Downloading PGO profile")
+            except Exception as exc:
+                path.unlink(missing_ok=True)
+                raise RuntimeError(f"Failed downloading PGO profile from {profile}: {exc}") from exc
+        elif parsed.scheme and len(parsed.scheme) > 1:
+            raise RuntimeError(f"PGO profile must be a local path or HTTP(S) URL: {profile}")
+        else:
+            path = Path(profile).expanduser()
+            path = path if path.is_absolute() else (project_dir / path).resolve()
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError(f"PGO profile does not exist or is empty: {path}")
+        resolved.append(path)
+    return resolved
 
 
 def _extract_build_native_binary_includes(args: Sequence[str]) -> list[str]:
@@ -3818,6 +3890,7 @@ def _run_native_base_build(
     output: Path,
     verbose: bool,
     java_home_provider: JavaHomeProvider | None,
+    pgo_profiles: Sequence[Path] = (),
 ) -> int:
     try:
         env = _build_non_test_resources_env("build", java_home_provider)
@@ -3836,6 +3909,8 @@ def _run_native_base_build(
         "--output", str(output),
         "--native-base",
     ]
+    if pgo_profiles:
+        command.append("--pgo=" + ",".join(str(profile) for profile in pgo_profiles))
     if _is_python_runtime_project(project_dir):
         command.append("--include-python")
     if verbose:
@@ -4286,6 +4361,7 @@ def _write_crema_base_dockerfile(
     passthrough_args: Sequence[str],
     resource_copies: Sequence[str],
     bundled_only: bool = False,
+    pgo_profiles: Sequence[str] = (),
 ) -> None:
     output_binary = f"/workspace/base/{runner_name}"
     build_command = [
@@ -4296,6 +4372,8 @@ def _write_crema_base_dockerfile(
     ]
     if bundled_only:
         build_command.append("--default-native-base")
+    if pgo_profiles:
+        build_command.append("--pgo=" + ",".join(pgo_profiles))
     if include_python:
         build_command.append("--include-python")
     if verbose:
@@ -4413,6 +4491,7 @@ def _run_docker_build(
     verbose: bool,
     static_native: bool,
     custom_base_image: str | None = None,
+    pgo_profiles: Sequence[Path] = (),
     record_native_base: bool = True,
     default_native_base: bool = False,
     selected_native_base: str | None = None,
@@ -4455,6 +4534,14 @@ def _run_docker_build(
                 dockerfile = context_dir / "DockerfileNativeBase"
                 with _preparing_docker_context():
                     _prepare_native_docker_context(project_dir=project_dir, context_dir=context_dir, resolver=resolver)
+                # Profiles are only needed by the builder stage, which sees
+                # the context's app/ directory as /workspace/app.
+                container_pgo_profiles = []
+                for index, profile in enumerate(pgo_profiles):
+                    staged = Path("__pyronaut__") / "pgo" / f"{index}-{profile.name}"
+                    (context_dir / "app" / staged).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(profile, context_dir / "app" / staged)
+                    container_pgo_profiles.append(f"/workspace/app/{staged.as_posix()}")
                 _write_crema_base_dockerfile(
                     target=dockerfile,
                     builder_image=builder_image,
@@ -4464,6 +4551,7 @@ def _run_docker_build(
                     verbose=verbose,
                     static_native=static_native,
                     passthrough_args=_extract_native_build_passthrough_args(args),
+                    pgo_profiles=container_pgo_profiles,
                     resource_copies=_additional_resource_docker_copy_lines(context_dir),
                     bundled_only=False,
                 )
@@ -5389,7 +5477,7 @@ def _extract_native_build_passthrough_args(args: Sequence[str]) -> list[str]:
         if token == "--":
             passthrough.extend(args[index + 1:])
             break
-        if token in {"--native", "--jvm", "--jar", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--native-base"} or token.startswith("--native-base="):
+        if token in {"--native", "--jvm", "--jar", "--verbose", "--no-cache", "--no-validate", "--offline", "--docker", "--static", "--native-base"} or token.startswith(("--native-base=", "--pgo=")):
             index += 1
             continue
         if token in {"--mode", "--main-class", "--project-dir", "--local-repository", "--local-repo", "--setup", "--name", "--version", "--python-src", "--java-src", "--include-native-binary"}:
@@ -11431,7 +11519,7 @@ def _print_build_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--native-base[=<default|path|image|url>]] [--include-native-binary <name|path>]... [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
+        "Usage: pyronaut build [--project-dir <dir>] [--jar|--native|--jvm|--mode=<native|jvm>] [--docker] [--static] [--native-base[=<default|path|image|url>]] [--pgo=<profile>[,<profile>...]] [--include-native-binary <name|path>]... [--name <name>] [--version <version>] [<source.java|source.py|source-dir>...] [--main-class <fqcn>] [--verbose] [--no-cache] [--no-validate]\n"
     )
 
 
