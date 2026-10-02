@@ -78,23 +78,42 @@ public final class PyronautTestRunner implements TestRunner {
     private static final Logger LOG = LoggerFactory.getLogger(PyronautTestRunner.class);
     private static final String CONTEXT_ERROR = "initializationError";
     private static final Source PURGE_TEST_MODULES = Source.newBuilder("python", """
-        def _pyronaut_purge_test_modules(roots):
+        def _pyronaut_purge_test_modules(roots, kept):
             import importlib
             import os
             import sys
-            roots = [os.path.normcase(os.path.realpath(str(root))) for root in roots]
+
+            def normalized(path):
+                return os.path.normcase(os.path.realpath(str(path)))
+
+            def under(path, root):
+                return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+            roots = [normalized(root) for root in roots]
+            # what a test root may hold besides tests, as a root of "." does: the application's sources, whose modules
+            # are patched in place, and the Python environment's
+            kept = [normalized(root) for root in kept if root]
+            kept += [normalized(prefix) for prefix in {sys.prefix, sys.base_prefix, os.environ.get("VIRTUAL_ENV", "")} if prefix]
             purged = []
             for name, module in list(sys.modules.items()):
                 file = getattr(module, "__file__", None)
                 if not isinstance(file, str):
                     continue
                 try:
-                    path = os.path.normcase(os.path.realpath(file))
+                    path = normalized(file)
                 except (OSError, ValueError):
                     continue
-                if any(path == root or path.startswith(root + os.sep) for root in roots):
+                for root in roots:
+                    if not under(path, root):
+                        continue
+                    # a kept root inside the test root keeps its modules; one holding the test root keeps nothing
+                    if any(under(keep, root) and keep != root and under(path, keep) for keep in kept):
+                        continue
+                    if "site-packages" in path.split(os.sep):
+                        continue
                     del sys.modules[name]
                     purged.append(name)
+                    break
             importlib.invalidate_caches()
             return purged
         _pyronaut_purge_test_modules
@@ -247,13 +266,15 @@ public final class PyronautTestRunner implements TestRunner {
     }
 
     /**
-     * Removes from {@code sys.modules} the modules imported from the test source roots, which pytest imports by path.
+     * Removes from {@code sys.modules} the modules imported from the test source roots, which pytest imports by path,
+     * but not those of the application's sources or the Python environment a test root may hold.
      */
     private static void purgeTestModules(Context context, List<Path> roots) {
         if (roots.isEmpty()) {
             return;
         }
-        Value purged = context.eval(PURGE_TEST_MODULES).execute((Object) roots.stream().map(Path::toString).toArray(String[]::new));
+        String[] kept = {System.getProperty(PyronautTestReload.PYTHON_SOURCES_PROPERTY, "")};
+        Value purged = context.eval(PURGE_TEST_MODULES).execute(roots.stream().map(Path::toString).toArray(String[]::new), kept);
         if (LOG.isDebugEnabled()) {
             LOG.debug("Removed the test modules {} to import them again", purged);
         }
