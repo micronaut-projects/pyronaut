@@ -107,6 +107,12 @@ class PyronautTestReloadTest {
     }
 
     @Test
+    void thePythonBytecodeSettingIsAddedUnlessTheOptionsHoldOne() {
+        assertEquals(List.of("-Aa=b", "-Amicronaut.python.bytecode=false"), DevReloadFiles.withPythonBytecode(List.of("-Aa=b"), false));
+        assertEquals(List.of("-Amicronaut.python.bytecode=false"), DevReloadFiles.withPythonBytecode(List.of("-Amicronaut.python.bytecode=false"), true));
+    }
+
+    @Test
     void preparingTakesTheProcessedTestsOverFromThePyronautProcessor() throws Exception {
         PyronautTestReload.Layout layout = layout("");
         Path pyronaut = project.resolve("__pyronaut__");
@@ -132,7 +138,8 @@ class PyronautTestReloadTest {
         assertFalse(Files.exists(pyronaut.resolve("incremental/main")));
         assertTrue(Files.isDirectory(pyronaut.resolve("reports/tests")));
         DevManifest manifest = DevManifest.load(file);
-        assertEquals(List.of("-Amain=true"), manifest.compileOptions(SourceKind.PYTHON));
+        // the application compiles with the bytecode setting pyronaut process compiled it with, so that both write the same files
+        assertEquals(List.of("-Amain=true", "-Amicronaut.python.bytecode=true"), manifest.compileOptions(SourceKind.PYTHON));
         assertEquals(List.of("-Atest=true"), manifest.testView().compileOptions(SourceKind.PYTHON));
     }
 
