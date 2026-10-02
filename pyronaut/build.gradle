@@ -204,6 +204,7 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
 }
 
 tasks.register("prepareWheelSources", Sync) {
+    inputs.property("wheelVersion", wheelVersion)
     // The SDK embeds only JVM launcher distributions. Keep them fresh whenever
     // the wheel is rebuilt so runtime fixes are not masked by stale output.
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
@@ -219,6 +220,7 @@ tasks.register("prepareWheelSources", Sync) {
         // the portable SDK wheel.
         exclude("**/__pycache__/**", "**/*.pyc", "**/*.pyo")
     }
+    from(rootProject.files("README.md", "LICENSE"))
     into(wheelStagingDir)
 
     delegatedCliProjects.each { cliProject ->
@@ -460,15 +462,36 @@ native-image.jdk=${nativeImageJdkVersion.get()}
 [project]
 name = "pyronaut"
 version = "${wheelVersion.get()}"
-description = "Pyronaut v2 SDK orchestrator"
+description = "A polyglot runtime for Python and Java applications built on Micronaut"
+readme = {file = "README.md", content-type = "text/markdown"}
+authors = [{name = "Graeme Rocher"}]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = []
+keywords = ["micronaut", "python", "java", "graalpy", "graalvm"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Java",
+    "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://pyronaut.io/"
+Documentation = "https://pyronaut.io/docs/"
+Source = "https://github.com/micronaut-projects/pyronaut"
+Issues = "https://github.com/micronaut-projects/pyronaut/issues"
+Changelog = "https://github.com/micronaut-projects/pyronaut/releases"
 
 [project.scripts]
 pyronaut = "pyronaut_cli_v2.cli:main"
 
 [build-system]
-requires = ["setuptools>=70", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -480,11 +503,6 @@ pyronaut_cli_v2 = ["tools/**", "tools/shared/lib/*", "tools/shared/maven-poms/*"
 
         def setupCfgFile = wheelStagingDir.get().file("setup.cfg").asFile
         setupCfgFile.text = """
-[metadata]
-name = pyronaut
-version = ${wheelVersion.get()}
-description = Pyronaut v2 SDK orchestrator
-
 [options]
 package_dir =
     = src

@@ -1,4 +1,4 @@
-<img src="media/pyronaut_logo.svg" alt="Pyronaut Logo" width="300">
+<img src="https://raw.githubusercontent.com/micronaut-projects/pyronaut/0.0.x/media/pyronaut_logo.svg" alt="Pyronaut Logo" width="300">
 
 # Pyronaut
 
@@ -39,11 +39,18 @@ The full user guide lives in `src/main/docs/guide`.
 
 ## Installation and user guide
 
-The [Pyronaut guide](src/main/docs/guide/introduction.adoc) contains the user-facing installation, setup, project,
+Install the CLI with Python 3.10 or later on Linux or macOS, then provision the SDK:
+
+```bash
+python3 -m pip install pyronaut
+pyronaut setup
+```
+
+The [Pyronaut guide](https://pyronaut.io/docs/) contains the user-facing installation, setup, project,
 testing, configuration, and packaging instructions.
-Start with [Installing Pyronaut](src/main/docs/guide/installation.adoc), then
-choose the [project workflow](src/main/docs/guide/gettingStarted.adoc) or the
-[direct-source tutorial](src/main/docs/guide/gettingStarted/fastApiTutorial.adoc).
+Start with [Installing Pyronaut](https://pyronaut.io/docs/#installation), then
+choose the [project workflow](https://pyronaut.io/docs/#gettingStarted) or the
+[direct-source tutorial](https://pyronaut.io/docs/#fastApiTutorial).
 
 This README focuses on building and contributing to the Pyronaut repository.
 
@@ -221,7 +228,7 @@ from the `hello-world` directory.
 ### 2. Create `pyproject.toml`
 
 Create `pyproject.toml` in the `hello-world` directory using the project
-configuration shown in [Getting Started](src/main/docs/guide/gettingStarted.adoc).
+configuration shown in [Getting Started](https://pyronaut.io/docs/#gettingStarted).
 The source checkout uses the Micronaut Core version declared by
 `pyronaut.micronaut.core.version` in `gradle.properties`.
 
@@ -355,7 +362,7 @@ environment where pytest was installed and verify it with
 
 ## CLI reference
 
-The [CLI reference](src/main/docs/guide/pyronautCliV2.adoc) is the source of
+The [CLI reference](https://pyronaut.io/docs/#pyronautCliV2) is the source of
 truth for command syntax, options, generated files, environment variables,
 exit codes, and representative workflows.
 
