@@ -32,6 +32,8 @@ import java.util.Set;
  */
 @Internal
 public final class PyronautDevServiceLoaderFeature extends ServiceLoaderFeature {
+    private static final String JACKSON_ARRAY_SERIALIZERS = "tools.jackson.databind.ser.jdk.JDKArraySerializers";
+
     private static final Set<String> DYNAMIC_SERVICES = Set.of(
         "io.micronaut.context.ApplicationContextConfigurer",
         "io.micronaut.context.env.PropertySourceLoader",
@@ -47,6 +49,17 @@ public final class PyronautDevServiceLoaderFeature extends ServiceLoaderFeature 
         "io.micronaut.serde.config.naming.PropertyNamingStrategy",
         "io.micronaut.sourcegen.generator.SourceGenerator"
     );
+
+    @Override
+    public void duringSetup(Feature.DuringSetupAccess access) {
+        // Outer and nested serializers depend on each other's initializers. Initialize the
+        // outer class on the builder thread before parallel analysis can deadlock on them.
+        try {
+            Class.forName(JACKSON_ARRAY_SERIALIZERS, true, access.getApplicationClassLoader());
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("Jackson array serializers are required by pyronaut-dev", e);
+        }
+    }
 
     @Override
     protected ServiceScanner.ExclusiveStaticServiceDefinitions buildStaticServiceDefinitions(Feature.BeforeAnalysisAccess access) {

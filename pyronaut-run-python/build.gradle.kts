@@ -72,8 +72,6 @@ val nativeImageOutputDirectory = layout.buildDirectory.dir("native/nativeCompile
 val isWindows = System.getProperty("os.name")
     .lowercase()
     .contains("windows")
-val windowsGraalPyOverride = providers.environmentVariable("PYRONAUT_WINDOWS_GRAALPY_OVERRIDE_JAR")
-    .map { file(it) }
 val nativeExecutableSuffix = if (isWindows) ".exe" else ""
 val cremaOutputArgument = nativeImageOutputDirectory.map { it.file("pyronaut-run-python") }
 val cremaOutput = nativeImageOutputDirectory.map { it.file("pyronaut-run-python$nativeExecutableSuffix") }
@@ -170,7 +168,6 @@ tasks {
         dependsOn(nativeBuildProject.tasks.named("installDist"))
         dependsOn(writeNativeClasspathManifest)
         inputs.files(configurations.runtimeClasspath)
-        inputs.files(windowsGraalPyOverride).withPropertyName("windowsGraalPyOverride")
         inputs.property("pyronautNativeImageCiArgs", nativeImageCiArgs)
         inputs.property("pyronautPgoMode", PyronautPgo.mode(project).name)
         inputs.property(
@@ -221,10 +218,7 @@ tasks {
             )
             val nativeBuildArgs = mutableListOf<Any>()
             if (isWindows) {
-                val builderClasspath = listOfNotNull(
-                    windowsGraalPyOverride.orNull?.absolutePath,
-                    nativeBuildInstallDirectory.get().dir("lib").asFile.resolve("*").absolutePath
-                ).joinToString(File.pathSeparator)
+                val builderClasspath = nativeBuildInstallDirectory.get().dir("lib").asFile.resolve("*").absolutePath
                 nativeBuildArgs.addAll(listOf(
                     File(System.getProperty("java.home"), "bin/java.exe").absolutePath,
                     "-cp", builderClasspath,
