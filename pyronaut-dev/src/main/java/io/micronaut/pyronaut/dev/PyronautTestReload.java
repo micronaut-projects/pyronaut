@@ -158,7 +158,7 @@ public final class PyronautTestReload extends MicronautDevMain {
             DevReloadFiles.readLines(pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST)),
             DevReloadFiles.readLines(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)),
             DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST)),
-            DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)),
+            DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), layout.pythonBytecode()),
             options(pyronautDir),
             filterPatterns(tests));
     }
@@ -325,7 +325,8 @@ public final class PyronautTestReload extends MicronautDevMain {
                   List<Path> additional,
                   List<Path> testResources,
                   Path reports,
-                  String reportPath) {
+                  String reportPath,
+                  boolean pythonBytecode) {
 
         static Layout of(Path root, PyprojectModel model) {
             PyprojectModel.Sources sources = model.pyronaut().sources();
@@ -350,7 +351,8 @@ public final class PyronautTestReload extends MicronautDevMain {
                 List.copyOf(additional),
                 List.copyOf(testResources),
                 pyronautDir.resolve(REPORTS_DIR),
-                model.pyronaut().test().reportPathOrDefault());
+                model.pyronaut().test().reportPathOrDefault(),
+                Boolean.TRUE.equals(model.pyronaut().build().pythonBytecodeEnabled()));
         }
     }
 

@@ -6186,8 +6186,9 @@ def _build_test_reload_invocation(
             "Run pyronaut install, or set tool.pyronaut.test.continuous = 'process'."
         )
     build_entries = _read_manifest_entries(cache_dir / "resolved-build-dependencies")
+    compiler = _dev_compiler_classpath(build_entries, resolver)
     command_line[classpath_index] = os.pathsep.join(
-        dict.fromkeys([*classpath, *_dev_compiler_entries(build_entries), *runtime, dev_jar])
+        dict.fromkeys([*_without_other_versions(classpath, compiler), *compiler, *runtime, dev_jar])
     )
     return command_line, env
 
@@ -6419,10 +6420,11 @@ def _build_dev_delegate_invocation(
                 "or set tool.pyronaut.dev.reload = 'process' to restart the process for every change."
             )
         classpath_index = command_line.index("-cp") + 1
+        compiler = _dev_compiler_classpath(build_entries, resolver)
         command_line[classpath_index] = os.pathsep.join(
             dict.fromkeys([
-                *command_line[classpath_index].split(os.pathsep),
-                *_dev_compiler_entries(build_entries),
+                *_without_other_versions(command_line[classpath_index].split(os.pathsep), compiler),
+                *compiler,
                 dev_jar,
             ])
         )
@@ -6611,6 +6613,72 @@ def _pyronaut_dev_jar(resolver: Callable[[str], str | None]) -> str | None:
 def _dev_compiler_entries(build_entries: Sequence[str]) -> list[str]:
     """The Pyronaut compiler and what it needs beyond the application runtime, from the build scope."""
     return [entry for entry in build_entries if _DEV_COMPILER_JAR.match(Path(entry).name)]
+
+
+def _dev_compiler_classpath(build_entries: Sequence[str], resolver: Callable[[str], str | None] | None) -> list[str]:
+    """
+    The Pyronaut compiler the development runtime compiles with: the build
+    scope's, at the versions of the pyronaut-processor launcher, which
+    ``pyronaut process`` runs, so that a compilation in process writes the
+    classes the processed output holds, byte for byte, and a first edit
+    changes only what it edits. The launcher aligns versions the build scope
+    does not, such as sourcegen's, whose bytecode writer orders a class's
+    constants differently from one version to the next. A jar at the same
+    version stays the build scope's: the same jar at two paths would hold the
+    compiler's Python file system twice, which GraalPy refuses.
+    """
+    entries = _dev_compiler_entries(build_entries)
+    executable = resolver(COMMAND_TO_EXECUTABLE["process"]) if resolver is not None else None
+    if executable is None:
+        return entries
+    try:
+        launcher_entries = [
+            entry for entry in _delegate_lib_entries(executable, include_control_panel=False)
+            if _DEV_COMPILER_JAR.match(Path(entry).name)
+        ]
+    except (OSError, RuntimeError):
+        return entries
+    launcher: dict[str, tuple[str, str]] = {}
+    for entry in launcher_entries:
+        match = _VERSIONED_JAR.match(Path(entry).name)
+        if match:
+            launcher[match.group(1)] = (match.group(2), entry)
+    aligned: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        match = _VERSIONED_JAR.match(Path(entry).name)
+        if match is None:
+            aligned.append(entry)
+            continue
+        seen.add(match.group(1))
+        version, launcher_entry = launcher.get(match.group(1), (match.group(2), entry))
+        aligned.append(entry if version == match.group(2) else launcher_entry)
+    # what the launcher's versions need that the build scope's did not
+    if any(name.startswith("micronaut-inject-python") for name in seen):
+        aligned.extend(entry for artifact, (_, entry) in launcher.items() if artifact not in seen)
+    return list(dict.fromkeys(aligned))
+
+
+_VERSIONED_JAR = re.compile(r"^(.+?)-(\d[^/\\]*)\.jar$")
+
+
+def _without_other_versions(entries: Sequence[str], compiler: Sequence[str]) -> list[str]:
+    """
+    A launch classpath without the jars of the compiler's artifacts at other
+    versions, as the build scope's on a test classpath, which would come first.
+    """
+    chosen: dict[str, str] = {}
+    for entry in compiler:
+        match = _VERSIONED_JAR.match(Path(entry).name)
+        if match:
+            chosen[match.group(1)] = entry
+    kept: list[str] = []
+    for entry in entries:
+        match = _VERSIONED_JAR.match(Path(entry).name)
+        if match and match.group(1) in chosen and chosen[match.group(1)] != entry:
+            continue
+        kept.append(entry)
+    return kept
 
 
 def _snapshot_dependency_inputs(project_dir: Path) -> tuple[tuple[str, int, int], ...]:
