@@ -6026,7 +6026,7 @@ def _test_reload_supports_args(args: Sequence[str]) -> bool:
         name = token.split("=", 1)[0]
         if not token.startswith("-"):
             return False
-        if name not in _TEST_RELOAD_OPTIONS and not name.startswith("--verbose"):
+        if name not in _TEST_RELOAD_OPTIONS and not name.startswith("--verbose") and not _is_system_property_arg(token):
             return False
         if token in _TEST_RELOAD_VALUE_OPTIONS:
             skip_next = True
@@ -6190,6 +6190,9 @@ def _build_test_reload_invocation(
     LiveReload server.
     """
     project_dir = Path(_extract_project_dir(args)).resolve()
+    # -Dname=value sets a system property of the test process, as -Dmicronaut.dev.max-generations
+    properties = [value for value in args if _is_system_property_arg(value)]
+    args = [value for value in args if not _is_system_property_arg(value)]
     native = _pyronaut_dev_native_command_line(
         "test",
         args,
@@ -6199,7 +6202,10 @@ def _build_test_reload_invocation(
         java_home_provider=java_home_provider,
     )
     if native is not None:
-        return _native_test_reload_invocation(native, project_dir, env_overrides, java_home_provider)
+        command_line, env = _native_test_reload_invocation(native, project_dir, env_overrides, java_home_provider)
+        index = command_line.index("test")
+        command_line[index:index] = properties
+        return command_line, env
     command_line, env = _build_java_delegate_invocation(
         "test",
         [value for value in args if value not in {"--jvm", "--native"}],
@@ -6233,7 +6239,13 @@ def _build_test_reload_invocation(
     command_line[classpath_index] = os.pathsep.join(
         dict.fromkeys([*_without_other_versions(classpath, compiler), *compiler, *runtime, dev_jar])
     )
+    command_line[classpath_index - 1:classpath_index - 1] = properties
     return command_line, env
+
+
+def _is_system_property_arg(value: str) -> bool:
+    """Whether an argument of pyronaut test -t sets a system property of the test process: -Dname or -Dname=value."""
+    return value.startswith("-D") and len(value) > 2
 
 
 def _native_test_reload_invocation(

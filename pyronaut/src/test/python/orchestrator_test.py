@@ -4689,6 +4689,31 @@ enabled = false
         self.assertEqual(cli.DEV_RELAUNCH_STATUS, code)
         self.assertEqual(1, len(launched))
 
+    def test_continuous_tests_pass_system_properties_to_the_test_process(self):
+        executed: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir)
+            resolver, _ = self._continuous_test_resolver(temp_dir)
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_stdin_is_terminal", return_value=False), redirect_stdout(io.StringIO()):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir), "-t", "-Dmicronaut.dev.max-generations=3"],
+                    runner_with_env=runner,
+                    resolver=resolver,
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        command_line = executed[-1]
+        main = command_line.index(cli.TEST_RELOAD_MAIN)
+        # a system property of the test JVM, not an argument of test mode
+        self.assertIn("-Dmicronaut.dev.max-generations=3", command_line[:command_line.index("-cp")])
+        self.assertNotIn("-Dmicronaut.dev.max-generations=3", command_line[main:])
+
     def test_continuous_tests_configured_to_start_a_process_per_run_keep_the_loop(self):
         executed: list[list[str]] = []
         stdout = io.StringIO()
