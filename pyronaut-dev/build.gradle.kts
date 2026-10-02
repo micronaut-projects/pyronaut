@@ -545,6 +545,7 @@ val nativeImageRuntimeArgs = listOf(
     /* netty.* */
     "-H:Preserve=package=io.netty.channel.nio",
     "-H:Preserve=package=io.netty.channel",
+    "-H:Preserve=package=io.netty.handler.codec",
     "-H:Preserve=package=io.netty.handler.codec.http.*",
     "-H:Preserve=package=io.netty.handler.ssl",
     "-H:Preserve=package=io.netty.resolver.*",
@@ -561,6 +562,7 @@ val nativeImageRuntimeArgs = listOf(
     /* other runtime APIs */
     "-H:Preserve=package=javax.xml.namespace.*",
     "-H:Preserve=package=org.reactivestreams.*",
+    "-H:Preserve=package=io.micrometer.core.instrument",
 
     /* other */
     "-H:Preserve=package=com.fasterxml.jackson.annotation.*",
