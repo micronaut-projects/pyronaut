@@ -21,6 +21,9 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"daemon\""));
         assertTrue(schema.contains("\"engine\""));
         assertTrue(schema.contains("\"enum\": [\"junit\", \"pytest\", \"both\"]"));
+        assertTrue(schema.contains("\"continuous\""));
+        assertTrue(schema.contains("\"report-path\""));
+        assertTrue(schema.contains("\"enum\": [\"restart\", \"process\"]"));
         assertTrue(schema.contains("\"sources\""));
         assertTrue(schema.contains("\"core\""));
         assertTrue(schema.contains("\"platform\""));

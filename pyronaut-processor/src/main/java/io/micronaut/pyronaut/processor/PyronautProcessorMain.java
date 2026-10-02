@@ -56,6 +56,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_TARGET_DIR = "__pyronaut__/classes";
     private static final String RESOLVED_PROCESSOR_OPTIONS = "resolved-processor-options";
+    private static final String RESOLVED_TEST_PROCESSOR_OPTIONS = "resolved-test-processor-options";
     private static final String DEFAULT_TEST_TARGET_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_TEST_SOURCES_DIR = "__pyronaut__/test-sources";
     private static final String DEFAULT_INCREMENTAL_DIR = "__pyronaut__/incremental";
@@ -211,6 +212,10 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                 writeResolvedOptions(root.resolve(DEFAULT_PYRONAUT_DIR).resolve(RESOLVED_PROCESSOR_OPTIONS), mainOptions);
             }
             List<String> testOptions = ProcessorOptions.resolve(root, model, options, true);
+            if (externalLayout == null) {
+                // and test mode compiles the tests in process with the options of the test pass
+                writeResolvedOptions(root.resolve(DEFAULT_PYRONAUT_DIR).resolve(RESOLVED_TEST_PROCESSOR_OPTIONS), testOptions);
+            }
             List<Path> pyronautProcessorSupport = externalProcessorSupportClasspath();
 
             List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()

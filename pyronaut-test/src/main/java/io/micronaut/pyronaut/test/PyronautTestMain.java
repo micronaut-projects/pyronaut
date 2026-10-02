@@ -460,6 +460,34 @@ public final class PyronautTestMain implements Callable<Integer> {
         }
     }
 
+    /**
+     * Prepares this JVM to run a project's tests as this command does: the Java home, the Test Resources client
+     * properties, the configuration validator's defaults, bean introspections through the thread context loader, and a
+     * random port for a test server. For the test mode of the development runtime, which runs the tests of
+     * {@code pyronaut test -t} on the JVM toolchain in one JVM, each run in a class loader generation of its own.
+     *
+     * @param environment The environment the Java home and the Test Resources client properties come from
+     */
+    public static void prepareTestJvm(Map<String, String> environment) {
+        initializeJavaHomeIfMissing(() -> environment.get("JAVA_HOME"));
+        applyTestResourcesProperties(environment);
+        setDefaultProperty(CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT, "false");
+        setDefaultProperty(CONFIGURATION_VALIDATOR_SUPPRESSIONS, "logger.levels.*");
+        enableContextClassLoaderIntrospections();
+        BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
+        defaultTestServerPort();
+    }
+
+    /**
+     * The Python source the reusable GraalPy context evaluates after the generated launcher, as this command chooses it.
+     *
+     * @param testsDir The Python tests directory
+     * @return {@code tests.py} when the tests directory holds one, else {@code main.py}
+     */
+    public static String applicationMain(Path testsDir) {
+        return selectApplicationMain(testsDir);
+    }
+
     static void enableContextClassLoaderIntrospections() {
         if (System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER) == null) {
             System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, "true");
