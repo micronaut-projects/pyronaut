@@ -6194,8 +6194,7 @@ def _build_test_reload_invocation(
     """
     project_dir = Path(_extract_project_dir(args)).resolve()
     # -Dname=value sets a system property of the test process, as -Dmicronaut.dev.max-generations
-    properties = [value for value in args if _is_system_property_arg(value)]
-    args = [value for value in args if not _is_system_property_arg(value)]
+    properties, args = _split_system_properties(args)
     native = _pyronaut_dev_native_command_line(
         "test",
         args,
@@ -6244,6 +6243,25 @@ def _build_test_reload_invocation(
     )
     command_line[classpath_index - 1:classpath_index - 1] = properties
     return command_line, env
+
+
+def _split_system_properties(args: Sequence[str]) -> tuple[list[str], list[str]]:
+    """The -D arguments of pyronaut test -t, and the others; the value of an option such as --tests stays with it."""
+    properties: list[str] = []
+    rest: list[str] = []
+    skip_next = False
+    for value in args:
+        if skip_next:
+            skip_next = False
+            rest.append(value)
+            continue
+        if value in _TEST_RELOAD_VALUE_OPTIONS:
+            skip_next = True
+        if _is_system_property_arg(value):
+            properties.append(value)
+        else:
+            rest.append(value)
+    return properties, rest
 
 
 def _is_system_property_arg(value: str) -> bool:
