@@ -155,6 +155,44 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void validationIgnoresUserLevelTestResourcesSettings() throws Exception {
+        // A settings file left behind by a shared Test Resources server that is no longer running.
+        Path home = tempDir.resolve("home");
+        Path settings = Files.createDirectories(home.resolve(".micronaut/test-resources"));
+        Files.writeString(settings.resolve("test-resources.properties"), """
+            server.uri=http\\://localhost\\:9
+            server.access.token=stale
+            """);
+        String previousHome = System.getProperty("user.home");
+        PyronautValidateConfigMain.ValidationExecutionResult result;
+        try {
+            System.setProperty("user.home", home.toString());
+            result = new MicronautConfigurationValidatorExecutor().validate(new PyronautValidateConfigMain.ValidationSettings(
+                true,
+                false,
+                false,
+                false,
+                "reachable",
+                PyronautValidateConfigMain.ReportFormat.JSON,
+                tempDir.resolve("reports"),
+                tempDir,
+                List.of("test"),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                "test"
+            ));
+        } finally {
+            restoreProperty("user.home", previousHome);
+        }
+
+        assertFalse(result.hasErrors());
+        assertNull(System.getProperty("micronaut.test.resources.enabled"));
+        assertNull(System.getProperty("pyronaut.dev.test.resources.bridge.enabled"));
+    }
+
+    @Test
     void validationClasspathIncludesResourcesDirsAndNativeProvidedJarWithoutChangingProjectClasspath() throws Exception {
         Path projectJar = Files.createFile(tempDir.resolve("project.jar"));
         Path nativeJar = Files.createFile(tempDir.resolve("native-metadata-1.0.0.jar"));
