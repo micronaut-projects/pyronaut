@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -22,11 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The processors a native image holds keep their static state between the compilations of the development runtime,
- * where javac on the JVM loads them anew for each: the OpenAPI visitor's endpoints held the elements of every
- * compilation, and with them its javac and GraalPy contexts.
+ * The processors the launcher holds, as the native image does, keep their static state between the compilations of
+ * the development runtime, where a processor path of their own goes with each compilation: the OpenAPI visitor's
+ * endpoints held the elements of every compilation, and with them its javac and GraalPy contexts.
  */
-class ImageProcessorStateTest {
+class LauncherProcessorStateTest {
 
     @AfterEach
     void clean() {
@@ -34,13 +36,13 @@ class ImageProcessorStateTest {
     }
 
     @Test
-    void theProcessorsStateIsReleasedAfterEachCompilationWhenTheyRunFromTheImage() {
+    void theProcessorsStateIsReleasedAfterEachCompilationWhenTheLauncherHoldsThem() {
         Compiler python = new Compiler(Set.of(SourceKind.PYTHON), Set.of(SourceKind.JAVA));
         Map<SourceKind, SourceCompiler> compilers = new HashMap<>();
         compilers.put(SourceKind.PYTHON, python);
         compilers.put(SourceKind.JAVA, python);
 
-        Map<SourceKind, SourceCompiler> releasing = ImageProcessorState.releasingAfterCompilation(compilers, true);
+        Map<SourceKind, SourceCompiler> releasing = LauncherProcessorState.releasingAfterCompilation(compilers, LauncherProcessorState.release(LauncherProcessorState.class.getClassLoader()));
 
         SourceCompiler compiler = releasing.get(SourceKind.PYTHON);
         // one compiler for its two languages
@@ -57,10 +59,11 @@ class ImageProcessorStateTest {
     }
 
     @Test
-    void theCompilersAreUnchangedOnTheJvm() {
+    void theCompilersAreUnchangedWhenTheLauncherHoldsNoSuchProcessor() {
+        assertNull(LauncherProcessorState.release(new URLClassLoader(new URL[0], null)));
         Map<SourceKind, SourceCompiler> compilers = Map.of(SourceKind.PYTHON, new Compiler(Set.of(SourceKind.PYTHON), Set.of()));
 
-        assertSame(compilers, ImageProcessorState.releasingAfterCompilation(compilers, false));
+        assertSame(compilers, LauncherProcessorState.releasingAfterCompilation(compilers, null));
     }
 
     /**
