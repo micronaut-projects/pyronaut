@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -82,11 +83,13 @@ class DirectSourceDiscoveryTest {
             classpath()
         );
 
-        assertEquals(List.of(
+        // The compiler does not visit source files in a fixed order, so only the
+        // declarations, not their order across files, are asserted.
+        assertEquals(Set.of(
             new DirectSourceDeclarations.Dependency("example:runtime:1", false),
             new DirectSourceDeclarations.Dependency("example:build:2", true)
-        ), declarations.dependencies());
-        assertEquals(List.of("https://repo1.example", "https://repo2.example"), declarations.repositories());
+        ), Set.copyOf(declarations.dependencies()));
+        assertEquals(Set.of("https://repo1.example", "https://repo2.example"), Set.copyOf(declarations.repositories()));
         assertEquals("runtime.value", declarations.runtimeProperties().get("runtime.name"));
         assertEquals("build.value", declarations.buildProperties().get("build.name"));
     }

@@ -26,9 +26,6 @@ jobs:
       DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
       GH_TOKEN_PUBLIC_REPOS_READONLY: ${{ secrets.GH_TOKEN_PUBLIC_REPOS_READONLY }}
       GH_USERNAME: ${{ secrets.GH_USERNAME }}
-      PYRONAUT_GIT_TOKEN: ${{ secrets.PYRONAUT_GIT_TOKEN || secrets.GH_TOKEN }}
-      PYRONAUT_GIT_USERNAME: ${{ secrets.PYRONAUT_GIT_USERNAME || secrets.GH_USERNAME || 'x-access-token' }}
-      PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
       TESTCONTAINERS_RYUK_DISABLED: true
       PREDICTIVE_TEST_SELECTION: "${{ github.event_name == 'pull_request' && 'true' || 'false' }}"
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -54,11 +51,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: "💾 Cache source dependency checkouts"
-        uses: ./.github/actions/cache-source-dependencies
-
       - name: "🔧 Setup GraalVM CE"
-        uses: graalvm/setup-graalvm@v1.4.4
+        uses: graalvm/setup-graalvm@v1.6.7
         with:
           distribution: 'graalvm'
           java-version: ${{ matrix.java }}
@@ -71,7 +65,8 @@ jobs:
       - name: "🔧 Setup Gradle"
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: false
+          # Saving the Gradle home takes up to a minute; pull requests reuse the branch caches
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
           gradle-home-cache-includes: |
             caches
             notifications
@@ -141,34 +136,34 @@ jobs:
         run: |
           [ -f ./cleanup.sh ] && ./cleanup.sh || [ ! -f ./cleanup.sh ]
 
-  e2e-parity:
+  e2e-docker:
     if: github.repository != 'micronaut-projects/micronaut-project-template'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    # Docker-backed suites (Test Resources/MySQL); GitHub's Linux runners
+    # provide a Docker engine, macOS runners do not.
+    runs-on: ubuntu-latest
     env:
       DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
       DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
       DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
       GH_TOKEN_PUBLIC_REPOS_READONLY: ${{ secrets.GH_TOKEN_PUBLIC_REPOS_READONLY }}
       GH_USERNAME: ${{ secrets.GH_USERNAME }}
-      PYRONAUT_GIT_TOKEN: ${{ secrets.PYRONAUT_GIT_TOKEN || secrets.GH_TOKEN }}
-      PYRONAUT_GIT_USERNAME: ${{ secrets.PYRONAUT_GIT_USERNAME || secrets.GH_USERNAME || 'x-access-token' }}
-      PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
       TESTCONTAINERS_RYUK_DISABLED: true
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: "🗑 Free disk space"
+        run: |
+         sudo rm -rf "/usr/local/share/boost"
+         sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+         sudo apt-get clean
+         df -h
+
       - name: "📥 Checkout repository"
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: "💾 Cache source dependency checkouts"
-        uses: ./.github/actions/cache-source-dependencies
-
       - name: "🔧 Setup GraalVM CE"
-        uses: graalvm/setup-graalvm@v1.4.4
+        uses: graalvm/setup-graalvm@v1.6.7
         with:
           distribution: 'graalvm'
           java-version: '25'
@@ -181,13 +176,13 @@ jobs:
       - name: "🔧 Setup Gradle"
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: false
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
           gradle-home-cache-includes: |
             caches
             notifications
             wrapper/dists
             jdks
 
-      - name: "🧪 Run CLI v2 E2E parity checks"
+      - name: "🧪 Run Docker-backed E2E and functional tests"
         run: |
-          ./gradlew :micronaut-pyronaut:check -PpyronautE2E=true --no-daemon
+          ./gradlew :micronaut-pyronaut:testPythonOrchestratorE2EFull :micronaut-functional-test-docker:test -Pdocker=true --no-daemon --continue

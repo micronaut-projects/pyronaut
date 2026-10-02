@@ -17,7 +17,9 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -32,6 +34,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * in runtime or test fails the whole scope.
  */
 class TestResourcesServerCoordinateTest {
+
+    @TempDir
+    Path tempDir;
 
     /** The form a POM-only aggregator has to be declared in. org.graalvm.polyglot:js is one. */
     private static final String POM_ONLY = "org.graalvm.polyglot:js:pom:25.4.4.1.1";
@@ -85,5 +90,18 @@ class TestResourcesServerCoordinateTest {
             "disabled inference must not add the Vault provider: " + serverCoordinates(runtime, false));
         assertTrue(serverCoordinates(runtime, true).stream().anyMatch(c -> c.startsWith(vaultModule)),
             "enabled inference should preserve the Test Resources mapping");
+    }
+
+    @Test
+    void resolvesAnEmptyServerScopeWithoutPyronautConfiguration() {
+        MavenClasspathResolver resolver = new MavenClasspathResolver();
+        List<Path> classpath = resolver.resolveScopeDetails(
+            new PyprojectModel(null, null, null),
+            InstallScope.TEST_RESOURCES_SERVER,
+            tempDir.resolve("repository"),
+            true
+        ).classpath();
+
+        assertTrue(classpath.isEmpty());
     }
 }

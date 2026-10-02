@@ -73,7 +73,7 @@ final class FastApiTutorialSmokeTest {
             .redirectErrorStream(true)
             .redirectOutput(outputFile.toFile())
             .start();
-        boolean finished = process.waitFor(60, TimeUnit.SECONDS);
+        boolean finished = process.waitFor(180, TimeUnit.SECONDS);
         if (!finished) {
             process.destroyForcibly();
         }
@@ -121,7 +121,9 @@ final class FastApiTutorialSmokeTest {
     ) throws Exception {
         URI uri = URI.create("http://localhost:" + port + path);
         Exception lastFailure = null;
-        for (int attempt = 0; attempt < 120; attempt++) {
+        // First start compiles the application with GraalPy, which takes well over
+        // 30 seconds on the 2-CPU GitHub-hosted runners.
+        for (int attempt = 0; attempt < 480; attempt++) {
             if (!process.isAlive()) {
                 throw new IllegalStateException("Development server exited early:\n" + Files.readString(outputFile));
             }
@@ -135,7 +137,7 @@ final class FastApiTutorialSmokeTest {
                 Thread.sleep(250);
             }
         }
-        throw new IllegalStateException("Server did not start at " + uri, lastFailure);
+        throw new IllegalStateException("Server did not start at " + uri + ":\n" + Files.readString(outputFile), lastFailure);
     }
 
     private static void assertResponseContains(
@@ -154,6 +156,7 @@ final class FastApiTutorialSmokeTest {
     private static List<String> smokeCommand(Path projectDirectory) throws URISyntaxException {
         List<String> command = new ArrayList<>();
         command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+        command.addAll(inheritedJitOptions());
         command.add("-Dpyronaut.dev.project.dir=" + projectDirectory);
         String compilerClasspath = System.getProperty("pyronaut.dev.compiler.class.path");
         if (compilerClasspath != null) {
@@ -167,6 +170,19 @@ final class FastApiTutorialSmokeTest {
         command.add(testProcessClasspath());
         command.add(SmokeLauncher.class.getName());
         return command;
+    }
+
+
+    // Forwards the JIT and Truffle settings the build gives the test JVM, so the child JVM
+    // spends as little CPU on compilation as the test JVM does
+    private static List<String> inheritedJitOptions() {
+        return java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments().stream()
+            .filter(arg -> arg.equals("-XX:+UnlockExperimentalVMOptions")
+                || arg.equals("-XX:-UseJVMCICompiler")
+                || arg.equals("-XX:+UseParallelGC")
+                || arg.startsWith("-Dtruffle.TruffleRuntime=")
+                || arg.startsWith("-Dpolyglot.engine.WarnInterpreterOnly="))
+            .toList();
     }
 
     private static String testProcessClasspath() throws URISyntaxException {

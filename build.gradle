@@ -112,3 +112,51 @@ gradle.projectsEvaluated {
         }
     }
 }
+
+// The test JVMs are CPU bound on the 4 vCPU CI runners. Most tests create short-lived GraalPy
+// contexts whose Truffle-compiled code is thrown away with the engine, so the Truffle compiler
+// threads burn CPU without paying off. Run Python interpreter-only and compile the host code with
+// C2, which compiles far less eagerly than the Graal JIT (same as micronaut-core's Python CI).
+def testJvmArgs = [
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:-UseJVMCICompiler",
+    "-XX:+UseParallelGC",
+    // Unlike polyglot.engine.Compilation=false, this runtime exists on every JDK
+    "-Dtruffle.TruffleRuntime=com.oracle.truffle.api.impl.DefaultTruffleRuntime",
+    "-Dpolyglot.engine.WarnInterpreterOnly=false"
+]
+// The JaCoCo agent instruments every class a test loads by default, including GraalPy, Truffle and
+// the Micronaut Python compiler, while the coverage reports only cover the Pyronaut classes
+def jacocoIncludes = [
+    "io.micronaut.pyronaut.*",
+    "io.micronaut.python.cli.*",
+    "io.micronaut.python.logging.*",
+    "io.micronaut.test.pytest.*",
+    "io.micronaut.core.io.service.*"
+]
+subprojects {
+    tasks.withType(Test).configureEach {
+        jvmArgs(testJvmArgs)
+    }
+    pluginManager.withPlugin("jacoco") {
+        tasks.withType(Test).configureEach {
+            jacoco {
+                includes = jacocoIncludes
+            }
+        }
+    }
+}
+// micronaut-build turns the JaCoCo agent on for every test on GitHub Actions, but only the Sonar
+// analysis reads the coverage, and it only runs with a SONAR_TOKEN. Registered once all projects are
+// evaluated so that it runs after the plugin's own configuration.
+if (!System.getenv("SONAR_TOKEN")?.trim()) {
+    gradle.projectsEvaluated {
+        subprojects {
+            pluginManager.withPlugin("jacoco") {
+                tasks.withType(Test).configureEach {
+                    jacoco.enabled = false
+                }
+            }
+        }
+    }
+}

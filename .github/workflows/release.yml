@@ -38,7 +38,7 @@ jobs:
           MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish to Sonatype OSSRH
+      - name: Publish to local build repository
         id: publish
         env:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
@@ -49,14 +49,13 @@ jobs:
           DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
           DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
           DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
-          PYRONAUT_GIT_TOKEN: ${{ secrets.PYRONAUT_GIT_TOKEN || secrets.GH_TOKEN }}
-          PYRONAUT_GIT_USERNAME: ${{ secrets.PYRONAUT_GIT_USERNAME || secrets.GH_USERNAME || 'x-access-token' }}
-          PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
         run: |
           echo $GPG_FILE | base64 -d > secring.gpg
-          # Publish both locally and to Sonatype.
-          # The artifacts stored locally will be used to generate the SLSA provenance.
-          ./gradlew publishToMavenCentral --publishing-type=AUTOMATIC
+          # Maven Central publishing is not enabled for Pyronaut yet, so only
+          # publish to the local build repository used for the SLSA provenance.
+          # This must not build native images: they are published by OraHub
+          # and do not fit in the memory of GitHub-hosted runners.
+          ./gradlew publishAllPublicationsToBuildRepository
           # Read the current version from gradle.properties.
           VERSION=$(./gradlew properties | grep 'version:' | awk '{print $2}')
           # Read the project group from gradle.properties.
@@ -94,9 +93,6 @@ jobs:
           DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
           GH_TOKEN_PUBLIC_REPOS_READONLY: ${{ secrets.GH_TOKEN_PUBLIC_REPOS_READONLY }}
           GH_USERNAME: ${{ secrets.GH_USERNAME }}
-          PYRONAUT_GIT_TOKEN: ${{ secrets.PYRONAUT_GIT_TOKEN || secrets.GH_TOKEN }}
-          PYRONAUT_GIT_USERNAME: ${{ secrets.PYRONAUT_GIT_USERNAME || secrets.GH_USERNAME || 'x-access-token' }}
-          PYRONAUT_GRAALPY_BUNDLE_URL: ${{ secrets.PYRONAUT_GRAALPY_BUNDLE_URL }}
       - name: Export Gradle Properties
         uses: micronaut-projects/github-actions/export-gradle-properties@master
       - name: LATEST_TAG

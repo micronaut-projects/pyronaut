@@ -104,8 +104,10 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
         }
         Path root = projectDir.toAbsolutePath().normalize();
         try {
-            PyprojectModel.TestResources config = ExternalProjectLayout.isExternal(root)
-                ? externalTestResourcesConfig() : modelReader.readProjectDirectory(root).pyronaut().testResources();
+            // External builds and direct-source projects (no pyproject.toml) use
+            // the project-local defaults that DirectSourceTestResourcesSession uses.
+            PyprojectModel.TestResources config = ExternalProjectLayout.isExternal(root) || !Files.isRegularFile(root.resolve("pyproject.toml"))
+                ? defaultTestResourcesConfig() : modelReader.readProjectDirectory(root).pyronaut().testResources();
             Path settingsDir = resolveSettingsDir(root, config);
             Path logsDir = resolveLogsDir(root, settingsDir, config);
             Path portFile = settingsDir.resolve("server.port");
@@ -128,7 +130,7 @@ public final class PyronautTestResourcesServerMain implements Callable<Integer> 
         }
     }
 
-    private static PyprojectModel.TestResources externalTestResourcesConfig() {
+    private static PyprojectModel.TestResources defaultTestResourcesConfig() {
         return new PyprojectModel.TestResources(true, true, null, null, true, List.of(), 60,
             false, null, null, null, java.util.Map.of(), java.util.Map.of(), false, null, "none", List.of());
     }

@@ -86,20 +86,32 @@ abstract class AbstractPyronautRunSmokeTest {
         List<String> classpathEntries = new ArrayList<>();
         classpathEntries.addAll(readManifestEntries(resolveRunManifest(project)));
         classpathEntries.addAll(currentRuntimeClasspathEntries(project));
-        return runCommand(
-            project,
-            List.of(
-                javaExecutable().toString(),
-                "--sun-misc-unsafe-memory-access=allow",
-                "--enable-native-access=ALL-UNNAMED",
-                "-cp",
-                String.join(File.pathSeparator, classpathEntries),
-                PyronautRunMain.class.getName(),
-                "--project-dir",
-                project.toString()
-            ),
-            Map.of()
-        );
+        List<String> command = new ArrayList<>();
+        command.add(javaExecutable().toString());
+        command.addAll(inheritedJitOptions());
+        command.addAll(List.of(
+            "--sun-misc-unsafe-memory-access=allow",
+            "--enable-native-access=ALL-UNNAMED",
+            "-cp",
+            String.join(File.pathSeparator, classpathEntries),
+            PyronautRunMain.class.getName(),
+            "--project-dir",
+            project.toString()
+        ));
+        return runCommand(project, command, Map.of());
+    }
+
+
+    // Forwards the JIT and Truffle settings the build gives the test JVM, so the child JVM
+    // spends as little CPU on compilation as the test JVM does
+    private static List<String> inheritedJitOptions() {
+        return java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments().stream()
+            .filter(arg -> arg.equals("-XX:+UnlockExperimentalVMOptions")
+                || arg.equals("-XX:-UseJVMCICompiler")
+                || arg.equals("-XX:+UseParallelGC")
+                || arg.startsWith("-Dtruffle.TruffleRuntime=")
+                || arg.startsWith("-Dpolyglot.engine.WarnInterpreterOnly="))
+            .toList();
     }
 
     protected static RunResult runNative(Path binary, Path project) throws Exception {

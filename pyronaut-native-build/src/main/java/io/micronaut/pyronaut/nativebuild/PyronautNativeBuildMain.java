@@ -57,7 +57,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
@@ -558,13 +558,10 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             return Set.of();
         }
         Set<String> resources = new HashSet<>();
-        try (var zip = new ZipInputStream(Files.newInputStream(entry))) {
-            ZipEntry zipEntry;
-            while ((zipEntry = zip.getNextEntry()) != null) {
-                if (!zipEntry.isDirectory() && zipEntry.getName().startsWith("META-INF/GRAALPY-VFS/")) {
-                    resources.add(zipEntry.getName());
-                }
-            }
+        try (var zip = new ZipFile(entry.toFile())) {
+            zip.stream()
+                .filter(zipEntry -> !zipEntry.isDirectory() && zipEntry.getName().startsWith("META-INF/GRAALPY-VFS/"))
+                .forEach(zipEntry -> resources.add(zipEntry.getName()));
         } catch (IOException ignored) {
             return Set.of();
         }
@@ -784,17 +781,10 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             if (!Files.isRegularFile(normalized) || !normalized.getFileName().toString().endsWith(".jar")) {
                 continue;
             }
-            try (var zip = new ZipInputStream(Files.newInputStream(normalized))) {
-                ZipEntry zipEntry;
-                while ((zipEntry = zip.getNextEntry()) != null) {
-                    if (zipEntry.isDirectory()) {
-                        continue;
-                    }
-                    String name = zipEntry.getName();
-                    if (name.startsWith("META-INF/GRAALPY-VFS/")) {
-                        resources.add(name);
-                    }
-                }
+            try (var zip = new ZipFile(normalized.toFile())) {
+                zip.stream()
+                    .filter(zipEntry -> !zipEntry.isDirectory() && zipEntry.getName().startsWith("META-INF/GRAALPY-VFS/"))
+                    .forEach(zipEntry -> resources.add(zipEntry.getName()));
             } catch (IOException ignored) {
                 // Skip unreadable jars; native-image will surface real classpath issues separately.
             }

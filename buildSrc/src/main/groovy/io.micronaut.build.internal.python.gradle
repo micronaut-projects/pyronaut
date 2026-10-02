@@ -15,3 +15,14 @@ dependencies {
     pyronautCompiler("io.micronaut:micronaut-inject-python")
     pyronautCompiler("io.micronaut:micronaut-context-python")
 }
+
+// The Python compiler runs GraalPy briefly per source set: Truffle's compiled code does not pay off,
+// and the host code compiles with less CPU under C2 than under the Graal JIT. See the root build.
+tasks.withType(PythonCompile).configureEach {
+    jvmArgs.addAll(
+        "-XX:+UnlockExperimentalVMOptions",
+        "-XX:-UseJVMCICompiler",
+        "-Dtruffle.TruffleRuntime=com.oracle.truffle.api.impl.DefaultTruffleRuntime",
+        "-Dpolyglot.engine.WarnInterpreterOnly=false"
+    )
+}
