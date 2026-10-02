@@ -313,6 +313,15 @@ public final class PyprojectConfigSpec {
         List.of(),
         List.of("tool.pyronaut.dev.restartExcludes")
     );
+    public static final FieldSpec PYRONAUT_DEV_RELOAD = enumString(
+        "tool.pyronaut.dev.reload",
+        "How dev mode applies a change on the JVM toolchain. 'restart' compiles the change in the running "
+            + "process and starts the application again in a new class loader, keeping the JVM, the dependencies "
+            + "and the GraalPy engine loaded; 'process' starts a new process for every change. The native "
+            + "toolchain always starts a new process.",
+        "restart",
+        List.of("restart", "process")
+    );
     public static final FieldSpec PYRONAUT_SOURCES_ADDITIONAL_TEST_RESOURCES = stringArray(
         "tool.pyronaut.sources.additional-test-resources",
         "Additional test resources directories included for test scope.",
@@ -926,7 +935,8 @@ public final class PyprojectConfigSpec {
         PYRONAUT_TEST_RESOURCES_JAVA_EXECUTABLE,
         PYRONAUT_TEST_RESOURCES_STARTUP_OPTIMIZATION,
         PYRONAUT_TEST_RESOURCES_LEYDEN_JVM_ARGS,
-        PYRONAUT_DEV_RESTART_EXCLUDES
+        PYRONAUT_DEV_RESTART_EXCLUDES,
+        PYRONAUT_DEV_RELOAD
     );
 
     public static final List<SectionSpec> STRICT_SECTIONS = List.of(

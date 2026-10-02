@@ -26,6 +26,8 @@ import io.micronaut.python.compiler.PythonIncrementalMode;
 import picocli.CommandLine;
 
 import java.nio.file.StandardCopyOption;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -53,6 +55,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_PYTHON_SRC = "src";
     private static final String DEFAULT_PYRONAUT_DIR = "__pyronaut__";
     private static final String DEFAULT_TARGET_DIR = "__pyronaut__/classes";
+    private static final String RESOLVED_PROCESSOR_OPTIONS = "resolved-processor-options";
     private static final String DEFAULT_TEST_TARGET_DIR = "__pyronaut__/test-classes";
     private static final String DEFAULT_TEST_SOURCES_DIR = "__pyronaut__/test-sources";
     private static final String DEFAULT_INCREMENTAL_DIR = "__pyronaut__/incremental";
@@ -203,6 +206,10 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
             ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
             List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false);
+            if (externalLayout == null) {
+                // development mode compiles in process with the options the main pass uses
+                writeResolvedOptions(root.resolve(DEFAULT_PYRONAUT_DIR).resolve(RESOLVED_PROCESSOR_OPTIONS), mainOptions);
+            }
             List<String> testOptions = ProcessorOptions.resolve(root, model, options, true);
             List<Path> pyronautProcessorSupport = externalProcessorSupportClasspath();
 
@@ -859,6 +866,15 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             if (verbose) {
                 e.printStackTrace(System.err);
             }
+        }
+    }
+
+    private static void writeResolvedOptions(Path file, List<String> options) {
+        try {
+            Files.createDirectories(file.getParent());
+            Files.write(file, options, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new PyronautProcessorException("Failed writing " + file, e);
         }
     }
 }
