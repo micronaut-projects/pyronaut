@@ -1903,6 +1903,10 @@ public final class PyronautDevMain implements Callable<Integer> {
                     yield new CommandLine(new PyronautDevRun()).execute(args);
                 }
                 case TEST -> {
+                    if (PyronautTestReload.isRequested()) {
+                        // continuous testing in this process: the image holds the test mode of the development runtime
+                        yield PyronautTestReload.runTestsReportingFailures(args);
+                    }
                     PyronautLauncherLogging.initializeApplicationDefaults(false);
                     yield new CommandLine(new PyronautTestMain()).execute(args);
                 }

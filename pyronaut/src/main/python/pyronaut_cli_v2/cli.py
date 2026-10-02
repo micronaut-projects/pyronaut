@@ -5892,7 +5892,7 @@ def _run_test_continuously(
     external_install_done: bool = False,
 ) -> int:
     project_root = project_dir.resolve()
-    if _test_reload_in_process(project_root, delegated_args, debug_vm=debug_vm):
+    if _test_reload_in_process(project_root, delegated_args, debug_vm=debug_vm, resolver=resolver):
         return _run_tests_in_process(
             project_dir=project_root,
             delegated_args=delegated_args,
@@ -5989,6 +5989,13 @@ def _run_test_continuously(
 TEST_CONTINUOUS_RESTART = "restart"
 TEST_CONTINUOUS_PROCESS = "process"
 TEST_RELOAD_MAIN = "io.micronaut.pyronaut.dev.PyronautTestReload"
+# Asks the native pyronaut-dev image to run its test command in test mode.
+TEST_RELOAD_PROPERTY = "pyronaut.test.reload"
+# The artifacts a native pyronaut-dev image holds when its test command can run
+# in test mode, in process.
+_NATIVE_TEST_RUNTIME_ARTIFACTS = frozenset({"io.micronaut:micronaut-dev", "io.micronaut:micronaut-dev-test-report"})
+# Written by test mode before it exits with DEV_RELAUNCH_STATUS.
+_TEST_RELAUNCH_MARKER = ("micronaut-dev", "test", "relaunch")
 # The options of the test command that test mode supports; any other runs the
 # tests in a new process for every run, as before.
 _TEST_RELOAD_OPTIONS = {"--project-dir", "--tests", "--verbose", "--debug-vm", "--jvm", "--native"}
@@ -6026,16 +6033,24 @@ def _test_reload_supports_args(args: Sequence[str]) -> bool:
     return True
 
 
-def _test_reload_in_process(project_dir: Path, args: Sequence[str], *, debug_vm: bool = False) -> bool:
+def _test_reload_in_process(
+    project_dir: Path,
+    args: Sequence[str],
+    *,
+    debug_vm: bool = False,
+    resolver: Callable[[str], str | None] | None = None,
+) -> bool:
     """
-    Whether pyronaut test -t runs the tests in one JVM, in the test mode of the
-    micronaut-dev runtime, rather than processing the project and starting a
-    new test process for every run.
+    Whether pyronaut test -t runs the tests in one process, in the test mode of
+    the micronaut-dev runtime, rather than processing the project and starting
+    a new test process for every run.
 
     The conditions are those of reloading dev mode: a Pyronaut project, not an
-    external build, on the JVM toolchain, whose development runtime holds
-    micronaut-dev, with no restart exclusion inside a watched root, and the
-    command's options must be ones test mode supports.
+    external build, with no restart exclusion inside a watched root, and the
+    command's options must be ones test mode supports. On the JVM toolchain the
+    development runtime must hold micronaut-dev with its test mode; on the
+    native toolchain the pyronaut-dev image must hold it, with its live test
+    report, as the image's parent tier.
     """
     if _is_external_build_project(project_dir) or _read_test_continuous(project_dir) == TEST_CONTINUOUS_PROCESS:
         return False
@@ -6044,16 +6059,16 @@ def _test_reload_in_process(project_dir: Path, args: Sequence[str], *, debug_vm:
     if _restart_excludes_under_watched_roots(project_dir, tests=True):
         return False
     try:
-        if (
+        native = (
             not debug_vm
             and _extract_build_mode_flag(args) != TOOLCHAIN_TYPE_JVM
             and _read_pyproject_test_mode(project_dir) == TOOLCHAIN_TYPE_NATIVE
-        ):
-            return False
-        if _use_pyronaut_dev_native_toolchain("test", project_dir, debug_vm=debug_vm, args=args):
-            return False
+        ) or _use_pyronaut_dev_native_toolchain("test", project_dir, debug_vm=debug_vm, args=args)
     except ValueError:
         return False
+    if native:
+        executable = _resolve_pyronaut_dev_native_executable(resolver or _resolve_executable)
+        return executable is not None and _NATIVE_TEST_RUNTIME_ARTIFACTS <= _native_launcher_provided_artifact_coordinates(executable)
     manifest = _pyronaut_output_dir(project_dir) / "resolved-development-runtime-dependencies"
     try:
         entries = _read_manifest_entries(manifest)
@@ -6125,13 +6140,31 @@ def _run_tests_in_process(
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
     if once:
-        command_line.insert(command_line.index("-cp"), "-Dmicronaut.dev.test.once=true")
+        command_line.insert(_test_reload_property_index(command_line), "-Dmicronaut.dev.test.once=true")
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
+    relaunch_marker = _pyronaut_output_dir(project_dir).joinpath(*_TEST_RELAUNCH_MARKER)
     try:
-        return execute(command_line, env)
+        while True:
+            relaunch_marker.unlink(missing_ok=True)
+            code = execute(command_line, env)
+            if int(code) == DEV_RELAUNCH_STATUS and relaunch_marker.is_file():
+                relaunch_marker.unlink(missing_ok=True)
+                # The development runtime spent its generation budget, which a
+                # native image has since it never unloads a generation's
+                # classes, and closed: start it again, from what it compiled.
+                print("Continuous testing: the generation budget is spent, relaunching the test process.", file=sys.stderr)
+                continue
+            return code
     except KeyboardInterrupt:
         return 130
+
+
+def _test_reload_property_index(command_line: Sequence[str]) -> int:
+    """Where a system property goes: before -cp on the JVM, before the command of the native image."""
+    if "-cp" in command_line:
+        return command_line.index("-cp")
+    return command_line.index("test")
 
 
 def _stdin_is_terminal() -> bool:
@@ -6157,6 +6190,16 @@ def _build_test_reload_invocation(
     LiveReload server.
     """
     project_dir = Path(_extract_project_dir(args)).resolve()
+    native = _pyronaut_dev_native_command_line(
+        "test",
+        args,
+        resolver,
+        debug_vm=debug_vm,
+        env_overrides=env_overrides,
+        java_home_provider=java_home_provider,
+    )
+    if native is not None:
+        return _native_test_reload_invocation(native, project_dir, env_overrides, java_home_provider)
     command_line, env = _build_java_delegate_invocation(
         "test",
         [value for value in args if value not in {"--jvm", "--native"}],
@@ -6190,6 +6233,36 @@ def _build_test_reload_invocation(
     command_line[classpath_index] = os.pathsep.join(
         dict.fromkeys([*_without_other_versions(classpath, compiler), *compiler, *runtime, dev_jar])
     )
+    return command_line, env
+
+
+def _native_test_reload_invocation(
+    command_line: list[str],
+    project_dir: Path,
+    env_overrides: dict[str, str] | None,
+    java_home_provider: JavaHomeProvider | None,
+) -> tuple[list[str], dict[str, str] | None]:
+    """
+    The native pyronaut-dev test command, running the test mode of the
+    micronaut-dev runtime the image holds. Its classpath, the parent tier, is
+    the project's dependencies alone: the processed classes and the resource
+    directories are the reloadable tier, read through each generation, which
+    a parent-first class path would hide.
+    """
+    command_line = list(command_line)
+    for index, value in enumerate(command_line):
+        if value.startswith("-Djava.class.path="):
+            entries = value.split("=", 1)[1].split(os.pathsep)
+            command_line[index] = "-Djava.class.path=" + os.pathsep.join(
+                entry for entry in entries if entry and Path(entry).suffix == ".jar"
+            )
+    # The image holds the development runtime: the tests run in this process,
+    # each generation's classes defined at runtime, until the generation
+    # budget is spent.
+    command_line.insert(command_line.index("test"), f"-D{TEST_RELOAD_PROPERTY}=true")
+    env = _build_non_test_resources_env("test", java_home_provider)
+    env = _merge_env_overrides(env, env_overrides)
+    env = _apply_project_virtualenv(env, project_dir)
     return command_line, env
 
 
