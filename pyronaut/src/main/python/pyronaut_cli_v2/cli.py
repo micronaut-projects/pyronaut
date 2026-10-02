@@ -6043,11 +6043,14 @@ def _test_reload_in_process(
     if _restart_excludes_under_watched_roots(project_dir, tests=True):
         return False
     try:
-        native = (
+        if (
             not debug_vm
             and _extract_build_mode_flag(args) != TOOLCHAIN_TYPE_JVM
             and _read_pyproject_test_mode(project_dir) == TOOLCHAIN_TYPE_NATIVE
-        ) or _use_pyronaut_dev_native_toolchain("test", project_dir, debug_vm=debug_vm, args=args)
+        ):
+            # tool.pyronaut.test.mode = "native" runs the tests its own way, a process per run
+            return False
+        native = _use_pyronaut_dev_native_toolchain("test", project_dir, debug_vm=debug_vm, args=args)
     except ValueError:
         return False
     if native:
