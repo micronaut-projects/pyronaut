@@ -4508,6 +4508,12 @@ enabled = false
         self.assertIn("-Dmicronaut.dev.max-generations=3", command_line[:command_line.index("-cp")])
         self.assertNotIn("-Dmicronaut.dev.max-generations=3", command_line[main:])
 
+    def test_continuous_tests_keep_an_option_value_that_looks_like_a_system_property(self):
+        self.assertEqual(
+            (["-Da=b"], ["--tests", "-DemoTest", "--project-dir", "/p"]),
+            cli._split_system_properties(["--tests", "-DemoTest", "-Da=b", "--project-dir", "/p"]),  # noqa: SLF001
+        )
+
     def test_continuous_tests_configured_to_start_a_process_per_run_keep_the_loop(self):
         executed: list[list[str]] = []
         stdout = io.StringIO()
