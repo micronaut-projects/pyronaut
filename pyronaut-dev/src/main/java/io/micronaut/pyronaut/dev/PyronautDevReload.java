@@ -132,7 +132,7 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         this.generations = devDir.resolve("generations");
         this.relaunchMarker = devDir.resolve(RELAUNCH_MARKER);
         Files.deleteIfExists(relaunchMarker);
-        List<String> options = DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS));
+        List<String> options = DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), model);
         // in a native image the processors the image holds run from it, as pyronaut process runs them there
         List<Path> processorPath = DevReloadFiles.withoutNativeProvidedArtifacts(
             DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST)));
