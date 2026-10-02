@@ -42,7 +42,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"setup", "update", "doctor", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "update", "doctor", "clean", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -359,6 +359,13 @@ def run(
             _print_doctor_usage()
             return SUCCESS
         return _run_doctor(doctor_args)
+
+    if command == "clean":
+        clean_args = list(argv[1:])
+        if _extract_flag(clean_args, "--help") or _extract_flag(clean_args, "-h"):
+            _print_clean_usage()
+            return SUCCESS
+        return _run_clean(clean_args)
 
     option_args = argv[: argv.index("--")] if "--" in argv else argv
     if "-V" in option_args[1:] or (
@@ -8748,7 +8755,7 @@ def _is_supported_project_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|clean|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_create_usage(stream=None) -> None:
@@ -10118,6 +10125,104 @@ def _run_doctor(args: Sequence[str]) -> int:
             progress.hint(f"No pyproject.toml in {project_dir}: project checks skipped (use --project-dir)")
         print(_doctor.summary_line(results))
     return PRECONDITION_FAILED if _doctor.overall_status(results) == _doctor.FAIL else SUCCESS
+
+
+# Outputs written by ``pyronaut process`` under the project's generated-output
+# directory. Dependency manifests, the project-local Maven repository, schemas,
+# IDE stubs and the compiler daemon's endpoint belong to ``pyronaut install`` or
+# other commands and survive a default ``pyronaut clean``.
+_PROCESS_OUTPUTS = (
+    "classes",
+    "test-classes",
+    "test-sources",
+    "incremental",
+    "processor.inputs",
+    "external-python",
+    "external-test-python",
+    "external-main-sources",
+    "external-test-sources",
+)
+_PROCESS_OUTPUT_PATTERNS = ("classes-native-runtime-*",)
+
+
+def _print_clean_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write("Usage: pyronaut clean [--project-dir <dir>] [-f|--full]\n")
+    stream.write("Remove the output of pyronaut process (processed classes and incremental state).\n")
+    stream.write("  --project-dir <dir>       Project to clean (default: the current directory).\n")
+    stream.write("  -f, --full                Also remove all generated Pyronaut state and caches and the\n")
+    stream.write("                            project .venv; run pyronaut install again afterwards.\n")
+    stream.write("  -h, --help                Show this help message and exit.\n")
+
+
+def _clean_targets(project_dir: Path, full: bool) -> list[Path]:
+    output_dir = _pyronaut_output_dir(project_dir)
+    if full:
+        candidates = [output_dir, project_dir / "__pyronaut__", project_dir / ".venv"]
+    else:
+        candidates = [output_dir / name for name in _PROCESS_OUTPUTS]
+        for pattern in _PROCESS_OUTPUT_PATTERNS:
+            candidates.extend(sorted(output_dir.glob(pattern)))
+    targets: list[Path] = []
+    for candidate in candidates:
+        if (candidate.exists() or candidate.is_symlink()) and candidate not in targets:
+            targets.append(candidate)
+    return targets
+
+
+def _remove_path(path: Path) -> None:
+    # Never follow a symlinked .venv or output directory into its target.
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
+def _run_clean(args: Sequence[str]) -> int:
+    args = _normalize_project_flag(list(args))
+    full = False
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"-f", "--full"}:
+            full = True
+        elif token == "--project-dir":
+            if index + 1 >= len(args):
+                return _usage_error("Missing value for --project-dir")
+            index += 1
+        elif not token.startswith("--project-dir="):
+            return _usage_error(f"Unknown pyronaut clean option: {token}")
+        index += 1
+
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    if not project_dir.is_dir():
+        print(f"Project directory does not exist: {project_dir}", file=sys.stderr)
+        return PRECONDITION_FAILED
+    if not (project_dir / "pyproject.toml").is_file() and not _is_external_build_project(project_dir):
+        # Guard --full in particular: never delete a .venv outside a project.
+        print(f"No pyproject.toml in {project_dir}: not a Pyronaut project (use --project-dir)", file=sys.stderr)
+        return PRECONDITION_FAILED
+
+    progress = _progress_console()
+    targets = _clean_targets(project_dir, full)
+    if not targets:
+        progress.note("Nothing to clean")
+        return SUCCESS
+    for target in targets:
+        try:
+            _remove_path(target)
+        except OSError as exc:
+            progress.fail(f"Unable to remove {target}: {exc}")
+            return INTERNAL_ERROR
+        try:
+            shown = target.relative_to(project_dir)
+        except ValueError:
+            shown = target
+        progress.success(f"Removed {shown}")
+    if full:
+        progress.hint("Run pyronaut install to recreate .venv and the dependency manifests")
+    return SUCCESS
 
 
 def _doctor_platform() -> str:

@@ -71,5 +71,6 @@ The `__pyronaut__` directory contains generated state such as dependency manifes
 Incremental processing stores compiler state separately for the main and test passes under `__pyronaut__/incremental/main` and `__pyronaut__/incremental/test`.
 The compiler daemon stores its authenticated local endpoint metadata and detached diagnostics under `__pyronaut__/daemon`.
 It is safe to delete this directory when you want a clean local Pyronaut state; the CLI recreates it as needed.
+`pyronaut clean` removes only the `pyronaut process` output, and `pyronaut clean --full` removes the whole directory together with `.venv` (see <<pyronautCliV2,Pyronaut CLI Reference>>).
 
 For Maven and Gradle projects (see <<mavenGradle,Using Maven and Gradle Projects>>) Pyronaut writes the same generated state under the build's output directory instead: `target/pyronaut` for Maven and `build/pyronaut` for Gradle.
