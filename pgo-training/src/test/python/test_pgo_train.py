@@ -1,3 +1,5 @@
+# Copyright 2017-2026 original authors
+
 import ast
 import importlib.util
 import tempfile
