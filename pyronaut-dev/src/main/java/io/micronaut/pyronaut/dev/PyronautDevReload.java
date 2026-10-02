@@ -17,6 +17,8 @@ package io.micronaut.pyronaut.dev;
 
 import io.micronaut.dev.DevRuntime;
 import io.micronaut.dev.MicronautDevMain;
+import io.micronaut.dev.compile.SourceCompiler;
+import io.micronaut.dev.compile.SourceKind;
 import io.micronaut.dev.loader.DevClassLoader;
 import io.micronaut.dev.manifest.DevManifest;
 import io.micronaut.dev.manifest.ResourceRoot;
@@ -34,6 +36,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -216,6 +219,11 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
             }
         }
         return new Tiers(config, additional, runtime);
+    }
+
+    @Override
+    protected Map<SourceKind, SourceCompiler> createCompilers(DevManifest manifest) {
+        return ImageProcessorState.releasingAfterCompilation(super.createCompilers(manifest));
     }
 
     @Override
