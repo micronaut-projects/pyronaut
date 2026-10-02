@@ -4083,6 +4083,53 @@ type = "{toolchain}"
         ]
         self.assertEqual(entries[:7], cli._dev_compiler_entries(entries))  # noqa: SLF001
 
+    def test_the_development_runtime_compiles_at_the_versions_pyronaut_process_runs(self):
+        build = [
+            "/repo/io/micronaut/micronaut-inject-python/5.3.0/micronaut-inject-python-5.3.0.jar",
+            "/repo/io/micronaut/sourcegen/micronaut-sourcegen-bytecode-writer/2.1.0/micronaut-sourcegen-bytecode-writer-2.1.0.jar",
+            "/repo/io/micronaut/serde/micronaut-serde-processor/3.2.2/micronaut-serde-processor-3.2.2.jar",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tool = Path(temp_dir) / "pyronaut-processor-dist"
+            (tool / "bin").mkdir(parents=True)
+            (tool / "lib").mkdir()
+            launcher = tool / "bin" / "pyronaut-processor"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            jars = [
+                "micronaut-pyronaut-processor-0.0.7.jar",
+                "micronaut-inject-python-5.3.0.jar",
+                "micronaut-sourcegen-bytecode-writer-2.2.3.jar",
+                "micronaut-sourcegen-bytecode-writer-core-2.2.3.jar",
+                "micronaut-serde-processor-3.2.4.jar",
+            ]
+            for jar in jars:
+                (tool / "lib" / jar).write_text("", encoding="utf-8")
+            (tool / "bin" / "pyronaut-classpath.txt").write_text("\n".join(jars) + "\n", encoding="utf-8")
+
+            def resolve(command_name):
+                return str(launcher) if command_name == "pyronaut-processor" else None
+
+            classpath = cli._dev_compiler_classpath(build, resolve)  # noqa: SLF001
+            # the same version stays the build scope's jar, another is the launcher's, with what it needs besides;
+            # no annotation processor joins
+            self.assertEqual(build[0], classpath[0])
+            self.assertEqual(
+                [str((tool / "lib" / jar).resolve()) for jar in jars[2:4]],
+                [str(Path(entry).resolve()) for entry in classpath[1:]],
+            )
+        # without that launcher, the build scope's
+        self.assertEqual(build[:2], cli._dev_compiler_classpath(build, lambda name: None))  # noqa: SLF001
+        # and a test classpath holding the build scope's other version leaves it out, so that the compiler's comes first
+        compiler = ["/repo/a/micronaut-inject-python-5.3.0.jar", "/tools/lib/micronaut-sourcegen-model-2.2.3.jar"]
+        self.assertEqual(
+            ["/repo/a/micronaut-inject-python-5.3.0.jar", "/repo/t/junit-platform-launcher-6.1.3.jar"],
+            cli._without_other_versions([  # noqa: SLF001
+                "/repo/a/micronaut-inject-python-5.3.0.jar",
+                "/repo/s/micronaut-sourcegen-model-2.1.0.jar",
+                "/repo/t/junit-platform-launcher-6.1.3.jar",
+            ], compiler),
+        )
+
     def test_reloading_dev_restarts_for_processor_options_and_refreshes_other_configuration(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._reload_project(temp_dir)
