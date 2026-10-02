@@ -5,7 +5,7 @@ The workload drives the real ``pyronaut`` CLI (from source) so that training fol
 command lines as users. Every launcher process started for the image under training goes through
 a shim that adds ``-XX:ProfilesDumpFile=<profiles>/<scenario>-<pid>.iprof``, so that no process
 overwrites another's profile. Servers are stopped with SIGTERM, which runs the shutdown hooks and
-writes the profile.
+writes the profile. Windows launchers use a private console and Ctrl+C for the same shutdown hooks.
 
 With ``--jvm`` the same scenarios run against the JVM launchers and no profiles are collected.
 That is how the workload itself is developed and checked without building native images.
@@ -58,7 +58,8 @@ pids.mkdir(parents=True, exist_ok=True)
 profile = profiles / f"{scenario}-{uuid.uuid4().hex}.iprof"
 process = subprocess.Popen(
     [@EXECUTABLE@, f"-XX:ProfilesDumpFile={profile}", *sys.argv[1:]],
-    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    creationflags=subprocess.CREATE_NEW_CONSOLE,
+    stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
 )
 with (pids / f"{scenario}.pids").open("a", encoding="utf-8") as stream:
     stream.write(f"{process.pid}\\t{profile.name}\\n")
@@ -101,7 +102,8 @@ command = [
     "io.micronaut.pyronaut.dev.PyronautDevMain",
     *arguments,
 ]
-process = subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+process = subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE,
+                           stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr)
 scenario = os.environ.get("PGO_SCENARIO")
 if scenario:
     pids = Path(os.environ["PGO_PIDS_DIR"])
@@ -109,6 +111,27 @@ if scenario:
     with (pids / f"{scenario}.children.pids").open("a", encoding="utf-8") as stream:
         stream.write(f"{process.pid}\\n")
 raise SystemExit(process.wait())
+"""
+
+WINDOWS_CTRL_C_HELPER = """import ctypes
+import sys
+
+# Run in a disposable process: attaching must not change the CI trainer's console.
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32.AttachConsole.argtypes = [ctypes.c_uint32]
+kernel32.SetConsoleCtrlHandler.argtypes = [ctypes.c_void_p, ctypes.c_int]
+kernel32.GenerateConsoleCtrlEvent.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+kernel32.FreeConsole()
+if not kernel32.AttachConsole(int(sys.argv[1])):
+    raise ctypes.WinError(ctypes.get_last_error())
+try:
+    # AttachConsole resets handlers, so ignore Ctrl+C only after attaching.
+    if not kernel32.SetConsoleCtrlHandler(None, True):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if not kernel32.GenerateConsoleCtrlEvent(0, 0):  # CTRL_C_EVENT, child console only.
+        raise ctypes.WinError(ctypes.get_last_error())
+finally:
+    kernel32.FreeConsole()
 """
 
 
@@ -381,7 +404,14 @@ class Trainer:
     def _write_windows_shim(self, base: Path, script: str) -> Path:
         helper = base.with_suffix(".py")
         shim = base.with_suffix(".cmd")
-        helper.write_text(script, encoding="utf-8")
+        helper.write_text("""import ctypes
+
+# Ctrl+C-ignore is inherited even with CREATE_NEW_CONSOLE; restore it before spawning.
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+if not kernel32.SetConsoleCtrlHandler(None, False):
+    raise ctypes.WinError(ctypes.get_last_error())
+
+""" + script, encoding="utf-8")
         shim.write_text(
             f'@echo off\r\n"{self.options.graalpy}" "%~dpn0.py" %*\r\nexit /b %ERRORLEVEL%\r\n',
             encoding="utf-8",
@@ -538,9 +568,15 @@ class Trainer:
                         client.expect("GET", "/hello", 200)
                     else:
                         details["workload-seconds"] = workload.run(client)
+                log(f"{name}: workload completed; stopping launchers")
             finally:
+                workload_failed = sys.exc_info()[0] is not None
                 try:
                     self._stop(name, process)
+                except Exception as error:
+                    if not workload_failed:
+                        raise
+                    log(f"{name}: shutdown also failed: {error}")
                 finally:
                     output.close()
             self._record(name, **details)
@@ -562,9 +598,14 @@ class Trainer:
         raise TrainingError(f"Server on port {port} was not ready after {self.options.startup_timeout}s; see {log_file}")
 
     def _stop(self, scenario: str, process: subprocess.Popen) -> None:
+        if os.name == "nt":
+            # Stop the CLI/watchers first; each tracked launcher has its own console.
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            self._stop_windows_children(scenario)
+            return
         if self.jvm:
-            if os.name == "nt":
-                self._stop_windows_children(scenario)
             self._signal_group(process, signal.SIGTERM)
             return
         # Stop the CLI first so that a development watcher cannot restart the application, then
@@ -572,9 +613,6 @@ class Trainer:
         if process.poll() is None:
             process.kill()
             process.wait()
-        if os.name == "nt":
-            self._stop_windows_children(scenario)
-            return
         for pid in self._pids(scenario):
             if pid_alive(pid):
                 os.kill(pid, signal.SIGTERM)
@@ -593,9 +631,15 @@ class Trainer:
         for pid in pids:
             if pid_alive(pid):
                 try:
-                    os.kill(pid, signal.CTRL_BREAK_EVENT)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                    result = subprocess.run(
+                        [self.options.graalpy, "-c", WINDOWS_CTRL_C_HELPER, str(pid)],
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    if result.returncode != 0:
+                        log(f"{scenario}: Ctrl+C helper for {pid} failed: {result.stderr.strip()}")
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    log(f"{scenario}: Ctrl+C helper for {pid} failed: {error}")
         deadline = time.monotonic() + self.options.shutdown_timeout
         while time.monotonic() < deadline and any(pid_alive(pid) for pid in pids):
             time.sleep(0.5)
@@ -603,7 +647,7 @@ class Trainer:
         for pid in survivors:
             os.kill(pid, signal.SIGTERM)
         if survivors:
-            raise TrainingError(f"{scenario}: launcher processes {survivors} ignored CTRL_BREAK and were terminated")
+            raise TrainingError(f"{scenario}: launcher processes {survivors} ignored Ctrl+C and were terminated")
 
     @staticmethod
     def _signal_group(process: subprocess.Popen, sig: int) -> None:
