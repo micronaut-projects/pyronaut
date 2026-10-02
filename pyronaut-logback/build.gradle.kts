@@ -8,6 +8,12 @@ dependencies {
     api(mn.micronaut.core)
     api(mn.micronaut.context)
     api(mnLogging.logback.classic)
+    constraints {
+        // micronaut-logging 2.1.0 manages logback 1.5.37, which is affected by
+        // CVE-2026-19880. The fix only exists in the 1.6.x line.
+        api(libs.logback.classic)
+        api(libs.logback.core)
+    }
 
     // Bridge java.util.logging (JUL) to SLF4J/logback
     runtimeOnly(mnLogging.slf4j.jul.to.slf4j)

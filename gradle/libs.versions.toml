@@ -10,9 +10,11 @@ icu4j = "78.3"
 graalvm-icu4j = "25.4.4.1.1"
 gradle-tapi = "9.8.0"
 tamboui = "0.5.0"
+jline = "3.30.17"
 maven-resolver = "2.0.23"
 maven = "3.9.16"
 slf4j = "2.0.20"
+logback = "1.6.5"
 micronaut-test-resources = "4.3.0"
 micronaut-json-schema = "2.3.0"
 micronaut-toml = "3.1.0"
@@ -44,6 +46,7 @@ icu4j = { module = "com.ibm.icu:icu4j", version.ref = "icu4j" }
 graalvm-icu4j = { module = "org.graalvm.shadowed:icu4j", version.ref = "graalvm-icu4j" }
 gradle-tapi = { module = "org.gradle:gradle-tooling-api", version.ref = "gradle-tapi" }
 tamboui = { module = "dev.tamboui:tamboui-toolkit", version.ref = "tamboui"}
+jline = { module = "org.jline:jline", version.ref = "jline" }
 tamboui-jline = { module = "dev.tamboui:tamboui-jline3-backend", version.ref = "tamboui"}
 tamboui-panama = { module = "dev.tamboui:tamboui-panama-backend", version.ref = "tamboui"}
 tamboui-annotations = { module = "dev.tamboui:tamboui-annotations", version.ref = "tamboui"}
@@ -57,6 +60,8 @@ maven-resolver-transport-file = { module = "org.apache.maven.resolver:maven-reso
 maven-resolver-transport-jdk = { module = "org.apache.maven.resolver:maven-resolver-transport-jdk", version.ref = "maven-resolver" }
 maven-resolver-supplier-mvn3 = { module = "org.apache.maven.resolver:maven-resolver-supplier-mvn3", version.ref = "maven-resolver" }
 maven-resolver-provider = { module = "org.apache.maven:maven-resolver-provider", version.ref = "maven" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logback-core = { module = "ch.qos.logback:logback-core", version.ref = "logback" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 slf4j-jul-to-slf4j = { module = "org.slf4j:jul-to-slf4j", version.ref = "slf4j" }
 micronaut-test-resources-build-tools = { module = "io.micronaut.testresources:micronaut-test-resources-build-tools", version.ref = "micronaut-test-resources" }
