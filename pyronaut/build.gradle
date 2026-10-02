@@ -662,12 +662,6 @@ tasks.register("installSdkWheel", Exec) {
 tasks.register("testPythonOrchestrator", Exec) {
     group = "verification"
     description = "Runs Python tests for pyronaut orchestrator"
-    onlyIf {
-        if (!dockerEnabled.get()) {
-            logger.lifecycle("Skipping Python orchestrator tests: Docker/Test Resources require -Pdocker=true.")
-        }
-        dockerEnabled.get()
-    }
     commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "*_test.py")
     environment("PYTHONPATH", file("src/main/python").absolutePath)
     // Unit tests must not inherit a developer's active virtual environment or
@@ -715,12 +709,6 @@ tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
 tasks.register("testPythonOrchestratorE2E", Exec) {
     group = "verification"
     description = "Runs fast smoke orchestrator e2e checks"
-    onlyIf {
-        if (!dockerEnabled.get()) {
-            logger.lifecycle("Skipping orchestrator E2E: Docker/Test Resources require -Pdocker=true.")
-        }
-        dockerEnabled.get()
-    }
 
     if (graalVmProvisionTask != null) {
         dependsOn(graalVmProvisionTask)
@@ -730,6 +718,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-run-python").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-validate-config").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"))
@@ -740,6 +729,10 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     environment("PYRONAUT_E2E_FULL", "false")
     environment("PYRONAUT_E2E_MYSQL", "false")
     environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment(
+        "PYRONAUT_DEV_EXECUTABLE",
+        project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
+    )
     environment(
         "PYRONAUT_DEV_NATIVE_EXECUTABLE",
         project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
@@ -755,6 +748,10 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     environment(
         "PYRONAUT_RUN_EXECUTABLE",
         project(":micronaut-pyronaut-run").layout.buildDirectory.file("install/micronaut-pyronaut-run/bin/pyronaut-run").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_RUN_PYTHON_EXECUTABLE",
+        project(":micronaut-pyronaut-run-python").layout.buildDirectory.file("install/micronaut-pyronaut-run-python/bin/pyronaut-run-python").get().asFile.absolutePath
     )
     environment(
         "PYRONAUT_TEST_EXECUTABLE",
@@ -842,6 +839,7 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))
+    dependsOn(project(":micronaut-pyronaut-run-python").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-validate-config").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-test-resources-server").tasks.named("installDist"))
@@ -852,6 +850,10 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     environment("PYRONAUT_E2E_FULL", "true")
     environment("PYRONAUT_E2E_MYSQL", "true")
     environment("PYRONAUT_E2E_PYTHON", "python3")
+    environment(
+        "PYRONAUT_DEV_EXECUTABLE",
+        project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
+    )
     environment(
         "PYRONAUT_DEV_NATIVE_EXECUTABLE",
         project(":micronaut-pyronaut-dev").layout.buildDirectory.file("install/micronaut-pyronaut-dev/bin/pyronaut-dev").get().asFile.absolutePath
@@ -867,6 +869,10 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     environment(
         "PYRONAUT_RUN_EXECUTABLE",
         project(":micronaut-pyronaut-run").layout.buildDirectory.file("install/micronaut-pyronaut-run/bin/pyronaut-run").get().asFile.absolutePath
+    )
+    environment(
+        "PYRONAUT_RUN_PYTHON_EXECUTABLE",
+        project(":micronaut-pyronaut-run-python").layout.buildDirectory.file("install/micronaut-pyronaut-run-python/bin/pyronaut-run-python").get().asFile.absolutePath
     )
     environment(
         "PYRONAUT_TEST_EXECUTABLE",
@@ -923,6 +929,9 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
 tasks.named("check") {
     dependsOn(tasks.named("testPythonOrchestrator"))
     dependsOn(tasks.named("testPythonOrchestratorE2E"))
+    if (dockerEnabled.get()) {
+        dependsOn(tasks.named("testPythonOrchestratorE2EFull"))
+    }
 }
 
 tasks.named("checkstyleMain") {

@@ -43,6 +43,7 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
     private static final String RESTARTABLE_PROPERTY = "pyronaut.dev.direct.restartable";
     private static final String SERVER_CLASSPATH_MANIFEST =
         "__pyronaut__/resolved-test-resources-server-dependencies";
+    private static final String OWNED_SESSION_FILE = "__pyronaut__/test-resources-session.json";
 
     private final PyronautTestResourcesServerMain.ServerManager serverManager;
     private final Path settingsDirectory;
@@ -142,6 +143,11 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
             PyronautTestResourcesServerMain.ServerStatus started = serverManager.start(request);
             ServerSettings settings = readSettings(settingsDirectory);
             boolean owned = settings.getAccessToken().filter(requestedToken::equals).isPresent();
+            if (owned && Boolean.getBoolean(RESTARTABLE_PROPERTY)) {
+                // The server outlives this JVM across restarts; the parent CLI
+                // stops it on exit with `stop --owner-token` using this session.
+                writeOwnedSession(root, requestedToken);
+            }
             statusSink.accept("[test-resources] server running on port " + started.port()
                 + " (" + started.uri() + "); logs: " + logsDirectory);
             logMirror.start();
@@ -265,6 +271,12 @@ public final class DirectSourceTestResourcesSession implements AutoCloseable {
                 deleteServerSettings(settingsDirectory);
             }
         }
+    }
+
+    private static void writeOwnedSession(Path root, String ownerToken) throws IOException {
+        Path sessionFile = root.resolve(OWNED_SESSION_FILE);
+        Files.createDirectories(sessionFile.getParent());
+        Files.writeString(sessionFile, "{\"ownerToken\": \"" + ownerToken + "\", \"ownerCommand\": \"direct-source\"}\n");
     }
 
     private static void deleteServerSettings(Path settingsDirectory) {

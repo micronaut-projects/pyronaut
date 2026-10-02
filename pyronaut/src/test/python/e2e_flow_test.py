@@ -164,12 +164,12 @@ class E2EFlowTest(unittest.TestCase):
             )
             self.assertEqual(0, test_result.returncode, test_result.stdout + "\n" + test_result.stderr)
             combined_output = test_result.stdout + test_result.stderr
-            self.assertIn("1 passed", combined_output)
+            self.assertIn("1 test passed", combined_output)
             self.assertNotIn("A restricted method in java.lang.System has been called", combined_output)
             self.assertNotIn("A terminally deprecated method in sun.misc.Unsafe has been called", combined_output)
 
     @unittest.skipUnless(_e2e_full_enabled(), "Set PYRONAUT_E2E_FULL=true to run full e2e flow tests")
-    def test_run_and_test_always_delegate_install_and_process(self):
+    def test_run_and_test_delegate_validation_and_process_without_reinstalling(self):
         fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "app"
@@ -180,20 +180,26 @@ class E2EFlowTest(unittest.TestCase):
             process_result = self._run_cli("process", "--project-dir", str(project_dir))
             self.assertEqual(0, process_result.returncode, process_result.stderr)
 
+            # The manifests written by install are current, so run and test
+            # validate and process the sources but do not resolve again.
             env = {"PYRONAUT_TRACE_DELEGATION": "true"}
-            run_process = self._start_cli("run", "--project-dir", str(project_dir), extra_env=env, capture_output=True)
+            run_env = {**env, "MICRONAUT_SERVER_PORT": str(self._allocate_port())}
+            run_process = self._start_cli("run", "--project-dir", str(project_dir), extra_env=run_env, capture_output=True)
             run_output = ""
             try:
                 try:
                     completed_output, _ = run_process.communicate(timeout=20)
                     run_output = completed_output or ""
                 except subprocess.TimeoutExpired as timeout:
-                    run_output = timeout.stdout or ""
+                    # TimeoutExpired carries bytes even for text-mode pipes.
+                    partial = timeout.stdout or b""
+                    run_output = partial.decode("utf-8", "replace") if isinstance(partial, bytes) else partial
             finally:
                 self._stop_process(run_process)
                 self._force_stop_test_resources_server(project_dir)
-            self.assertIn("pyronaut-install", run_output)
+            self.assertIn("pyronaut-validate-config", run_output)
             self.assertIn("pyronaut-processor", run_output)
+            self.assertNotIn("bin/pyronaut-install", run_output)
 
             test_result = self._run_cli(
                 "test",
@@ -203,24 +209,31 @@ class E2EFlowTest(unittest.TestCase):
                 timeout_seconds=1800,
             )
             self.assertEqual(0, test_result.returncode, test_result.stdout + test_result.stderr)
-            self.assertIn("pyronaut-install", test_result.stderr)
+            self.assertIn("pyronaut-validate-config", test_result.stderr)
             self.assertIn("pyronaut-processor", test_result.stderr)
+            self.assertNotIn("bin/pyronaut-install", test_result.stderr)
 
     @unittest.skipUnless(_e2e_full_enabled(), "Set PYRONAUT_E2E_FULL=true to run full e2e flow tests")
-    def test_no_cache_propagates_to_install_refresh_and_processor(self):
+    def test_no_cache_propagates_to_validation_and_processor(self):
         fixture_dir = Path(os.environ["PYRONAUT_E2E_FIXTURE_DIR"])
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "app"
             shutil.copytree(fixture_dir, project_dir)
 
+            # test resolves nothing itself; it relies on the manifests from install.
+            install_result = self._run_cli("install", "--project-dir", str(project_dir))
+            self.assertEqual(0, install_result.returncode, install_result.stderr)
+
             env = {"PYRONAUT_TRACE_DELEGATION": "true"}
             result = self._run_cli("test", "--no-cache", "--project-dir", str(project_dir), extra_env=env)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
-            self.assertIn("pyronaut-install", result.stderr)
-            self.assertIn("--refresh", result.stderr)
-            self.assertIn("pyronaut-processor", result.stderr)
-            self.assertIn("--no-cache", result.stderr)
+            trace = [line for line in result.stderr.splitlines() if "/bin/pyronaut-" in line]
+            validate_line = next(line for line in trace if "bin/pyronaut-validate-config " in line)
+            processor_line = next(line for line in trace if "bin/pyronaut-processor " in line)
+            self.assertIn("--no-cache", validate_line)
+            self.assertIn("--no-cache", processor_line)
+            self.assertFalse(any("bin/pyronaut-install " in line for line in trace), trace)
 
     @unittest.skipUnless(_e2e_full_enabled(), "Set PYRONAUT_E2E_FULL=true to run full e2e flow tests")
     def test_install_dependencies_tree_mode_outputs_scoped_graph(self):
@@ -396,6 +409,10 @@ class E2EFlowTest(unittest.TestCase):
             self._enable_mysql_dependencies(project_dir)
             self._write_project_sources(project_dir, port)
             self._write_mysql_test_resources_config(project_dir)
+
+            # dev resolves nothing itself; it relies on the manifests from install.
+            install_result = self._run_cli("install", "--project-dir", str(project_dir))
+            self.assertEqual(0, install_result.returncode, install_result.stdout + install_result.stderr)
 
             run_process = self._start_cli(
                 "dev",

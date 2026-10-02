@@ -2,6 +2,7 @@ import importlib.util
 import hashlib
 import io
 import os
+import signal
 import subprocess
 import shutil
 import tarfile
@@ -1389,6 +1390,14 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual([str(binary.resolve())], jars)
         self.assertEqual({"io.micronaut:micronaut-jdbc"}, coordinates)
 
+    def test_direct_source_sigterm_takes_interrupt_path_and_restores_handler(self):
+        previous = signal.getsignal(signal.SIGTERM)
+        with cli._sigterm_as_keyboard_interrupt():  # noqa: SLF001
+            handler = signal.getsignal(signal.SIGTERM)
+            with self.assertRaises(KeyboardInterrupt):
+                handler(signal.SIGTERM, None)
+        self.assertIs(previous, signal.getsignal(signal.SIGTERM))
+
     def test_native_dev_command_passes_provided_jar_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             install_dir = Path(temp_dir) / "tools" / "pyronaut-dev"
@@ -1588,7 +1597,14 @@ class OrchestratorTest(unittest.TestCase):
             artifact = distribution_lib / filename
             artifact.write_text("inject-python", encoding="utf-8")
 
-            entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
+            with (
+                patch.object(cli, "_setup_is_required", return_value=False),
+                patch.dict(
+                    os.environ,
+                    {"HOME": str(root / "home"), cli.LOCAL_REPOSITORY_ENV: str(root / "missing-repository")},
+                ),
+            ):
+                entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
 
         self.assertEqual([str(artifact.resolve())], entries)
 
@@ -1847,7 +1863,8 @@ type = "native"
             for name in ("micronaut-control-panel-core-2.0.0.jar", "micronaut-control-panel-ui-2.0.0.jar"):
                 (control_panel_dir / name).write_text("", encoding="utf-8")
 
-            entries = cli._direct_control_panel_classpath_entries(str(native_dev))  # noqa: SLF001
+            with patch.object(cli, "_resolved_tool_distribution_dir", return_value=None):
+                entries = cli._direct_control_panel_classpath_entries(str(native_dev))  # noqa: SLF001
 
         self.assertIn(str(control_panel_dir / "micronaut-control-panel-core-2.0.0.jar"), entries)
         self.assertIn(str(control_panel_dir / "micronaut-control-panel-ui-2.0.0.jar"), entries)
@@ -9371,9 +9388,9 @@ java-version = 25
                 f"sdk.version=1.2.3\ndescriptor.sha256={digest.hexdigest()}\n", encoding="utf-8"
             )
 
-            with patch.object(cli, "__file__", str(package / "cli.py")), patch.dict(
-                os.environ, {"HOME": str(root / "home")}
-            ):
+            with patch.object(cli, "__file__", str(package / "cli.py")), patch.object(
+                cli, "_installed_pyronaut_version", return_value="1.2.3"
+            ), patch.dict(os.environ, {"HOME": str(root / "home")}):
                 self.assertEqual(executable, cli._resolved_tool_executable("pyronaut-run"))
                 artifact.write_bytes(b"corrupt")
                 self.assertIsNone(cli._resolved_tool_executable("pyronaut-run"))
