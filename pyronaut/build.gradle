@@ -13,6 +13,7 @@ def wheelDistDir = layout.buildDirectory.dir("wheel/dist")
 def e2eFixtureSourceDir = layout.projectDirectory.dir("src/test/resources/e2e-app")
 def e2eFixtureDir = layout.buildDirectory.dir("e2e-fixture/app")
 def e2eFixtureRepositoryDir = project(":micronaut-functional-test").layout.buildDirectory.dir("fixture-repo")
+def e2eLocalRepositoryDir = layout.buildDirectory.dir("e2e-m2")
 def wheelVersion = providers.provider {
     def configuredVersion = project.findProperty("projectVersion")?.toString() ?: project.version.toString()
     configuredVersion.replace("-SNAPSHOT", ".dev0")
@@ -777,6 +778,10 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     )
     doFirst {
         environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
+        // Other fixture builds in the same Gradle run cache the same SNAPSHOTs in
+        // ~/.m2 under different repository ids, which Maven Resolver then refuses
+        // to serve ("present, but unavailable"). Give the e2e fixture its own.
+        environment("PYRONAUT_LOCAL_REPOSITORY", e2eLocalRepositoryDir.get().asFile.absolutePath)
         if (graalVmHomeProvider.present) {
             def graalVmHome = graalVmHomeProvider.get()
             PyronautGraalVmDevBuilds.ensureNativeImageLauncherIsUsable(file(graalVmHome))
@@ -900,6 +905,10 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     )
     doFirst {
         environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
+        // Other fixture builds in the same Gradle run cache the same SNAPSHOTs in
+        // ~/.m2 under different repository ids, which Maven Resolver then refuses
+        // to serve ("present, but unavailable"). Give the e2e fixture its own.
+        environment("PYRONAUT_LOCAL_REPOSITORY", e2eLocalRepositoryDir.get().asFile.absolutePath)
         Process dockerProcess
         try {
             dockerProcess = new ProcessBuilder("docker", "info")
