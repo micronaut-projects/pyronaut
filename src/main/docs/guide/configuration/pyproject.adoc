@@ -98,9 +98,14 @@ captured into the test reports rather than shown. Set it to `true`, or pass
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
 For a Crema format, set `native-base = "default"` to use the configured
 language-specific production runtime for the target platform, or set a
-filesystem path or HTTP(S) URL to reuse a custom base created by
-`pyronaut build --native-base`. Docker builds select Linux; host builds select
-the current operating system.
+filesystem path or HTTP(S) URL to reuse a custom base. Docker builds select
+Linux; host builds select the current operating system.
+`pyronaut build --native-base=<path>` builds a custom base and writes
+`build.native-base` together with `packaging.format = "wheel-crema"`;
+`pyronaut build --docker --native-base=<image>` writes
+`build.docker.base-image` together with `packaging.format = "docker-crema"`.
+Bare `--native-base` selects the default runtime and does not change
+`pyproject.toml`.
 A closed-world
 `wheel-native` or `docker-native` format rejects a configured reusable base.
 See the CLI reference for the full build option surface.

@@ -176,7 +176,7 @@ public final class PyprojectConfigSpec {
     );
     public static final FieldSpec PYRONAUT_BUILD_NATIVE_BASE = string(
         "tool.pyronaut.build.native-base",
-        "Reusable Pyronaut native runtime path or HTTP(S) URL, or 'default' for the configured language-specific runtime for the target platform.",
+        "Reusable Pyronaut native runtime used by the Crema formats: a launcher path (written by pyronaut build --native-base=<path>), an HTTP(S) URL, or 'default' for the configured language-specific runtime for the target platform.",
         null,
         List.of(),
         List.of()
@@ -441,7 +441,7 @@ public final class PyprojectConfigSpec {
     );
     public static final FieldSpec PYRONAUT_BUILD_DOCKER_BASE_IMAGE = string(
         "tool.pyronaut.build.docker.base-image",
-        "Reusable Pyronaut native Docker image.",
+        "Reusable Pyronaut native Docker base image used by docker-crema (written by pyronaut build --docker --native-base=<image>).",
         null,
         List.of(),
         List.of("tool.pyronaut.build.docker.baseImage")
