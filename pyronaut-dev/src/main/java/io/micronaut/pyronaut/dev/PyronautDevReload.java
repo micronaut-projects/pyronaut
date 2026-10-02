@@ -223,7 +223,7 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
 
     @Override
     protected Map<SourceKind, SourceCompiler> createCompilers(DevManifest manifest) {
-        return ImageProcessorState.releasingAfterCompilation(super.createCompilers(manifest));
+        return LauncherProcessorState.releasingAfterCompilation(super.createCompilers(manifest));
     }
 
     @Override
