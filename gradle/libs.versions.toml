@@ -13,6 +13,7 @@ tamboui = "0.5.0"
 maven-resolver = "2.0.23"
 maven = "3.9.16"
 slf4j = "2.0.20"
+logback = "1.6.5"
 micronaut-test-resources = "4.3.0"
 micronaut-json-schema = "2.3.0"
 micronaut-toml = "3.1.0"
@@ -57,6 +58,8 @@ maven-resolver-transport-file = { module = "org.apache.maven.resolver:maven-reso
 maven-resolver-transport-jdk = { module = "org.apache.maven.resolver:maven-resolver-transport-jdk", version.ref = "maven-resolver" }
 maven-resolver-supplier-mvn3 = { module = "org.apache.maven.resolver:maven-resolver-supplier-mvn3", version.ref = "maven-resolver" }
 maven-resolver-provider = { module = "org.apache.maven:maven-resolver-provider", version.ref = "maven" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logback-core = { module = "ch.qos.logback:logback-core", version.ref = "logback" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 slf4j-jul-to-slf4j = { module = "org.slf4j:jul-to-slf4j", version.ref = "slf4j" }
 micronaut-test-resources-build-tools = { module = "io.micronaut.testresources:micronaut-test-resources-build-tools", version.ref = "micronaut-test-resources" }

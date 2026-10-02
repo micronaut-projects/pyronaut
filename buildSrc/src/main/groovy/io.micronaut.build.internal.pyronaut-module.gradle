@@ -20,6 +20,12 @@ configurations.configureEach {
     exclude(group: "org.graalvm.python", module: "python-bouncycastle-support")
 }
 
+ossIndexAudit {
+    // HdrHistogram (pulled in by micrometer-core) has no release fixing these
+    // low-severity CVEs yet; 2.2.2 is the latest version.
+    excludeVulnerabilityIds = ["CVE-2026-14683", "CVE-2026-14686"]
+}
+
 micronautBuild {
     descriptor {
         parentModuleId = "io.micronaut.pyronaut:micronaut-pyronaut"
