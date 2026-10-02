@@ -679,6 +679,15 @@ tasks.register("testPythonOrchestrator", Exec) {
     }
 }
 
+// The e2e fixtures resolve through ~/.m2. Publishing into it while they resolve
+// leaves half-written SNAPSHOT entries (jar without pom) that Maven Resolver
+// rejects, so run the e2e tasks only after any publishToMavenLocal in the build.
+def mavenLocalPublishingTasks = {
+    rootProject.subprojects
+        .collect { it.tasks.findByName("publishToMavenLocal") }
+        .findAll { it != null }
+}
+
 tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
     group = "build setup"
     description = "Prepares the Python orchestrator e2e fixture with locally staged snapshot artifacts"
@@ -714,6 +723,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
         dependsOn(graalVmProvisionTask)
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
+    mustRunAfter(mavenLocalPublishingTasks)
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
@@ -780,6 +790,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
 tasks.register("testPythonOrchestratorExternalE2E", Exec) {
     group = "verification"
     description = "Runs opt-in Maven and Gradle external-build orchestrator e2e checks"
+    mustRunAfter(mavenLocalPublishingTasks)
 
     if (graalVmProvisionTask != null) {
         dependsOn(graalVmProvisionTask)
@@ -835,6 +846,7 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
         dependsOn(graalVmProvisionTask)
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
+    mustRunAfter(mavenLocalPublishingTasks)
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))

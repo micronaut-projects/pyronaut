@@ -4023,6 +4023,12 @@ additional-test-resources = ["test-fixtures"]
                     if command == "test":
                         (project_dir / "__pyronaut__" / "test-classes").mkdir(parents=True, exist_ok=True)
                     self._write_manifests(project_dir)
+                    # The delegated launch needs a java executable; do not rely
+                    # on the host providing one on PATH=/usr/bin.
+                    java_home = Path(temp_dir) / "graalvm-jdk-25"
+                    (java_home / "bin").mkdir(parents=True)
+                    (java_home / "bin" / "java").write_text("", encoding="utf-8")
+                    (java_home / "bin" / "java").chmod(0o755)
 
                     def runner_with_env(command_line, env):
                         executed.append((command_line, env))
@@ -4034,7 +4040,7 @@ additional-test-resources = ["test-fixtures"]
                             runner_with_env=runner_with_env,
                             resolver=self._resolver(),
                             platform_name="linux",
-                            java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+                            java_home_provider=lambda: str(java_home),
                         )
 
                 self.assertEqual(0, exit_code)
