@@ -426,9 +426,6 @@ if not kernel32.SetConsoleCtrlHandler(None, False):
         base = directory / "bin" / "pyronaut-dev"
         if os.name == "nt":
             classpath = str(install / "lib" / "*")
-            override = os.environ.get("PYRONAUT_WINDOWS_GRAALPY_OVERRIDE_JAR")
-            if override:
-                classpath = override + ";" + classpath
             script = WINDOWS_JVM_DEV_SHIM.replace("@JAVA@", repr(str(Path(self.options.java_home) / "bin" / "java.exe")))
             script = script.replace("@CLASSPATH@", repr(classpath))
             shim = self._write_windows_shim(base, script)

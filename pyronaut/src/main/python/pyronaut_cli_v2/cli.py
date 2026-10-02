@@ -1535,7 +1535,7 @@ def _resolve_java_executable(env: dict[str, str] | None) -> str:
     if env is not None:
         java_home = env.get("JAVA_HOME")
         if java_home:
-            java_bin = Path(java_home) / "bin" / "java"
+            java_bin = Path(java_home) / "bin" / ("java.exe" if sys.platform == "win32" else "java")
             if java_bin.exists():
                 return str(java_bin)
     resolved = shutil.which("java", path=(env or os.environ).get("PATH"))
@@ -6346,7 +6346,7 @@ def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None
     command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
-        command_line, options = _windows_launch(command_line)
+        command_line, options = _windows_launch(command_line, env)
         process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError:
         launch.abandon()
@@ -8154,7 +8154,7 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
     command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
-        command_line, options = _windows_launch(command_line)
+        command_line, options = _windows_launch(command_line, env)
         process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError as exception:
         launch.abandon()
@@ -8184,7 +8184,7 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
 def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:
     aot = _prepare_aot_launch(command_line, env)
     try:
-        command_line, options = _windows_launch(aot.command_line)
+        command_line, options = _windows_launch(aot.command_line, aot.env)
         completed = subprocess.run(
             command_line,
             check=False,
@@ -8214,14 +8214,65 @@ _JVM_OPTIONS_FILE_PROPERTY = "pyronaut.jvm.options.file"
 _JVM_OPTIONS_FILE_MIN_OPTION_LENGTH = 256
 
 
-def _windows_launch(command_line: list[str]) -> tuple[list[str], dict[str, bool]]:
+def _windows_launch(command_line: list[str], env: dict[str, str] | None = None) -> tuple[list[str] | str, dict[str, bool]]:
     """Return the command line and Popen options for launching on the current platform."""
     if sys.platform != "win32":
         return command_line, {}
+    java_launch = _windows_java_launcher(command_line, env)
+    if java_launch is not None:
+        return java_launch, {}
     batch = _uses_windows_batch_shell(command_line)
     limit = _WINDOWS_BATCH_COMMAND_LINE_LIMIT if batch else _WINDOWS_COMMAND_LINE_LIMIT
     command_line = _spill_native_system_properties(command_line, limit)
     return _spill_native_process_args(command_line, limit), ({"shell": True} if batch else {})
+
+
+def _windows_java_launcher(command_line: list[str], env: dict[str, str] | None) -> str | None:
+    """Bypass Gradle's batch classpath expansion using Java's argument-file support."""
+    if not command_line:
+        return None
+    script = Path(command_line[0])
+    if script.suffix.lower() != ".bat" or not script.name.startswith("pyronaut-"):
+        return None
+    try:
+        script = script.resolve()
+        text = script.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    if f"@rem  {script.stem} startup script for Windows" not in text:
+        return None
+    classpath = re.search(r"^set CLASSPATH=(.*)$", text, re.MULTILINE)
+    defaults = re.search(r"^set DEFAULT_JVM_OPTS=(.*)$", text, re.MULTILINE)
+    invocation = re.search(
+        r'^"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %(\w+_OPTS)%\s+'
+        r'-classpath "%CLASSPATH%" ([\w.$]+) %\*\s*$', text, re.MULTILINE,
+    )
+    # Only translate the known Gradle launcher; custom scripts and native shims stay intact.
+    if classpath is None or defaults is None or invocation is None:
+        return None
+    environment = os.environ if env is None else env
+    if java_home := environment.get("JAVA_HOME"):
+        # Like Gradle, a defined JAVA_HOME must win even when it is invalid.
+        java = str(Path(java_home.strip('"')) / "bin" / "java.exe")
+    else:
+        try:
+            java = _resolve_java_executable(environment)
+        except RuntimeError as exc:
+            raise FileNotFoundError(str(exc)) from exc
+    entries = classpath.group(1).strip().replace("%APP_HOME%", str(script.parent.parent))
+    quoted = entries.replace("\\", "\\\\").replace('"', '\\"')
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                     prefix="pyronaut-java-", suffix=".args", delete=False) as args_file:
+        args_file.write(f'-classpath\n"{quoted}"\n')
+    # A spawned JVM may not have read the file yet when Popen returns.
+    atexit.register(Path(args_file.name).unlink, missing_ok=True)
+    # Pass the option strings unchanged to Windows' Java launcher, not through shlex/cmd.exe.
+    # JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS are still read by Java from the child's environment.
+    options = " ".join(value for value in (
+        defaults.group(1), environment.get("JAVA_OPTS", ""), environment.get(invocation.group(1), ""),
+    ) if value)
+    arguments = subprocess.list2cmdline([f"@{args_file.name}", invocation.group(2), *command_line[1:]])
+    return " ".join(value for value in (subprocess.list2cmdline([java]), options, arguments) if value)
 
 
 def _spill_native_process_args(command_line: list[str], limit: int) -> list[str]:
