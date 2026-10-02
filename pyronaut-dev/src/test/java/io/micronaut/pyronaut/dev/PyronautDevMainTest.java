@@ -894,6 +894,55 @@ final class PyronautDevMainTest {
     }
 
     @Test
+    void directPythonTestsConvertPythonObjectsToTheirGeneratedTypes(@TempDir Path tempDir) throws IOException {
+        Path source = tempDir.resolve("app.py");
+        Path test = tempDir.resolve("test_app.py");
+        Files.writeString(source, """
+            from dataclasses import dataclass
+            from micronaut.core.annotation import Introspected
+
+            @Introspected
+            @dataclass
+            class Item:
+                name: str = ""
+            """);
+        // Class.isInstance takes an erased Object: it only receives the generated python.Item when
+        // the in-memory TargetTypeMapping for it reached the bootstrapped context.
+        Files.writeString(test, """
+            from typing import Annotated
+            from jakarta.inject import Inject
+            from micronaut.context import ApplicationContext
+            from micronaut.core.reflect import ClassUtils
+            from micronaut.test.extensions.junit5.annotation import MicronautTest
+            from app import Item
+
+            MicronautTest()
+
+            context: Annotated[ApplicationContext, Inject]
+
+            def test_converts():
+                item_type = ClassUtils.forName("python.Item", context.getClassLoader()).get()
+                assert item_type.isInstance(Item("a"))
+            """);
+        PrintStream previousOut = System.out;
+        PrintStream previousErr = System.err;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(output, true, StandardCharsets.UTF_8));
+            System.setErr(new PrintStream(output, true, StandardCharsets.UTF_8));
+            int exit = PyronautDevMain.execute(
+                new String[]{"test", source.toString(), "--", test.toString()}
+            );
+            String testOutput = output.toString(StandardCharsets.UTF_8);
+            assertEquals(0, exit, testOutput);
+            assertTrue(testOutput.contains("1 test passed in"), testOutput);
+        } finally {
+            System.setOut(previousOut);
+            System.setErr(previousErr);
+        }
+    }
+
+    @Test
     void executesDirectPythonTestsWithInlineDeclarations(@TempDir Path tempDir) throws IOException {
         Path projectDirectory = Files.createDirectories(tempDir.resolve("project"));
         Path source = tempDir.resolve("app.py");

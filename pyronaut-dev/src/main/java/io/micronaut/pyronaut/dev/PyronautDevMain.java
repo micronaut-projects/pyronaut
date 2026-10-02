@@ -911,7 +911,11 @@ public final class PyronautDevMain implements Callable<Integer> {
             // classes load: its "Starting test runtime" row covers that wait too.
             try (TestProgressReporter reporter = TestProgressReporter.create(originalErr, invocation.verbose())) {
                 if (pythonSource) {
-                    GraalPyContextFactory.bootstrapReusableContext(applicationClassLoader, Map.of(), GraalPyContextFactory.APPLICATION_MAIN);
+                    GraalPyContextFactory.bootstrapReusableContext(
+                        InMemoryTargetTypeMappings.expose(applicationClassLoader),
+                        Map.of(),
+                        GraalPyContextFactory.APPLICATION_MAIN
+                    );
                 }
 
                 now = System.currentTimeMillis();
