@@ -26,7 +26,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable, Iterable, Iterator, NamedTuple, Protocol, Sequence
 
 from .progress import PROGRESS_EPOCH_ENV as _PROGRESS_EPOCH_ENV
@@ -2034,8 +2034,19 @@ def _native_launcher_provided_artifact_ids(
 
 
 def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_name: str) -> list[str]:
-    if not launcher_executable:
+    manifest = _native_launcher_manifest_path(launcher_executable, manifest_name)
+    if manifest is None:
         return []
+    return [
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _native_launcher_manifest_path(launcher_executable: str | None, manifest_name: str) -> Path | None:
+    if not launcher_executable:
+        return None
     executable_path = Path(launcher_executable).resolve()
     executable_parent = executable_path.parent
     candidates = (
@@ -2058,14 +2069,7 @@ def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_
         parent / "generated" / "native-classpaths" / manifest_name
         for parent in executable_path.parents
     )
-    manifest = next((candidate for candidate in candidates if candidate.is_file()), None)
-    if manifest is None:
-        return []
-    return [
-        line.strip()
-        for line in manifest.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 
 def _native_launcher_provided_artifact_coordinates(launcher_executable: str | None) -> set[str]:
@@ -6334,7 +6338,7 @@ def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None
     command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        command_line, options = _windows_launch(command_line)
         process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError:
         launch.abandon()
@@ -8142,7 +8146,7 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
     command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        command_line, options = _windows_launch(command_line)
         process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError as exception:
         launch.abandon()
@@ -8172,9 +8176,9 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
 def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:
     aot = _prepare_aot_launch(command_line, env)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(aot.command_line) else {}
+        command_line, options = _windows_launch(aot.command_line)
         completed = subprocess.run(
-            aot.command_line,
+            command_line,
             check=False,
             env=aot.env,
             stdout=subprocess.DEVNULL,
@@ -8192,6 +8196,63 @@ def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = 
 
 def _uses_windows_batch_shell(command_line: Sequence[str]) -> bool:
     return sys.platform == "win32" and bool(command_line) and command_line[0].lower().endswith((".bat", ".cmd"))
+
+
+# cmd.exe rejects command lines longer than 8191 characters and CreateProcess
+# rejects those longer than 32767.
+_WINDOWS_BATCH_COMMAND_LINE_LIMIT = 8191
+_WINDOWS_COMMAND_LINE_LIMIT = 32767
+_JVM_OPTIONS_FILE_PROPERTY = "pyronaut.jvm.options.file"
+_JVM_OPTIONS_FILE_MIN_OPTION_LENGTH = 256
+
+
+def _windows_launch(command_line: list[str]) -> tuple[list[str], dict[str, bool]]:
+    """Return the command line and Popen options for launching on the current platform."""
+    if sys.platform != "win32":
+        return command_line, {}
+    batch = _uses_windows_batch_shell(command_line)
+    limit = _WINDOWS_BATCH_COMMAND_LINE_LIMIT if batch else _WINDOWS_COMMAND_LINE_LIMIT
+    return _spill_native_system_properties(command_line, limit), ({"shell": True} if batch else {})
+
+
+def _spill_native_system_properties(command_line: list[str], limit: int) -> list[str]:
+    """Move long ``-D`` options of a native Pyronaut launcher into an options file.
+
+    Classpath-valued properties easily exceed the Windows command line limit.
+    The native launchers load the file named by ``pyronaut.jvm.options.file``
+    before reading any other system property.
+    """
+    if not command_line or len(subprocess.list2cmdline(command_line)) < limit:
+        return command_line
+    executable = PureWindowsPath(command_line[0]).name.lower()
+    for suffix in (".exe", ".cmd", ".bat"):
+        executable = executable.removesuffix(suffix)
+    if executable not in _NATIVE_IMAGE_COMMANDS:
+        return command_line
+    retained = [command_line[0]]
+    spilled: list[str] = []
+    for index, value in enumerate(command_line[1:], start=1):
+        if not value.startswith("-"):
+            # Options after the subcommand belong to the launcher's own parser.
+            retained.extend(command_line[index:])
+            break
+        if value.startswith("-D") and len(value) >= _JVM_OPTIONS_FILE_MIN_OPTION_LENGTH and "\n" not in value:
+            spilled.append(value)
+        else:
+            retained.append(value)
+    if not spilled:
+        return command_line
+    content = "".join(f"{value}\n" for value in spilled)
+    directory = Path(tempfile.gettempdir()) / "pyronaut"
+    directory.mkdir(parents=True, exist_ok=True)
+    # Content-addressed so concurrent and restarted launches can share it.
+    options_file = directory / f"jvm-options-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}.txt"
+    if not options_file.is_file():
+        staging = options_file.with_name(f"{options_file.name}.{os.getpid()}.tmp")
+        with staging.open("w", encoding="utf-8", newline="\n") as output:
+            output.write(content)
+        os.replace(staging, options_file)
+    return [retained[0], f"-D{_JVM_OPTIONS_FILE_PROPERTY}={options_file}", *retained[1:]]
 
 
 def _resolve_executable(command_name: str) -> str | None:
@@ -8436,15 +8497,15 @@ def _pyronaut_dev_native_command_line(
             return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider) if command in {"dev", "run", "test"} else []
-    # Coordinates contain ':', so use a delimiter independent of the host
-    # path separator when passing the list through a system property.
-    provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
-    if provided_artifacts:
+    if _native_launcher_provided_artifact_coordinates(executable_path):
         # The native pyronaut-dev image embeds the compiler and annotation
         # processors. Tell the in-process processor to remove matching
         # project artifacts from its annotation-processor path as well as from
-        # application classpaths.
-        jvm_args.append(f"-Dpyronaut.dev.native.provided.artifacts={provided_artifacts}")
+        # application classpaths. Pass the manifest by reference: the inline
+        # coordinate list exceeds cmd.exe's 8191-character limit when the
+        # launcher is invoked through a Windows .cmd shim.
+        provided_manifest = _native_launcher_manifest_path(executable_path, "native-provided-classpath.txt")
+        jvm_args.append(f"-Dpyronaut.dev.native.provided.artifacts=@{provided_manifest}")
         provided_jars = _native_launcher_provided_jar_entries(executable_path)
         if provided_jars:
             # Metadata consumers inspect these shipped JARs directly; they are

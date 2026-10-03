@@ -89,6 +89,29 @@ class NativeProvidedJarResolverTest {
         }
     }
 
+    @Test
+    void readsCoordinatesFromAManifestFileReference(@TempDir Path directory) throws Exception {
+        Files.createFile(directory.resolve("micronaut-jdbc-hikari-6.0.0.jar"));
+        Files.createFile(directory.resolve("micronaut-http-server-6.0.0.jar"));
+        Path manifest = Files.writeString(directory.resolve("native-provided-classpath.txt"),
+            "# provided by the native launcher\nio.micronaut.sql:micronaut-jdbc-hikari\n\nio.micronaut:micronaut-core\n");
+        String previousArtifacts = System.getProperty(NativeProvidedJarResolver.ARTIFACTS_PROPERTY);
+        String previousJars = System.getProperty(NativeProvidedJarResolver.JARS_PROPERTY);
+        try {
+            System.setProperty(NativeProvidedJarResolver.ARTIFACTS_PROPERTY, "@" + manifest);
+            System.setProperty(NativeProvidedJarResolver.JARS_PROPERTY, directory.toString());
+
+            assertEquals(List.of("io.micronaut.sql:micronaut-jdbc-hikari", "io.micronaut:micronaut-core"),
+                NativeProvidedJarResolver.providedArtifactCoordinates());
+            List<NativeProvidedJarResolver.JarPair> jars = new NativeProvidedJarResolver().resolve();
+            assertEquals(1, jars.size());
+            assertEquals("micronaut-jdbc-hikari", jars.getFirst().artifactId());
+        } finally {
+            restore(NativeProvidedJarResolver.ARTIFACTS_PROPERTY, previousArtifacts);
+            restore(NativeProvidedJarResolver.JARS_PROPERTY, previousJars);
+        }
+    }
+
     private static void restore(String name, String previousValue) {
         if (previousValue == null) {
             System.clearProperty(name);
