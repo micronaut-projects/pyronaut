@@ -21,6 +21,7 @@ import io.micronaut.testresources.buildtools.MavenDependency;
 import io.micronaut.testresources.buildtools.TestResourcesClasspath;
 import io.micronaut.testresources.buildtools.VersionInfo;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -178,9 +179,8 @@ final class ExternalBuildResolver {
 
     private static String evaluateMavenExpression(Path root, String expression, boolean offline, Path localRepository) {
         try {
-            Path wrapper = root.resolve("mvnw");
             List<String> command = new ArrayList<>(List.of(
-                Files.isRegularFile(wrapper) ? wrapper.toString() : "mvn",
+                buildToolCommand(root, ProjectKind.MAVEN),
                 "help:evaluate", "-q", "-DforceStdout", "-Dexpression=" + expression
             ));
             if (offline) {
@@ -232,8 +232,7 @@ final class ExternalBuildResolver {
                 }
                 """.replace("__PYRONAUT_TARGET__", target);
             Files.writeString(script, scriptText, StandardCharsets.UTF_8);
-            Path wrapper = root.resolve("gradlew");
-            List<String> command = new ArrayList<>(List.of(Files.isRegularFile(wrapper) ? wrapper.toString() : "gradle", "--no-daemon", "--init-script", script.toString(), "__pyronautWriteSourceLayout"));
+            List<String> command = new ArrayList<>(List.of(buildToolCommand(root, ProjectKind.GRADLE), "--no-daemon", "--init-script", script.toString(), "__pyronautWriteSourceLayout"));
             if (offline) {
                 command.add("--offline");
             }
@@ -327,7 +326,7 @@ final class ExternalBuildResolver {
         Files.createDirectories(cache);
         Path output = cache.resolve("external-effective-pom.xml");
         try {
-            List<String> command = new ArrayList<>(List.of(mavenCommand(root), "help:effective-pom", "-Doutput=" + output));
+            List<String> command = new ArrayList<>(List.of(buildToolCommand(root, ProjectKind.MAVEN), "help:effective-pom", "-Doutput=" + output));
             if (offline) {
                 command.add("-o");
             }
@@ -395,7 +394,7 @@ final class ExternalBuildResolver {
         pom.append("</project>");
         Files.writeString(processorPom, pom, StandardCharsets.UTF_8);
         try {
-            List<String> command = new ArrayList<>(List.of(mavenCommand(root), "-f", processorPom.toString(), "dependency:build-classpath", "-Dmdep.outputFile=" + output, "-DincludeScope=compile"));
+            List<String> command = new ArrayList<>(List.of(buildToolCommand(root, ProjectKind.MAVEN), "-f", processorPom.toString(), "dependency:build-classpath", "-Dmdep.outputFile=" + output, "-DincludeScope=compile"));
             if (offline) {
                 command.add("-o");
             }
@@ -418,9 +417,19 @@ final class ExternalBuildResolver {
         }
     }
 
-    private static String mavenCommand(Path root) {
-        Path wrapper = root.resolve("mvnw");
-        return Files.isRegularFile(wrapper) ? wrapper.toString() : "mvn";
+    private static String buildToolCommand(Path root, ProjectKind kind) {
+        return buildToolCommand(root, kind, File.separatorChar == '\\');
+    }
+
+    static String buildToolCommand(Path root, ProjectKind kind, boolean windows) {
+        String tool = switch (kind) {
+            case MAVEN -> "mvn";
+            case GRADLE -> "gradle";
+            default -> throw new IllegalArgumentException("No external build tool for " + kind);
+        };
+        String suffix = windows ? (kind == ProjectKind.MAVEN ? ".cmd" : ".bat") : "";
+        Path wrapper = root.resolve(tool + "w" + suffix).toAbsolutePath().normalize();
+        return Files.isRegularFile(wrapper) ? wrapper.toString() : tool + suffix;
     }
 
     private static String childText(org.w3c.dom.Node parent, String name) {
@@ -480,8 +489,7 @@ final class ExternalBuildResolver {
         try {
             List<String> command = new ArrayList<>();
             if (kind == ProjectKind.MAVEN) {
-                Path wrapper = root.resolve("mvnw");
-                command.add(Files.isRegularFile(wrapper) ? wrapper.toString() : "mvn");
+                command.add(buildToolCommand(root, ProjectKind.MAVEN));
                 if ("testResources".equals(scope)) {
                     temporaryPom = writeMavenTestResourcesPom(root, offline, localRepository);
                     command.add("-f");
@@ -491,8 +499,7 @@ final class ExternalBuildResolver {
                 command.add("-Dmdep.outputFile=" + output);
                 command.add("-DincludeScope=" + ("test".equals(scope) ? "test" : ("build".equals(scope) ? "compile" : "runtime")));
             } else {
-                Path wrapper = root.resolve("gradlew");
-                command.add(Files.isRegularFile(wrapper) ? wrapper.toString() : "gradle");
+                command.add(buildToolCommand(root, ProjectKind.GRADLE));
                 command.add("--no-daemon");
                 initScript = cache.resolve("external-" + scope + ".gradle");
                 Files.deleteIfExists(initScript);

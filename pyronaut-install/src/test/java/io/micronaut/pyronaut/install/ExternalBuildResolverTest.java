@@ -7,16 +7,62 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout.ProjectKind;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExternalBuildResolverTest {
+    @Test
+    void selectsPlatformBuildToolAndPrefersMatchingProjectWrapper(@TempDir Path directory) throws Exception {
+        for (ProjectKind kind : List.of(ProjectKind.MAVEN, ProjectKind.GRADLE)) {
+            String tool = kind == ProjectKind.MAVEN ? "mvn" : "gradle";
+            String windowsSuffix = kind == ProjectKind.MAVEN ? ".cmd" : ".bat";
+            for (boolean windows : List.of(false, true)) {
+                Path root = Files.createDirectories(directory.resolve(kind + " with spaces " + windows));
+                String suffix = windows ? windowsSuffix : "";
+                assertEquals(tool + suffix, ExternalBuildResolver.buildToolCommand(root, kind, windows));
+                Files.writeString(root.resolve(tool + "w" + (windows ? "" : windowsSuffix)), "wrong platform");
+                assertEquals(tool + suffix, ExternalBuildResolver.buildToolCommand(root, kind, windows));
+                Path wrapper = Files.writeString(root.resolve(tool + "w" + suffix), "matching wrapper");
+                assertEquals(wrapper.toAbsolutePath().toString(), ExternalBuildResolver.buildToolCommand(root, kind, windows));
+            }
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void startsWindowsBuildToolWrappersWithSpaces(@TempDir Path directory) throws Exception {
+        Path root = Files.createDirectories(directory.resolve("project with spaces"));
+        for (ProjectKind kind : List.of(ProjectKind.MAVEN, ProjectKind.GRADLE)) {
+            String wrapper = kind == ProjectKind.MAVEN ? "mvnw.cmd" : "gradlew.bat";
+            Files.writeString(root.resolve(wrapper), "@echo off\r\nif not \"%~1\"==\"argument with spaces\" exit /b 17\r\nexit /b 0\r\n");
+            Process process = new ProcessBuilder(ExternalBuildResolver.buildToolCommand(root, kind, true), "argument with spaces")
+                .directory(root.toFile()).inheritIO().start();
+            assertEquals(0, process.waitFor());
+        }
+    }
+
+    @Test
+    void externalInstallHashChangesWhenWindowsWrapperChanges(@TempDir Path root) throws Exception {
+        for (String name : List.of("mvnw.cmd", "gradlew.bat")) {
+            Path wrapper = root.resolve(name);
+            Files.writeString(wrapper, "first version");
+            String before = ResolutionCache.externalInstallHash(root, root.resolve("repo"));
+            Files.writeString(wrapper, "updated version");
+            assertNotEquals(before, ResolutionCache.externalInstallHash(root, root.resolve("repo")));
+        }
+    }
+
     @Test
     void readsConfiguredMavenResourceDirectories() throws Exception {
         var root = Files.createTempDirectory("pyronaut-maven-resources");
@@ -164,7 +210,9 @@ class ExternalBuildResolverTest {
         }
         assertTrue(repositoryRoot != null, "Could not locate the repository Gradle wrapper");
         Path root = Files.createTempDirectory(prefix);
-        Files.copy(repositoryRoot.resolve("gradlew"), root.resolve("gradlew"), StandardCopyOption.COPY_ATTRIBUTES);
+        for (String script : List.of("gradlew", "gradlew.bat")) {
+            Files.copy(repositoryRoot.resolve(script), root.resolve(script), StandardCopyOption.COPY_ATTRIBUTES);
+        }
         Path wrapper = Files.createDirectories(root.resolve("gradle/wrapper"));
         for (String file : new String[] {"gradle-wrapper.jar", "gradle-wrapper.properties"}) {
             Files.copy(repositoryRoot.resolve("gradle/wrapper").resolve(file), wrapper.resolve(file));
