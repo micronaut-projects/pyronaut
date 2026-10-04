@@ -925,12 +925,19 @@ publish:github-release:
 
 The workload lives in `pgo-training`. It drives the real `pyronaut` CLI, so
 training follows the same command lines as users. Every launcher process for
-the image under training writes its own profile, and servers are stopped with
-`SIGTERM`, which runs the shutdown hooks and writes the profile.
+the image under training writes its own profile. Native servers are stopped with
+`SIGTERM` on Unix or private-console Ctrl+C on Windows, allowing shutdown hooks
+to write the profile. Windows JVM-only training terminates the CLI process tree;
+there are no profiles to flush in that mode.
+
+Training and benchmark tasks substitute the effective Gradle Core/Platform
+properties and Serde/Validation catalog versions into copied application templates.
+The source fixtures do not pin separate Micronaut versions. When invoking either
+Python driver directly, supply its `--micronaut-*-version` options explicitly.
 
 | Image | Scenarios |
 | --- | --- |
-| `pyronaut-run` | A Java application (`apps/java`): 5 cold starts, then the runtime workload |
+| `pyronaut-run` | A Maven Java application (`apps/java-maven`): 5 cold starts, then the runtime workload |
 | `pyronaut-run-python` | A Python application (`apps/python`): 5 cold starts, then the runtime workload |
 | `pyronaut-dev` | `install`; clean, incremental and new-route `process`; `test`; `dev` with the runtime workload; `install` and `process` of the Java application; direct-source `run app.py` and `run App.java` with the runtime workload |
 

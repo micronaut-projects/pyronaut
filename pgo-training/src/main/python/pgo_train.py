@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
+# Copyright 2017-2026 original authors
+
 """Runs the PGO training workload for one Pyronaut native image.
 
 The workload drives the real ``pyronaut`` CLI (from source) so that training follows the same
 command lines as users. Every launcher process started for the image under training goes through
 a shim that adds ``-XX:ProfilesDumpFile=<profiles>/<scenario>-<pid>.iprof``, so that no process
 overwrites another's profile. Servers are stopped with SIGTERM, which runs the shutdown hooks and
-writes the profile.
+writes the profile. Windows launchers use a private console and Ctrl+C for the same shutdown hooks.
 
 With ``--jvm`` the same scenarios run against the JVM launchers and no profiles are collected.
 That is how the workload itself is developed and checked without building native images.
@@ -25,10 +27,13 @@ import subprocess
 import sys
 import threading
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 IMAGES = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
+MICRONAUT_MODULES = ("core", "platform", "serde", "validation")
 # The pyronaut-run workload. It must be a Maven or Gradle project, not a pyproject.toml project.
 RUN_APP = "java-maven"
 SPECIES = ("dog", "cat", "rabbit", "parrot", "hamster", "lizard")
@@ -56,7 +61,8 @@ pids.mkdir(parents=True, exist_ok=True)
 profile = profiles / f"{scenario}-{uuid.uuid4().hex}.iprof"
 process = subprocess.Popen(
     [@EXECUTABLE@, f"-XX:ProfilesDumpFile={profile}", *sys.argv[1:]],
-    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+    creationflags=subprocess.CREATE_NEW_CONSOLE,
+    stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
 )
 with (pids / f"{scenario}.pids").open("a", encoding="utf-8") as stream:
     stream.write(f"{process.pid}\\t{profile.name}\\n")
@@ -99,7 +105,8 @@ command = [
     "io.micronaut.pyronaut.dev.PyronautDevMain",
     *arguments,
 ]
-process = subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+process = subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE,
+                           stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr)
 scenario = os.environ.get("PGO_SCENARIO")
 if scenario:
     pids = Path(os.environ["PGO_PIDS_DIR"])
@@ -107,6 +114,27 @@ if scenario:
     with (pids / f"{scenario}.children.pids").open("a", encoding="utf-8") as stream:
         stream.write(f"{process.pid}\\n")
 raise SystemExit(process.wait())
+"""
+
+WINDOWS_CTRL_C_HELPER = """import ctypes
+import sys
+
+# Run in a disposable process: attaching must not change the CI trainer's console.
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32.AttachConsole.argtypes = [ctypes.c_uint32]
+kernel32.SetConsoleCtrlHandler.argtypes = [ctypes.c_void_p, ctypes.c_int]
+kernel32.GenerateConsoleCtrlEvent.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+kernel32.FreeConsole()
+if not kernel32.AttachConsole(int(sys.argv[1])):
+    raise ctypes.WinError(ctypes.get_last_error())
+try:
+    # AttachConsole resets handlers, so ignore Ctrl+C only after attaching.
+    if not kernel32.SetConsoleCtrlHandler(None, True):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if not kernel32.GenerateConsoleCtrlEvent(0, 0):  # CTRL_C_EVENT, child console only.
+        raise ctypes.WinError(ctypes.get_last_error())
+finally:
+    kernel32.FreeConsole()
 """
 
 
@@ -135,6 +163,24 @@ def _venv_python(venv: Path, *, windows: bool = os.name == "nt") -> Path:
 
 
 def pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        # On Windows os.kill(pid, 0) sends CTRL_C; it is not a liveness probe.
+        import _winapi
+
+        if pid <= 0:
+            return False
+        try:
+            handle = _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, pid)
+        except PermissionError:
+            return True
+        except OSError as error:
+            if getattr(error, "winerror", None) == 87:  # ERROR_INVALID_PARAMETER: the PID no longer exists.
+                return False
+            raise
+        try:
+            return _winapi.WaitForSingleObject(handle, 0) == _winapi.WAIT_TIMEOUT
+        finally:
+            _winapi.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -150,13 +196,24 @@ class Client:
     def __init__(self, port: int):
         self.port = port
         self.local = threading.local()
+        self.connections = []
+        self.lock = threading.Lock()
 
     def _connection(self) -> http.client.HTTPConnection:
         connection = getattr(self.local, "connection", None)
         if connection is None:
             connection = http.client.HTTPConnection("localhost", self.port, timeout=120)
             self.local.connection = connection
+            with self.lock:
+                self.connections.append(connection)
         return connection
+
+    def close(self) -> None:
+        # Workers have finished before closing; GraalPy cannot rely on refcounted socket cleanup.
+        for connection in self.connections:
+            connection.close()
+        self.connections.clear()
+        self.local = threading.local()
 
     def request(self, method: str, path: str, body=None, content_type: str = "application/json") -> tuple[int, bytes]:
         headers = {}
@@ -208,11 +265,14 @@ class Workload:
             timings[f"concurrency-{concurrency}"] = round(time.monotonic() - start, 1)
         return timings
 
-    def _parallel(self, concurrency: int, count: int, action) -> list:
-        if concurrency == 1:
-            return [action(i) for i in range(count)]
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            return list(pool.map(action, range(count)))
+    def _parallel(self, client: Client, concurrency: int, count: int, action) -> list:
+        try:
+            if concurrency == 1:
+                return [action(i) for i in range(count)]
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                return list(pool.map(action, range(count)))
+        finally:
+            client.close()
 
     def _pet(self, i: int) -> dict:
         return {
@@ -223,8 +283,8 @@ class Workload:
         }
 
     def _phase(self, client: Client, concurrency: int) -> None:
-        self._parallel(concurrency, self.count(3000), lambda i: client.expect("GET", "/hello", 200))
-        created = self._parallel(concurrency, self.count(1500), lambda i: client.expect("POST", "/pets", 201, self._pet(i)))
+        self._parallel(client, concurrency, self.count(3000), lambda i: client.expect("GET", "/hello", 200))
+        created = self._parallel(client, concurrency, self.count(1500), lambda i: client.expect("POST", "/pets", 201, self._pet(i)))
         ids = [pet["id"] for pet in created]
 
         def read(i: int) -> None:
@@ -242,9 +302,9 @@ class Workload:
             else:
                 client.expect("GET", f"/pets/{ids[-1 - i % len(ids)]}", 200)
 
-        self._parallel(concurrency, self.count(3000), read)
+        self._parallel(client, concurrency, self.count(3000), read)
         update_count = min(len(ids), self.count(600))
-        self._parallel(concurrency, update_count, lambda i: client.expect(
+        self._parallel(client, concurrency, update_count, lambda i: client.expect(
             "PUT", f"/pets/{ids[i]}", 200, dict(self._pet(i + 7), name=f"Updated {i}")))
 
         def errors(i: int) -> None:
@@ -258,16 +318,16 @@ class Workload:
             else:
                 client.expect("DELETE", "/pets/999999999", 404)
 
-        self._parallel(concurrency, self.count(300), errors)
+        self._parallel(client, concurrency, self.count(300), errors)
         if self.has_summary:
             small = self._summary_document(20, 40)
-            self._parallel(concurrency, self.count(1500), lambda i: client.expect(
+            self._parallel(client, concurrency, self.count(1500), lambda i: client.expect(
                 "POST", "/pets/summary", 200, small, "text/plain"))
             large = self._summary_document(1500, 20000)
-            self._parallel(concurrency, self.count(100), lambda i: client.expect(
+            self._parallel(client, concurrency, self.count(100), lambda i: client.expect(
                 "POST", "/pets/summary", 200, large, "text/plain"))
         delete_count = min(len(ids), self.count(1500))
-        self._parallel(concurrency, delete_count, lambda i: client.expect("DELETE", f"/pets/{ids[i]}", 204))
+        self._parallel(client, concurrency, delete_count, lambda i: client.expect("DELETE", f"/pets/{ids[i]}", 204))
 
     def _summary_document(self, visits: int, words: int) -> str:
         vocabulary = ("fed", "walked", "groomed", "vaccinated", "weighed", "checked", "played", "slept")
@@ -347,7 +407,14 @@ class Trainer:
     def _write_windows_shim(self, base: Path, script: str) -> Path:
         helper = base.with_suffix(".py")
         shim = base.with_suffix(".cmd")
-        helper.write_text(script, encoding="utf-8")
+        helper.write_text("""import ctypes
+
+# Ctrl+C-ignore is inherited even with CREATE_NEW_CONSOLE; restore it before spawning.
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+if not kernel32.SetConsoleCtrlHandler(None, False):
+    raise ctypes.WinError(ctypes.get_last_error())
+
+""" + script, encoding="utf-8")
         shim.write_text(
             f'@echo off\r\n"{self.options.graalpy}" "%~dpn0.py" %*\r\nexit /b %ERRORLEVEL%\r\n',
             encoding="utf-8",
@@ -392,11 +459,20 @@ class Trainer:
         source = self.apps / name
         target = self.work / "apps" / name
         shutil.copytree(source, target)
-        pyproject = target / "pyproject.toml"
-        if pyproject.is_file():
-            content = pyproject.read_text().replace("@REPOSITORY@", str(Path(self.options.repository).resolve()))
-            toolchain = "jvm" if self.jvm else "native"
-            pyproject.write_text(content + f"\n[tool.pyronaut.toolchain]\ntype = '{toolchain}'\n")
+        replacements = {
+            "@REPOSITORY@": str(Path(self.options.repository).resolve()),
+            **{f"@MICRONAUT_{module.upper()}_VERSION@": getattr(self.options, f"micronaut_{module}_version")
+               for module in MICRONAUT_MODULES},
+        }
+        for fixture in (target / "pyproject.toml", target / "pom.xml"):
+            if fixture.is_file():
+                content = fixture.read_text()
+                for placeholder, value in replacements.items():
+                    content = content.replace(placeholder, value)
+                if fixture.name == "pyproject.toml":
+                    toolchain = "jvm" if self.jvm else "native"
+                    content += f"\n[tool.pyronaut.toolchain]\ntype = '{toolchain}'\n"
+                fixture.write_text(content)
         if port is not None:
             self.set_port(target, port)
         return target
@@ -451,8 +527,18 @@ class Trainer:
             result = subprocess.run(command, cwd=cwd, env=env if env is not None else self.env(scenario),
                                     stdout=output, stderr=subprocess.STDOUT)
         if result.returncode != 0:
+            details = self._log_contents(log_file)
+            if scenario == "test":
+                junit_report = cwd / "__pyronaut__" / "reports" / "tests" / "junit.xml"
+                if junit_report.is_file():
+                    try:
+                        failure = ET.parse(junit_report).find(".//failure")
+                        if failure is not None:
+                            details += "\nFirst test failure (full report):\n" + (failure.text or "")
+                    except (OSError, ET.ParseError):
+                        pass
             raise TrainingError(f"{scenario}: {' '.join(command[2:])} exited with {result.returncode}; see {log_file}\n"
-                                + self._log_contents(log_file))
+                                + details)
         return round(time.monotonic() - start, 1)
 
     @staticmethod
@@ -489,14 +575,22 @@ class Trainer:
             try:
                 self._wait_ready(port, process, log_file)
                 details["ready-seconds"] = round(time.monotonic() - started, 1)
-                client = Client(port)
-                if workload is None:
-                    client.expect("GET", "/hello", 200)
-                else:
-                    details["workload-seconds"] = workload.run(client)
+                with closing(Client(port)) as client:
+                    if workload is None:
+                        client.expect("GET", "/hello", 200)
+                    else:
+                        details["workload-seconds"] = workload.run(client)
+                log(f"{name}: workload completed; stopping launchers")
             finally:
-                self._stop(name, process)
-                output.close()
+                workload_failed = sys.exc_info()[0] is not None
+                try:
+                    self._stop(name, process)
+                except Exception as error:
+                    if not workload_failed:
+                        raise
+                    log(f"{name}: shutdown also failed: {error}")
+                finally:
+                    output.close()
             self._record(name, **details)
 
     def _wait_ready(self, port: int, process: subprocess.Popen, log_file: Path) -> None:
@@ -506,19 +600,32 @@ class Trainer:
                 raise TrainingError(f"Server exited with {process.returncode} before it was ready; see {log_file}\n"
                                     + self._log_contents(log_file))
             try:
-                connection = http.client.HTTPConnection("localhost", port, timeout=5)
-                connection.request("GET", "/hello")
-                if connection.getresponse().status == 200:
-                    return
+                with closing(http.client.HTTPConnection("localhost", port, timeout=5)) as connection:
+                    connection.request("GET", "/hello")
+                    if connection.getresponse().status == 200:
+                        return
             except OSError:
                 pass
             time.sleep(0.5)
         raise TrainingError(f"Server on port {port} was not ready after {self.options.startup_timeout}s; see {log_file}")
 
     def _stop(self, scenario: str, process: subprocess.Popen) -> None:
+        if os.name == "nt":
+            if process.poll() is None:
+                if self.jvm:
+                    # Stock JVM launchers do not write shim PID files. Keep the CLI alive
+                    # until taskkill has found its descendants; no PGO dump is needed here.
+                    result = subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                            capture_output=True, text=True, timeout=30)
+                    if result.returncode != 0:
+                        raise TrainingError(f"{scenario}: cannot stop JVM process tree: {result.stderr.strip()}")
+                else:
+                    # Stop watchers before sending Ctrl+C to the tracked native launchers.
+                    process.kill()
+                process.wait()
+            self._stop_windows_children(scenario)
+            return
         if self.jvm:
-            if os.name == "nt":
-                self._stop_windows_children(scenario)
             self._signal_group(process, signal.SIGTERM)
             return
         # Stop the CLI first so that a development watcher cannot restart the application, then
@@ -526,9 +633,6 @@ class Trainer:
         if process.poll() is None:
             process.kill()
             process.wait()
-        if os.name == "nt":
-            self._stop_windows_children(scenario)
-            return
         for pid in self._pids(scenario):
             if pid_alive(pid):
                 os.kill(pid, signal.SIGTERM)
@@ -547,9 +651,15 @@ class Trainer:
         for pid in pids:
             if pid_alive(pid):
                 try:
-                    os.kill(pid, signal.CTRL_BREAK_EVENT)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                    result = subprocess.run(
+                        [self.options.graalpy, "-c", WINDOWS_CTRL_C_HELPER, str(pid)],
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    if result.returncode != 0:
+                        log(f"{scenario}: Ctrl+C helper for {pid} failed: {result.stderr.strip()}")
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    log(f"{scenario}: Ctrl+C helper for {pid} failed: {error}")
         deadline = time.monotonic() + self.options.shutdown_timeout
         while time.monotonic() < deadline and any(pid_alive(pid) for pid in pids):
             time.sleep(0.5)
@@ -557,7 +667,7 @@ class Trainer:
         for pid in survivors:
             os.kill(pid, signal.SIGTERM)
         if survivors:
-            raise TrainingError(f"{scenario}: launcher processes {survivors} ignored CTRL_BREAK and were terminated")
+            raise TrainingError(f"{scenario}: launcher processes {survivors} ignored Ctrl+C and were terminated")
 
     @staticmethod
     def _signal_group(process: subprocess.Popen, sig: int) -> None:
@@ -671,6 +781,12 @@ class Trainer:
                    Workload(self.options.scale / 2, has_summary=False))
 
 
+def add_version_arguments(parser: argparse.ArgumentParser) -> None:
+    for module in MICRONAUT_MODULES:
+        parser.add_argument(f"--micronaut-{module}-version", required=True,
+                            help=f"Micronaut {module} version used by the image; supplied by the Gradle tasks")
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--image", choices=IMAGES, required=True)
@@ -686,6 +802,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--cli-source", required=True, help="pyronaut/src/main/python")
     parser.add_argument("--graalpy", required=True)
     parser.add_argument("--java-home", required=True)
+    add_version_arguments(parser)
     parser.add_argument("--tool", action="append", default=[], help="<tool>=<JVM launcher>, e.g. install=/path/bin/pyronaut-install")
     parser.add_argument("--scale", type=float, default=1.0, help="multiplies the number of requests")
     parser.add_argument("--skip", action="append", default=[], help="scenario to skip; for local debugging only")

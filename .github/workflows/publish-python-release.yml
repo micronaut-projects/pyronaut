@@ -145,6 +145,11 @@ jobs:
         with:
           name: pyronaut-wheel
           path: dist
+      - name: Check wheel metadata
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/twine"
+          "${RUNNER_TEMP}/twine/bin/python" -m pip install twine
+          "${RUNNER_TEMP}/twine/bin/python" -m twine check --strict dist/*.whl
       - name: Publish wheel to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
 

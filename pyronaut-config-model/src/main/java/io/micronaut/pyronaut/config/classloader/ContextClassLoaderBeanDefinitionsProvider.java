@@ -19,7 +19,6 @@ import io.micronaut.context.BeanDefinitionsProvider;
 import io.micronaut.context.RequiresCondition;
 import io.micronaut.context.annotation.Requires;
 import io.micronaut.core.annotation.AnnotationValue;
-import io.micronaut.core.io.service.MicronautMetaServiceLoaderUtils;
 import io.micronaut.core.reflect.ClassUtils;
 import io.micronaut.inject.BeanDefinitionReference;
 
@@ -72,7 +71,7 @@ public final class ContextClassLoaderBeanDefinitionsProvider implements BeanDefi
     private static List<BeanDefinitionReference<?>> discoverLauncherReferences(ClassLoader classLoader) {
         List<BeanDefinitionReference<?>> references = new ArrayList<>();
         try {
-            for (String className : MicronautMetaServiceLoaderUtils.findMicronautMetaServiceEntries(classLoader, BeanDefinitionReference.class.getName())) {
+            for (String className : NativeLauncherServices.find(classLoader, BeanDefinitionReference.class.getName())) {
                 if (className.startsWith("io.micronaut.controlpanel.")) {
                     continue;
                 }

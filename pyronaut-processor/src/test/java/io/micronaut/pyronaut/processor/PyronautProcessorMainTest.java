@@ -25,6 +25,27 @@ class PyronautProcessorMainTest {
     Path tempDir;
 
     @Test
+    void standardArgumentFilesPreserveNestedFilesAndWindowsValues() throws Exception {
+        Path userOptions = Files.writeString(tempDir.resolve("user.args"),
+            "--project-dir \"C:/app with spaces\"\n");
+        Path generatedOptions = Files.writeString(tempDir.resolve("process.args"),
+            "\"@" + userOptions.toString().replace("\\", "\\\\") + "\"\n"
+                + "\"--classpath\"\n\"dependency with spaces.jar\"\n"
+                + "\"--option\"\n\"C:\\\\app #1\\\\\\\"quoted\\\"\\\\\"\n"
+                + "\"--option\"\n\"\"\n"
+                + "\"--option\"\n\"@@literal\"\n"
+                + "\"--option\"\n\"line\\nbreak\\rvalue\"\n"
+                + "\"--option\"\n\"café\"\n");
+        PyronautProcessorMain command = new PyronautProcessorMain();
+
+        new CommandLine(command).parseArgs("@" + generatedOptions);
+
+        assertEquals(Path.of("C:/app with spaces"), command.projectDir);
+        assertEquals(List.of(Path.of("dependency with spaces.jar")), command.classpath);
+        assertEquals(List.of("C:\\app #1\\\"quoted\"\\", "", "@literal", "line\nbreak\rvalue", "café"), command.options);
+    }
+
+    @Test
     void usesCachedDefaultPaths() throws Exception {
         Path project = tempDir.resolve("project");
         Files.createDirectories(project.resolve("__pyronaut__"));

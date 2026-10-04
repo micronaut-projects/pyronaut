@@ -1,5 +1,6 @@
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.python.processing.OptionDeclaringTypeElementVisitor;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -72,6 +73,34 @@ class AnnotationProcessorOptionDiscoveryTest {
         assertTrue(written.getProperty("options").contains(LoggingTypeElementVisitor.OPTION), written.toString());
         String output = stderr.toString(StandardCharsets.UTF_8);
         assertFalse(output.contains("SLF4J"), output);
+    }
+
+    @Test
+    void discoversOptionsDeclaredByThePythonVisitors() throws Exception {
+        // The Python stub generators declare the options Python processing reads, and discovery
+        // is what makes them settable: `pyronaut process` forwards a value out of application
+        // configuration only for an option some visitor on the project's class path says it
+        // supports. Skipping the package left every one of them -- among them
+        // `micronaut.python.pool.ignoreDependencies` -- configurable only by passing -A by hand.
+        Path root = Files.createTempDirectory("processor-option-python");
+        Path services = root.resolve("services");
+        Path serviceFile = services.resolve("META-INF/services/io.micronaut.inject.visitor.TypeElementVisitor");
+        Files.createDirectories(serviceFile.getParent());
+        Files.writeString(serviceFile, OptionDeclaringTypeElementVisitor.class.getName() + "\n");
+        List<Path> classpath = List.of(
+            services,
+            location(OptionDeclaringTypeElementVisitor.class),
+            location(io.micronaut.inject.visitor.TypeElementVisitor.class),
+            location(io.micronaut.core.order.Ordered.class)
+        );
+
+        AnnotationProcessorOptionDiscovery.refresh(root, classpath);
+
+        Properties written = new Properties();
+        try (var reader = Files.newBufferedReader(root.resolve(AnnotationProcessorOptionDiscovery.CACHE_FILE_NAME))) {
+            written.load(reader);
+        }
+        assertTrue(written.getProperty("options").contains(OptionDeclaringTypeElementVisitor.OPTION), written.toString());
     }
 
     private static Path location(Class<?> type) throws Exception {

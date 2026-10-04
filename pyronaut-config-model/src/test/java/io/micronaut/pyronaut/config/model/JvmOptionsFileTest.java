@@ -48,6 +48,25 @@ class JvmOptionsFileTest {
     }
 
     @Test
+    void appliesDuplicateSystemPropertiesInOrder(@TempDir Path directory) throws Exception {
+        Path options = Files.writeString(directory.resolve("jvm-options.txt"),
+            "-D" + CLASSPATH + "=earlier\n-D" + CLASSPATH + "=last\n-D" + FLAG + "=set\n-D" + FLAG + "\n");
+        String previous = System.getProperty(JvmOptionsFile.PROPERTY);
+        try {
+            System.setProperty(JvmOptionsFile.PROPERTY, options.toString());
+
+            JvmOptionsFile.apply();
+
+            assertEquals("last", System.getProperty(CLASSPATH));
+            assertEquals("", System.getProperty(FLAG));
+        } finally {
+            restore(JvmOptionsFile.PROPERTY, previous);
+            System.clearProperty(CLASSPATH);
+            System.clearProperty(FLAG);
+        }
+    }
+
+    @Test
     void ignoresAMissingProperty() {
         String previous = System.getProperty(JvmOptionsFile.PROPERTY);
         try {

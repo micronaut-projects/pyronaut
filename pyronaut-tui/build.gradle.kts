@@ -27,6 +27,11 @@ dependencies {
     implementation(libs.tamboui.annotations)
 
     runtimeOnly(libs.tamboui.jline)
+    constraints {
+        // tamboui-jline3-backend 0.5.0 depends on jline 3.25.1, which is
+        // affected by CVE-2026-77420 and CVE-2026-77422 (fixed in 3.30.15).
+        runtimeOnly(libs.jline)
+    }
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
