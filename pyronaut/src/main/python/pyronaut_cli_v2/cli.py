@@ -8286,7 +8286,13 @@ def _spill_native_process_args(command_line: list[str], limit: int) -> list[str]
     arguments = command_line[index + 1:]
     if not any(option in arguments for option in ("--classpath", "--test-classpath")):
         return command_line
-    content = "\n".join(arguments) + "\n"
+    # Picocli's standard @file parser uses StreamTokenizer: quote every entry
+    # and escape backslashes/quotes so Windows paths and nested user @files keep
+    # the same meaning as command-line arguments.
+    content = "\n".join(
+        '"' + argument.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r") + '"'
+        for argument in arguments
+    ) + "\n"
     directory = Path(tempfile.gettempdir()) / "pyronaut"
     directory.mkdir(parents=True, exist_ok=True)
     args_file = directory / f"process-args-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}.txt"
@@ -8295,8 +8301,7 @@ def _spill_native_process_args(command_line: list[str], limit: int) -> list[str]
         with staging.open("w", encoding="utf-8", newline="\n") as output:
             output.write(content)
         os.replace(staging, args_file)
-    # The direct process delegate forwards @file to picocli; simplified files preserve paths with spaces.
-    return [*command_line[:index], "-Dpicocli.useSimplifiedAtFiles=true", "process", f"@{args_file}"]
+    return [*command_line[:index], "process", f"@{args_file}"]
 
 
 def _spill_native_system_properties(command_line: list[str], limit: int) -> list[str]:
@@ -8313,17 +8318,23 @@ def _spill_native_system_properties(command_line: list[str], limit: int) -> list
         executable = executable.removesuffix(suffix)
     if executable not in _NATIVE_IMAGE_COMMANDS:
         return command_line
+    # Options after the subcommand belong to the launcher's own parser.
+    index = next((i for i, value in enumerate(command_line[1:], start=1) if not value.startswith("-")), len(command_line))
+    properties = [value for value in command_line[1:index] if value.startswith("-D")]
+    spilled_keys = {value[2:].split("=", 1)[0] for value in properties if len(value) >= _JVM_OPTIONS_FILE_MIN_OPTION_LENGTH}
+    # The options file is line-based. Keep all occurrences of an unrepresentable
+    # property inline, rather than corrupting its value or duplicate precedence.
+    spilled_keys.difference_update(value[2:].split("=", 1)[0] for value in properties if "\n" in value or "\r" in value)
     retained = [command_line[0]]
     spilled: list[str] = []
-    for index, value in enumerate(command_line[1:], start=1):
-        if not value.startswith("-"):
-            # Options after the subcommand belong to the launcher's own parser.
-            retained.extend(command_line[index:])
-            break
-        if value.startswith("-D") and len(value) >= _JVM_OPTIONS_FILE_MIN_OPTION_LENGTH and "\n" not in value:
+    for value in command_line[1:index]:
+        # Apply every occurrence of a spilled key in its original order: the
+        # options file is loaded after inline -D options, and the last one wins.
+        if value.startswith("-D") and value[2:].split("=", 1)[0] in spilled_keys:
             spilled.append(value)
         else:
             retained.append(value)
+    retained.extend(command_line[index:])
     if not spilled:
         return command_line
     content = "".join(f"{value}\n" for value in spilled)

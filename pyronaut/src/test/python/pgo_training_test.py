@@ -1,3 +1,5 @@
+# Copyright 2017-2026 original authors
+
 import importlib.util
 import io
 import json
@@ -186,7 +188,7 @@ class PgoTrainingTest(unittest.TestCase):
                     expected.append(call.FreeConsole())
                 self.assertEqual(expected, kernel32.mock_calls)
 
-    def test_windows_shutdown_stops_cli_before_launchers_in_native_and_jvm_modes(self):
+    def test_windows_shutdown_preserves_native_ctrl_c_and_stops_jvm_tree(self):
         for jvm in (False, True):
             with self.subTest(jvm=jvm):
                 trainer = object.__new__(training.Trainer)
@@ -197,9 +199,13 @@ class PgoTrainingTest(unittest.TestCase):
                 order = Mock()
                 order.attach_mock(process, "cli")
                 order.attach_mock(trainer._stop_windows_children, "children")
-                with patch.object(training.os, "name", "nt"):
+                run = Mock(return_value=types.SimpleNamespace(returncode=0))
+                order.attach_mock(run, "taskkill")
+                with patch.object(training.os, "name", "nt"), patch.object(training.subprocess, "run", run):
                     trainer._stop("dev-run", process)
-                self.assertEqual([call.cli.poll(), call.cli.kill(), call.cli.wait(), call.children("dev-run")],
+                stop = (call.taskkill(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                      capture_output=True, text=True, timeout=30) if jvm else call.cli.kill())
+                self.assertEqual([call.cli.poll(), stop, call.cli.wait(), call.children("dev-run")],
                                  order.mock_calls)
 
     def test_windows_shutdown_requires_children_to_exit_and_profiles_to_exist(self):

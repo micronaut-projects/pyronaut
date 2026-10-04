@@ -218,10 +218,9 @@ tasks {
             )
             val nativeBuildArgs = mutableListOf<Any>()
             if (isWindows) {
-                val builderClasspath = nativeBuildInstallDirectory.get().dir("lib").asFile.resolve("*").absolutePath
                 nativeBuildArgs.addAll(listOf(
                     File(System.getProperty("java.home"), "bin/java.exe").absolutePath,
-                    "-cp", builderClasspath,
+                    "-cp", nativeBuildInstallDirectory.get().dir("lib").asFile.resolve("*").absolutePath,
                     "io.micronaut.pyronaut.nativebuild.PyronautNativeBuildMain",
                     "--native-image-executable",
                     File(System.getProperty("java.home"), "bin/native-image.cmd").absolutePath

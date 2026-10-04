@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2017-2026 original authors
+
 """Runs the PGO training workload for one Pyronaut native image.
 
 The workload drives the real ``pyronaut`` CLI (from source) so that training follows the same
@@ -31,6 +33,7 @@ from contextlib import closing
 from pathlib import Path
 
 IMAGES = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
+MICRONAUT_MODULES = ("core", "platform", "serde", "validation")
 # The pyronaut-run workload. It must be a Maven or Gradle project, not a pyproject.toml project.
 RUN_APP = "java-maven"
 SPECIES = ("dog", "cat", "rabbit", "parrot", "hamster", "lizard")
@@ -456,11 +459,20 @@ if not kernel32.SetConsoleCtrlHandler(None, False):
         source = self.apps / name
         target = self.work / "apps" / name
         shutil.copytree(source, target)
-        pyproject = target / "pyproject.toml"
-        if pyproject.is_file():
-            content = pyproject.read_text().replace("@REPOSITORY@", str(Path(self.options.repository).resolve()))
-            toolchain = "jvm" if self.jvm else "native"
-            pyproject.write_text(content + f"\n[tool.pyronaut.toolchain]\ntype = '{toolchain}'\n")
+        replacements = {
+            "@REPOSITORY@": str(Path(self.options.repository).resolve()),
+            **{f"@MICRONAUT_{module.upper()}_VERSION@": getattr(self.options, f"micronaut_{module}_version")
+               for module in MICRONAUT_MODULES},
+        }
+        for fixture in (target / "pyproject.toml", target / "pom.xml"):
+            if fixture.is_file():
+                content = fixture.read_text()
+                for placeholder, value in replacements.items():
+                    content = content.replace(placeholder, value)
+                if fixture.name == "pyproject.toml":
+                    toolchain = "jvm" if self.jvm else "native"
+                    content += f"\n[tool.pyronaut.toolchain]\ntype = '{toolchain}'\n"
+                fixture.write_text(content)
         if port is not None:
             self.set_port(target, port)
         return target
@@ -599,9 +611,17 @@ if not kernel32.SetConsoleCtrlHandler(None, False):
 
     def _stop(self, scenario: str, process: subprocess.Popen) -> None:
         if os.name == "nt":
-            # Stop the CLI/watchers first; each tracked launcher has its own console.
             if process.poll() is None:
-                process.kill()
+                if self.jvm:
+                    # Stock JVM launchers do not write shim PID files. Keep the CLI alive
+                    # until taskkill has found its descendants; no PGO dump is needed here.
+                    result = subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                            capture_output=True, text=True, timeout=30)
+                    if result.returncode != 0:
+                        raise TrainingError(f"{scenario}: cannot stop JVM process tree: {result.stderr.strip()}")
+                else:
+                    # Stop watchers before sending Ctrl+C to the tracked native launchers.
+                    process.kill()
                 process.wait()
             self._stop_windows_children(scenario)
             return
@@ -761,6 +781,12 @@ if not kernel32.SetConsoleCtrlHandler(None, False):
                    Workload(self.options.scale / 2, has_summary=False))
 
 
+def add_version_arguments(parser: argparse.ArgumentParser) -> None:
+    for module in MICRONAUT_MODULES:
+        parser.add_argument(f"--micronaut-{module}-version", required=True,
+                            help=f"Micronaut {module} version used by the image; supplied by the Gradle tasks")
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--image", choices=IMAGES, required=True)
@@ -776,6 +802,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--cli-source", required=True, help="pyronaut/src/main/python")
     parser.add_argument("--graalpy", required=True)
     parser.add_argument("--java-home", required=True)
+    add_version_arguments(parser)
     parser.add_argument("--tool", action="append", default=[], help="<tool>=<JVM launcher>, e.g. install=/path/bin/pyronaut-install")
     parser.add_argument("--scale", type=float, default=1.0, help="multiplies the number of requests")
     parser.add_argument("--skip", action="append", default=[], help="scenario to skip; for local debugging only")

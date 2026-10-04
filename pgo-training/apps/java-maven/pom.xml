@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
+  Copyright 2017-2026 original authors
+
   PGO training workload for pyronaut-run: a plain Maven Micronaut application without Python.
   Pyronaut resolves it through its external build support, so the runtime classpath is exactly
   what Maven resolves here. Keep the parent version aligned with pyronaut.micronaut.platform.version.
@@ -13,7 +15,7 @@
     <parent>
         <groupId>io.micronaut.platform</groupId>
         <artifactId>micronaut-parent</artifactId>
-        <version>5.2.1</version>
+        <version>@MICRONAUT_PLATFORM_VERSION@</version>
     </parent>
 
     <groupId>training</groupId>
@@ -24,9 +26,9 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
-        <micronaut.core.version>5.2.13</micronaut.core.version>
-        <micronaut.serde.version>3.2.4</micronaut.serde.version>
-        <micronaut.validation.version>5.2.1</micronaut.validation.version>
+        <micronaut.core.version>@MICRONAUT_CORE_VERSION@</micronaut.core.version>
+        <micronaut.serde.version>@MICRONAUT_SERDE_VERSION@</micronaut.serde.version>
+        <micronaut.validation.version>@MICRONAUT_VALIDATION_VERSION@</micronaut.validation.version>
     </properties>
 
     <dependencies>

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2017-2026 original authors
+
 """Compares Pyronaut native images, for example a baseline build against a PGO build.
 
 Each ``--candidate label=/path/to/executable`` is measured with the training application:
@@ -257,6 +259,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--cli-source", required=True)
     parser.add_argument("--graalpy", required=True)
     parser.add_argument("--java-home", required=True)
+    pgo_train.add_version_arguments(parser)
     parser.add_argument("--tool", action="append", default=[])
     parser.add_argument("--launches", type=int, default=20)
     parser.add_argument("--duration", type=float, default=30)

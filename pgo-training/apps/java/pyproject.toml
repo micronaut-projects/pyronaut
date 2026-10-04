@@ -1,3 +1,5 @@
+# Copyright 2017-2026 original authors
+
 # pyronaut-dev PGO training workload for a pyproject.toml project with only Java sources.
 # pyronaut-run trains on ../java-maven instead: a pyproject.toml project always resolves the GraalPy
 # runtime, which the pyronaut-run image does not contain.
@@ -9,6 +11,12 @@ version = '1.0.0'
 
 [tool.pyronaut]
 repositories = ['@REPOSITORY@', 'mavenCentral']
+
+[tool.pyronaut.core]
+version = '@MICRONAUT_CORE_VERSION@'
+
+[tool.pyronaut.platform]
+version = '@MICRONAUT_PLATFORM_VERSION@'
 
 [tool.pyronaut.processor]
 incremental = true
@@ -23,8 +31,8 @@ resources = 'config'
 
 [tool.pyronaut.dependencies]
 boms = [
-  'io.micronaut.serde:micronaut-serde-bom:3.2.4',
-  'io.micronaut.validation:micronaut-validation-bom:5.2.1',
+  'io.micronaut.serde:micronaut-serde-bom:@MICRONAUT_SERDE_VERSION@',
+  'io.micronaut.validation:micronaut-validation-bom:@MICRONAUT_VALIDATION_VERSION@',
 ]
 runtime = [
   'io.micronaut:micronaut-http-server-netty',

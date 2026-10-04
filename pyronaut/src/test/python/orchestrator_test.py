@@ -1473,14 +1473,60 @@ class OrchestratorTest(unittest.TestCase):
             with patch.object(cli.sys, "platform", "win32"), patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
                 launched, options = cli._windows_launch(command_line)  # noqa: SLF001
                 args_file = Path(launched[-1][1:])
-                arguments = args_file.read_text(encoding="utf-8").splitlines()
+                arguments = args_file.read_text(encoding="utf-8")
 
         self.assertEqual({"shell": True}, options)
         self.assertTrue(launched[1].startswith("-Dpyronaut.jvm.options.file="))
-        self.assertEqual("-Dpicocli.useSimplifiedAtFiles=true", launched[2])
-        self.assertEqual("process", launched[3])
-        self.assertEqual(command_line[3:], arguments)
+        self.assertEqual("process", launched[2])
+        quoted_classpath = classpath.replace("\\", "\\\\")
+        self.assertEqual(
+            '"--project-dir"\n"C:\\\\app with spaces"\n"--classpath"\n'
+            f'"{quoted_classpath}"\n"--test-classpath"\n"{quoted_classpath}"\n',
+            arguments,
+        )
         self.assertLess(len(subprocess.list2cmdline(launched)), 8191)
+
+    def test_native_process_argfile_preserves_standard_picocli_quoting(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            arguments = [
+                "@user.args", "--project-dir", 'C:\\app #1\\"quoted"\\',
+                "", "@@literal", "line\nbreak\rvalue", "café", "--classpath", "x" * 9000,
+            ]
+            with patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                launched = cli._spill_native_process_args(["pyronaut-dev.cmd", "process", *arguments], 8191)
+                content = Path(launched[-1][1:]).read_text(encoding="utf-8")
+            self.assertEqual(["pyronaut-dev.cmd", "process", launched[-1]], launched)
+            self.assertEqual(
+                '"@user.args"\n"--project-dir"\n"C:\\\\app #1\\\\\\"quoted\\"\\\\"\n'
+                '""\n"@@literal"\n"line\\nbreak\\rvalue"\n"café"\n"--classpath"\n'
+                + '"' + "x" * 9000 + '"\n',
+                content,
+            )
+
+    def test_windows_native_options_file_preserves_last_duplicate_property(self):
+        long_option = "-Dreview.key=" + "x" * 300
+        for image in ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python"):
+            for suffix in (".cmd", ".exe"):
+                for short_option in ("-Dreview.key=short", "-Dreview.key"):
+                    for duplicates in ([long_option, short_option], [short_option, long_option]):
+                        with self.subTest(image=image, suffix=suffix, duplicates=duplicates), tempfile.TemporaryDirectory() as temp_dir:
+                            command_line = [image + suffix, *duplicates, "-Dpadding=" + "x" * 40000, "install", short_option]
+                            with patch.object(cli.sys, "platform", "win32"), patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                                launched, _ = cli._windows_launch(command_line)
+                                spilled = Path(launched[1].split("=", 1)[1]).read_text(encoding="utf-8").splitlines()
+                            self.assertEqual(duplicates, spilled[:2])
+                            self.assertEqual([command_line[0], launched[1], "install", short_option], launched)
+
+    def test_native_options_file_keeps_multiline_duplicate_properties_inline(self):
+        for newline in ("\n", "\r"):
+            with self.subTest(newline=newline), tempfile.TemporaryDirectory() as temp_dir:
+                duplicates = ["-Dreview.key=" + "x" * 300, "-Dreview.key=first" + newline + "second"]
+                command_line = ["pyronaut-dev.cmd", *duplicates, "-Dpadding=" + "x" * 9000, "install"]
+                with patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                    launched = cli._spill_native_system_properties(command_line, 8191)
+                    spilled = Path(launched[1].split("=", 1)[1]).read_text(encoding="utf-8").splitlines()
+                self.assertEqual([command_line[3]], spilled)
+                self.assertEqual([command_line[0], launched[1], *duplicates, "install"], launched)
 
     def test_windows_launch_keeps_short_or_non_native_command_lines(self):
         long_property = "-Dpyronaut.dev.compiler.class.path=" + "x" * 9000
