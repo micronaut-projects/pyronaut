@@ -42,6 +42,17 @@ class PyronautTestMainTest {
     }
 
     @Test
+    void launcherRuntimeProvidesTheNettyAsyncioEventLoop() {
+        // without it `pyronaut test` runs coroutines on the fallback loop instead of the Netty loop of
+        // `pyronaut dev`/`run`: awaited client calls stall and run_in_executor tries to start threads
+        assertDoesNotThrow(() ->
+            Class.forName("io.micronaut.context.python.netty.NettyPythonEventLoopProvider", false, PyronautTestMain.class.getClassLoader())
+        );
+        assertTrue(PyronautTestMain.isLauncherProvidedArtifact(Path.of("micronaut-context-python-netty-5.2.13.jar")));
+        assertTrue(PyronautTestMain.isLauncherProvidedArtifact(Path.of("micronaut-context-python-5.2.13.jar")));
+    }
+
+    @Test
     void launcherRuntimeCanResolveReactorMicrometerContextAccessor() {
         assertDoesNotThrow(() ->
             Class.forName("reactor.util.context.ReactorContextAccessor", false, PyronautTestMain.class.getClassLoader())

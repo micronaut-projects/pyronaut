@@ -16,6 +16,11 @@ dependencies {
     implementation(project(":micronaut-pyronaut-pytest"))
     implementation(project(":micronaut-pyronaut-logback"))
     implementation(mn.micronaut.context.python)
+    // the asyncio event loop of `pyronaut test`, as in the dev and run launchers: without it coroutines run
+    // on a fallback loop, where awaited client calls and run_in_executor do not work like they do in the app
+    implementation(mn.micronaut.context.python.netty) {
+        exclude(group = "org.graalvm.python", module = "python-bouncycastle-support")
+    }
     implementation(mnPicocli.picocli)
     implementation(mnTest.junit.platform.launcher)
     runtimeOnly(platform("io.micronaut.platform:micronaut-platform:${micronautPlatformVersion.get()}"))

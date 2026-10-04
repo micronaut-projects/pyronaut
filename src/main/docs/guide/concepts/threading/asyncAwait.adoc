@@ -77,6 +77,10 @@ class DemoController:
         return "exchange: " + response.body()
 ----
 
+A failed await raises the Java exception itself, exactly as the blocking call does, so you handle it with `except` on the Java type, for example `except HttpClientResponseException as e:`. As with a blocking Java call, `except Exception` does not catch a Java exception; use the Java type, a Java superclass such as `java.lang.RuntimeException`, or `BaseException`.
+
+Any `CompletionStage` (such as a `CompletableFuture`) or Reactive Streams `Publisher` returned by a Java call is awaitable. A publisher awaits to its first item, so `await Mono.from_(publisher)` and `await Mono.from_(publisher).toFuture()` both work.
+
 == Running work concurrently
 
 `asyncio.gather` and `asyncio.TaskGroup` schedule several coroutines on the Pyronaut-managed loop and wait for all of them:
@@ -138,4 +142,4 @@ Pyronaut enables the asyncio bridge by default. You can switch it off; in that c
 enabled = false
 ----
 
-The `micronaut-context-python-netty` module provides the Netty-backed event loop. The launchers used by `pyronaut dev` and `pyronaut run` include it, so you do not need to declare a dependency.
+The `micronaut-context-python-netty` module provides the Netty-backed event loop. The launchers used by `pyronaut dev`, `pyronaut run` and `pyronaut test`, and the artifacts `pyronaut build` produces, include it, so you do not need to declare a dependency.
