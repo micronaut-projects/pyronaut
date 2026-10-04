@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2017-2026 original authors
+
 """Compares Pyronaut native images, for example a baseline build against a PGO build.
 
 Each ``--candidate label=/path/to/executable`` is measured with the training application:
@@ -23,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -114,7 +117,8 @@ class Benchmark(pgo_train.Trainer):
                 if process.poll() is not None:
                     raise TrainingError(f"{self.label}: launcher exited with {process.returncode} during start-up")
                 try:
-                    status, _ = Client(port).request("GET", "/hello")
+                    with closing(Client(port)) as client:
+                        status, _ = client.request("GET", "/hello")
                     if status == 200:
                         return (time.monotonic() - started) * 1000
                 except OSError:
@@ -139,9 +143,9 @@ class Benchmark(pgo_train.Trainer):
 
         sampler = threading.Thread(target=sample, daemon=True)
         sampler.start()
+        client = Client(port)
         try:
             self._wait_ready(port, process, self.logs / "discover.log")
-            client = Client(port)
             Workload(self.options.warmup_scale, has_summary=True).run(client)
             ids = [client.expect("POST", "/pets", 201, {"name": f"Bench {i}", "species": "dog", "age": 3})["id"]
                    for i in range(200)]
@@ -155,6 +159,7 @@ class Benchmark(pgo_train.Trainer):
                                  content_type="text/plain")
             return {"mixed": mixed, "summary": python, "peak-rss-mb": round(peak_rss[0] / 1024)}
         finally:
+            client.close()
             stop.set()
             process.terminate()
             process.wait()
@@ -167,16 +172,16 @@ class Benchmark(pgo_train.Trainer):
         counter = [0]
 
         def worker() -> None:
-            local = Client(client.port)
             mine = []
-            while time.monotonic() < deadline:
-                with lock:
-                    i = counter[0]
-                    counter[0] += 1
-                method, path, body, status = request(i)
-                started = time.perf_counter()
-                local.expect(method, path, status, body, content_type)
-                mine.append((time.perf_counter() - started) * 1000)
+            with closing(Client(client.port)) as local:
+                while time.monotonic() < deadline:
+                    with lock:
+                        i = counter[0]
+                        counter[0] += 1
+                    method, path, body, status = request(i)
+                    started = time.perf_counter()
+                    local.expect(method, path, status, body, content_type)
+                    mine.append((time.perf_counter() - started) * 1000)
             with lock:
                 latencies.extend(mine)
 
@@ -254,6 +259,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--cli-source", required=True)
     parser.add_argument("--graalpy", required=True)
     parser.add_argument("--java-home", required=True)
+    pgo_train.add_version_arguments(parser)
     parser.add_argument("--tool", action="append", default=[])
     parser.add_argument("--launches", type=int, default=20)
     parser.add_argument("--duration", type=float, default=30)

@@ -1,3 +1,5 @@
+// Copyright 2017-2026 original authors
+
 import io.micronaut.pyronaut.gradle.PyronautPgo
 
 // PGO training workload for the pyronaut-dev, pyronaut-run and pyronaut-run-python native images.
@@ -31,6 +33,14 @@ val launcherSuffix = if (isWindows) ".bat" else ""
 val trainingScale = providers.gradleProperty("pyronaut.pgo.trainingScale").orElse("1.0")
 // Comma-separated scenarios to leave out, for local debugging only: a release profile must cover every scenario.
 val trainingSkip = providers.gradleProperty("pyronaut.pgo.trainingSkip").orElse("")
+val micronautVersionArguments = providers.provider {
+    listOf(
+        "--micronaut-core-version", providers.gradleProperty("pyronaut.micronaut.core.version").get(),
+        "--micronaut-platform-version", providers.gradleProperty("pyronaut.micronaut.platform.version").get(),
+        "--micronaut-serde-version", libs.versions.micronaut.serde.get(),
+        "--micronaut-validation-version", libs.versions.micronaut.validation.get(),
+    )
+}
 
 fun toolProject(tool: String) = project(":micronaut-pyronaut-$tool")
 
@@ -73,6 +83,7 @@ fun registerTraining(taskName: String, image: String, jvm: Boolean) = tasks.regi
             "--java-home", javaHome.absolutePath,
             "--scale", trainingScale.get(),
         )
+        arguments += micronautVersionArguments.get()
         jvmTools.forEach { arguments += listOf("--tool", "$it=${toolExecutable(it).absolutePath}") }
         trainingSkip.get().split(",").map(String::trim).filter(String::isNotEmpty).forEach { arguments += listOf("--skip", it) }
         if (jvm) {
@@ -124,6 +135,7 @@ fun registerBenchmark(taskName: String, image: String) = tasks.register<Exec>(ta
             "--graalpy", graalPy.get(),
             "--java-home", System.getProperty("java.home"),
         )
+        arguments += micronautVersionArguments.get()
         jvmTools.forEach { arguments += listOf("--tool", "$it=${toolExecutable(it).absolutePath}") }
         commandLine(arguments)
     }
@@ -141,4 +153,14 @@ tasks.register("trainJvm") {
     group = "pgo"
     description = "Runs every training workload on the JVM launchers"
     dependsOn(jvmTrainingTasks)
+}
+
+val testTraining by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Runs the PGO training driver regression tests"
+    commandLine("python3", "-m", "unittest", "discover", "-s", "src/test/python", "-p", "test_*.py")
+}
+
+tasks.named("check") {
+    dependsOn(testTraining)
 }

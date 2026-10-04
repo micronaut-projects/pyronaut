@@ -17,6 +17,7 @@ package io.micronaut.pyronaut.config.model;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -50,9 +51,36 @@ public final class NativeProvidedJarResolver {
         return List.copyOf(resolved);
     }
 
+    /**
+     * Returns the Maven coordinates configured by {@link #ARTIFACTS_PROPERTY}.
+     *
+     * <p>The property holds either a comma-separated coordinate list or
+     * {@code @<file>} naming a manifest with one coordinate per line. The file
+     * form keeps launcher command lines below the Windows cmd.exe limit.</p>
+     *
+     * @return the configured coordinates, never {@code null}
+     */
+    public static List<String> providedArtifactCoordinates() {
+        String configured = System.getProperty(ARTIFACTS_PROPERTY, "").trim();
+        List<String> values;
+        if (configured.startsWith("@")) {
+            try {
+                values = Files.readAllLines(Path.of(configured.substring(1)));
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to read " + ARTIFACTS_PROPERTY + " manifest " + configured.substring(1), e);
+            }
+        } else {
+            values = List.of(configured.split(","));
+        }
+        return values.stream()
+            .map(String::trim)
+            .filter(value -> !value.isEmpty() && !value.startsWith("#") && value.indexOf(':') > 0)
+            .toList();
+    }
+
     private static Set<String> artifactIds() {
         Set<String> ids = new LinkedHashSet<>();
-        for (String coordinate : System.getProperty(ARTIFACTS_PROPERTY, "").split(",")) {
+        for (String coordinate : providedArtifactCoordinates()) {
             String trimmed = coordinate.trim();
             int separator = trimmed.indexOf(':');
             if (separator > 0 && separator < trimmed.length() - 1) {

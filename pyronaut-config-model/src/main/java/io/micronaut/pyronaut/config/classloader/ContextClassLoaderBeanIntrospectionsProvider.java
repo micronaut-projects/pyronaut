@@ -18,7 +18,6 @@ package io.micronaut.pyronaut.config.classloader;
 import io.micronaut.core.beans.BeanIntrospectionReference;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
 import io.micronaut.core.annotation.Nullable;
-import io.micronaut.core.io.service.MicronautMetaServiceLoaderUtils;
 import io.micronaut.core.reflect.ClassUtils;
 
 import java.io.IOException;
@@ -97,7 +96,7 @@ public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanI
     private static List<BeanIntrospectionReference<Object>> discoverLauncherReferences(ClassLoader classLoader) {
         List<BeanIntrospectionReference<Object>> references = new ArrayList<>();
         try {
-            for (String className : MicronautMetaServiceLoaderUtils.findMicronautMetaServiceEntries(classLoader, BeanIntrospectionReference.class.getName())) {
+            for (String className : NativeLauncherServices.find(classLoader, BeanIntrospectionReference.class.getName())) {
                 addReference(className, classLoader, references);
             }
         } catch (IOException e) {

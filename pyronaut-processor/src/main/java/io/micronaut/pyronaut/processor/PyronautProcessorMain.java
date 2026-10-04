@@ -21,6 +21,7 @@ import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.config.terminal.TerminalInfo;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
+import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.python.compiler.PythonIncrementalMode;
 import picocli.CommandLine;
@@ -29,14 +30,12 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -62,7 +61,6 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     private static final String DEFAULT_TEST_PYTHON_SRC = "tests";
     private static final String DEFAULT_TEST_JAVA_SRC = "test-java";
     private static final String VERBOSE_HINT = "Re-run with --verbose for full diagnostics.";
-    private static final String NATIVE_PROVIDED_ARTIFACTS = "pyronaut.dev.native.provided.artifacts";
 
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory containing pyproject.toml")
     Path projectDir = Path.of(".");
@@ -538,14 +536,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     }
 
     static List<Path> filterNativeProvidedArtifacts(List<Path> paths) {
-        String configured = System.getProperty(NATIVE_PROVIDED_ARTIFACTS, "");
-        if (configured.isBlank()) {
-            return paths;
-        }
         Set<String> artifactIds = new HashSet<>();
-        Arrays.stream(configured.split(Pattern.quote(",")))
-            .map(String::trim)
-            .filter(value -> !value.isEmpty())
+        NativeProvidedJarResolver.providedArtifactCoordinates().stream()
             .map(value -> value.substring(value.lastIndexOf(':') + 1))
             .forEach(artifactIds::add);
         if (artifactIds.isEmpty()) {

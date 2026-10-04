@@ -1427,6 +1427,188 @@ class OrchestratorTest(unittest.TestCase):
         jars_arg = next(arg for arg in command_line if arg.startswith("-Dpyronaut.dev.native.provided.jars="))
         self.assertEqual(f"-Dpyronaut.dev.native.provided.jars={lib_dir.resolve()}", jars_arg)
         self.assertLess(len(jars_arg), 256)
+        artifacts_arg = next(arg for arg in command_line if arg.startswith("-Dpyronaut.dev.native.provided.artifacts="))
+        self.assertEqual(
+            f"-Dpyronaut.dev.native.provided.artifacts=@{(bin_dir / 'native-provided-classpath.txt').resolve()}",
+            artifacts_arg,
+        )
+
+    def test_windows_launch_spills_long_native_system_properties_to_options_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            classpath = ";".join(f"C:\\repo\\lib-{index}.jar" for index in range(600))
+            command_line = [
+                "C:\\tools\\pyronaut-dev.cmd",
+                "-Dmicronaut.environments=dev",
+                f"-Dpyronaut.dev.compiler.class.path={classpath}",
+                f"-Djava.class.path={classpath}",
+                "process",
+                "--classpath",
+                "short.jar",
+            ]
+            with patch.object(cli.sys, "platform", "win32"), patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                launched, options = cli._windows_launch(command_line)  # noqa: SLF001
+                relaunched, _ = cli._windows_launch(command_line)  # noqa: SLF001
+                options_file = Path(launched[1].split("=", 1)[1])
+                spilled = options_file.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual({"shell": True}, options)
+        self.assertEqual(launched, relaunched)
+        self.assertTrue(launched[1].startswith("-Dpyronaut.jvm.options.file="))
+        self.assertEqual(
+            ["C:\\tools\\pyronaut-dev.cmd", launched[1], "-Dmicronaut.environments=dev", "process", "--classpath", "short.jar"],
+            launched,
+        )
+        self.assertEqual(command_line[2:4], spilled)
+        self.assertLess(len(subprocess.list2cmdline(launched)), 8191)
+
+    def test_windows_launch_spills_process_classpaths_after_system_properties(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            classpath = ";".join(f"C:\\repo with spaces\\lib-{index}.jar" for index in range(600))
+            command_line = [
+                "C:\\tools\\pyronaut-dev.cmd",
+                f"-Dpyronaut.dev.compiler.class.path={classpath}",
+                "process", "--project-dir", "C:\\app with spaces", "--classpath", classpath,
+                "--test-classpath", classpath,
+            ]
+            with patch.object(cli.sys, "platform", "win32"), patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                launched, options = cli._windows_launch(command_line)  # noqa: SLF001
+                args_file = Path(launched[-1][1:])
+                arguments = args_file.read_text(encoding="utf-8")
+
+        self.assertEqual({"shell": True}, options)
+        self.assertTrue(launched[1].startswith("-Dpyronaut.jvm.options.file="))
+        self.assertEqual("process", launched[2])
+        quoted_classpath = classpath.replace("\\", "\\\\")
+        self.assertEqual(
+            '"--project-dir"\n"C:\\\\app with spaces"\n"--classpath"\n'
+            f'"{quoted_classpath}"\n"--test-classpath"\n"{quoted_classpath}"\n',
+            arguments,
+        )
+        self.assertLess(len(subprocess.list2cmdline(launched)), 8191)
+
+    def test_native_process_argfile_preserves_standard_picocli_quoting(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            arguments = [
+                "@user.args", "--project-dir", 'C:\\app #1\\"quoted"\\',
+                "", "@@literal", "line\nbreak\rvalue", "café", "--classpath", "x" * 9000,
+            ]
+            with patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                launched = cli._spill_native_process_args(["pyronaut-dev.cmd", "process", *arguments], 8191)
+                content = Path(launched[-1][1:]).read_text(encoding="utf-8")
+            self.assertEqual(["pyronaut-dev.cmd", "process", launched[-1]], launched)
+            self.assertEqual(
+                '"@user.args"\n"--project-dir"\n"C:\\\\app #1\\\\\\"quoted\\"\\\\"\n'
+                '""\n"@@literal"\n"line\\nbreak\\rvalue"\n"café"\n"--classpath"\n'
+                + '"' + "x" * 9000 + '"\n',
+                content,
+            )
+
+    def test_windows_native_options_file_preserves_last_duplicate_property(self):
+        long_option = "-Dreview.key=" + "x" * 300
+        for image in ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python"):
+            for suffix in (".cmd", ".exe"):
+                for short_option in ("-Dreview.key=short", "-Dreview.key"):
+                    for duplicates in ([long_option, short_option], [short_option, long_option]):
+                        with self.subTest(image=image, suffix=suffix, duplicates=duplicates), tempfile.TemporaryDirectory() as temp_dir:
+                            command_line = [image + suffix, *duplicates, "-Dpadding=" + "x" * 40000, "install", short_option]
+                            with patch.object(cli.sys, "platform", "win32"), patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                                launched, _ = cli._windows_launch(command_line)
+                                spilled = Path(launched[1].split("=", 1)[1]).read_text(encoding="utf-8").splitlines()
+                            self.assertEqual(duplicates, spilled[:2])
+                            self.assertEqual([command_line[0], launched[1], "install", short_option], launched)
+
+    def test_native_options_file_keeps_multiline_duplicate_properties_inline(self):
+        for newline in ("\n", "\r"):
+            with self.subTest(newline=newline), tempfile.TemporaryDirectory() as temp_dir:
+                duplicates = ["-Dreview.key=" + "x" * 300, "-Dreview.key=first" + newline + "second"]
+                command_line = ["pyronaut-dev.cmd", *duplicates, "-Dpadding=" + "x" * 9000, "install"]
+                with patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                    launched = cli._spill_native_system_properties(command_line, 8191)
+                    spilled = Path(launched[1].split("=", 1)[1]).read_text(encoding="utf-8").splitlines()
+                self.assertEqual([command_line[3]], spilled)
+                self.assertEqual([command_line[0], launched[1], *duplicates, "install"], launched)
+
+    def test_windows_launch_keeps_short_or_non_native_command_lines(self):
+        long_property = "-Dpyronaut.dev.compiler.class.path=" + "x" * 9000
+        with patch.object(cli.sys, "platform", "win32"):
+            short = ["C:\\tools\\pyronaut-dev.exe", "-Dmicronaut.environments=dev", "install"]
+            self.assertEqual((short, {}), cli._windows_launch(short))  # noqa: SLF001
+            java = ["C:\\jdk\\bin\\java.exe", long_property, "Main"]
+            self.assertEqual((java, {}), cli._windows_launch(java))  # noqa: SLF001
+        with patch.object(cli.sys, "platform", "linux"):
+            native = ["/tools/pyronaut-dev", long_property, "install"]
+            self.assertEqual((native, {}), cli._windows_launch(native))  # noqa: SLF001
+
+    def test_windows_gradle_launchers_use_java_argfile_without_changing_options_or_arguments(self):
+        for command in ("install", "processor", "validate-config", "run", "test", "native-build"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir) / "tools with spaces"
+                bin_dir = root / "bin"
+                bin_dir.mkdir(parents=True)
+                script = bin_dir / f"pyronaut-{command}.bat"
+                variable = f"PYRONAUT_{command.upper().replace('-', '_')}_OPTS"
+                defaults = '"--enable-native-access=ALL-UNNAMED"'
+                # Keep the declared order and wheel's relocated shared/lib layout, not a wildcard.
+                classpath = ";".join(rf"%APP_HOME%\..\shared\lib\dependency-{index}.jar"
+                                     for index in reversed(range(200)))
+                script.write_bytes((
+                    f"@rem  {script.stem} startup script for Windows\n"
+                    f"set DEFAULT_JVM_OPTS={defaults}\nset CLASSPATH={classpath}\n"
+                    f'"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %{variable}%  '
+                    '-classpath "%CLASSPATH%" example.Main %*\n'
+                ).replace("\n", "\r\n").encode("utf-8"))
+                expected_classpath = classpath.replace("%APP_HOME%", str(root.resolve()))
+                self.assertGreater(len(expected_classpath), 8191)
+                java = root / "jdk" / "bin" / "java.exe"
+                java.parent.mkdir(parents=True)
+                java.touch()
+                environment = {
+                    "JAVA_HOME": f'"{java.parent.parent}"',
+                    "JAVA_OPTS": r'-Ddirectory="C:\Program Files\Java" -Dproxy=host|localhost',
+                    variable: '-Xmx2g -Dmessage="quoted value"',
+                    "JAVA_TOOL_OPTIONS": "-Dimplicit=true",
+                }
+                arguments = ["--project-dir", r"C:\app with spaces", 'quote"value', "", "@app.args", "a&b"]
+                for runner_name in ("_run_subprocess", "_run_subprocess_quiet", "_spawn_subprocess"):
+                    with self.subTest(runner=runner_name):
+                        process = MagicMock()
+                        process.wait.return_value = 0
+                        process.returncode = 0
+                        prepared_env = dict(environment, PREPARED="true")
+                        prepared = cli._aot_cache.Launch([str(script), *arguments], prepared_env)
+                        indicator = Mock(pass_fds=())
+                        indicator.environment.side_effect = lambda env: env
+                        with (
+                            patch.object(cli.sys, "platform", "win32"),
+                            patch.object(cli.tempfile, "gettempdir", return_value=temp_dir),
+                            patch.object(cli, "_prepare_aot_launch", return_value=prepared),
+                            patch.object(cli, "_launch_indicator", return_value=indicator),
+                            patch.object(cli.subprocess, "Popen", return_value=process) as popen,
+                            patch.object(cli.subprocess, "run", return_value=process) as run_mock,
+                        ):
+                            getattr(cli, runner_name)(["original.bat"], {"ORIGINAL": "true"})
+                        call = run_mock.call_args if runner_name == "_run_subprocess_quiet" else popen.call_args
+                        launched = call.args[0]
+                        args_file = next(Path(temp_dir).glob("pyronaut-java-*.args"))
+                        expected_content = '-classpath\n"' + expected_classpath.replace("\\", "\\\\") + '"\n'
+                        self.assertEqual(expected_content, args_file.read_text(encoding="utf-8"))
+                        self.assertEqual(
+                            subprocess.list2cmdline([str(java)]) + " " + defaults + " "
+                            + prepared_env["JAVA_OPTS"] + " " + prepared_env[variable] + " "
+                            + subprocess.list2cmdline([f"@{args_file}", "example.Main", *arguments]), launched,
+                        )
+                        self.assertLess(len(launched), 8191)
+                        self.assertFalse(call.kwargs.get("shell", False))
+                        self.assertEqual(prepared_env, call.kwargs["env"])
+                        args_file.unlink()
+
+    def test_windows_custom_batch_and_native_shims_are_not_rewritten(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli.sys, "platform", "win32"):
+            for suffix in (".bat", ".cmd"):
+                script = Path(temp_dir) / f"pyronaut-dev{suffix}"
+                script.write_text("@echo off\ncustom-command %*\n", encoding="utf-8")
+                command_line = [str(script), "install"]
+                self.assertEqual((command_line, {"shell": True}), cli._windows_launch(command_line, {}))
 
     def test_native_provided_coordinates_keep_same_artifact_id_from_different_group(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1529,6 +1711,26 @@ class OrchestratorTest(unittest.TestCase):
                 entries = cli._native_launcher_compile_classpath_entries(str(native_dev))  # noqa: SLF001
 
         self.assertEqual([str(binary.resolve())], entries)
+
+    def test_native_compile_classpath_accepts_windows_launcher_names(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dir = Path(temp_dir) / "pyronaut-dev" / "native"
+            native_dir.mkdir(parents=True)
+            home = Path(temp_dir) / "home"
+            for suffix in (".cmd", ".exe"):
+                launcher = native_dir / f"pyronaut-dev{suffix}"
+                launcher.write_text("", encoding="utf-8")
+                binary = self._write_native_compile_descriptor(
+                    launcher,
+                    home,
+                    [("io.micronaut", "micronaut-inject-python", "5.2.3", "micronaut-inject-python-5.2.3.jar")],
+                )[0]
+                with patch("pathlib.Path.home", return_value=home):
+                    entries = cli._native_launcher_compile_classpath_entries(str(launcher))  # noqa: SLF001
+                self.assertEqual([str(binary.resolve())], entries)
+
+            with self.assertRaisesRegex(RuntimeError, "Pyronaut setup is missing or stale"):
+                cli._native_launcher_compile_classpath_entries(str(native_dir / "pyronaut-dev.bat"))  # noqa: SLF001
 
     def test_native_compile_classpath_falls_back_to_project_local_repository(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -4315,6 +4517,29 @@ additional-test-resources = ["test-fixtures"]
             _, kwargs = run_mock.call_args
             self.assertIs(kwargs.get("stdout"), cli.subprocess.DEVNULL)
             self.assertIs(kwargs.get("stderr"), cli.subprocess.DEVNULL)
+
+    def test_quiet_windows_launch_preserves_prepared_command_and_shortens_properties(self):
+        launch = Mock(
+            command_line=[r"C:\tools\pyronaut-dev.cmd", "-Djava.class.path=" + "x" * 9000, "test"],
+            env={"PREPARED": "true"},
+        )
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            patch.object(cli.sys, "platform", "win32"),
+            patch.object(cli.tempfile, "gettempdir", return_value=temp_dir),
+            patch.object(cli, "_prepare_aot_launch", return_value=launch),
+            patch.object(cli.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run_mock,
+        ):
+            exit_code = cli._run_subprocess_quiet([r"C:\original\pyronaut-dev.cmd", "test"])
+
+        self.assertEqual(0, exit_code)
+        command_line = run_mock.call_args.args[0]
+        self.assertEqual(launch.command_line[0], command_line[0])
+        self.assertTrue(command_line[1].startswith("-Dpyronaut.jvm.options.file="))
+        self.assertLess(len(subprocess.list2cmdline(command_line)), 8191)
+        self.assertEqual(launch.env, run_mock.call_args.kwargs["env"])
+        self.assertTrue(run_mock.call_args.kwargs["shell"])
+        launch.finish.assert_called_once_with()
 
     def test_owned_test_resources_delegate_receives_java_home_from_provider(self):
         executed = []

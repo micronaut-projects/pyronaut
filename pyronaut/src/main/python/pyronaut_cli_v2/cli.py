@@ -26,7 +26,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable, Iterable, Iterator, NamedTuple, Protocol, Sequence
 
 from .progress import PROGRESS_EPOCH_ENV as _PROGRESS_EPOCH_ENV
@@ -1437,8 +1437,9 @@ def _direct_control_panel_classpath_entries(executable_path: str) -> list[str]:
     executable = Path(executable_path)
     launcher_root = executable.parent.parent
     launcher_lib = launcher_root / "lib"
-    if Path(executable_path).name in _NATIVE_IMAGE_COMMANDS:
-        packaged_root = _packaged_tool_dir(Path(executable_path).name)
+    image_name = _native_image_command_name(executable)
+    if image_name in _NATIVE_IMAGE_COMMANDS:
+        packaged_root = _packaged_tool_dir(image_name)
         packaged_lib = packaged_root / "lib"
         if (packaged_lib / "control-panel").is_dir():
             launcher_root = packaged_root
@@ -1534,7 +1535,7 @@ def _resolve_java_executable(env: dict[str, str] | None) -> str:
     if env is not None:
         java_home = env.get("JAVA_HOME")
         if java_home:
-            java_bin = Path(java_home) / "bin" / "java"
+            java_bin = Path(java_home) / "bin" / ("java.exe" if sys.platform == "win32" else "java")
             if java_bin.exists():
                 return str(java_bin)
     resolved = shutil.which("java", path=(env or os.environ).get("PATH"))
@@ -1561,10 +1562,15 @@ def _resolve_run_manifest(cache_dir: Path) -> Path:
     return cache_dir / "resolved-runtime-dependencies"
 
 
+def _native_image_command_name(executable: str | Path) -> str:
+    path = Path(executable)
+    return path.stem if path.suffix.lower() in {".cmd", ".exe"} else path.name
+
+
 def _launcher_shared_lib_dir(executable_path: str | Path) -> Path:
     """Resolve the wheel-level shared library directory for a launcher."""
     path = Path(executable_path).resolve()
-    if path.name in _NATIVE_IMAGE_COMMANDS:
+    if _native_image_command_name(path) in _NATIVE_IMAGE_COMMANDS:
         packaged_shared = Path(__file__).resolve().parent / "tools" / "shared" / "lib"
         if packaged_shared.is_dir():
             return packaged_shared
@@ -1580,7 +1586,7 @@ def _delegate_lib_entries(executable_path: str, *, include_control_panel: bool =
     path = Path(executable_path).resolve()
     if path.suffix == ".jar":
         return [str(path)]
-    command_name = path.name
+    command_name = _native_image_command_name(path)
     packaged_dir = _packaged_tool_dir(command_name) if command_name in _NATIVE_IMAGE_COMMANDS else None
     roots = [path.parent.parent]
     if packaged_dir is not None:
@@ -2034,8 +2040,19 @@ def _native_launcher_provided_artifact_ids(
 
 
 def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_name: str) -> list[str]:
-    if not launcher_executable:
+    manifest = _native_launcher_manifest_path(launcher_executable, manifest_name)
+    if manifest is None:
         return []
+    return [
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _native_launcher_manifest_path(launcher_executable: str | None, manifest_name: str) -> Path | None:
+    if not launcher_executable:
+        return None
     executable_path = Path(launcher_executable).resolve()
     executable_parent = executable_path.parent
     candidates = (
@@ -2044,8 +2061,9 @@ def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_
         executable_parent.parent / "bin" / manifest_name,
         executable_parent.parent / manifest_name,
     )
-    if executable_path.name in _NATIVE_IMAGE_COMMANDS:
-        packaged_tool = _packaged_tool_dir(executable_path.name)
+    image_name = _native_image_command_name(executable_path)
+    if image_name in _NATIVE_IMAGE_COMMANDS:
+        packaged_tool = _packaged_tool_dir(image_name)
         candidates += (
             packaged_tool / "bin" / manifest_name,
             packaged_tool / manifest_name,
@@ -2058,14 +2076,7 @@ def _native_launcher_manifest_entries(launcher_executable: str | None, manifest_
         parent / "generated" / "native-classpaths" / manifest_name
         for parent in executable_path.parents
     )
-    manifest = next((candidate for candidate in candidates if candidate.is_file()), None)
-    if manifest is None:
-        return []
-    return [
-        line.strip()
-        for line in manifest.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 
 def _native_launcher_provided_artifact_coordinates(launcher_executable: str | None) -> set[str]:
@@ -2088,7 +2099,7 @@ def _native_launcher_compile_classpath_entries(
 ) -> list[str]:
     if not launcher_executable:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
-    image_name = Path(launcher_executable).name
+    image_name = _native_image_command_name(launcher_executable)
     if image_name not in _NATIVE_IMAGE_COMMANDS:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
     if local_repository or not _setup_is_required():
@@ -2160,10 +2171,11 @@ def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> li
         executable_path.parent.parent.parent / "lib",
         _launcher_shared_lib_dir(executable_path),
     ]
-    if executable_path.name in _NATIVE_IMAGE_COMMANDS:
+    image_name = _native_image_command_name(executable_path)
+    if image_name in _NATIVE_IMAGE_COMMANDS:
         candidate_lib_dirs.extend((
-            _packaged_tool_dir(executable_path.name) / "lib",
-            _packaged_tool_dir(executable_path.name).parent / "shared" / "lib",
+            _packaged_tool_dir(image_name) / "lib",
+            _packaged_tool_dir(image_name).parent / "shared" / "lib",
         ))
     manifest_entries = _native_launcher_manifest_entries(
         launcher_executable, "native-provided-classpath.txt"
@@ -6334,7 +6346,7 @@ def _spawn_subprocess(command_line: list[str], env: dict[str, str] | None = None
     command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        command_line, options = _windows_launch(command_line, env)
         process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError:
         launch.abandon()
@@ -8142,7 +8154,7 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
     command_line, env = aot.command_line, aot.env
     launch = _launch_indicator(command_line)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(command_line) else {}
+        command_line, options = _windows_launch(command_line, env)
         process = subprocess.Popen(command_line, env=launch.environment(env), pass_fds=launch.pass_fds, **options)
     except OSError as exception:
         launch.abandon()
@@ -8172,9 +8184,9 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
 def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = None) -> int:
     aot = _prepare_aot_launch(command_line, env)
     try:
-        options = {"shell": True} if _uses_windows_batch_shell(aot.command_line) else {}
+        command_line, options = _windows_launch(aot.command_line, aot.env)
         completed = subprocess.run(
-            aot.command_line,
+            command_line,
             check=False,
             env=aot.env,
             stdout=subprocess.DEVNULL,
@@ -8192,6 +8204,150 @@ def _run_subprocess_quiet(command_line: list[str], env: dict[str, str] | None = 
 
 def _uses_windows_batch_shell(command_line: Sequence[str]) -> bool:
     return sys.platform == "win32" and bool(command_line) and command_line[0].lower().endswith((".bat", ".cmd"))
+
+
+# cmd.exe rejects command lines longer than 8191 characters and CreateProcess
+# rejects those longer than 32767.
+_WINDOWS_BATCH_COMMAND_LINE_LIMIT = 8191
+_WINDOWS_COMMAND_LINE_LIMIT = 32767
+_JVM_OPTIONS_FILE_PROPERTY = "pyronaut.jvm.options.file"
+_JVM_OPTIONS_FILE_MIN_OPTION_LENGTH = 256
+
+
+def _windows_launch(command_line: list[str], env: dict[str, str] | None = None) -> tuple[list[str] | str, dict[str, bool]]:
+    """Return the command line and Popen options for launching on the current platform."""
+    if sys.platform != "win32":
+        return command_line, {}
+    java_launch = _windows_java_launcher(command_line, env)
+    if java_launch is not None:
+        return java_launch, {}
+    batch = _uses_windows_batch_shell(command_line)
+    limit = _WINDOWS_BATCH_COMMAND_LINE_LIMIT if batch else _WINDOWS_COMMAND_LINE_LIMIT
+    command_line = _spill_native_system_properties(command_line, limit)
+    return _spill_native_process_args(command_line, limit), ({"shell": True} if batch else {})
+
+
+def _windows_java_launcher(command_line: list[str], env: dict[str, str] | None) -> str | None:
+    """Bypass Gradle's batch classpath expansion using Java's argument-file support."""
+    if not command_line:
+        return None
+    script = Path(command_line[0])
+    if script.suffix.lower() != ".bat" or not script.name.startswith("pyronaut-"):
+        return None
+    try:
+        script = script.resolve()
+        text = script.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    if f"@rem  {script.stem} startup script for Windows" not in text:
+        return None
+    classpath = re.search(r"^set CLASSPATH=(.*)$", text, re.MULTILINE)
+    defaults = re.search(r"^set DEFAULT_JVM_OPTS=(.*)$", text, re.MULTILINE)
+    invocation = re.search(
+        r'^"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %(\w+_OPTS)%\s+'
+        r'-classpath "%CLASSPATH%" ([\w.$]+) %\*\s*$', text, re.MULTILINE,
+    )
+    # Only translate the known Gradle launcher; custom scripts and native shims stay intact.
+    if classpath is None or defaults is None or invocation is None:
+        return None
+    environment = os.environ if env is None else env
+    if java_home := environment.get("JAVA_HOME"):
+        # Like Gradle, a defined JAVA_HOME must win even when it is invalid.
+        java = str(Path(java_home.strip('"')) / "bin" / "java.exe")
+    else:
+        try:
+            java = _resolve_java_executable(environment)
+        except RuntimeError as exc:
+            raise FileNotFoundError(str(exc)) from exc
+    entries = classpath.group(1).strip().replace("%APP_HOME%", str(script.parent.parent))
+    quoted = entries.replace("\\", "\\\\").replace('"', '\\"')
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                     prefix="pyronaut-java-", suffix=".args", delete=False) as args_file:
+        args_file.write(f'-classpath\n"{quoted}"\n')
+    # A spawned JVM may not have read the file yet when Popen returns.
+    atexit.register(Path(args_file.name).unlink, missing_ok=True)
+    # Pass the option strings unchanged to Windows' Java launcher, not through shlex/cmd.exe.
+    # JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS are still read by Java from the child's environment.
+    options = " ".join(value for value in (
+        defaults.group(1), environment.get("JAVA_OPTS", ""), environment.get(invocation.group(1), ""),
+    ) if value)
+    arguments = subprocess.list2cmdline([f"@{args_file.name}", invocation.group(2), *command_line[1:]])
+    return " ".join(value for value in (subprocess.list2cmdline([java]), options, arguments) if value)
+
+
+def _spill_native_process_args(command_line: list[str], limit: int) -> list[str]:
+    """Use picocli's argument file when process classpaths still exceed the Windows limit."""
+    if len(subprocess.list2cmdline(command_line)) < limit or "process" not in command_line:
+        return command_line
+    executable = PureWindowsPath(command_line[0]).name.lower().removesuffix(".exe").removesuffix(".cmd").removesuffix(".bat")
+    if executable not in _NATIVE_IMAGE_COMMANDS:
+        return command_line
+    index = command_line.index("process")
+    arguments = command_line[index + 1:]
+    if not any(option in arguments for option in ("--classpath", "--test-classpath")):
+        return command_line
+    # Picocli's standard @file parser uses StreamTokenizer: quote every entry
+    # and escape backslashes/quotes so Windows paths and nested user @files keep
+    # the same meaning as command-line arguments.
+    content = "\n".join(
+        '"' + argument.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r") + '"'
+        for argument in arguments
+    ) + "\n"
+    directory = Path(tempfile.gettempdir()) / "pyronaut"
+    directory.mkdir(parents=True, exist_ok=True)
+    args_file = directory / f"process-args-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}.txt"
+    if not args_file.is_file():
+        staging = args_file.with_name(f"{args_file.name}.{os.getpid()}.tmp")
+        with staging.open("w", encoding="utf-8", newline="\n") as output:
+            output.write(content)
+        os.replace(staging, args_file)
+    return [*command_line[:index], "process", f"@{args_file}"]
+
+
+def _spill_native_system_properties(command_line: list[str], limit: int) -> list[str]:
+    """Move long ``-D`` options of a native Pyronaut launcher into an options file.
+
+    Classpath-valued properties easily exceed the Windows command line limit.
+    The native launchers load the file named by ``pyronaut.jvm.options.file``
+    before reading any other system property.
+    """
+    if not command_line or len(subprocess.list2cmdline(command_line)) < limit:
+        return command_line
+    executable = PureWindowsPath(command_line[0]).name.lower()
+    for suffix in (".exe", ".cmd", ".bat"):
+        executable = executable.removesuffix(suffix)
+    if executable not in _NATIVE_IMAGE_COMMANDS:
+        return command_line
+    # Options after the subcommand belong to the launcher's own parser.
+    index = next((i for i, value in enumerate(command_line[1:], start=1) if not value.startswith("-")), len(command_line))
+    properties = [value for value in command_line[1:index] if value.startswith("-D")]
+    spilled_keys = {value[2:].split("=", 1)[0] for value in properties if len(value) >= _JVM_OPTIONS_FILE_MIN_OPTION_LENGTH}
+    # The options file is line-based. Keep all occurrences of an unrepresentable
+    # property inline, rather than corrupting its value or duplicate precedence.
+    spilled_keys.difference_update(value[2:].split("=", 1)[0] for value in properties if "\n" in value or "\r" in value)
+    retained = [command_line[0]]
+    spilled: list[str] = []
+    for value in command_line[1:index]:
+        # Apply every occurrence of a spilled key in its original order: the
+        # options file is loaded after inline -D options, and the last one wins.
+        if value.startswith("-D") and value[2:].split("=", 1)[0] in spilled_keys:
+            spilled.append(value)
+        else:
+            retained.append(value)
+    retained.extend(command_line[index:])
+    if not spilled:
+        return command_line
+    content = "".join(f"{value}\n" for value in spilled)
+    directory = Path(tempfile.gettempdir()) / "pyronaut"
+    directory.mkdir(parents=True, exist_ok=True)
+    # Content-addressed so concurrent and restarted launches can share it.
+    options_file = directory / f"jvm-options-{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}.txt"
+    if not options_file.is_file():
+        staging = options_file.with_name(f"{options_file.name}.{os.getpid()}.tmp")
+        with staging.open("w", encoding="utf-8", newline="\n") as output:
+            output.write(content)
+        os.replace(staging, options_file)
+    return [retained[0], f"-D{_JVM_OPTIONS_FILE_PROPERTY}={options_file}", *retained[1:]]
 
 
 def _resolve_executable(command_name: str) -> str | None:
@@ -8436,15 +8592,15 @@ def _pyronaut_dev_native_command_line(
             return None
         raise RuntimeError("Missing native delegated executable for pyronaut-dev. Build or install pyronaut-dev, or set tool.pyronaut.toolchain.type = 'jvm'.")
     jvm_args = _native_dev_java_home_jvm_args(java_home_provider) if command in {"dev", "run", "test"} else []
-    # Coordinates contain ':', so use a delimiter independent of the host
-    # path separator when passing the list through a system property.
-    provided_artifacts = ",".join(sorted(_native_launcher_provided_artifact_coordinates(executable_path)))
-    if provided_artifacts:
+    if _native_launcher_provided_artifact_coordinates(executable_path):
         # The native pyronaut-dev image embeds the compiler and annotation
         # processors. Tell the in-process processor to remove matching
         # project artifacts from its annotation-processor path as well as from
-        # application classpaths.
-        jvm_args.append(f"-Dpyronaut.dev.native.provided.artifacts={provided_artifacts}")
+        # application classpaths. Pass the manifest by reference: the inline
+        # coordinate list exceeds cmd.exe's 8191-character limit when the
+        # launcher is invoked through a Windows .cmd shim.
+        provided_manifest = _native_launcher_manifest_path(executable_path, "native-provided-classpath.txt")
+        jvm_args.append(f"-Dpyronaut.dev.native.provided.artifacts=@{provided_manifest}")
         provided_jars = _native_launcher_provided_jar_entries(executable_path)
         if provided_jars:
             # Metadata consumers inspect these shipped JARs directly; they are

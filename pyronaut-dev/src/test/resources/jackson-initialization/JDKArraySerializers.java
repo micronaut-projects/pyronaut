@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2026 original authors
+ * Copyright 2026 original authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.micronaut.python.cli.util;
+package tools.jackson.databind.ser.jdk;
 
-/**
- * Represents a Maven module, without version.
- * @param groupId the group id
- * @param artifactId the artifact id
- */
-public record MavenModule(
-    String groupId,
-    String artifactId
-) {
+public final class JDKArraySerializers {
+    static {
+        System.setProperty("pyronaut.test.jackson.array.serializers.initialized", "true");
+    }
+
+    private JDKArraySerializers() {
+    }
 }
