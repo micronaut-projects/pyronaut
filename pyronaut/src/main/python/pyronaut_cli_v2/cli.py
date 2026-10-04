@@ -627,6 +627,21 @@ def run(
             )
 
         if auto_restart_mode:
+            # The validator reads the configuration metadata processing generates:
+            # validating first checks the configuration against the previous pass.
+            if not _is_external_build_project(Path(project_dir)):
+                preflight_code = _run_preflight(
+                    project_dir,
+                    no_cache,
+                    local_repository,
+                    execute,
+                    locate,
+                    install=False,
+                    process_pass="main",
+                    java_home_provider=effective_java_home_provider,
+                )
+                if preflight_code != SUCCESS:
+                    return preflight_code
             if no_validate:
                 _progress_console().note("Configuration validation skipped (--no-validate)")
             else:
@@ -641,19 +656,6 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-            if not _is_external_build_project(Path(project_dir)):
-                preflight_code = _run_preflight(
-                    project_dir,
-                    no_cache,
-                    local_repository,
-                    execute,
-                    locate,
-                    install=False,
-                    process_pass="main",
-                    java_home_provider=effective_java_home_provider,
-                )
-                if preflight_code != SUCCESS:
-                    return preflight_code
             if tr_session is not None:
                 tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
                 test_resources_env_overrides = tr_session.client_env_overrides()
@@ -693,6 +695,21 @@ def run(
                 )
                 if preflight_code != SUCCESS:
                     return preflight_code
+            # Processing generates the configuration metadata the validator reads.
+            if not _is_external_build_project(Path(project_dir)):
+                preflight_code = _run_preflight(
+                    project_dir,
+                    no_cache,
+                    local_repository,
+                    execute,
+                    locate,
+                    install=False,
+                    process_pass="main",
+                    java_home_provider=effective_java_home_provider,
+                )
+                if preflight_code != SUCCESS:
+                    return preflight_code
+
             if no_validate:
                 _progress_console().note("Configuration validation skipped (--no-validate)")
             else:
@@ -707,20 +724,6 @@ def run(
                 )
                 if validation_code != SUCCESS:
                     return validation_code
-
-            if not _is_external_build_project(Path(project_dir)):
-                preflight_code = _run_preflight(
-                    project_dir,
-                    no_cache,
-                    local_repository,
-                    execute,
-                    locate,
-                    install=False,
-                    process_pass="main",
-                    java_home_provider=effective_java_home_provider,
-                )
-                if preflight_code != SUCCESS:
-                    return preflight_code
 
             if tr_session is not None:
                 tr_session.ensure_started(runner=execute, resolver=locate, java_home_provider=effective_java_home_provider)
@@ -2988,6 +2991,19 @@ def _run_build(
         print("--static is only supported with pyronaut build --native --docker", file=sys.stderr)
         return USAGE_ERROR
 
+    # Processing generates the configuration metadata the validator reads.
+    preflight = _run_preflight(
+        str(project_dir),
+        no_cache,
+        None,
+        runner,
+        resolver,
+        install=preflight_install,
+        java_home_provider=java_home_provider,
+    )
+    if preflight != SUCCESS:
+        return preflight
+
     if no_validate:
         _progress_console().note("Configuration validation skipped (--no-validate)")
     else:
@@ -3001,18 +3017,6 @@ def _run_build(
         )
         if validation_code != SUCCESS:
             return validation_code
-
-    preflight = _run_preflight(
-        str(project_dir),
-        no_cache,
-        None,
-        runner,
-        resolver,
-        install=preflight_install,
-        java_home_provider=java_home_provider,
-    )
-    if preflight != SUCCESS:
-        return preflight
 
     try:
         pgo_profiles = _resolve_pgo_profiles(
@@ -5674,16 +5678,7 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
-                        if validate_on_restart:
-                            validation_code = _run_lifecycle_validation(
-                                project_dir=str(project_root), scenario="dev",
-                                runner=execute, resolver=resolver,
-                                no_cache=no_cache, env_overrides=env_overrides,
-                                java_home_provider=java_home_provider,
-                            )
-                            if validation_code != SUCCESS:
-                                refresh_code = validation_code
-                                return
+                        # validation reads the configuration metadata of this processing pass
                         refresh_code = _run_preflight(
                             str(project_root),
                             no_cache,
@@ -5694,6 +5689,13 @@ def _run_with_auto_restart(
                             process_pass=process_pass,
                             java_home_provider=java_home_provider,
                         )
+                        if refresh_code == SUCCESS and validate_on_restart:
+                            refresh_code = _run_lifecycle_validation(
+                                project_dir=str(project_root), scenario="dev",
+                                runner=execute, resolver=resolver,
+                                no_cache=no_cache, env_overrides=env_overrides,
+                                java_home_provider=java_home_provider,
+                            )
                     except BaseException as exc:
                         refresh_exception = exc
                         refresh_code = INTERNAL_ERROR
@@ -5757,6 +5759,21 @@ def _run_test_cycle(
         )
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
+    else:
+        # The validator reads the configuration metadata processing generates:
+        # validating first checks the configuration against the previous pass.
+        preflight_code = _run_preflight(
+            str(project_dir),
+            no_cache,
+            local_repository,
+            execute,
+            resolver,
+            install=False,
+            process_pass="all",
+            java_home_provider=java_home_provider,
+        )
+        if preflight_code != SUCCESS:
+            return preflight_code, test_resources_env_overrides
     # The validator must see the newly started owned server. Starting it only
     # after validation leaves a stale URI from the previous dev session.
     if tr_session is not None and test_resources_env_overrides is None:
@@ -5776,20 +5793,6 @@ def _run_test_cycle(
         )
         if validation_code != SUCCESS:
             return validation_code, test_resources_env_overrides
-
-    if not _is_external_build_project(project_dir):
-        preflight_code = _run_preflight(
-            str(project_dir),
-            no_cache,
-            local_repository,
-            execute,
-            resolver,
-            install=False,
-            process_pass="all",
-            java_home_provider=java_home_provider,
-        )
-        if preflight_code != SUCCESS:
-            return preflight_code, test_resources_env_overrides
 
     return (
         _delegate(
