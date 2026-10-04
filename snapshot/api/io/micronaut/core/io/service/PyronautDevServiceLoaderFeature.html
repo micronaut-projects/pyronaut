@@ -64,10 +64,11 @@ loadScripts(document, 'script');</script>
 </li>
 <li><a href="#method-detail" tabindex="0">Method Details</a>
 <ol class="toc-list">
+<li><a href="#duringSetup(org.graalvm.nativeimage.hosted.Feature.DuringSetupAccess)" tabindex="0">duringSetup(Feature.DuringSetupAccess)</a></li>
 <li><a href="#buildStaticServiceDefinitions(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess)" tabindex="0">buildStaticServiceDefinitions(Feature.BeforeAnalysisAccess)</a></li>
+<li><a href="#addImageSingleton(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions)" tabindex="0">addImageSingleton(ServiceScanner.ExclusiveStaticServiceDefinitions)</a></li>
 <li><a href="#beforeAnalysis(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess)" tabindex="0">beforeAnalysis(Feature.BeforeAnalysisAccess)</a></li>
 <li><a href="#registerForReflectiveInstantiation(java.lang.Class)" tabindex="0">registerForReflectiveInstantiation(Class)</a></li>
-<li><a href="#addImageSingleton(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions)" tabindex="0">addImageSingleton(ServiceScanner.ExclusiveStaticServiceDefinitions)</a></li>
 <li><a href="#registerRuntimeReflection(java.lang.Class)" tabindex="0">registerRuntimeReflection(Class)</a></li>
 <li><a href="#registerRuntimeReflection(java.lang.reflect.Method...)" tabindex="0">registerRuntimeReflection(Method...)</a></li>
 <li><a href="#registerRuntimeReflection(java.lang.reflect.Field...)" tabindex="0">registerRuntimeReflection(Field...)</a></li>
@@ -138,7 +139,7 @@ discover providers from the current application classloader.</p></div>
 <div class="table-header col-second">Method</div>
 <div class="table-header col-last">Description</div>
 <div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#addImageSingleton(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions)" class="member-name-link">addImageSingleton</a><wbr>(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions&nbsp;arg0)</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#addImageSingleton(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions)" class="member-name-link">addImageSingleton</a><wbr>(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions&nbsp;definitions)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 <div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
 <div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#beforeAnalysis(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess)" class="member-name-link">beforeAnalysis</a><wbr>(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess&nbsp;arg0)</code></div>
@@ -146,24 +147,27 @@ discover providers from the current application classloader.</p></div>
 <div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions</code></div>
 <div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#buildStaticServiceDefinitions(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess)" class="member-name-link">buildStaticServiceDefinitions</a><wbr>(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess&nbsp;access)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#initializeAtBuildTime(java.lang.Class)" class="member-name-link">initializeAtBuildTime</a><wbr>(@Nullable <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Class.html" title="class or interface in java.lang" class="external-link">Class</a>&lt;?&gt;&nbsp;arg0)</code></div>
-<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/Collection.html" title="class or interface in java.util" class="external-link">Collection</a><wbr>&lt;io.micronaut.core.graal.GraalReflectionConfigurer&gt;</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#loadReflectionConfigurers(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess)" class="member-name-link">loadReflectionConfigurers</a><wbr>(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess&nbsp;arg0)</code></div>
-<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#registerForReflectiveInstantiation(java.lang.Class)" class="member-name-link">registerForReflectiveInstantiation</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Class.html" title="class or interface in java.lang" class="external-link">Class</a>&lt;?&gt;&nbsp;arg0)</code></div>
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#duringSetup(org.graalvm.nativeimage.hosted.Feature.DuringSetupAccess)" class="member-name-link">duringSetup</a><wbr>(org.graalvm.nativeimage.hosted.Feature.DuringSetupAccess&nbsp;access)</code></div>
 <div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 <div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#registerRuntimeReflection(java.lang.Class)" class="member-name-link">registerRuntimeReflection</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Class.html" title="class or interface in java.lang" class="external-link">Class</a>&lt;?&gt;&nbsp;arg0)</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#initializeAtBuildTime(java.lang.Class)" class="member-name-link">initializeAtBuildTime</a><wbr>(@Nullable <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Class.html" title="class or interface in java.lang" class="external-link">Class</a>&lt;?&gt;&nbsp;arg0)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#registerRuntimeReflection(java.lang.reflect.Field...)" class="member-name-link">registerRuntimeReflection</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/reflect/Field.html" title="class or interface in java.lang.reflect" class="external-link">Field</a>...&nbsp;arg0)</code></div>
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/Collection.html" title="class or interface in java.util" class="external-link">Collection</a><wbr>&lt;io.micronaut.core.graal.GraalReflectionConfigurer&gt;</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#loadReflectionConfigurers(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess)" class="member-name-link">loadReflectionConfigurers</a><wbr>(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess&nbsp;arg0)</code></div>
 <div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 <div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#registerRuntimeReflection(java.lang.reflect.Method...)" class="member-name-link">registerRuntimeReflection</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/reflect/Method.html" title="class or interface in java.lang.reflect" class="external-link">Method</a>...&nbsp;arg0)</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#registerForReflectiveInstantiation(java.lang.Class)" class="member-name-link">registerForReflectiveInstantiation</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Class.html" title="class or interface in java.lang" class="external-link">Class</a>&lt;?&gt;&nbsp;arg0)</code></div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#registerRuntimeReflection(java.lang.Class)" class="member-name-link">registerRuntimeReflection</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Class.html" title="class or interface in java.lang" class="external-link">Class</a>&lt;?&gt;&nbsp;arg0)</code></div>
+<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
+<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#registerRuntimeReflection(java.lang.reflect.Field...)" class="member-name-link">registerRuntimeReflection</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/reflect/Field.html" title="class or interface in java.lang.reflect" class="external-link">Field</a>...&nbsp;arg0)</code></div>
+<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>protected void</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#registerRuntimeReflection(java.lang.reflect.Method...)" class="member-name-link">registerRuntimeReflection</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/reflect/Method.html" title="class or interface in java.lang.reflect" class="external-link">Method</a>...&nbsp;arg0)</code></div>
+<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 </div>
 </div>
 </div>
@@ -172,7 +176,7 @@ discover providers from the current application classloader.</p></div>
 <code><a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#clone()" title="class or interface in java.lang" class="external-link">clone</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#equals(java.lang.Object)" title="class or interface in java.lang" class="external-link">equals</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#finalize()" title="class or interface in java.lang" class="external-link">finalize</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#getClass()" title="class or interface in java.lang" class="external-link">getClass</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#hashCode()" title="class or interface in java.lang" class="external-link">hashCode</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#notify()" title="class or interface in java.lang" class="external-link">notify</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#notifyAll()" title="class or interface in java.lang" class="external-link">notifyAll</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#toString()" title="class or interface in java.lang" class="external-link">toString</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#wait()" title="class or interface in java.lang" class="external-link">wait</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#wait(long)" title="class or interface in java.lang" class="external-link">wait</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#wait(long,int)" title="class or interface in java.lang" class="external-link">wait</a></code></div>
 <div class="inherited-list">
 <h3 id="methods-inherited-from-class-org.graalvm.nativeimage.hosted.Feature">Methods inherited from interface&nbsp;org.graalvm.nativeimage.hosted.Feature</h3>
-<code>afterAnalysis, afterCompilation, afterHeapLayout, afterImageWrite, afterRegistration, beforeCompilation, beforeHeapLayout, beforeImageWrite, beforeUniverseBuilding, cleanup, duringAnalysis, duringSetup, getDescription, getRequiredFeatures, getURL, isInConfiguration, onAnalysisExit, onRegistration</code></div>
+<code>afterAnalysis, afterCompilation, afterHeapLayout, afterImageWrite, afterRegistration, beforeCompilation, beforeHeapLayout, beforeImageWrite, beforeUniverseBuilding, cleanup, duringAnalysis, getDescription, getRequiredFeatures, getURL, isInConfiguration, onAnalysisExit, onRegistration</code></div>
 </section>
 </li>
 </ul>
@@ -201,10 +205,26 @@ discover providers from the current application classloader.</p></div>
 <h2>Method Details</h2>
 <ul class="member-list">
 <li>
+<section class="detail" id="duringSetup(org.graalvm.nativeimage.hosted.Feature.DuringSetupAccess)">
+<h3>duringSetup</h3>
+<div class="horizontal-scroll">
+<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type">void</span>&nbsp;<span class="element-name">duringSetup</span><wbr><span class="parameters">(org.graalvm.nativeimage.hosted.Feature.DuringSetupAccess&nbsp;access)</span></div>
+</div>
+</section>
+</li>
+<li>
 <section class="detail" id="buildStaticServiceDefinitions(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess)">
 <h3>buildStaticServiceDefinitions</h3>
 <div class="horizontal-scroll">
 <div class="member-signature"><span class="modifiers">protected</span>&nbsp;<span class="return-type">io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions</span>&nbsp;<span class="element-name">buildStaticServiceDefinitions</span><wbr><span class="parameters">(org.graalvm.nativeimage.hosted.Feature.BeforeAnalysisAccess&nbsp;access)</span></div>
+</div>
+</section>
+</li>
+<li>
+<section class="detail" id="addImageSingleton(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions)">
+<h3>addImageSingleton</h3>
+<div class="horizontal-scroll">
+<div class="member-signature"><span class="modifiers">protected</span>&nbsp;<span class="return-type">void</span>&nbsp;<span class="element-name">addImageSingleton</span><wbr><span class="parameters">(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions&nbsp;definitions)</span></div>
 </div>
 </section>
 </li>
@@ -225,14 +245,6 @@ discover providers from the current application classloader.</p></div>
 <h3>registerForReflectiveInstantiation</h3>
 <div class="horizontal-scroll">
 <div class="member-signature"><span class="modifiers">protected</span>&nbsp;<span class="return-type">void</span>&nbsp;<span class="element-name">registerForReflectiveInstantiation</span><wbr><span class="parameters">(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Class.html" title="class or interface in java.lang" class="external-link">Class</a>&lt;?&gt;&nbsp;arg0)</span></div>
-</div>
-</section>
-</li>
-<li>
-<section class="detail" id="addImageSingleton(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions)">
-<h3>addImageSingleton</h3>
-<div class="horizontal-scroll">
-<div class="member-signature"><span class="modifiers">protected</span>&nbsp;<span class="return-type">void</span>&nbsp;<span class="element-name">addImageSingleton</span><wbr><span class="parameters">(io.micronaut.core.io.service.ServiceScanner.ExclusiveStaticServiceDefinitions&nbsp;arg0)</span></div>
 </div>
 </section>
 </li>
