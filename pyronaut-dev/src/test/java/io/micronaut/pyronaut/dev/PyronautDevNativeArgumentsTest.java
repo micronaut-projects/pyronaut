@@ -44,5 +44,11 @@ final class PyronautDevNativeArgumentsTest {
             buildScript.substring(argsStart, argsEnd).contains("-H:Preserve=package=io.netty.util.internal\""),
             "The reusable image must preserve direct Netty internal classes"
         );
+        for (String corePackage : new String[] {"io", "value", "bind", "execution", "convert"}) {
+            assertTrue(
+                buildScript.substring(argsStart, argsEnd).contains("-H:Preserve=package=io.micronaut.core." + corePackage + ".*\""),
+                "Python host access needs reflection metadata for io.micronaut.core." + corePackage
+            );
+        }
     }
 }
