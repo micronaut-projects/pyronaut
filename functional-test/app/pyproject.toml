@@ -25,6 +25,7 @@ runtime = [
     "io.micronaut.serde:micronaut-serde-jackson",
     "io.micronaut.jsonschema:micronaut-json-schema-annotations",
     "org.apache.commons:commons-lang3:3.20.0",
+    "io.micronaut.pyronaut.fixture:crema-provided-access:1.0.0",
 ]
 
 build = [

@@ -133,6 +133,31 @@ class PyronautNativeImageBuilderTest {
     }
 
     @Test
+    void preservesMicronautCoreApisCalledFromPython() throws Exception {
+        Path classpathEntry = tempDir.resolve("micronaut-core.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {
+            for (String entry : List.of(
+                "io/micronaut/core/io/ResourceResolver.class",
+                "io/micronaut/core/io/scan/ClassPathResourceLoader.class",
+                "io/micronaut/core/convert/ConversionService.class",
+                "io/micronaut/core/value/PropertyResolver.class",
+                "io/micronaut/core/execution/ExecutionFlow.class"
+            )) {
+                output.putNextEntry(new ZipEntry(entry));
+                output.write(0);
+                output.closeEntry();
+            }
+        }
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.io.*"));
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.convert.*"));
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.value.*"));
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.execution.*"));
+    }
+
+    @Test
     void addsPythonClasspathAndTruffleAccessOnlyWhenPythonIsEnabled() throws Exception {
         Path javaClasspathEntry = tempDir.resolve("runtime.jar");
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(javaClasspathEntry))) {

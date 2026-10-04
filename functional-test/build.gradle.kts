@@ -184,6 +184,41 @@ dependencies.add(
     "com.github.javaparser:javaparser-core:$includedCoreJavaParserVersion"
 )
 
+// A library outside the native launchers' provided artifacts, so pyronaut-dev
+// loads and interprets it at runtime. It compiles against Micronaut Core, which
+// the image provides, to cover runtime-loaded code reaching image classes.
+val cremaFixtureGroupId = "io.micronaut.pyronaut.fixture"
+val cremaFixtureArtifactId = "crema-provided-access"
+val cremaFixtureVersion = "1.0.0"
+
+val cremaFixtureCompileClasspath by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+    useJavaRuntimeClasspathAttributes()
+}
+dependencies.add(cremaFixtureCompileClasspath.name, "io.micronaut:micronaut-core:$functionalTestMicronautCoreVersion")
+
+val compileCremaFixture by tasks.registering(JavaCompile::class) {
+    group = "build setup"
+    description = "Compiles the runtime-loaded fixture library used by the functional-test app."
+    source(layout.projectDirectory.dir("fixture-lib/src/main/java"))
+    classpath = cremaFixtureCompileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("crema-fixture/classes"))
+    // Without the java plugin there are no defaults; --release overrides both.
+    sourceCompatibility = "17"
+    targetCompatibility = "17"
+    options.release.set(17)
+}
+
+val cremaFixtureJar by tasks.registering(Jar::class) {
+    group = "build setup"
+    description = "Packages the runtime-loaded fixture library used by the functional-test app."
+    from(compileCremaFixture)
+    archiveFileName.set("$cremaFixtureArtifactId-$cremaFixtureVersion.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("crema-fixture/libs"))
+}
+
 val stagedPyronautProjectPaths = listOf(
     ":micronaut-pyronaut-config-model",
     ":micronaut-pyronaut-logback",
@@ -1359,6 +1394,35 @@ val stageMicronautPlatformFixtureArtifact by tasks.registering {
     }
 }
 
+val stageCremaFixtureArtifact by tasks.registering {
+    group = "build setup"
+    description = "Stages the runtime-loaded fixture library into the functional-test file repository."
+    val pomFile = layout.buildDirectory.file("crema-fixture/$cremaFixtureArtifactId-$cremaFixtureVersion.pom")
+    inputs.files(cremaFixtureJar)
+    outputs.files(stagedMavenArtifactOutputFiles(cremaFixtureGroupId, cremaFixtureArtifactId, cremaFixtureVersion))
+    doLast {
+        // No dependencies: Micronaut Core comes from the app's own runtime classpath.
+        pomFile.get().asFile.writeText(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>$cremaFixtureGroupId</groupId>
+              <artifactId>$cremaFixtureArtifactId</artifactId>
+              <version>$cremaFixtureVersion</version>
+            </project>
+            """.trimIndent() + "\n"
+        )
+        copyMavenArtifact(
+            groupId = cremaFixtureGroupId,
+            artifactId = cremaFixtureArtifactId,
+            version = cremaFixtureVersion,
+            pomFile = pomFile.get().asFile,
+            jarFile = cremaFixtureJar.get().archiveFile.get().asFile,
+        )
+    }
+}
+
 val stageMicronautCoreFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages included Micronaut Core artifacts into the functional-test file repository."
@@ -1479,6 +1543,7 @@ val publishFixtureArtifactsToMavenLocal by tasks.registering {
     description = "Stages local fixture artifacts into the functional-test file repository."
     dependsOn(
         stagePyronautFixtureArtifacts,
+        stageCremaFixtureArtifact,
         stageMicronautPlatformFixtureArtifact,
         stageMicronautCoreFixtureArtifacts,
         stageMicronautDataFixtureArtifacts,
