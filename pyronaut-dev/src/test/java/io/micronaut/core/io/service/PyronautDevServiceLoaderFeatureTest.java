@@ -28,6 +28,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 final class PyronautDevServiceLoaderFeatureTest {
     private static final String JACKSON_ARRAY_SERIALIZERS = "tools.jackson.databind.ser.jdk.JDKArraySerializers";
@@ -37,9 +38,12 @@ final class PyronautDevServiceLoaderFeatureTest {
     void initializesJacksonArraySerializersWithApplicationClassLoader(@TempDir Path classesDirectory) throws Exception {
         // Compile the sentinel into an isolated loader, never shadow Jackson on the test classpath.
         Path sourceFile = classesDirectory.resolve("JDKArraySerializers.java");
-        try (var source = getClass().getResourceAsStream("/jackson-initialization/JDKArraySerializers.java")) {
-            Files.copy(source, sourceFile);
-        }
+        Files.writeString(sourceFile, """
+            package tools.jackson.databind.ser.jdk;
+            final class JDKArraySerializers {
+                static { System.setProperty("%s", "true"); }
+            }
+            """.formatted(INITIALIZED_PROPERTY));
         assertEquals(0, ToolProvider.getSystemJavaCompiler().run(
             null, null, null, "-proc:none", "-d", classesDirectory.toString(), sourceFile.toString()
         ));
@@ -48,16 +52,30 @@ final class PyronautDevServiceLoaderFeatureTest {
             Class.forName(JACKSON_ARRAY_SERIALIZERS, false, classLoader);
             assertNull(System.getProperty(INITIALIZED_PROPERTY));
 
-            Feature.DuringSetupAccess access = (Feature.DuringSetupAccess) Proxy.newProxyInstance(
-                Feature.DuringSetupAccess.class.getClassLoader(),
-                new Class<?>[]{Feature.DuringSetupAccess.class},
-                (proxy, method, args) -> method.getName().equals("getApplicationClassLoader") ? classLoader : null
-            );
-            new PyronautDevServiceLoaderFeature().duringSetup(access);
+            new PyronautDevServiceLoaderFeature().duringSetup(setupAccess(classLoader));
 
             assertEquals("true", System.getProperty(INITIALIZED_PROPERTY));
         } finally {
             System.clearProperty(INITIALIZED_PROPERTY);
         }
+    }
+
+    @Test
+    void reportsMissingJacksonArraySerializers() {
+        ClassLoader emptyLoader = new ClassLoader(null) { };
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new PyronautDevServiceLoaderFeature().duringSetup(setupAccess(emptyLoader)));
+
+        assertEquals("Jackson array serializers are required by pyronaut-dev", error.getMessage());
+        assertEquals(ClassNotFoundException.class, error.getCause().getClass());
+    }
+
+    private static Feature.DuringSetupAccess setupAccess(ClassLoader classLoader) {
+        return (Feature.DuringSetupAccess) Proxy.newProxyInstance(
+            Feature.DuringSetupAccess.class.getClassLoader(),
+            new Class<?>[]{Feature.DuringSetupAccess.class},
+            (proxy, method, args) -> method.getName().equals("getApplicationClassLoader") ? classLoader : null
+        );
     }
 }

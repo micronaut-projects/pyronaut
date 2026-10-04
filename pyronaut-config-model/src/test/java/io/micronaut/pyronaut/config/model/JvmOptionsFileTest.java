@@ -18,11 +18,14 @@ package io.micronaut.pyronaut.config.model;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class JvmOptionsFileTest {
     private static final String CLASSPATH = "pyronaut.test.jvm.options.classpath";
@@ -33,6 +36,8 @@ class JvmOptionsFileTest {
         Path options = Files.writeString(directory.resolve("jvm-options.txt"),
             "-D" + CLASSPATH + "=C:\\lib\\a.jar;C:\\lib\\b=c.jar\n-D" + FLAG + "\nignored\n");
         String previous = System.getProperty(JvmOptionsFile.PROPERTY);
+        String previousClasspath = System.getProperty(CLASSPATH);
+        String previousFlag = System.getProperty(FLAG);
         try {
             System.setProperty(JvmOptionsFile.PROPERTY, options.toString());
 
@@ -42,8 +47,8 @@ class JvmOptionsFileTest {
             assertEquals("", System.getProperty(FLAG));
         } finally {
             restore(JvmOptionsFile.PROPERTY, previous);
-            System.clearProperty(CLASSPATH);
-            System.clearProperty(FLAG);
+            restore(CLASSPATH, previousClasspath);
+            restore(FLAG, previousFlag);
         }
     }
 
@@ -52,6 +57,8 @@ class JvmOptionsFileTest {
         Path options = Files.writeString(directory.resolve("jvm-options.txt"),
             "-D" + CLASSPATH + "=earlier\n-D" + CLASSPATH + "=last\n-D" + FLAG + "=set\n-D" + FLAG + "\n");
         String previous = System.getProperty(JvmOptionsFile.PROPERTY);
+        String previousClasspath = System.getProperty(CLASSPATH);
+        String previousFlag = System.getProperty(FLAG);
         try {
             System.setProperty(JvmOptionsFile.PROPERTY, options.toString());
 
@@ -61,20 +68,68 @@ class JvmOptionsFileTest {
             assertEquals("", System.getProperty(FLAG));
         } finally {
             restore(JvmOptionsFile.PROPERTY, previous);
-            System.clearProperty(CLASSPATH);
-            System.clearProperty(FLAG);
+            restore(CLASSPATH, previousClasspath);
+            restore(FLAG, previousFlag);
         }
     }
 
     @Test
-    void ignoresAMissingProperty() {
+    void ignoresMissingOrBlankOptionsFileProperties() {
         String previous = System.getProperty(JvmOptionsFile.PROPERTY);
+        String previousClasspath = System.getProperty(CLASSPATH);
         try {
-            System.clearProperty(JvmOptionsFile.PROPERTY);
+            System.setProperty(CLASSPATH, "unchanged");
+            for (String configured : new String[]{null, "", " \t "}) {
+                if (configured == null) {
+                    System.clearProperty(JvmOptionsFile.PROPERTY);
+                } else {
+                    System.setProperty(JvmOptionsFile.PROPERTY, configured);
+                }
+
+                JvmOptionsFile.apply();
+
+                assertEquals("unchanged", System.getProperty(CLASSPATH));
+            }
+        } finally {
+            restore(JvmOptionsFile.PROPERTY, previous);
+            restore(CLASSPATH, previousClasspath);
+        }
+    }
+
+    @Test
+    void ignoresMalformedOptionsAndStillAppliesValidProperties(@TempDir Path directory) throws Exception {
+        Path options = Files.writeString(directory.resolve("jvm-options.txt"),
+            "-D\n-D=ignored\n" + FLAG + "=ignored\n\n-D" + CLASSPATH + "=valid\n");
+        String previous = System.getProperty(JvmOptionsFile.PROPERTY);
+        String previousClasspath = System.getProperty(CLASSPATH);
+        String previousFlag = System.getProperty(FLAG);
+        try {
+            System.setProperty(JvmOptionsFile.PROPERTY, options.toString());
+            System.setProperty(FLAG, "unchanged");
 
             JvmOptionsFile.apply();
 
-            assertNull(System.getProperty(CLASSPATH));
+            assertEquals("valid", System.getProperty(CLASSPATH));
+            assertEquals("unchanged", System.getProperty(FLAG));
+        } finally {
+            restore(JvmOptionsFile.PROPERTY, previous);
+            restore(CLASSPATH, previousClasspath);
+            restore(FLAG, previousFlag);
+        }
+    }
+
+    @Test
+    void reportsUnreadableOptionsFiles(@TempDir Path directory) {
+        String previous = System.getProperty(JvmOptionsFile.PROPERTY);
+        try {
+            for (Path options : List.of(directory.resolve("missing-options.txt"), directory)) {
+                System.setProperty(JvmOptionsFile.PROPERTY, options.toString());
+
+                UncheckedIOException error = assertThrows(UncheckedIOException.class, JvmOptionsFile::apply);
+
+                assertEquals("Failed to read " + JvmOptionsFile.PROPERTY + " " + options, error.getMessage());
+                assertNotNull(error.getCause());
+            }
         } finally {
             restore(JvmOptionsFile.PROPERTY, previous);
         }

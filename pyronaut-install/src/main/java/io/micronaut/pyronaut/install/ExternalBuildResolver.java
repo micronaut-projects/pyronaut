@@ -427,7 +427,10 @@ final class ExternalBuildResolver {
             case GRADLE -> "gradle";
             default -> throw new IllegalArgumentException("No external build tool for " + kind);
         };
-        String suffix = windows ? (kind == ProjectKind.MAVEN ? ".cmd" : ".bat") : "";
+        String suffix = "";
+        if (windows) {
+            suffix = kind == ProjectKind.MAVEN ? ".cmd" : ".bat";
+        }
         Path wrapper = root.resolve(tool + "w" + suffix).toAbsolutePath().normalize();
         return Files.isRegularFile(wrapper) ? wrapper.toString() : tool + suffix;
     }

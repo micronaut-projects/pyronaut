@@ -59,9 +59,9 @@ class NativeLauncherServicesTest {
             Thread.currentThread().setContextClassLoader(hiddenResources);
             var provider = new ContextClassLoaderBeanDefinitionsProvider();
             var first = provider.provide(hiddenResources).stream()
-                .filter(reference -> reference instanceof ApplicationEventPublisherFactory).findFirst().orElseThrow();
+                .filter(ApplicationEventPublisherFactory.class::isInstance).findFirst().orElseThrow();
             var second = provider.provide(hiddenResources).stream()
-                .filter(reference -> reference instanceof ApplicationEventPublisherFactory).findFirst().orElseThrow();
+                .filter(ApplicationEventPublisherFactory.class::isInstance).findFirst().orElseThrow();
             assertNotSame(first, second);
             try (ApplicationContext context = ApplicationContext.builder()
                 .classLoader(hiddenResources)

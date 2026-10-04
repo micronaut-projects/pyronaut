@@ -175,7 +175,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         DEFAULT_PYRONAUT_DIR
     );
     private static final Set<String> TOOL_COMMANDS = Set.of(
-        "install",
+        ToolCommand.INSTALL.cliValue,
         "process",
         "run",
         "test",
@@ -207,7 +207,7 @@ public final class PyronautDevMain implements Callable<Integer> {
         JvmOptionsFile.apply();
         Terminal.notifyLaunched();
         // install only uses bundled beans; keep their native-image service definitions available.
-        if (args.length == 0 || !"install".equals(args[0])) {
+        if (args.length == 0 || !ToolCommand.INSTALL.cliValue.equals(args[0])) {
             PyronautRuntimeProperties.disableGraalVmImageSingletons();
         }
         configureNativeRuntimeDefaults();

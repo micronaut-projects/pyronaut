@@ -30,6 +30,9 @@ import java.util.Set;
 
 /**
  * Service names discovered by the native launcher feature, independent of runtime resource scans.
+ *
+ * <p>Public only so the hosted feature in {@code pyronaut-dev} can capture the names;
+ * this is an internal cross-module bridge, not an application extension point.</p>
  */
 @Internal
 public final class NativeLauncherServices {

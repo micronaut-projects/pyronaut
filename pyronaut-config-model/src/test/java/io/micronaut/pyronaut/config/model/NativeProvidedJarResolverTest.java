@@ -18,12 +18,15 @@ package io.micronaut.pyronaut.config.model;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class NativeProvidedJarResolverTest {
     @Test
@@ -109,6 +112,45 @@ class NativeProvidedJarResolverTest {
         } finally {
             restore(NativeProvidedJarResolver.ARTIFACTS_PROPERTY, previousArtifacts);
             restore(NativeProvidedJarResolver.JARS_PROPERTY, previousJars);
+        }
+    }
+
+    @Test
+    void doesNotResolveArtifactsFromInvalidManifestCoordinates(@TempDir Path directory) throws Exception {
+        Files.createFile(directory.resolve("micronaut-jdbc-hikari-6.0.0.jar"));
+        Files.createFile(directory.resolve("-6.0.0.jar"));
+        Path manifest = Files.writeString(directory.resolve("native-provided-classpath.txt"),
+            "# ignored:coordinate\n  \nnot-a-coordinate\n :micronaut-jdbc-hikari \nio.micronaut:\n");
+        String previousArtifacts = System.getProperty(NativeProvidedJarResolver.ARTIFACTS_PROPERTY);
+        String previousJars = System.getProperty(NativeProvidedJarResolver.JARS_PROPERTY);
+        try {
+            System.setProperty(NativeProvidedJarResolver.ARTIFACTS_PROPERTY, "@" + manifest);
+            System.setProperty(NativeProvidedJarResolver.JARS_PROPERTY, directory.toString());
+
+            assertEquals(List.of("io.micronaut:"), NativeProvidedJarResolver.providedArtifactCoordinates());
+            assertEquals(List.of(), new NativeProvidedJarResolver().resolve());
+        } finally {
+            restore(NativeProvidedJarResolver.ARTIFACTS_PROPERTY, previousArtifacts);
+            restore(NativeProvidedJarResolver.JARS_PROPERTY, previousJars);
+        }
+    }
+
+    @Test
+    void reportsUnreadableManifestFiles(@TempDir Path directory) {
+        String previousArtifacts = System.getProperty(NativeProvidedJarResolver.ARTIFACTS_PROPERTY);
+        try {
+            for (Path manifest : List.of(directory.resolve("missing-manifest.txt"), directory)) {
+                System.setProperty(NativeProvidedJarResolver.ARTIFACTS_PROPERTY, "@" + manifest);
+
+                UncheckedIOException error = assertThrows(UncheckedIOException.class,
+                    NativeProvidedJarResolver::providedArtifactCoordinates);
+
+                assertEquals("Failed to read " + NativeProvidedJarResolver.ARTIFACTS_PROPERTY + " manifest " + manifest,
+                    error.getMessage());
+                assertNotNull(error.getCause());
+            }
+        } finally {
+            restore(NativeProvidedJarResolver.ARTIFACTS_PROPERTY, previousArtifacts);
         }
     }
 

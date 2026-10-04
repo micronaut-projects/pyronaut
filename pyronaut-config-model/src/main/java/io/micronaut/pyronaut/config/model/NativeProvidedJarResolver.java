@@ -74,7 +74,7 @@ public final class NativeProvidedJarResolver {
         }
         return values.stream()
             .map(String::trim)
-            .filter(value -> !value.isEmpty() && !value.startsWith("#") && value.indexOf(':') > 0)
+            .filter(value -> !value.isEmpty() && !value.startsWith("#") && value.contains(":") && !value.startsWith(":"))
             .toList();
     }
 
