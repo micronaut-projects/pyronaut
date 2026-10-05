@@ -7901,7 +7901,51 @@ def _run_create(args: Sequence[str], runner: RunnerWithEnv, platform_name: str) 
             return exit_code
         sys.stdout.write(_filter_create_features(stdout, version))
         return SUCCESS
-    return runner(command_line, None)
+    exit_code = runner(command_line, None)
+    if exit_code == SUCCESS:
+        _align_created_core_version(_created_project_dir(create_args))
+    return exit_code
+
+
+def _created_project_dir(create_args: Sequence[str]) -> Path:
+    """The directory Micronaut Launch generated into: the current one, or the last segment of NAME."""
+    if "-i" in create_args or "--inplace" in create_args:
+        return Path.cwd()
+    names = [
+        arg for index, arg in enumerate(create_args)
+        if not arg.startswith("-") and (index == 0 or create_args[index - 1] not in {"-f", "--features"})
+    ]
+    name = names[0] if names else "demo"
+    return Path.cwd() / name.rsplit(".", 1)[-1]
+
+
+def _align_created_core_version(project_dir: Path) -> None:
+    """Raise the generated Micronaut Core version to the one this Pyronaut distribution bundles.
+
+    Micronaut Launch writes the Core version of its own Platform release, which can be older
+    than the Core release Pyronaut was built and tested against.
+    """
+    core_version = _read_version_properties().get("micronaut.core")
+    parsed_core = _parse_micronaut_version(core_version) if core_version else None
+    pyproject = project_dir / "pyproject.toml"
+    if parsed_core is None or not pyproject.is_file():
+        return
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return
+    pattern = re.compile(r'(^\[tool\.pyronaut\.core\][^\[]*?^version\s*=\s*")([^"]+)(")', re.MULTILINE | re.DOTALL)
+    match = pattern.search(text)
+    if match is None:
+        return
+    generated = _parse_micronaut_version(match.group(2))
+    if generated is None or generated >= parsed_core:
+        return
+    updated = text[:match.start(2)] + core_version + text[match.end(2):]
+    try:
+        pyproject.write_text(updated, encoding="utf-8")
+    except OSError:
+        return
 
 
 class _CreatePreconditionError(RuntimeError):

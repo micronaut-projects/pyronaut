@@ -98,6 +98,7 @@ public final class PyronautTestMain implements Callable<Integer> {
         "micronaut-buffer-netty",
         "micronaut-context-propagation",
         "micronaut-context-python",
+        "micronaut-context-python-netty",
         "micronaut-core",
         "micronaut-core-reactive",
         "micronaut-discovery-core",

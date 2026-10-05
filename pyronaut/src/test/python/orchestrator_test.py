@@ -9688,6 +9688,41 @@ java-version = 25
             executed,
         )
 
+    def test_create_raises_generated_core_version_to_the_bundled_core(self):
+        generated = (
+            '[tool.pyronaut.core]\nversion = "{core}"\n\n'
+            '[tool.pyronaut.platform]\nversion = "5.2.1"\n'
+        )
+
+        def create_project(core):
+            def runner(command_line, env=None):
+                project = Path.cwd() / "app"
+                project.mkdir()
+                (project / "pyproject.toml").write_text(generated.format(core=core), encoding="utf-8")
+                return 0
+            return runner
+
+        for launch_core, expected in (("5.2.12", "5.2.13"), ("5.2.14", "5.2.14")):
+            with self.subTest(launch_core=launch_core), tempfile.TemporaryDirectory() as temp_dir:
+                previous = Path.cwd()
+                os.chdir(temp_dir)
+                try:
+                    with (
+                        patch.object(cli, "_micronaut_platform_version", return_value="5.2.1"),
+                        patch.object(cli, "_ensure_micronaut_launch", return_value=Path("/tmp/mn")),
+                        patch.object(cli, "_read_version_properties", return_value={"micronaut.core": "5.2.13"}),
+                    ):
+                        exit_code = cli.run(
+                            ["create", "com.example.app", "--features", "data-jdbc"],
+                            runner_with_env=create_project(launch_core),
+                            platform_name="linux",
+                        )
+                    text = (Path(temp_dir) / "app" / "pyproject.toml").read_text(encoding="utf-8")
+                finally:
+                    os.chdir(previous)
+                self.assertEqual(cli.SUCCESS, exit_code)
+                self.assertEqual(generated.format(core=expected), text)
+
     def test_create_rejects_hidden_micronaut_options(self):
         executed = []
 
