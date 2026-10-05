@@ -15,6 +15,11 @@
  */
 package io.micronaut.pyronaut.validateconfig;
 
+import io.micronaut.context.ApplicationContext;
+import io.micronaut.context.ApplicationContextBuilder;
+import io.micronaut.context.ApplicationContextConfiguration;
+import io.micronaut.context.ConfigurableApplicationContext;
+import io.micronaut.context.env.Environment;
 import io.micronaut.context.env.EnvironmentPropertySource;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
@@ -24,30 +29,50 @@ import io.micronaut.jsonschema.configuration.validator.ConfigurationJsonSchemaVa
 import io.micronaut.jsonschema.configuration.validator.DependencyInjectionError;
 import io.micronaut.jsonschema.configuration.validator.DependencyInjectionValidationStrategy;
 import io.micronaut.jsonschema.configuration.validator.DefaultDependencyInjectionValidator;
-import io.micronaut.jsonschema.configuration.validator.cli.DependencyInjectionConfigurationValidator;
-import io.micronaut.jsonschema.configuration.validator.cli.JsonSchemaConfigurationValidator;
 import io.micronaut.jsonschema.configuration.validator.report.HtmlConfigurationErrorReporter;
 import io.micronaut.jsonschema.configuration.validator.report.JsonConfigurationErrorReporter;
 import io.micronaut.jsonschema.configuration.validator.report.SystemErrConfigurationErrorReporter;
 import io.micronaut.pyronaut.config.classloader.ContextClassLoaderBeanIntrospectionsProvider;
 import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 final class MicronautConfigurationValidatorExecutor implements PyronautValidateConfigMain.ConfigurationValidatorExecutor {
     private static final String DEFAULT_ENVIRONMENT_LOGGER = "org.slf4j.simpleLogger.log.io.micronaut.context.env.DefaultEnvironment";
     private static final String MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER = "micronaut.introspections.use.context.classloader";
     private static final String PROPERTY_NOT_PRESENT = "Property not present in schema";
+    // Validation never resolves values through Test Resources. Left active, the client, which
+    // pyronaut-dev bundles beside the validator, falls back to settings files such as
+    // ~/.micronaut/test-resources/test-resources.properties, which may name a server that has
+    // long since exited or that belongs to another project. Both switches stop the client and the
+    // pyronaut-dev bridge to it for as long as validation runs, including a client cached by an
+    // earlier application in the same process (micronaut-test-resources#1236). The client's own
+    // service registrations are also hidden from the validation classloader: the disabled client
+    // still announces itself on stderr each time one of them asks it for a value.
+    private static final List<String> TEST_RESOURCES_SWITCHES = List.of(
+        "micronaut.test.resources.enabled",
+        "pyronaut.dev.test.resources.bridge.enabled"
+    );
+    private static final String TEST_RESOURCES_PACKAGE = "io.micronaut.testresources.";
+    private static final String SERVICES_PREFIX = "META-INF/services/";
 
     @Override
     public PyronautValidateConfigMain.ValidationExecutionResult validate(PyronautValidateConfigMain.ValidationSettings settings) throws Exception {
@@ -55,6 +80,7 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
         ClassLoader previousClassLoader = Thread.currentThread().getContextClassLoader();
         String previousIntrospectionProperty = System.getProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
         BeanIntrospectionsProvider previousProvider = BeanIntrospectionProviders.set(new ContextClassLoaderBeanIntrospectionsProvider());
+        Map<String, String> previousTestResourcesSwitches = disableTestResources();
         try (URLClassLoader validationClassLoader = new URLClassLoader(validationClasspath.toArray(URL[]::new), previousClassLoader)) {
             System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, "true");
             Thread.currentThread().setContextClassLoader(validationClassLoader);
@@ -62,11 +88,38 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
         } finally {
             Thread.currentThread().setContextClassLoader(previousClassLoader);
             BeanIntrospectionProviders.set(previousProvider);
-            if (previousIntrospectionProperty == null) {
-                System.clearProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER);
-            } else {
-                System.setProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionProperty);
-            }
+            restoreProperty(MICRONAUT_INTROSPECTIONS_USE_CONTEXT_CLASSLOADER, previousIntrospectionProperty);
+            previousTestResourcesSwitches.forEach(MicronautConfigurationValidatorExecutor::restoreProperty);
+        }
+    }
+
+    private static Map<String, String> disableTestResources() {
+        Map<String, String> previous = new HashMap<>();
+        for (String name : TEST_RESOURCES_SWITCHES) {
+            previous.put(name, System.getProperty(name));
+            System.setProperty(name, "false");
+        }
+        return previous;
+    }
+
+    private static URLClassLoader environmentClassLoader(List<URL> validationClasspath) {
+        return new URLClassLoader(
+            validationClasspath.toArray(URL[]::new),
+            new TestResourcesServicesHidingClassLoader(MicronautConfigurationValidatorExecutor.class.getClassLoader())
+        );
+    }
+
+    private static ApplicationContextBuilder contextBuilder(PyronautValidateConfigMain.ValidationSettings settings, ClassLoader classLoader) {
+        return ApplicationContext.builder(settings.environments().toArray(String[]::new))
+            .classLoader(classLoader)
+            .deduceEnvironment(settings.deduceEnvironments());
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
         }
     }
 
@@ -84,26 +137,35 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
         suppressions.add("micronaut.introspections");
         validator.setSuppressionPatterns(suppressions);
 
-        JsonSchemaConfigurationValidator facade = new JsonSchemaConfigurationValidator(
-            validationClasspath,
-            settings.environments(),
-            settings.deduceEnvironments(),
-            validator
-        );
-
-        Set<ConfigurationError> errors = withoutAmbiguousEnvironmentKeys(facade.validate());
+        // Mirrors JsonSchemaConfigurationValidator and DependencyInjectionConfigurationValidator,
+        // which build the same classloader and context, but under a parent that hides the Test
+        // Resources client bundled beside the validator.
+        Set<ConfigurationError> errors;
+        try (URLClassLoader classLoader = environmentClassLoader(validationClasspath);
+             Environment environment = Environment.create((ApplicationContextConfiguration) contextBuilder(settings, classLoader)).start()) {
+            try {
+                errors = withoutAmbiguousEnvironmentKeys(validator.validate(classLoader, environment));
+            } finally {
+                environment.stop();
+            }
+        }
         Set<DependencyInjectionError> dependencyInjectionErrors = Set.of();
 
         if (settings.validateDependencyInjection()) {
-            dependencyInjectionErrors = new DependencyInjectionConfigurationValidator(
-                validationClasspath,
-                settings.environments(),
-                settings.deduceEnvironments(),
-                new DefaultDependencyInjectionValidator(
-                    settings.suppressedInjectErrors(),
-                    strategy(settings.dependencyInjectionValidationStrategy())
-                )
-            ).validate();
+            DefaultDependencyInjectionValidator injectionValidator = new DefaultDependencyInjectionValidator(
+                settings.suppressedInjectErrors(),
+                strategy(settings.dependencyInjectionValidationStrategy())
+            );
+            try (URLClassLoader classLoader = environmentClassLoader(validationClasspath);
+                 ApplicationContext context = contextBuilder(settings, classLoader).build()) {
+                ConfigurableApplicationContext configurableContext = (ConfigurableApplicationContext) context;
+                try (Environment ignored = configurableContext.getEnvironment().start()) {
+                    configurableContext.configure();
+                    dependencyInjectionErrors = injectionValidator.validate(configurableContext);
+                }
+            } catch (Exception e) {
+                throw new IllegalStateException("Dependency injection validation failed", e);
+            }
         }
 
         Path jsonFile = null;
@@ -230,5 +292,62 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
             case "all-beans" -> DependencyInjectionValidationStrategy.ALL_BEANS;
             default -> throw new IllegalArgumentException("Invalid value for --dependency-injection-validation-strategy. Use reachable|application-beans|all-beans");
         };
+    }
+
+    /**
+     * Hides the service registrations of the Test Resources client, so that validation never
+     * loads its property source loader or expression resolver.
+     */
+    static final class TestResourcesServicesHidingClassLoader extends ClassLoader {
+        static {
+            registerAsParallelCapable();
+        }
+
+        TestResourcesServicesHidingClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        @Override
+        public URL getResource(String name) {
+            URL resource = super.getResource(name);
+            if (resource != null && name.startsWith(SERVICES_PREFIX) && registersOnlyTestResources(resource)) {
+                Enumeration<URL> resources = getResources(name);
+                return resources.hasMoreElements() ? resources.nextElement() : null;
+            }
+            return resource;
+        }
+
+        @Override
+        public Enumeration<URL> getResources(String name) {
+            Enumeration<URL> resources;
+            try {
+                resources = super.getResources(name);
+            } catch (IOException e) {
+                return Collections.emptyEnumeration();
+            }
+            if (!name.startsWith(SERVICES_PREFIX)) {
+                return resources;
+            }
+            List<URL> visible = new ArrayList<>();
+            while (resources.hasMoreElements()) {
+                URL resource = resources.nextElement();
+                if (!registersOnlyTestResources(resource)) {
+                    visible.add(resource);
+                }
+            }
+            return Collections.enumeration(visible);
+        }
+
+        private static boolean registersOnlyTestResources(URL resource) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(resource.openStream(), StandardCharsets.UTF_8))) {
+                List<String> providers = reader.lines()
+                    .map(line -> line.replaceFirst("#.*", "").trim())
+                    .filter(line -> !line.isEmpty())
+                    .toList();
+                return !providers.isEmpty() && providers.stream().allMatch(provider -> provider.startsWith(TEST_RESOURCES_PACKAGE));
+            } catch (IOException e) {
+                return false;
+            }
+        }
     }
 }

@@ -21,6 +21,9 @@ dependencies {
     testImplementation(mn.micronaut.inject.java)
     testRuntimeOnly(mn.micronaut.context)
     testRuntimeOnly(mn.micronaut.http.server)
+    // pyronaut-dev bundles the Test Resources client beside the validator; validation must
+    // not use it.
+    testRuntimeOnly(libs.micronaut.test.resources.client)
 }
 
 application {
