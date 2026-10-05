@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -52,6 +53,23 @@ class TestResourcesServerCoordinateTest {
             new PyprojectModel.Dependencies(runtime, List.of(), List.of(), List.of(),
                 List.of(), List.of(), Map.of()),
             null, null, null, null, null, null, null, null, null, testResources, false));
+    }
+
+    private static PyprojectModel modelWithAdditionalModules(List<String> additionalModules) {
+        PyprojectModel.TestResources testResources = new PyprojectModel.TestResources(
+            true, Boolean.TRUE, "2.9.0", null, false, additionalModules, null, null, null, null,
+            null, Map.of(), Map.of(), null, null, null, List.of());
+        return new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(),
+            new PyprojectModel.Dependencies(List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, testResources, false));
+    }
+
+    private static List<String> additionalModuleCoordinates(List<String> additionalModules,
+                                                            Map<String, String> managedVersions) {
+        return new MavenClasspathResolver().coordinatesForScope(
+            modelWithAdditionalModules(additionalModules), InstallScope.TEST_RESOURCES_SERVER, managedVersions);
     }
 
     private static List<String> serverCoordinates(List<String> runtime) {
@@ -103,5 +121,68 @@ class TestResourcesServerCoordinateTest {
         ).classpath();
 
         assertTrue(classpath.isEmpty());
+    }
+
+    private static final String OLLAMA_TEST_RESOURCE =
+        "io.micronaut.langchain4j:micronaut-langchain4j-ollama-testresource";
+
+    @Test
+    void shortAdditionalModuleNameUsesTheTestResourcesVersion() {
+        List<String> coordinates = additionalModuleCoordinates(List.of("jdbc-mysql"), Map.of());
+
+        assertTrue(coordinates.contains("io.micronaut.testresources:micronaut-test-resources-jdbc-mysql:2.9.0"),
+            "a short module name maps to the Test Resources group and version: " + coordinates);
+    }
+
+    @Test
+    void versionlessTestResourcesCoordinateUsesTheTestResourcesVersion() {
+        List<String> coordinates = additionalModuleCoordinates(
+            List.of("io.micronaut.testresources:micronaut-test-resources-kafka"),
+            Map.of("io.micronaut.testresources:micronaut-test-resources-kafka", "9.9.9"));
+
+        assertTrue(coordinates.contains("io.micronaut.testresources:micronaut-test-resources-kafka:2.9.0"),
+            "a Test Resources coordinate follows the Test Resources version: " + coordinates);
+    }
+
+    @Test
+    void versionlessThirdPartyCoordinateUsesTheManagedVersion() {
+        List<String> coordinates = additionalModuleCoordinates(
+            List.of(OLLAMA_TEST_RESOURCE),
+            Map.of(OLLAMA_TEST_RESOURCE, "2.3.0"));
+
+        assertTrue(coordinates.contains(OLLAMA_TEST_RESOURCE + ":2.3.0"),
+            "a module outside the Test Resources group takes the BOM-managed version: " + coordinates);
+        assertFalse(coordinates.contains(OLLAMA_TEST_RESOURCE + ":2.9.0"),
+            "the Test Resources version must not be applied to another group: " + coordinates);
+    }
+
+    @Test
+    void versionlessThirdPartyCoordinateWithoutManagedVersionIsLeftForManagedResolution() {
+        List<String> coordinates = additionalModuleCoordinates(List.of(OLLAMA_TEST_RESOURCE), Map.of());
+
+        assertTrue(coordinates.contains(OLLAMA_TEST_RESOURCE),
+            "an unmanaged module is left versionless so resolution reports the missing version: " + coordinates);
+    }
+
+    @Test
+    void explicitAdditionalModuleVersionIsPreserved() {
+        List<String> coordinates = additionalModuleCoordinates(
+            List.of(OLLAMA_TEST_RESOURCE + ":1.0.0", "io.micronaut.testresources:micronaut-test-resources-kafka:2.8.0"),
+            Map.of(OLLAMA_TEST_RESOURCE, "2.3.0"));
+
+        assertTrue(coordinates.contains(OLLAMA_TEST_RESOURCE + ":1.0.0"), coordinates.toString());
+        assertTrue(coordinates.contains("io.micronaut.testresources:micronaut-test-resources-kafka:2.8.0"),
+            coordinates.toString());
+        assertEquals(1, coordinates.stream().filter(c -> c.startsWith(OLLAMA_TEST_RESOURCE)).count(),
+            coordinates.toString());
+    }
+
+    @Test
+    void additionalModulesStillHonorTheServerClasspathFilter() {
+        List<String> coordinates = additionalModuleCoordinates(
+            List.of("io.micronaut.testresources:micronaut-test-resources-client"), Map.of());
+
+        assertFalse(coordinates.stream().anyMatch(c -> c.startsWith("io.micronaut.testresources:micronaut-test-resources-client")),
+            "modules forbidden on the server classpath are still filtered: " + coordinates);
     }
 }
