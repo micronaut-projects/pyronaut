@@ -21,11 +21,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class PyronautDevNativeArgumentsTest {
     @Test
-    void reusableImagePreservesNettyRuntimeClasses() throws IOException {
+    void reusableImagePreservesNettyAndMicrometerRuntimeClasses() throws IOException {
         Path repositoryRoot = Path.of("").toAbsolutePath().normalize();
         while (repositoryRoot != null && !Files.isRegularFile(repositoryRoot.resolve("settings.gradle.kts"))) {
             repositoryRoot = repositoryRoot.getParent();
@@ -36,19 +37,30 @@ final class PyronautDevNativeArgumentsTest {
         int argsStart = buildScript.indexOf("val nativeImageRuntimeArgs = listOf(");
         int argsEnd = buildScript.indexOf("val nativeImageBuildReportArgs", argsStart);
         assertTrue(argsStart >= 0 && argsEnd > argsStart, "Could not locate nativeImageRuntimeArgs");
+        String nativeImageArgs = buildScript.substring(argsStart, argsEnd);
         assertTrue(
-            buildScript.substring(argsStart, argsEnd).contains("-H:Preserve=package=io.netty.handler.logging.*"),
+            nativeImageArgs.contains("-H:Preserve=package=io.netty.handler.logging.*"),
             "The reusable image must preserve Netty logging classes"
         );
         assertTrue(
-            buildScript.substring(argsStart, argsEnd).contains("-H:Preserve=package=io.netty.util.internal\""),
+            nativeImageArgs.contains("-H:Preserve=package=io.netty.util.internal\""),
             "The reusable image must preserve direct Netty internal classes"
         );
         for (String corePackage : new String[] {"io", "value", "bind", "execution", "convert"}) {
             assertTrue(
-                buildScript.substring(argsStart, argsEnd).contains("-H:Preserve=package=io.micronaut.core." + corePackage + ".*\""),
+                nativeImageArgs.contains("-H:Preserve=package=io.micronaut.core." + corePackage + ".*\""),
                 "Python host access needs reflection metadata for io.micronaut.core." + corePackage
             );
         }
+        assertAll(
+            () -> assertTrue(
+                nativeImageArgs.contains("-H:Preserve=package=io.netty.handler.codec\""),
+                "The reusable image must preserve direct Netty codec classes"
+            ),
+            () -> assertTrue(
+                nativeImageArgs.contains("-H:Preserve=package=io.micrometer.core.instrument\""),
+                "The reusable image must preserve direct Micrometer instrument classes"
+            )
+        );
     }
 }
