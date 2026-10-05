@@ -7323,7 +7323,21 @@ additional-modules = ["jdbc-mysql"]</code></pre>
 </div>
 <div class="paragraph">
 <p><code>infer-classpath</code> lets Pyronaut infer test resources modules from application dependencies.
-Use <code>additional-modules</code> when Pyronaut cannot infer a module or when you want to select modules explicitly.</p>
+Use <code>additional-modules</code> when Pyronaut cannot infer a module or when you want to select modules explicitly.
+An entry can be a short Test Resources module name such as <code>jdbc-mysql</code>, a <code>group:artifact</code> coordinate, or a <code>group:artifact:version</code> coordinate:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Short names and versionless <code>io.micronaut.testresources</code> coordinates use the Test Resources version.</p>
+</li>
+<li>
+<p>Versionless coordinates in any other group use the version managed by the Micronaut platform BOM (<code>[tool.pyronaut.platform]</code>) or a configured BOM, for example <code>"io.micronaut.langchain4j:micronaut-langchain4j-ollama-testresource"</code>. If no BOM manages the module, add an explicit version.</p>
+</li>
+<li>
+<p>An explicit version is always used as written.</p>
+</li>
+</ul>
 </div>
 </div>
 </div>
