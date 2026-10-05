@@ -87,6 +87,7 @@ import java.util.stream.Collectors;
 @SuppressWarnings({"checkstyle:InnerTypeLast", "checkstyle:NeedBraces"})
 final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_CLIENT_MODULE = "io.micronaut.testresources:micronaut-test-resources-client";
+    private static final String TEST_RESOURCES_GROUP = "io.micronaut.testresources";
     private static final String TEST_RESOURCES_SERVER_MODULE = "io.micronaut.testresources:micronaut-test-resources-server";
     private static final String TEST_RESOURCES_CONTROL_PANEL_MODULE = "io.micronaut.testresources:micronaut-test-resources-control-panel";
     private static final String NASHORN_MODULE = "org.openjdk.nashorn:nashorn-core";
@@ -734,7 +735,7 @@ final class MavenClasspathResolver {
 
         List<String> additionalModules = testResources.additionalModules() == null ? List.of() : testResources.additionalModules();
         for (String additionalModule : additionalModules) {
-            MavenDependency normalized = normalizeAdditionalModuleCoordinate(additionalModule, version);
+            MavenDependency normalized = normalizeAdditionalModuleCoordinate(additionalModule, version, managedVersions);
             if (normalized != null) {
                 coordinates.add(normalized);
             }
@@ -840,7 +841,20 @@ final class MavenClasspathResolver {
         return List.copyOf(appCoordinates);
     }
 
-    private MavenDependency normalizeAdditionalModuleCoordinate(String value, String testResourcesVersion) {
+    /**
+     * Normalizes an entry of {@code [tool.pyronaut.test-resources].additional-modules}.
+     *
+     * <p>A short module name ({@code jdbc-mysql}) and a versionless coordinate in the
+     * {@code io.micronaut.testresources} group take the Test Resources version. A
+     * versionless coordinate in any other group takes the version managed by the
+     * platform BOM or a configured BOM; when nothing manages it the version is left
+     * empty, so it fails later with the same "no managed version" error as a
+     * versionless {@code runtime} or {@code test} dependency. An explicit
+     * {@code group:artifact:version} is kept as written.</p>
+     */
+    private MavenDependency normalizeAdditionalModuleCoordinate(String value,
+                                                                String testResourcesVersion,
+                                                                Map<String, String> managedVersions) {
         if (value == null) {
             return null;
         }
@@ -851,7 +865,10 @@ final class MavenClasspathResolver {
         if (trimmed.contains(":")) {
             String[] parts = trimmed.split(":");
             if (parts.length == 2) {
-                return new MavenDependency(parts[0], parts[1], testResourcesVersion);
+                String version = TEST_RESOURCES_GROUP.equals(parts[0])
+                    ? testResourcesVersion
+                    : normalizedVersion(managedVersions.get(parts[0] + ":" + parts[1]));
+                return new MavenDependency(parts[0], parts[1], version);
             }
             if (parts.length == 3) {
                 return new MavenDependency(parts[0], parts[1], parts[2]);
@@ -862,7 +879,7 @@ final class MavenClasspathResolver {
         String artifactId = trimmed.startsWith("micronaut-test-resources-")
             ? trimmed
             : "micronaut-test-resources-" + trimmed;
-        return new MavenDependency("io.micronaut.testresources", artifactId, testResourcesVersion);
+        return new MavenDependency(TEST_RESOURCES_GROUP, artifactId, testResourcesVersion);
     }
 
     private boolean isDependencyAllowedOnServerClasspath(MavenDependency dependency) {
