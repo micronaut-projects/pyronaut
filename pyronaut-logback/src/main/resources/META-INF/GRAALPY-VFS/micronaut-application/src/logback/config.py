@@ -4,6 +4,7 @@ Configuration module for pyronaut logback.
 
 import logging
 import logging.config
+from contextlib import contextmanager
 
 # Import Java classes using GraalPy java.type
 try:
@@ -12,6 +13,60 @@ try:
 except (ImportError, KeyError):
     # Fallback for environments where java is unavailable or host symbol lookup is denied.
     LogbackConfigurer = None
+
+
+@contextmanager
+def capture_logs(logger=None, level=None):
+    """Capture Logback events as Python LogRecords, populated when the scope exits.
+
+    Accept a logging.Logger or logger name; default to the root logger. An optional
+    level temporarily changes the Java logger level, not Python's filtering.
+    Await event producers before exiting. Do not reconfigure logging in the scope
+    or overlap level-changing scopes for the same logger across threads.
+    """
+    if logger is None:
+        logger = logging.getLogger()
+    if isinstance(logger, logging.Logger):
+        logger = logger.name
+    if not isinstance(logger, str):
+        raise TypeError("logger must be a logging.Logger or logger name")
+    if not LogbackConfigurer:
+        raise RuntimeError("capture_logs requires the Java Logback backend")
+    try:
+        capture_level = LogbackConfigurer.toLogbackLevel(level)
+    except java.type("java.lang.IllegalArgumentException") as exc:
+        raise ValueError(str(exc)) from exc
+
+    java_logger = LogbackConfigurer.getLogger(logger)
+    previous_level = java_logger.getLevel()
+    appender = java.type("ch.qos.logback.core.read.ListAppender")()
+    appender.setContext(java_logger.getLoggerContext())
+    # Java-only callbacks; a synchronized snapshot also tolerates other producers.
+    appender.list = java.type("java.util.Collections").synchronizedList(java.type("java.util.ArrayList")())
+    records = []
+    try:
+        if level is not None:
+            java_logger.setLevel(capture_level)
+        appender.start()
+        java_logger.addAppender(appender)
+        yield records
+    finally:
+        java_logger.detachAppender(appender)
+        appender.stop()
+        if level is not None:
+            java_logger.setLevel(previous_level)
+        for event in appender.list.toArray():
+            level_name = str(event.getLevel())
+            level_number = 5 if level_name == "TRACE" else getattr(logging, level_name)
+            record = logging.LogRecord(str(event.getLoggerName()), level_number, "", 0,
+                                       str(event.getFormattedMessage()), (), None)
+            if level_name == "TRACE":
+                record.levelname = "TRACE"
+            record.created = event.getTimeStamp() / 1000
+            record.msecs = event.getTimeStamp() % 1000
+            # ListAppender does not eagerly preserve the emitter's thread/caller.
+            record.thread = record.threadName = None
+            records.append(record)
 
 
 def _level_to_python(level):

@@ -8,6 +8,6 @@ Usage:
     from logback.config import dictConfig
 """
 
-from .config import dictConfig
+from .config import capture_logs, dictConfig
 
-__all__ = ['dictConfig']
+__all__ = ['capture_logs', 'dictConfig']
