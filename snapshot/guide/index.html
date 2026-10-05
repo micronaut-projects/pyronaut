@@ -3530,6 +3530,12 @@ class DemoController:
         return "exchange: " + response.body()</code></pre>
 </div>
 </div>
+<div class="paragraph">
+<p>A failed await raises the Java exception itself, exactly as the blocking call does, so you handle it with <code>except</code> on the Java type, for example <code>except HttpClientResponseException as e:</code>. As with a blocking Java call, <code>except Exception</code> does not catch a Java exception; use the Java type, a Java superclass such as <code>java.lang.RuntimeException</code>, or <code>BaseException</code>.</p>
+</div>
+<div class="paragraph">
+<p>Any <code>CompletionStage</code> (such as a <code>CompletableFuture</code>) or Reactive Streams <code>Publisher</code> returned by a Java call is awaitable. A publisher awaits to its first item, so <code>await Mono.from_(publisher)</code> and <code>await Mono.from_(publisher).toFuture()</code> both work.</p>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -3645,7 +3651,7 @@ enabled = false</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>The <code>micronaut-context-python-netty</code> module provides the Netty-backed event loop. The launchers used by <code>pyronaut dev</code> and <code>pyronaut run</code> include it, so you do not need to declare a dependency.</p>
+<p>The <code>micronaut-context-python-netty</code> module provides the Netty-backed event loop. The launchers used by <code>pyronaut dev</code>, <code>pyronaut run</code> and <code>pyronaut test</code>, and the artifacts <code>pyronaut build</code> produces, include it, so you do not need to declare a dependency.</p>
 </div>
 </div>
 </div>
