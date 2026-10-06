@@ -36,6 +36,54 @@ class PyronautDevReloadTest {
     }
 
     @Test
+    void inANativeLaunchTheProcessorsTheImageHoldsRunFromTheImage() throws Exception {
+        Path processors = project.resolve("repo");
+        List<Path> path = List.of(
+            processors.resolve("micronaut-inject-java-5.3.0-SNAPSHOT.jar"),
+            processors.resolve("micronaut-inject-5.3.0-SNAPSHOT.jar"),
+            processors.resolve("micronaut-data-processor-5.0.0.jar"),
+            processors.resolve("acme-processor-1.0.jar"),
+            processors.resolve("classes"));
+        // outside a native launch the CLI names no provided artifact
+        assertEquals(path, DevReloadFiles.withoutNativeProvidedArtifacts("", path));
+        // micronaut-inject is provided, micronaut-inject-java is not: only the jar of the artifact itself goes
+        assertEquals(
+            List.of(path.get(0), path.get(3), path.get(4)),
+            DevReloadFiles.withoutNativeProvidedArtifacts("io.micronaut:micronaut-inject, io.micronaut.data:micronaut-data-processor", path));
+        // the CLI names them in a manifest, one per line, to keep the command line short
+        Path manifest = project.resolve("native-provided-classpath.txt");
+        Files.writeString(manifest, "# provided\nio.micronaut:micronaut-inject\nio.micronaut.data:micronaut-data-processor\n");
+        String previous = System.getProperty("pyronaut.dev.native.provided.artifacts");
+        try {
+            System.setProperty("pyronaut.dev.native.provided.artifacts", "@" + manifest);
+            assertEquals(List.of(path.get(0), path.get(3), path.get(4)), DevReloadFiles.withoutNativeProvidedArtifacts(path));
+        } finally {
+            if (previous == null) {
+                System.clearProperty("pyronaut.dev.native.provided.artifacts");
+            } else {
+                System.setProperty("pyronaut.dev.native.provided.artifacts", previous);
+            }
+        }
+    }
+
+    @Test
+    void theNativeRunCommandCreatesTheDevelopmentRuntimeOnlyWhenTheCliAsksForIt() {
+        String previous = System.getProperty("pyronaut.dev.reload");
+        try {
+            System.clearProperty("pyronaut.dev.reload");
+            assertEquals(null, new PyronautDevRun().createDevelopmentRuntime());
+            System.setProperty("pyronaut.dev.reload", "true");
+            assertTrue(new PyronautDevRun().createDevelopmentRuntime() instanceof PyronautDevReload);
+        } finally {
+            if (previous == null) {
+                System.clearProperty("pyronaut.dev.reload");
+            } else {
+                System.setProperty("pyronaut.dev.reload", previous);
+            }
+        }
+    }
+
+    @Test
     void theManifestCompilesTheJavaSourcesWithThePythonModuleIntoTheProcessedClasses() throws Exception {
         Path classes = Files.createDirectories(project.resolve("__pyronaut__/classes"));
         Path python = Files.createDirectories(project.resolve("src"));

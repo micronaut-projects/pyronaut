@@ -4116,11 +4116,152 @@ type = "{toolchain}"
             project_dir = self._reload_project(temp_dir)
             self.assertTrue(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
 
-    def test_dev_restarts_the_process_on_the_native_toolchain(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
+    def test_dev_restarts_the_process_on_the_native_toolchain_without_an_image_holding_micronaut_dev(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli, "_resolve_pyronaut_dev_native_executable", return_value=None):
             project_dir = self._reload_project(temp_dir, toolchain="native")
             self.assertFalse(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
             self.assertTrue(cli._dev_reload_in_process(project_dir, ["--jvm"]))  # noqa: SLF001
+
+    def test_dev_reloads_in_process_on_the_native_toolchain_when_the_image_holds_micronaut_dev(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # the image provides micronaut-dev: the project's development runtime need not
+            project_dir = self._reload_project(temp_dir, toolchain="native", dev_jar=False)
+            native_dev = Path(temp_dir) / "image" / "pyronaut-dev"
+            native_dev.parent.mkdir()
+            native_dev.write_text("", encoding="utf-8")
+            provided = native_dev.parent / "native-provided-classpath.txt"
+            provided.write_text("io.micronaut:micronaut-context\nio.micronaut:micronaut-dev-livereload\n", encoding="utf-8")
+            with patch.object(cli, "_resolve_pyronaut_dev_native_executable", return_value=str(native_dev)):
+                # an image built before it held the development runtime restarts the process
+                self.assertFalse(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+                provided.write_text(
+                    "io.micronaut:micronaut-context\nio.micronaut:micronaut-dev\nio.micronaut:micronaut-dev-livereload\n",
+                    encoding="utf-8",
+                )
+                self.assertTrue(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+                pyproject = project_dir / "pyproject.toml"
+                pyproject.write_text(
+                    pyproject.read_text(encoding="utf-8") + '\n[tool.pyronaut.dev]\nreload = "process"\n',
+                    encoding="utf-8",
+                )
+                # the opt-out
+                self.assertFalse(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
+            with patch.object(cli, "_resolve_pyronaut_dev_native_executable", return_value=None):
+                self.assertFalse(cli._dev_reload_in_process(self._reload_project(temp_dir, toolchain="native"), []))  # noqa: SLF001
+
+    def test_native_reloading_dev_asks_the_image_for_the_development_runtime_on_its_command_line(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            native_dev = root / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            project_dir = self._write_disabled_test_resources_project(root, toolchain="native")
+            args = ["--project-dir", str(project_dir), "--port", "9000", "-Dmicronaut.dev.max-generations=3"]
+            with patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None,
+            ):
+                reloading, _ = cli._build_dev_delegate_invocation(  # noqa: SLF001
+                    args, self._resolver(), debug_vm=False, env_overrides=None, java_home_provider=None, reload_in_process=True,
+                )
+                restarting, _ = cli._build_dev_delegate_invocation(  # noqa: SLF001
+                    args, self._resolver(), debug_vm=False, env_overrides=None, java_home_provider=None,
+                )
+
+        run = reloading.index("run")
+        self.assertEqual(str(native_dev), reloading[0])
+        # a native image reads no JAVA_TOOL_OPTIONS: the properties precede the command
+        for value in ("-Dpyronaut.dev.reload=true", "-Dmicronaut.server.port=9000", "-Dmicronaut.dev.max-generations=3"):
+            self.assertIn(value, reloading[:run])
+            self.assertNotIn(value, reloading[run:])
+        self.assertNotIn("-Dpyronaut.dev.reload=true", restarting)
+        self.assertIn("-Dmicronaut.server.port=9000", restarting[:restarting.index("run")])
+
+    def _relaunch_cycle(
+        self, temp_dir: str, *, reload_in_process: bool, statuses: list[int], marked: bool = True
+    ) -> tuple[int, list, list, str]:
+        launched: list = []
+        preflights: list = []
+        project_dir = self._reload_project(temp_dir)
+        marker = project_dir / "__pyronaut__" / "micronaut-dev" / "relaunch"
+
+        class Process:
+            def __init__(self, status: int):
+                self.status = status
+
+            def poll(self):
+                return self.status
+
+        def process_runner(command_line, env):
+            launched.append(command_line)
+            # a marker left by an earlier process never counts
+            self.assertFalse(marker.exists())
+            status = statuses[len(launched) - 1]
+            if status == cli.DEV_RELAUNCH_STATUS and marked:
+                # the runtime marks the exit as its own before it exits
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text("generation budget spent\n", encoding="utf-8")
+            return Process(status)
+
+        def preflight(*args, **kwargs):
+            preflights.append(args)
+            return cli.SUCCESS
+
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("stale\n", encoding="utf-8")
+        stderr = io.StringIO()
+        with patch.object(cli, "_dev_reload_in_process", return_value=reload_in_process), patch.object(
+            cli, "_build_dev_delegate_invocation", return_value=(["pyronaut-dev", "run"], {})
+        ), patch.object(cli, "_run_preflight", side_effect=preflight), redirect_stderr(stderr):
+            code = cli._run_with_auto_restart(  # noqa: SLF001
+                project_dir,
+                ["--project-dir", str(project_dir)],
+                False,
+                lambda command_line, env: 0,
+                process_runner,
+                self._resolver(),
+                debug_vm=False,
+                env_overrides=None,
+                initial_preflight_done=True,
+                poll_interval=0.01,
+                debounce_seconds=0.0,
+                snapshotter=lambda path: (),
+                monotonic=time.monotonic,
+                sleep=lambda seconds: None,
+                java_home_provider=None,
+                local_repository=None,
+            )
+        return code, launched, preflights, stderr.getvalue()
+
+    def test_dev_relaunches_the_process_when_the_runtime_spends_its_generation_budget(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            code, launched, preflights, stderr = self._relaunch_cycle(
+                temp_dir, reload_in_process=True, statuses=[cli.DEV_RELAUNCH_STATUS, cli.DEV_RELAUNCH_STATUS, 0]
+            )
+        self.assertEqual(0, code)
+        self.assertEqual(3, len(launched))
+        # the project is processed again before each relaunch, as before a process restart
+        self.assertEqual(2, len(preflights))
+        self.assertIn("relaunching", stderr)
+
+    def test_dev_returns_the_status_of_an_application_that_exits_with_the_relaunch_status_itself(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            code, launched, preflights, _ = self._relaunch_cycle(
+                temp_dir, reload_in_process=True, statuses=[cli.DEV_RELAUNCH_STATUS], marked=False
+            )
+        self.assertEqual(cli.DEV_RELAUNCH_STATUS, code)
+        self.assertEqual(1, len(launched))
+        self.assertEqual([], preflights)
+
+    def test_dev_returns_the_relaunch_status_of_a_process_that_does_not_reload_in_process(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            code, launched, preflights, _ = self._relaunch_cycle(
+                temp_dir, reload_in_process=False, statuses=[cli.DEV_RELAUNCH_STATUS]
+            )
+        self.assertEqual(cli.DEV_RELAUNCH_STATUS, code)
+        self.assertEqual(1, len(launched))
+        self.assertEqual([], preflights)
 
     def test_dev_restarts_the_process_when_configured_or_without_micronaut_dev(self):
         with tempfile.TemporaryDirectory() as temp_dir:
