@@ -63,13 +63,17 @@ class MavenClasspathResolverScopeTest {
     private static List<String> projectCoordinates(PyprojectModel.Project project, InstallScope scope) {
         PyprojectModel base = model();
         return new MavenClasspathResolver().coordinatesForScope(
-            new PyprojectModel(project, null, base.pyronaut()), scope, Map.of(MICRONAUT_DEV, "5.3.0"));
+            new PyprojectModel(project, null, base.pyronaut()), scope,
+            Map.of(MICRONAUT_DEV, "5.3.0", MICRONAUT_DEV + "-test-report", "5.3.0", MICRONAUT_DEV + "-livereload", "5.3.0"));
     }
 
     @Test
     void addsTheReloadingRuntimeToTheDevelopmentRuntimeOfAProjectOnly() {
         PyprojectModel.Project project = new PyprojectModel.Project("demo", "1.0.0", List.of());
         assertTrue(projectCoordinates(project, InstallScope.DEVELOPMENT_RUNTIME).contains(MICRONAUT_DEV + ":5.3.0"));
+        // the live test report of test mode, and the LiveReload server that serves it
+        assertTrue(projectCoordinates(project, InstallScope.DEVELOPMENT_RUNTIME).contains(MICRONAUT_DEV + "-test-report:5.3.0"));
+        assertTrue(projectCoordinates(project, InstallScope.DEVELOPMENT_RUNTIME).contains(MICRONAUT_DEV + "-livereload:5.3.0"));
         assertFalse(projectCoordinates(project, InstallScope.RUNTIME).stream().anyMatch(c -> c.startsWith(MICRONAUT_DEV + ":")));
         assertFalse(projectCoordinates(project, InstallScope.TEST).stream().anyMatch(c -> c.startsWith(MICRONAUT_DEV + ":")));
         // the development support resolved for an external build has no [project]
