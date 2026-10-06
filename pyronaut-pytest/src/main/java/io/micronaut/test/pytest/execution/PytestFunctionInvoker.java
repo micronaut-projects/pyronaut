@@ -15,12 +15,14 @@
  */
 package io.micronaut.test.pytest.execution;
 
-import org.graalvm.polyglot.PolyglotException;
+import io.micronaut.context.python.PythonAsyncioRuntime;
 import io.micronaut.test.pytest.extension.PytestMicronautExtension;
+import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Value;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.concurrent.CompletionException;
 
 /**
  * Executes pytest test functions behind a Java boundary so foreign exceptions
@@ -46,7 +48,11 @@ public final class PytestFunctionInvoker {
     public static Result call(Value callable, String testName) {
         try {
             PytestMicronautExtension.interceptTestBody(() -> {
-                callable.executeVoid();
+                Value result = callable.execute();
+                // Lifecycle calls also use this invoker and may return a Java application context.
+                if (!result.isHostObject() && result.canInvokeMember("__await__")) {
+                    PythonAsyncioRuntime.toCompletionStage(result).toCompletableFuture().join();
+                }
                 return null;
             }, testName);
             return Result.success();
@@ -88,6 +94,9 @@ public final class PytestFunctionInvoker {
         }
 
         private static Throwable unwrapHostException(Throwable error) {
+            if (error instanceof CompletionException && error.getCause() != null) {
+                return unwrapHostException(error.getCause());
+            }
             if (error instanceof PolyglotException polyglotException && polyglotException.isHostException()) {
                 return polyglotException.asHostException();
             }

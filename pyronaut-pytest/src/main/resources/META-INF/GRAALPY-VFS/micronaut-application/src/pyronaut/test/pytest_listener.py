@@ -10,7 +10,6 @@ from typing import Optional, Any
 import sys
 import traceback
 import java
-import inspect
 from typing import get_origin, get_args
 
 PytestFunctionInvoker = java.type("io.micronaut.test.pytest.execution.PytestFunctionInvoker")
@@ -200,8 +199,6 @@ class MicronautPytestPlugin:
     def pytest_pyfunc_call(self, pyfuncitem):
         """Run Python test functions behind the Java foreign-exception boundary."""
         testfunction = pyfuncitem.obj
-        if inspect.iscoroutinefunction(testfunction):
-            return None
         fixtureinfo = getattr(pyfuncitem, "_fixtureinfo", None)
         if fixtureinfo is None:
             return None
