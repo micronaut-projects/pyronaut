@@ -5993,28 +5993,9 @@ def _build_dev_delegate_invocation(
     )
     if dev_command_line is not None:
         dev_command_line = [value for value in dev_command_line if value not in {"--jvm", "--native"}]
-        # The native launcher accepts only its subcommand and source selectors;
-        # convenience JVM properties are applied by the Python/fallback path.
-        # Do not leak them into native picocli parsing.
-        if _control_panel_requested(project_dir, args):
-            executable_path = _resolve_pyronaut_dev_native_executable(resolver)
-            control_panel = _select_control_panel_entries(
-                _direct_control_panel_classpath_entries(executable_path),
-                _control_panel_application_entries(project_dir),
-            )
-            if control_panel:
-                classpath_property = next((i for i, value in enumerate(dev_command_line) if value.startswith("-Djava.class.path=")), None)
-                if classpath_property is not None:
-                    existing = dev_command_line[classpath_property].split("=", 1)[1]
-                    dev_command_line[classpath_property] = f"-Djava.class.path={os.pathsep.join(dict.fromkeys([existing, *control_panel]))}"
-                command_index = dev_command_line.index("run")
-                dev_command_line[command_index:command_index] = [
-                    "-Dmicronaut.control-panel.enabled=true",
-                    "-Dmicronaut.control-panel.path=/control-panel",
-                    "-Dmicronaut.control-panel.security.access=ANONYMOUS",
-                    f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}",
-                ]
-        env = _build_non_test_resources_env("dev", java_home_provider)
+        # _pyronaut_dev_native_command_line adds the selected Control Panel
+        # modules for the "dev" classpath command.
+        env =_build_non_test_resources_env("dev", java_home_provider)
         if dev_jvm_args:
             env["JAVA_TOOL_OPTIONS"] = " ".join(dev_jvm_args)
         env = _merge_env_overrides(env, env_overrides)
@@ -8705,7 +8686,12 @@ def _pyronaut_dev_native_command_line(
         classpath_command = "run" if effective_classpath_command == "validate-config" else effective_classpath_command
         classpath = _build_native_application_classpath(classpath_command, project_dir, executable_path)
         if effective_classpath_command == "dev" and _control_panel_requested(project_dir, args):
-            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            # Optional panels (object storage, Kafka, ...) fail to load their
+            # bean definitions when the library they inspect is absent.
+            control_panel = _select_control_panel_entries(
+                _direct_control_panel_classpath_entries(executable_path),
+                _control_panel_application_entries(project_dir),
+            )
             if control_panel:
                 classpath = os.pathsep.join(dict.fromkeys([classpath, *control_panel]))
                 jvm_args.extend((
