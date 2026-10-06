@@ -267,7 +267,8 @@ public final class LogbackConfigurer {
      * @return the logback level, or {@code null} for {@code NOTSET} (inherit from the parent logger)
      * @throws IllegalArgumentException if the level name is not recognised
      */
-    static @Nullable Level toLogbackLevel(@Nullable Object level) {
+    @Internal
+    public static @Nullable Level toLogbackLevel(@Nullable Object level) {
         if (level == null) {
             return null;
         }

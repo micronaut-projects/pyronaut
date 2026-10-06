@@ -22,6 +22,7 @@ dependencies {
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation("org.awaitility:awaitility:4.3.0")
     testImplementation(mn.micronaut.context.python)
+    testImplementation(mn.micronaut.http)
     testImplementation(mn.graalpy) {
         artifact {
             type = "pom"

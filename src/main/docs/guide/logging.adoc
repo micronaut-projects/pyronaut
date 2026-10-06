@@ -168,6 +168,29 @@ logger.warning("Slow response from %s", service)
 
 The adapter formats messages with Python's `%` arguments and then passes them to Logback, so `%s` placeholders and lazy formatting work as usual.
 
+== Capturing log messages in tests
+
+Use `capture_logs` to capture Python and framework Logback messages without importing Java logging APIs:
+
+[source,python]
+----
+import logging
+from logback import capture_logs
+
+logger = logging.getLogger(__name__)
+with capture_logs(logger, level="TRACE") as records:
+    logger.warning("Processing request")
+
+assert records[0].getMessage() == "Processing request"
+assert records[0].levelno == logging.WARNING
+----
+
+The argument can also be a logger name; omit it to capture the root logger. The optional level accepts the same names and numbers as `dictConfig`. It temporarily changes the Java logger level and restores the previous level, including inherited levels, even when the body raises an exception. Python's own logger level still controls Python calls. Existing appenders and propagation remain unchanged.
+
+The returned list is populated with Python `logging.LogRecord` values only when the scope exits. Java event threads never call Python to capture a message. Records preserve the logger name, formatted message, timestamp and level; `TRACE` uses `levelno=5` and `levelname="TRACE"`. Emitter-thread and caller information are not available.
+
+Complete requests and await or join asynchronous producers before leaving the scope. Do not reconfigure logging while capture is active or overlap level-changing scopes on the same logger across threads. Capturing requires the Java Logback backend; it raises `RuntimeError` when that backend is unavailable.
+
 == Combining with logback.xml
 
 Micronaut applications can also ship a `logback.xml` in the `config` directory. The shared Logback context applies loggers and appenders declared there to Python loggers too because the adapter delivers Python records to that context. Use `logback.xml` for appenders that need nested configuration and `dictConfig` for settings you want to keep in Python.

@@ -1,8 +1,15 @@
 {
   "reflection": [
+    {"type": "java.lang.IllegalArgumentException"},
     {
       "type": "io.micronaut.pyronaut.logback.LogbackConfigurer",
       "methods": [
+        {
+          "name": "toLogbackLevel",
+          "parameterTypes": [
+            "java.lang.Object"
+          ]
+        },
         {
           "name": "configure",
           "parameterTypes": [
@@ -63,6 +70,11 @@
     {
       "type": "ch.qos.logback.classic.Logger",
       "methods": [
+        {"name": "getLevel", "parameterTypes": []},
+        {"name": "setLevel", "parameterTypes": ["ch.qos.logback.classic.Level"]},
+        {"name": "getLoggerContext", "parameterTypes": []},
+        {"name": "addAppender", "parameterTypes": ["ch.qos.logback.core.Appender"]},
+        {"name": "detachAppender", "parameterTypes": ["ch.qos.logback.core.Appender"]},
         {
           "name": "error",
           "parameterTypes": [
@@ -93,6 +105,33 @@
             "java.lang.String"
           ]
         }
+      ]
+    },
+    {
+      "type": "ch.qos.logback.core.read.ListAppender",
+      "allPublicMethods": true,
+      "methods": [{"name": "<init>", "parameterTypes": []}],
+      "fields": [{"name": "list"}]
+    },
+    {
+      "type": "java.util.ArrayList",
+      "methods": [{"name": "<init>", "parameterTypes": []}]
+    },
+    {
+      "type": "java.util.Collections",
+      "methods": [{"name": "synchronizedList", "parameterTypes": ["java.util.List"]}]
+    },
+    {
+      "type": "java.util.List",
+      "methods": [{"name": "toArray", "parameterTypes": []}]
+    },
+    {
+      "type": "ch.qos.logback.classic.spi.ILoggingEvent",
+      "methods": [
+        {"name": "getLoggerName", "parameterTypes": []},
+        {"name": "getLevel", "parameterTypes": []},
+        {"name": "getFormattedMessage", "parameterTypes": []},
+        {"name": "getTimeStamp", "parameterTypes": []}
       ]
     }
   ],
