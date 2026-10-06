@@ -86,6 +86,7 @@ class PyronautNativeImageBuilderTest {
         assertTrue(command.contains("-H:Preserve=package=tools.jackson.core.*"));
         assertFalse(command.contains("-H:Preserve=package=com.google.gson.*"));
         assertFalse(command.contains("-H:Preserve=package=io.micronaut.expressions.*"));
+        assertFalse(command.contains("-H:Preserve=package=io.micronaut.core.io.*"));
     }
 
     @Test
@@ -155,6 +156,39 @@ class PyronautNativeImageBuilderTest {
         assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.convert.*"));
         assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.value.*"));
         assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.execution.*"));
+    }
+
+    @Test
+    void preservesMicronautCoreBufferApisFromJarClasspath() throws Exception {
+        Path classpathEntry = tempDir.resolve("micronaut-core-buffer.jar");
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(classpathEntry))) {
+            for (String entry : List.of(
+                "io/micronaut/core/io/buffer/ReferenceCounted.class",
+                "io/micronaut/core/io/buffer/ByteBuffer.class",
+                "io/micronaut/core/io/buffer/ByteBufferFactory.class"
+            )) {
+                output.putNextEntry(new ZipEntry(entry));
+                output.write(0);
+                output.closeEntry();
+            }
+        }
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.io.*"));
+    }
+
+    @Test
+    void preservesMicronautCoreBufferApisFromDirectoryClasspath() throws Exception {
+        Path classpathEntry = tempDir.resolve("micronaut-core-buffer");
+        Path packageDirectory = Files.createDirectories(classpathEntry.resolve("io/micronaut/core/io/buffer"));
+        for (String className : List.of("ReferenceCounted", "ByteBuffer", "ByteBufferFactory")) {
+            Files.createFile(packageDirectory.resolve(className + ".class"));
+        }
+
+        List<String> command = build(classpathEntry, false, false);
+
+        assertTrue(command.contains("-H:Preserve=package=io.micronaut.core.io.*"));
     }
 
     @Test

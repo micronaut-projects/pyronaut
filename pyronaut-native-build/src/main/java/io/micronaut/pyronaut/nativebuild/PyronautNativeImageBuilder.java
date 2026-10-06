@@ -699,7 +699,7 @@ public final class PyronautNativeImageBuilder {
             if (Files.isDirectory(entry)) {
                 Path packageDirectory = entry.resolve(prefix);
                 if (Files.isDirectory(packageDirectory)) {
-                    try (var files = Files.walk(packageDirectory, 1)) {
+                    try (var files = Files.walk(packageDirectory)) {
                         if (files.anyMatch(path -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(".class"))) {
                             return true;
                         }
