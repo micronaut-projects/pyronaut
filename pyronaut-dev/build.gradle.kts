@@ -77,6 +77,8 @@ dependencies {
     // each generation's classes defined at runtime (-H:+RuntimeClassLoading)
     implementation("io.micronaut:micronaut-dev:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
     implementation("io.micronaut:micronaut-dev-livereload:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
+    // the live HTML report of test mode, which pyronaut test -t runs in process in the image too
+    implementation("io.micronaut:micronaut-dev-test-report:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
     testImplementation("io.micronaut:micronaut-dev:${providers.gradleProperty("pyronaut.micronaut.core.version").get()}")
 
     // CLI modules
@@ -551,6 +553,12 @@ val nativeImageRuntimeArgs = listOf(
     // the development runtime: its ApplicationContextConfigurer is a dynamic service, created reflectively. Not its
     // subpackages: the embedded Kotlin and Groovy compilers there reference compilers the image does not hold
     "-H:Preserve=package=io.micronaut.dev",
+    // test mode: its runners and report listeners are services, and the live report and LiveReload read their pages
+    // and scripts as resources
+    "-H:Preserve=package=io.micronaut.dev.test",
+    "-H:Preserve=package=io.micronaut.dev.test.report",
+    "-H:Preserve=package=io.micronaut.dev.livereload",
+    "-H:IncludeResources=META-INF/micronaut-dev/.*",
 
 
     /* netty.* */

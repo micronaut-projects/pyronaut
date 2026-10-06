@@ -107,6 +107,25 @@ class PyronautTestReloadTest {
     }
 
     @Test
+    void thePythonBytecodeSettingIsAddedUnlessTheOptionsHoldOne() {
+        assertEquals(List.of("-Aa=b", "-Amicronaut.python.bytecode=false"), DevReloadFiles.withPythonBytecode(List.of("-Aa=b"), false));
+        assertEquals(List.of("-Amicronaut.python.bytecode=false"), DevReloadFiles.withPythonBytecode(List.of("-Amicronaut.python.bytecode=false"), true));
+    }
+
+    @Test
+    void theOpenApiAdocOutputIsTurnedOffOnTheJvmUnlessTheBuildDependenciesHoldTheConverter() {
+        List<Path> visitor = List.of(Path.of("/repo/micronaut-openapi-7.3.0.jar"));
+        List<Path> withConverter = List.of(Path.of("/repo/micronaut-openapi-7.3.0.jar"), Path.of("/repo/micronaut-openapi-adoc-7.3.0.jar"));
+        assertEquals(List.of("-Aa=b", "-Amicronaut.openapi.adoc.enabled=false"), DevReloadFiles.withOpenApiAdoc(List.of("-Aa=b"), visitor, false));
+        assertEquals(List.of("-Aa=b"), DevReloadFiles.withOpenApiAdoc(List.of("-Aa=b"), withConverter, false));
+        // a native image holds the converter for pyronaut process too
+        assertEquals(List.of("-Aa=b"), DevReloadFiles.withOpenApiAdoc(List.of("-Aa=b"), visitor, true));
+        assertEquals(List.of("-Aa=b"), DevReloadFiles.withOpenApiAdoc(List.of("-Aa=b"), List.of(Path.of("/repo/micronaut-inject-5.3.0.jar")), false));
+        assertEquals(List.of("-Amicronaut.openapi.adoc.enabled=true"),
+            DevReloadFiles.withOpenApiAdoc(List.of("-Amicronaut.openapi.adoc.enabled=true"), visitor, false));
+    }
+
+    @Test
     void preparingTakesTheProcessedTestsOverFromThePyronautProcessor() throws Exception {
         PyronautTestReload.Layout layout = layout("");
         Path pyronaut = project.resolve("__pyronaut__");
@@ -132,7 +151,8 @@ class PyronautTestReloadTest {
         assertFalse(Files.exists(pyronaut.resolve("incremental/main")));
         assertTrue(Files.isDirectory(pyronaut.resolve("reports/tests")));
         DevManifest manifest = DevManifest.load(file);
-        assertEquals(List.of("-Amain=true"), manifest.compileOptions(SourceKind.PYTHON));
+        // the application compiles with the bytecode setting pyronaut process compiled it with, so that both write the same files
+        assertEquals(List.of("-Amain=true", "-Amicronaut.python.bytecode=true"), manifest.compileOptions(SourceKind.PYTHON));
         assertEquals(List.of("-Atest=true"), manifest.testView().compileOptions(SourceKind.PYTHON));
     }
 
