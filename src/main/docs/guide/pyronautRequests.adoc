@@ -1,5 +1,7 @@
 Pyronaut Requests provides a subset of the Python https://requests.readthedocs.io[`requests`] API and delegates HTTP work to the Micronaut HTTP client. Code that uses the supported API can keep `import requests`, and the client can also target an embedded server in tests.
 
+If standard Requests is installed in the virtual environment, `import requests` selects that package without replacing its transports, `Session`, or exceptions. The `requests.with_context` extension remains available for Micronaut-backed test clients. Use `from pyronaut import requests` to select the Micronaut-backed API explicitly, regardless of installed packages.
+
 Add it to the scope where you need it. For application code declare it under `runtime`; for tests only, under `test`:
 
 [source,toml]
@@ -16,13 +18,13 @@ Direct-source files can declare it inline with `Dependency(group="io.micronaut.p
 
 [source,python]
 ----
-import requests
+from pyronaut import requests
 
 response = requests.get("https://httpbin.org/get", params={"q": "pyronaut"})
 print(response.status_code, response.json())
 ----
 
-`import pyronaut.requests as requests` is equivalent to the `requests` shim and avoids shadowing a `requests` package installed in the virtual environment.
+`import pyronaut.requests as requests` also selects the Micronaut-backed API explicitly.
 
 == Supported API
 
