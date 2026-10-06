@@ -3,6 +3,10 @@ plugins {
     id("io.micronaut.build.internal.python")
 }
 
+micronautBuild {
+    python.testsEnabled.set(true)
+}
+
 dependencies {
     implementation(mn.micronaut.core)
     implementation(mn.micronaut.context.python)
