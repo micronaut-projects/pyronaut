@@ -22,8 +22,27 @@ https://docs.micronaut.io/latest/api/[Micronaut API reference] lists `io.microna
 `micronaut.http.annotation.Get`. Packages that do not start with `io.micronaut` keep their original names, such as
 `jakarta.inject.Singleton` and `jakarta.validation.constraints.NotBlank`.
 
-Pass annotation members as keyword arguments, for example `@Get(value="/", produces="text/plain")`, or pass a single
-positional argument for the `value` member, as in `@Get("/")`. A decorator on a Python class corresponds to a type-level
+=== Import through the Pyronaut facades
+
+Importing one Java package at a time works everywhere, but the recommended shorthand is a Pyronaut facade: a curated
+Python module that gathers the types of several Java packages under one name. The example above becomes:
+
+[source,python]
+----
+from pyronaut import http
+
+
+@http.Get(value="/", produces=http.TEXT_PLAIN)
+def index() -> str:
+    return "Hello from Pyronaut"
+----
+
+The compiler resolves `http.Get` to `io.micronaut.http.annotation.Get`, so the generated code and runtime behavior are
+identical to the direct import. The rest of this guide uses facades where one covers the type and direct imports
+otherwise; the two styles mix freely. See <<facades,Pyronaut Facades>> for the full list.
+
+Pass annotation members as keyword arguments, for example `@http.Get(value="/", produces="text/plain")`, or pass a single
+positional argument for the `value` member, as in `@http.Get("/")`. A decorator on a Python class corresponds to a type-level
 annotation. A decorator on a function or method corresponds to a method-level annotation.
 
 Use `typing.Annotated` for annotations that Java applies to fields or parameters. It keeps the type hint and annotation
@@ -33,15 +52,17 @@ together:
 ----
 from typing import Annotated
 
-from jakarta.validation.constraints import NotBlank, Size
-from micronaut.http.annotation import Body
+from pyronaut import http, validation
 
 
-def save(name: Annotated[str, NotBlank, Size(min=1, max=30)], payload: Annotated[Item, Body]) -> Item:
+def save(
+    name: Annotated[str, validation.NotBlank, validation.Size(min=1, max=30)],
+    payload: Annotated[Item, http.Body],
+) -> Item:
     ...
 ----
 
-A bare name inside `Annotated`, such as `NotBlank`, applies the annotation with its default values. Call the annotation
+A bare name inside `Annotated`, such as `validation.NotBlank`, applies the annotation with its default values. Call the annotation
 to pass members.
 
 === Names that clash with Python keywords
@@ -51,10 +72,10 @@ Pyronaut maps it back to the Java name:
 
 [source,python]
 ----
-from micronaut.http.annotation import Error
+from pyronaut import http
 
 
-@Error(global_=True)          # Java member: global
+@http.Error(global_=True)     # Java member: global
 def handle(request, error):
     ...
 ----
@@ -91,9 +112,9 @@ When you run `pyronaut dev`, `pyronaut run`, or `pyronaut test`, the CLI first r
 your Python sources and passes decorators, type hints, dataclasses, and abstract classes to the Micronaut compiler. The
 compiler generates Java classes and metadata for:
 
-* Bean definitions describing how to construct each `@Singleton`, `@Controller` or `@Factory` and which dependencies to inject.
+* Bean definitions describing how to construct each `@inject.Singleton`, `@http.Controller` or `@inject.Factory` and which dependencies to inject.
 * Route metadata for every HTTP method decorator, including how to bind each parameter.
-* Serializers and deserializers for `@Serdeable` dataclasses.
+* Serializers and deserializers for `@serde.Serdeable` dataclasses.
 * Validation metadata for `jakarta.validation` constraints.
 * Bridge code that lets Java call your Python functions and lets Python receive Java objects.
 * An OpenAPI description of the routes.
@@ -112,22 +133,20 @@ To see how processing handles serialization and validation, define a data class:
 from dataclasses import dataclass
 from typing import Annotated
 
-from com.fasterxml.jackson.annotation import JsonProperty
-from jakarta.validation.constraints import NotBlank, Pattern, Size
-from micronaut.serde.annotation import Serdeable
+from pyronaut import serde, validation
 
 
-@Serdeable                                                   # <1>
+@serde.Serdeable                                                         # <1>
 @dataclass
 class Person:
-    name: Annotated[str, NotBlank, Size(min=1, max=30)]      # <2>
-    age: Annotated[int, JsonProperty("person_age")]          # <3>
-    telephone: Annotated[str | None, Pattern(regexp=r"\d{10}")] = None
+    name: Annotated[str, validation.NotBlank, validation.Size(min=1, max=30)]  # <2>
+    age: Annotated[int, serde.JsonProperty("person_age")]                # <3>
+    telephone: Annotated[str | None, validation.Pattern(regexp=r"\d{10}")] = None
 ----
 
-<1> `@Serdeable` asks Micronaut Serialization to generate a JSON encoder and decoder for the class.
-<2> Micronaut checks the `jakarta.validation` constraints whenever it validates a `Person`, for example as a request body annotated with `Valid`.
-<3> `JsonProperty` renames the attribute in JSON to `person_age`.
+<1> `@serde.Serdeable` asks Micronaut Serialization to generate a JSON encoder and decoder for the class.
+<2> Micronaut checks the `jakarta.validation` constraints whenever it validates a `Person`, for example as a request body annotated with `validation.Valid`.
+<3> `serde.JsonProperty` (Jackson's `JsonProperty`) renames the attribute in JSON to `person_age`.
 
 Processing produces a serializer that writes `{"name": ..., "person_age": ...}`, a validator that enforces the
 constraints, and a Python-to-Java bridge that lets a controller return a `Person` directly. The application does not

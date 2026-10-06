@@ -7,6 +7,7 @@ gettingStarted:
   project: Create a Pyronaut Project
   fastApiTutorial: The FastAPI Tutorial
 how: How Pyronaut Works
+facades: Pyronaut Facades
 concepts:
   title: Micronaut Concepts for Python Developers
   dependencyInjection: Dependency Injection

@@ -9,7 +9,7 @@ Blocking code is any code that makes the current thread wait: a database query, 
 |It already runs on the `io` executor.
 
 |Slow work that needs its own pool
-|`@ExecuteOn(TaskExecutors.BLOCKING)` or `@ExecuteOn("my-pool")`
+|`@scheduling.ExecuteOn(scheduling.BLOCKING)` or `@scheduling.ExecuteOn("my-pool")`
 |Isolates the work from the shared `io` executor.
 
 |Blocking work in an `async def` route
@@ -17,7 +17,7 @@ Blocking code is any code that makes the current thread wait: a database query, 
 |Moves the call off the event loop and uses Micronaut's blocking executor.
 
 |Work that should start and return immediately
-|`@Async`
+|`@scheduling.Async`
 |Submits the method to the `scheduled` executor.
 
 |Manually created threads
@@ -31,34 +31,32 @@ Synchronous Python routes already run on the `io` executor, so this is the usual
 
 [source,python]
 ----
-from micronaut.http.annotation import Controller, Get
+from pyronaut import http
 
 
-@Controller("/books")
+@http.Controller("/books")
 class BookController:
     def __init__(self, repository: BookRepository):
         self.repository = repository
 
-    @Get("/{isbn}")
+    @http.Get("/{isbn}")
     def find(self, isbn: str) -> Book | None:
         return self.repository.findByIsbn(isbn)   # blocking JDBC call is fine here
 ----
 
 == Choosing a different pool with `@ExecuteOn`
 
-Use `@ExecuteOn` from `micronaut.scheduling.annotation` to isolate slow work on the blocking executor or a custom pool:
+Use `@scheduling.ExecuteOn` (`micronaut.scheduling.annotation.ExecuteOn`) to isolate slow work on the blocking executor or a custom pool. The `pyronaut.scheduling` facade also exports the executor names of `TaskExecutors` as constants, such as `scheduling.BLOCKING` and `scheduling.IO`:
 
 [source,python]
 ----
-from micronaut.http.annotation import Controller, Get
-from micronaut.scheduling import TaskExecutors
-from micronaut.scheduling.annotation import ExecuteOn
+from pyronaut import http, scheduling
 
 
-@Controller("/reports")
-@ExecuteOn(TaskExecutors.BLOCKING)
+@http.Controller("/reports")
+@scheduling.ExecuteOn(scheduling.BLOCKING)
 class ReportController:
-    @Get("/{year}")
+    @http.Get("/{year}")
     def yearly(self, year: int) -> Report:
         return build_report(year)   # slow, runs on the blocking executor
 ----
@@ -74,7 +72,7 @@ n-threads = 4
 
 [source,python]
 ----
-@ExecuteOn("reports")
+@scheduling.ExecuteOn("reports")
 def yearly(self, year: int) -> Report:
     ...
 ----
@@ -89,10 +87,10 @@ A coroutine runs on the event loop. Hand blocking calls to Micronaut's blocking 
 ----
 import asyncio
 
-from micronaut.http.annotation import Get
+from pyronaut import http
 
 
-@Get("/report")
+@http.Get("/report")
 async def report() -> Report:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, build_report)
@@ -109,17 +107,16 @@ result = await loop.run_in_executor(None, partial(build_report, year=2026))
 
 == Background work with `@Async`
 
-Decorate a bean method with `@Async` to start work and return immediately:
+Decorate a bean method with `@scheduling.Async` to start work and return immediately:
 
 [source,python]
 ----
-from jakarta.inject import Singleton
-from micronaut.scheduling.annotation import Async
+from pyronaut import inject, scheduling
 
 
-@Singleton
+@inject.Singleton
 class Mailer:
-    @Async
+    @scheduling.Async
     def send_welcome(self, address: str) -> None:
         deliver(address)   # runs on a background thread
 ----
