@@ -60,6 +60,7 @@ loadScripts(document, 'script');</script>
 <li><a href="#configure(java.util.Map)" tabindex="0">configure(Map)</a></li>
 <li><a href="#initialize()" tabindex="0">initialize()</a></li>
 <li><a href="#initializeFallback(ch.qos.logback.classic.Level)" tabindex="0">initializeFallback(Level)</a></li>
+<li><a href="#toLogbackLevel(java.lang.Object)" tabindex="0">toLogbackLevel(Object)</a></li>
 <li><a href="#log(java.lang.String,java.lang.String,java.lang.String)" tabindex="0">log(String, String, String)</a></li>
 <li><a href="#getLogger(java.lang.String)" tabindex="0">getLogger(String)</a></li>
 </ol>
@@ -129,6 +130,12 @@ This allows Python code to configure logback appenders and loggers.</div>
 <div class="col-last even-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4">
 <div class="block">Log a message directly to logback, bypassing SLF4J.</div>
 </div>
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4"><code>static @Nullable ch.qos.logback.classic.Level</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4"><code><a href="#toLogbackLevel(java.lang.Object)" class="member-name-link">toLogbackLevel</a><wbr>(@Nullable <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html" title="class or interface in java.lang" class="external-link">Object</a>&nbsp;level)</code></div>
+<div class="col-last odd-row-color method-summary-table method-summary-table-tab1 method-summary-table-tab4">
+<div class="block">Maps a Python logging level (a name such as <code>WARNING</code> or a numeric value such as
+<code>20</code>) to the corresponding logback level.</div>
+</div>
 </div>
 </div>
 </div>
@@ -185,6 +192,25 @@ Later explicit <a href="#configure(java.util.Map)"><code>configure(Map)</code></
 <dd><code>rootLevel</code> - the temporary root logger level to apply</dd>
 <dt>Returns:</dt>
 <dd>The logback context.</dd>
+</dl>
+</div>
+</section>
+</li>
+<li>
+<section class="detail" id="toLogbackLevel(java.lang.Object)">
+<h3>toLogbackLevel</h3>
+<div class="horizontal-scroll">
+<div class="member-signature"><span class="annotations">@Internal
+</span><span class="modifiers">public static</span>&nbsp;<span class="return-type">@Nullable ch.qos.logback.classic.Level</span>&nbsp;<span class="element-name">toLogbackLevel</span><wbr><span class="parameters">(@Nullable <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html" title="class or interface in java.lang" class="external-link">Object</a>&nbsp;level)</span></div>
+<div class="block">Maps a Python logging level (a name such as <code>WARNING</code> or a numeric value such as
+<code>20</code>) to the corresponding logback level.</div>
+<dl class="notes">
+<dt>Parameters:</dt>
+<dd><code>level</code> - the Python level name or number</dd>
+<dt>Returns:</dt>
+<dd>the logback level, or <code>null</code> for <code>NOTSET</code> (inherit from the parent logger)</dd>
+<dt>Throws:</dt>
+<dd><code><a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/IllegalArgumentException.html" title="class or interface in java.lang" class="external-link">IllegalArgumentException</a></code> - if the level name is not recognised</dd>
 </dl>
 </div>
 </section>

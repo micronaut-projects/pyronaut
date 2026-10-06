@@ -6783,6 +6783,36 @@ logger.warning("Slow response from %s", service)</code></pre>
 </div>
 </div>
 <div class="sect1">
+<h2 id="_capturing_log_messages_in_tests">Capturing log messages in tests</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Use <code>capture_logs</code> to capture Python and framework Logback messages without importing Java logging APIs:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-python hljs" data-lang="python">import logging
+from logback import capture_logs
+
+logger = logging.getLogger(__name__)
+with capture_logs(logger, level="TRACE") as records:
+    logger.warning("Processing request")
+
+assert records[0].getMessage() == "Processing request"
+assert records[0].levelno == logging.WARNING</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The argument can also be a logger name; omit it to capture the root logger. The optional level accepts the same names and numbers as <code>dictConfig</code>. It temporarily changes the Java logger level and restores the previous level, including inherited levels, even when the body raises an exception. Python&#8217;s own logger level still controls Python calls. Existing appenders and propagation remain unchanged.</p>
+</div>
+<div class="paragraph">
+<p>The returned list is populated with Python <code>logging.LogRecord</code> values only when the scope exits. Java event threads never call Python to capture a message. Records preserve the logger name, formatted message, timestamp and level; <code>TRACE</code> uses <code>levelno=5</code> and <code>levelname="TRACE"</code>. Emitter-thread and caller information are not available.</p>
+</div>
+<div class="paragraph">
+<p>Complete requests and await or join asynchronous producers before leaving the scope. Do not reconfigure logging while capture is active or overlap level-changing scopes on the same logger across threads. Capturing requires the Java Logback backend; it raises <code>RuntimeError</code> when that backend is unavailable.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="_combining_with_logback_xml">Combining with logback.xml</h2>
 <div class="sectionbody">
 <div class="paragraph">
