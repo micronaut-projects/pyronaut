@@ -51,14 +51,13 @@ The JUnit engine supports Python modules as JUnit 5 tests. Invoke `MicronautTest
 ----
 from typing import Annotated
 
-from jakarta.inject import Inject
-from micronaut.context import ApplicationContext
 from micronaut.test.extensions.junit5.annotation import MicronautTest
 from org.junit.jupiter.api import BeforeEach
+from pyronaut import inject
 
 MicronautTest()
 
-context: Annotated[ApplicationContext, Inject]
+context: Annotated[inject.ApplicationContext, inject.Inject]
 
 @BeforeEach
 def verify_context():

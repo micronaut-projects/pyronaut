@@ -20,11 +20,11 @@ Pyronaut selects where Python code runs from the function signature and any exec
 |The Netty event loop
 |The coroutine runs on a Micronaut-managed asyncio loop; `await` suspends it and frees the thread. Await non-blocking operations or move blocking work to `run_in_executor` (see <<blockingWork,Running Blocking Code>>).
 
-|Method decorated with `@ExecuteOn(TaskExecutors.BLOCKING)`
+|Method decorated with `@scheduling.ExecuteOn(scheduling.BLOCKING)`
 |The `blocking` executor
 |Runs explicitly selected work on a separate platform-thread pool. Pyronaut uses platform threads because GraalPy cannot run Python code on virtual threads.
 
-|Method decorated with `@ExecuteOn("my-pool")`
+|Method decorated with `@scheduling.ExecuteOn("my-pool")`
 |The custom executor `my-pool`
 |Uses the executor configured under `micronaut.executors`.
 

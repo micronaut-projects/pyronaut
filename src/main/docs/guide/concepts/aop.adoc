@@ -25,34 +25,34 @@ A Micronaut _advice_ decorator does not change the function. The processor recor
 
 == Common advice
 
-The following decorators are built in and require no code from you:
+The following decorators are built in and require no code from you. Each is listed with the Pyronaut facade that exports it (see <<facades,Pyronaut Facades>>) and its Java package:
 
 [cols="1,2", options="header"]
 |===
 |Decorator |Effect
 
-|`@Validated` (`micronaut.validation`) with `jakarta.validation` constraints
+|`@validation.Validated` (`micronaut.validation`) with `jakarta.validation` constraints
 |Validates method arguments before the method runs and raises a `ConstraintViolationException` (a `400 Bad Request` in controllers). Module-level routes enable validation automatically when a constraint is present.
 
-|`@Retryable` and `@CircuitBreaker` (`micronaut.retry.annotation`)
+|`@retry.Retryable` and `@retry.CircuitBreaker` (`micronaut.retry.annotation`)
 |Retry a failing call with configurable attempts and delay, optionally opening a circuit after repeated failures.
 
-|`@Scheduled` (`micronaut.scheduling.annotation`)
+|`@scheduling.Scheduled` (`micronaut.scheduling.annotation`)
 |Run the method on a fixed rate, fixed delay or cron schedule. Replaces Celery beat or APScheduler for in-process jobs.
 
-|`@Async` (`micronaut.scheduling.annotation`)
+|`@scheduling.Async` (`micronaut.scheduling.annotation`)
 |Run the method on a background executor and return immediately. Replaces FastAPI's `BackgroundTasks` for fire-and-forget work.
 
-|`@ExecuteOn` (`micronaut.scheduling.annotation`)
+|`@scheduling.ExecuteOn` (`micronaut.scheduling.annotation`)
 |Run the method on a named thread pool. See <<blockingWork,Running Blocking Code>>.
 
-|`@Cacheable`, `@CachePut`, `@CacheInvalidate` (`micronaut.cache.annotation`)
+|`@cache.Cacheable`, `@cache.CachePut`, `@cache.CacheInvalidate` (`micronaut.cache.annotation`)
 |Cache the return value keyed by the arguments. Requires a cache implementation such as `io.micronaut.cache:micronaut-cache-caffeine` in `[tool.pyronaut.dependencies].runtime`.
 
-|`@Transactional` (`jakarta.transaction`)
+|`@tx.Transactional` (`micronaut.transaction.annotation`)
 |Wrap the method in a database transaction when using Micronaut Data.
 
-|`@Client` (`micronaut.http.client.annotation`)
+|`@http.client.Client` (`micronaut.http.client.annotation`)
 |Turn an abstract class into an HTTP client. Micronaut implements its declared client methods. See <<httpApis,Building HTTP APIs>>.
 |===
 
@@ -60,13 +60,12 @@ For example, a retrying service needs only a decorator:
 
 [source,python]
 ----
-from jakarta.inject import Singleton
-from micronaut.retry.annotation import Retryable
+from pyronaut import inject, retry
 
 
-@Singleton
+@inject.Singleton
 class CatalogClient:
-    @Retryable(attempts="5", delay="2s")
+    @retry.Retryable(attempts="5", delay="2s")
     def find_book(self, isbn: str) -> Book:
         ...
 ----
@@ -75,7 +74,7 @@ Annotation members accept configuration placeholders, so you can tune the retry 
 
 [source,python]
 ----
-@Retryable(attempts="${catalog.retry.attempts:3}", delay="${catalog.retry.delay:1s}")
+@retry.Retryable(attempts="${catalog.retry.attempts:3}", delay="${catalog.retry.delay:1s}")
 def find_book(self, isbn: str) -> Book:
     ...
 ----
@@ -84,36 +83,35 @@ A scheduled job is a bean with a decorated method:
 
 [source,python]
 ----
-from jakarta.inject import Singleton
-from micronaut.scheduling.annotation import Scheduled
+from pyronaut import inject, scheduling
 
 
-@Singleton
+@inject.Singleton
 class ReportJob:
-    @Scheduled(fixedRate="10m", initialDelay="1m")
+    @scheduling.Scheduled(fixedRate="10m", initialDelay="1m")
     def generate(self) -> None:
         print("generating report")
 
-    @Scheduled(cron="0 15 10 ? * MON")
+    @scheduling.Scheduled(cron="0 15 10 ? * MON")
     def weekly(self) -> None:
         print("it is Monday")
 ----
 
-NOTE: Annotation member names keep their Java spelling (`fixedRate`, not `fixed_rate`). Members that clash with Python keywords take a trailing underscore, for example `@Error(global_=True)`.
+NOTE: Annotation member names keep their Java spelling (`fixedRate`, not `fixed_rate`). Members that clash with Python keywords take a trailing underscore, for example `@http.Error(global_=True)`.
 
 == Writing your own advice
 
 Custom advice has two parts: a decorator that marks the methods to intercept, and an interceptor bean that implements the behaviour.
 
-First define the decorator. It is a plain function that returns its argument unchanged; the `@Around` decorator tells Micronaut it is an AOP marker and `@Executable` makes the target methods callable through the proxy:
+First define the decorator. It is a plain function that returns its argument unchanged; the `@Around` decorator tells Micronaut it is an AOP marker and `@inject.Executable` makes the target methods callable through the proxy. No facade covers `micronaut.aop`, so its types keep their direct imports:
 
 [source,python]
 ----
 from micronaut.aop import Around
-from micronaut.context.annotation import Executable
+from pyronaut import inject
 
 
-@Executable
+@inject.Executable
 @Around
 def Timed(func):
     return func
@@ -148,12 +146,12 @@ Finally apply the decorator to any bean method:
 
 [source,python]
 ----
-from jakarta.inject import Singleton
+from pyronaut import inject
 
 from .Timed import Timed
 
 
-@Singleton
+@inject.Singleton
 class BookService:
     @Timed
     def list_books(self) -> list[Book]:
@@ -164,4 +162,4 @@ The interceptor is a bean, so it can receive dependencies through its constructo
 
 == Introduction advice
 
-_Around_ advice wraps an existing implementation. _Introduction_ advice supplies the implementation of an abstract method. `@Client` is the best-known example: you declare an abstract class describing the remote API and the processor generates the code that performs the HTTP calls. Micronaut Data repositories work the same way. Writing your own introduction advice is rarely necessary; the https://docs.micronaut.io/latest/guide/#introductionAdvice[Micronaut guide] shows how.
+_Around_ advice wraps an existing implementation. _Introduction_ advice supplies the implementation of an abstract method. `@http.client.Client` is the best-known example: you declare an abstract class describing the remote API and the processor generates the code that performs the HTTP calls. Micronaut Data repositories work the same way. Writing your own introduction advice is rarely necessary; the https://docs.micronaut.io/latest/guide/#introductionAdvice[Micronaut guide] shows how.

@@ -2,28 +2,28 @@ Pyronaut applications expose HTTP APIs with the same decorators Micronaut uses i
 
 == Routes
 
-A route is a function decorated with an HTTP method decorator from `micronaut.http.annotation`. The decorators are `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete`, `@Head` and `@Options`. Routes can live at module level, which is the quickest way to start, or inside a `@Controller` class, which groups related routes under a common prefix and lets them share injected dependencies:
+A route is a function decorated with an HTTP method decorator from the `pyronaut.http` facade (see <<facades,Pyronaut Facades>>), which exposes the annotations of `micronaut.http.annotation`. The decorators are `@http.Get`, `@http.Post`, `@http.Put`, `@http.Patch`, `@http.Delete`, `@http.Head` and `@http.Options`. Routes can live at module level, which is the quickest way to start, or inside a `@http.Controller` class, which groups related routes under a common prefix and lets them share injected dependencies:
 
 [source,python]
 ----
-from micronaut.http.annotation import Controller, Get, Post
+from pyronaut import http
 
 
-@Controller("/books")
+@http.Controller("/books")
 class BookController:
     def __init__(self, service: BookService):
         self.service = service
 
-    @Get("/")
+    @http.Get("/")
     def list_books(self) -> list[Book]:
         return self.service.list()
 
-    @Get("/{isbn}")
+    @http.Get("/{isbn}")
     def get_book(self, isbn: str) -> Book | None:
         return self.service.find(isbn)
 ----
 
-A module with routes but no `@Controller` receives an implicit controller mounted at `/`. Call `Controller("/prefix")` at module level to change the prefix without introducing a class.
+A module with routes but no `@http.Controller` receives an implicit controller mounted at `/`. Call `http.Controller("/prefix")` at module level to change the prefix without introducing a class.
 
 Path variables use `{name}` in the route and a parameter of the same name in the function. The parameter's type hint drives conversion, so `item_id: int` rejects non-numeric values with `400 Bad Request`.
 
@@ -41,51 +41,48 @@ Micronaut binds function parameters from the request using the parameter name, t
 |`q: str \| None = None`
 |The query parameter `q`. Parameters that are not path variables bind from the query string; a default value makes them optional.
 
-|`Annotated[str, QueryValue("page-size")]`
+|`Annotated[str, http.QueryValue("page-size")]`
 |A query parameter whose name differs from the Python name.
 
-|`Annotated[str, Header("X-Request-Id")]`
-|A request header. `Annotated[str, Header]` infers the header name from the parameter name.
+|`Annotated[str, http.Header("X-Request-Id")]`
+|A request header. `Annotated[str, http.Header]` infers the header name from the parameter name.
 
-|`Annotated[str, CookieValue("session")]`
+|`Annotated[str, http.CookieValue("session")]`
 |A cookie.
 
-|`Annotated[Item, Body]`
-|The request body, decoded from JSON into the dataclass. `Annotated[str, Body]` receives the raw text.
+|`Annotated[Item, http.Body]`
+|The request body, decoded from JSON into the dataclass. `Annotated[str, http.Body]` receives the raw text.
 
-|`request: HttpRequest`
+|`request: http.HttpRequest`
 |The full request object, for headers, the URI or attributes.
 |===
 
-Model a JSON body with a dataclass decorated with `@Serdeable` from `micronaut.serde.annotation`. This replaces a Pydantic `BaseModel`: the decorator makes Micronaut generate the JSON encoder and decoder during processing, without reflection or runtime schema building:
+Model a JSON body with a dataclass decorated with `@serde.Serdeable` (`micronaut.serde.annotation.Serdeable`). This replaces a Pydantic `BaseModel`: the decorator makes Micronaut generate the JSON encoder and decoder during processing, without reflection or runtime schema building:
 
 [source,python]
 ----
 from dataclasses import dataclass
 from typing import Annotated
 
-from jakarta.validation import Valid
-from jakarta.validation.constraints import NotBlank, Positive
-from micronaut.http.annotation import Body, Post
-from micronaut.serde.annotation import Serdeable
+from pyronaut import http, serde, validation
 
 
-@Serdeable
+@serde.Serdeable
 @dataclass
 class Item:
-    name: Annotated[str, NotBlank]
-    price: Annotated[float, Positive]
+    name: Annotated[str, validation.NotBlank]
+    price: Annotated[float, validation.Positive]
     is_offer: bool | None = None
 
 
-@Post("/items")
-def create_item(item: Annotated[Item, Body, Valid]) -> Item:
+@http.Post("/items")
+def create_item(item: Annotated[Item, http.Body, validation.Valid]) -> Item:
     return item
 ----
 
-`Valid` asks Micronaut Validation to check the constraints declared on the dataclass before the function runs. You can also apply constraints directly to parameters, for example `page: Annotated[int, Min(1)] = 1`.
+`validation.Valid` asks Micronaut Validation to check the constraints declared on the dataclass before the function runs. You can also apply constraints directly to parameters, for example `page: Annotated[int, validation.Min(1)] = 1`.
 
-TIP: Dataclasses may reference each other and contain lists, dictionaries, enums, `datetime`, `date`, `timedelta` and `uuid.UUID` fields. Quote forward references (`"Room | None"`) when the referenced class is declared later in the file. Rename a JSON property with `Annotated[int, JsonProperty("person_age")]` from `com.fasterxml.jackson.annotation`.
+TIP: Dataclasses may reference each other and contain lists, dictionaries, enums, `datetime`, `date`, `timedelta` and `uuid.UUID` fields. Quote forward references (`"Room | None"`) when the referenced class is declared later in the file. Rename a JSON property with `Annotated[int, serde.JsonProperty("person_age")]` (Jackson's `JsonProperty`, also in the `pyronaut.serde` facade).
 
 == Responses
 
@@ -95,70 +92,68 @@ The return type hint decides how Micronaut encodes the response:
 |===
 |Return type |Response
 
-|`dict`, `list`, a `@Serdeable` dataclass, or a list of them
+|`dict`, `list`, a `@serde.Serdeable` dataclass, or a list of them
 |JSON with `Content-Type: application/json`.
 
 |`str`
-|Text. Set `@Get(produces="text/plain")` or `@Produces(MediaType.TEXT_PLAIN)` to send plain text rather than a JSON string.
+|Text. Set `@http.Get(produces=http.TEXT_PLAIN)` or `@http.Produces(http.TEXT_PLAIN)` to send plain text rather than a JSON string.
 
 |`None`
 |`404 Not Found`. Returning `None` from a lookup is the idiomatic "not found" response.
 
-|`HttpResponse`
-|Full control of status, headers and body: `HttpResponse.created(item)`, `HttpResponse.notFound()`, `HttpResponse.ok(body).header("X-Total", "3")`.
+|`http.HttpResponse`
+|Full control of status, headers and body: `http.created(item)`, `http.notFound()`, `http.ok(body).header("X-Total", "3")`. These functions are the `HttpResponse` static methods, so `http.HttpResponse.created(item)` works too.
 
-|`HttpStatus`
+|`http.HttpStatus`
 |An empty response with the given status.
 
 |`Publisher`, `Mono`, `CompletionStage`, or an `async def` function
 |Asynchronous responses; see <<threading,Threading, blocking work, and asyncio>>.
 |===
 
-Change the status of a successful response with `@Status`:
+Change the status of a successful response with `@http.Status`:
 
 [source,python]
 ----
-from micronaut.http import HttpStatus
-from micronaut.http.annotation import Post, Status
+from pyronaut import http
 
 
-@Post("/items")
-@Status(HttpStatus.CREATED)
-def create_item(item: Annotated[Item, Body]) -> Item:
+@http.Post("/items")
+@http.Status(http.status.CREATED)
+def create_item(item: Annotated[Item, http.Body]) -> Item:
     return item
 ----
 
 == Errors
 
-Exceptions raised from a route become `500 Internal Server Error` responses with a JSON error body. Validation failures and binding failures become `400 Bad Request`. To customise error handling, declare an `@Error` method. Inside a controller it handles errors from that controller; with `global_=True` it handles errors from every route:
+Exceptions raised from a route become `500 Internal Server Error` responses with a JSON error body. Validation failures and binding failures become `400 Bad Request`. To customise error handling, declare an `@http.Error` method. Inside a controller it handles errors from that controller; with `global_=True` it handles errors from every route:
 
 [source,python]
 ----
-from micronaut.http import HttpRequest, HttpResponse, HttpStatus
-from micronaut.http.annotation import Controller, Error, Get
 from micronaut.http.hateoas import JsonError
+from pyronaut import http
 
 
 class BookNotFound(Exception):
     pass
 
 
-@Controller("/books")
+@http.Controller("/books")
 class BookController:
-    @Get("/{isbn}")
+    @http.Get("/{isbn}")
     def get_book(self, isbn: str) -> Book:
         raise BookNotFound(isbn)
 
-    @Error
-    def on_not_found(self, request: HttpRequest, e: BookNotFound) -> HttpResponse:
-        return HttpResponse.notFound().body(JsonError(f"No book {e}"))
+    @http.Error
+    def on_not_found(self, request: http.HttpRequest, e: BookNotFound) -> http.HttpResponse:
+        return http.notFound().body(JsonError(f"No book {e}"))
 
-    @Error(status=HttpStatus.NOT_FOUND)
-    def on_404(self, request: HttpRequest) -> HttpResponse:
-        return HttpResponse.notFound().body(JsonError("Nothing here"))
+    @http.Error(status=http.status.NOT_FOUND)
+    def on_404(self, request: http.HttpRequest) -> http.HttpResponse:
+        return http.notFound().body(JsonError("Nothing here"))
 ----
 
-The exception type of the second parameter selects which exceptions the handler receives, and `status=` selects a status code instead. For application-wide handling of one exception type, implement an `ExceptionHandler` bean as shown in the https://docs.micronaut.io/latest/guide/#exceptionHandler[Micronaut guide].
+`JsonError` is not part of a facade, so it keeps its direct `micronaut.http.hateoas` import; both styles mix freely. The exception type of the second parameter selects which exceptions the handler receives, and `status=` selects a status code instead. For application-wide handling of one exception type, implement an `http.ExceptionHandler` bean as shown in the https://docs.micronaut.io/latest/guide/#exceptionHandler[Micronaut guide].
 
 == Calling other services
 
@@ -168,23 +163,22 @@ The `requests` library works in Pyronaut through the `pyronaut-requests` shim (s
 ----
 from abc import ABC, abstractmethod
 
-from micronaut.http.annotation import Get
-from micronaut.http.client.annotation import Client
+from pyronaut import http
 
 
-@Client("https://api.example.com/catalog")
+@http.client.Client("https://api.example.com/catalog")
 class CatalogClient(ABC):
-    @Get("/books/{isbn}")
+    @http.Get("/books/{isbn}")
     @abstractmethod
     def find(self, isbn: str) -> Book:
         ...
 ----
 
-Inject `CatalogClient` like any bean. Declaring the method `async def` returns an awaitable instead of blocking; see <<asyncAwait,Using async/await>>. `@Client("catalog")` with a `micronaut.http.services.catalog.url` property keeps the URL in configuration.
+Inject `CatalogClient` like any bean. Declaring the method `async def` returns an awaitable instead of blocking; see <<asyncAwait,Using async/await>>. `@http.client.Client("catalog")` with a `micronaut.http.services.catalog.url` property keeps the URL in configuration.
 
 == OpenAPI documentation
 
-Pyronaut generates an OpenAPI description from your routes and dataclasses during processing and serves Swagger UI at `/swagger-ui/index.html` and ReDoc at `/redoc/index.html` in development mode. Add descriptions with the annotations in `io.swagger.v3.oas.annotations`, which are available as decorators.
+Pyronaut generates an OpenAPI description from your routes and dataclasses during processing and serves Swagger UI at `/swagger-ui/index.html` and ReDoc at `/redoc/index.html` in development mode. Add descriptions with the annotations in `io.swagger.v3.oas.annotations`, which are available as decorators, for example through `from pyronaut import openapi` and `@openapi.Operation(summary="...")`.
 
 == FastAPI equivalents in Pyronaut
 
@@ -193,34 +187,34 @@ Pyronaut generates an OpenAPI description from your routes and dataclasses durin
 |FastAPI |Pyronaut
 
 |`@app.get("/items/{id}")`
-|`@Get("/items/{id}")`
+|`@http.Get("/items/{id}")`
 
 |`def read(id: int, q: str \| None = None)`
 |Identical.
 
 |`Query(..., alias="page-size")`
-|`Annotated[int, QueryValue("page-size")]`
+|`Annotated[int, http.QueryValue("page-size")]`
 
 |`Header()`
-|`Annotated[str, Header]`
+|`Annotated[str, http.Header]`
 
 |`class Item(BaseModel)`
-|`@Serdeable @dataclass class Item`
+|`@serde.Serdeable @dataclass class Item`
 
 |`item: Item` body parameter
-|`item: Annotated[Item, Body, Valid]`
+|`item: Annotated[Item, http.Body, validation.Valid]`
 
 |`raise HTTPException(404)`
-|Return `None`, return `HttpResponse.notFound()`, or raise an exception and handle it with `@Error`
+|Return `None`, return `http.notFound()`, or raise an exception and handle it with `@http.Error`
 
 |`Depends(get_service)`
 |Constructor injection: `def __init__(self, service: Service)`
 
 |`BackgroundTasks`
-|`@Async` on a bean method
+|`@scheduling.Async` on a bean method
 
 |`@app.on_event("startup")`
-|`@EventListener` for `StartupEvent`
+|`@inject.EventListener` for `inject.StartupEvent`
 
 |`response_model=Item`
 |The `-> Item` return type hint
@@ -239,31 +233,31 @@ Pyronaut generates an OpenAPI description from your routes and dataclasses durin
 |Flask |Pyronaut
 
 |`@app.route("/items", methods=["POST"])`
-|`@Post("/items")`
+|`@http.Post("/items")`
 
 |`request.args.get("q")`
 |`q: str \| None = None` parameter
 
 |`request.get_json()`
-|`Annotated[Item, Body]` parameter
+|`Annotated[Item, http.Body]` parameter
 
 |`jsonify(data)`
 |Return a `dict` or dataclass
 
 |`abort(404)`
-|Return `None` or `HttpResponse.notFound()`
+|Return `None` or `http.notFound()`
 
 |`@app.errorhandler(NotFound)`
-|`@Error(status=HttpStatus.NOT_FOUND)`
+|`@http.Error(status=http.status.NOT_FOUND)`
 
 |`app.config["KEY"]`
-|`@Value("${key}")` or a `@ConfigurationProperties` class
+|`@inject.Value("${key}")` or an `@inject.ConfigurationProperties` class
 
 |`g` and `current_app`
 |Dependency injection
 
 |Blueprints
-|`@Controller("/prefix")` classes
+|`@http.Controller("/prefix")` classes
 
 |`flask run --debug`
 |`pyronaut dev`

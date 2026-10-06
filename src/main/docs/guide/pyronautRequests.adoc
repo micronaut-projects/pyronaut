@@ -45,10 +45,10 @@ When a request uses `timeout`, `verify` or `allow_redirects` values that differ 
 ----
 from dataclasses import dataclass
 
-from micronaut.serde.annotation import Serdeable
+from pyronaut import serde
 
 
-@Serdeable
+@serde.Serdeable
 @dataclass
 class Message:
     message: str
