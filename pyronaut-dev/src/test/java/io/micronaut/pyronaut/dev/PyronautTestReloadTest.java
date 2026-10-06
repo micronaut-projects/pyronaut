@@ -113,6 +113,19 @@ class PyronautTestReloadTest {
     }
 
     @Test
+    void theOpenApiAdocOutputIsTurnedOffOnTheJvmUnlessTheBuildDependenciesHoldTheConverter() {
+        List<Path> visitor = List.of(Path.of("/repo/micronaut-openapi-7.3.0.jar"));
+        List<Path> withConverter = List.of(Path.of("/repo/micronaut-openapi-7.3.0.jar"), Path.of("/repo/micronaut-openapi-adoc-7.3.0.jar"));
+        assertEquals(List.of("-Aa=b", "-Amicronaut.openapi.adoc.enabled=false"), DevReloadFiles.withOpenApiAdoc(List.of("-Aa=b"), visitor, false));
+        assertEquals(List.of("-Aa=b"), DevReloadFiles.withOpenApiAdoc(List.of("-Aa=b"), withConverter, false));
+        // a native image holds the converter for pyronaut process too
+        assertEquals(List.of("-Aa=b"), DevReloadFiles.withOpenApiAdoc(List.of("-Aa=b"), visitor, true));
+        assertEquals(List.of("-Aa=b"), DevReloadFiles.withOpenApiAdoc(List.of("-Aa=b"), List.of(Path.of("/repo/micronaut-inject-5.3.0.jar")), false));
+        assertEquals(List.of("-Amicronaut.openapi.adoc.enabled=true"),
+            DevReloadFiles.withOpenApiAdoc(List.of("-Amicronaut.openapi.adoc.enabled=true"), visitor, false));
+    }
+
+    @Test
     void preparingTakesTheProcessedTestsOverFromThePyronautProcessor() throws Exception {
         PyronautTestReload.Layout layout = layout("");
         Path pyronaut = project.resolve("__pyronaut__");

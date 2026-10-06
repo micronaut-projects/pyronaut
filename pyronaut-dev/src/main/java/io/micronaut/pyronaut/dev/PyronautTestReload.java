@@ -201,12 +201,15 @@ public final class PyronautTestReload extends MicronautDevMain {
         Files.createDirectories(layout.reports());
         Path devDir = Files.createDirectories(pyronautDir.resolve(DevReloadFiles.DEV_DIR).resolve(TEST_DIR));
         Files.deleteIfExists(devDir.resolve(PyronautDevReload.RELAUNCH_MARKER));
+        List<Path> buildDependencies = DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST));
         return writeManifest(layout, devDir,
             DevReloadFiles.readLines(pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST)),
             DevReloadFiles.readLines(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)),
             // in a native image the processors the image holds run from it, as pyronaut process runs them there
-            DevReloadFiles.withoutNativeProvidedArtifacts(DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST))),
-            DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), layout.pythonBytecode()),
+            DevReloadFiles.withoutNativeProvidedArtifacts(buildDependencies),
+            DevReloadFiles.withOpenApiAdoc(
+                DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), layout.pythonBytecode()),
+                buildDependencies),
             options(pyronautDir),
             filterPatterns(tests));
     }

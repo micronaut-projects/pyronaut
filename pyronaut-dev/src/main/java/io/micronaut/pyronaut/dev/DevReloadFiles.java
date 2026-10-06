@@ -48,6 +48,10 @@ final class DevReloadFiles {
      * The compiler option that sets whether the Python compiler writes a bytecode cache for every module.
      */
     static final String PYTHON_BYTECODE_OPTION = "-A" + PythonAnnotationProcessor.BYTECODE_OPTION + "=";
+    /**
+     * The compiler option that sets whether the OpenAPI visitor writes an AsciiDoc file.
+     */
+    static final String OPENAPI_ADOC_OPTION = "-Amicronaut.openapi.adoc.enabled=";
 
     private DevReloadFiles() {
     }
@@ -81,6 +85,44 @@ final class DevReloadFiles {
         List<String> withBytecode = new ArrayList<>(options);
         withBytecode.add(PYTHON_BYTECODE_OPTION + enabled);
         return List.copyOf(withBytecode);
+    }
+
+    /**
+     * The compiler options, with the OpenAPI AsciiDoc output turned off where {@code pyronaut process} writes none. On
+     * the JVM the launcher of the development runtime holds the AsciiDoc converter, and the OpenAPI visitor, which
+     * finds it there, writes an AsciiDoc file that {@code pyronaut process}, whose launcher holds no converter, writes
+     * only when the build dependencies hold one: the first compilation of a session added that file, a resource a
+     * patch in place cannot take, and the first edit started a new generation. A native image holds the converter for
+     * both.
+     *
+     * @param options The processor options
+     * @param buildDependencies The build dependencies {@code pyronaut process} compiled with
+     * @return The options, with the AsciiDoc output turned off when it differs, unless they set it already
+     */
+    static List<String> withOpenApiAdoc(List<String> options, List<Path> buildDependencies) {
+        return withOpenApiAdoc(options, buildDependencies, "runtime".equals(System.getProperty("org.graalvm.nativeimage.imagecode")));
+    }
+
+    static List<String> withOpenApiAdoc(List<String> options, List<Path> buildDependencies, boolean nativeImage) {
+        if (nativeImage
+            || options.stream().anyMatch(option -> option.startsWith(OPENAPI_ADOC_OPTION))
+            || !holdsJarOf(buildDependencies, "micronaut-openapi")
+            || holdsJarOf(buildDependencies, "micronaut-openapi-adoc")) {
+            return options;
+        }
+        List<String> withoutAdoc = new ArrayList<>(options);
+        withoutAdoc.add(OPENAPI_ADOC_OPTION + false);
+        return List.copyOf(withoutAdoc);
+    }
+
+    private static boolean holdsJarOf(List<Path> paths, String artifactId) {
+        for (Path path : paths) {
+            Path fileName = path.getFileName();
+            if (fileName != null && fileName.toString().endsWith(".jar") && isJarOf(fileName.toString(), artifactId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
