@@ -72,7 +72,6 @@ loadScripts(document, 'script');</script>
 <li><a href="#method-detail" tabindex="0">Method Details</a>
 <ol class="toc-list">
 <li><a href="#getType()" tabindex="0">getType()</a></li>
-<li><a href="#mayRegisterTests()" tabindex="0">mayRegisterTests()</a></li>
 <li><a href="#getFilePath()" tabindex="0">getFilePath()</a></li>
 <li><a href="#getStartLine()" tabindex="0">getStartLine()</a></li>
 <li><a href="#getEndLine()" tabindex="0">getEndLine()</a></li>
@@ -103,7 +102,7 @@ loadScripts(document, 'script');</script>
 <div class="horizontal-scroll">
 <div class="type-signature"><span class="modifiers">public final class </span><span class="element-name type-name-label">PytestTestDescriptor</span>
 <span class="extends-implements">extends org.junit.platform.engine.support.descriptor.AbstractTestDescriptor</span></div>
-<div class="block">Source container for a Python test function or method and its runtime pytest cases.</div>
+<div class="block">Test descriptor for an individual Python test function or method.</div>
 </div>
 </section>
 <section class="summary">
@@ -193,9 +192,6 @@ loadScripts(document, 'script');</script>
 <div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>boolean</code></div>
 <div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#matchesId(java.lang.String)" class="member-name-link">matchesId</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html" title="class or interface in java.lang" class="external-link">String</a>&nbsp;testId)</code></div>
 <div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
-<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>boolean</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#mayRegisterTests()" class="member-name-link">mayRegisterTests</a>()</code></div>
-<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">&nbsp;</div>
 </div>
 </div>
 </div>
@@ -207,7 +203,7 @@ loadScripts(document, 'script');</script>
 <code><a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#clone()" title="class or interface in java.lang" class="external-link">clone</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#finalize()" title="class or interface in java.lang" class="external-link">finalize</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#getClass()" title="class or interface in java.lang" class="external-link">getClass</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#notify()" title="class or interface in java.lang" class="external-link">notify</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#notifyAll()" title="class or interface in java.lang" class="external-link">notifyAll</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#wait()" title="class or interface in java.lang" class="external-link">wait</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#wait(long)" title="class or interface in java.lang" class="external-link">wait</a>, <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Object.html#wait(long,int)" title="class or interface in java.lang" class="external-link">wait</a></code></div>
 <div class="inherited-list">
 <h3 id="methods-inherited-from-class-org.junit.platform.engine.TestDescriptor">Methods inherited from interface&nbsp;org.junit.platform.engine.TestDescriptor</h3>
-<code>accept, getAncestors, getDescendants, getLegacyReportingName, isContainer, isRoot, isTest, prune</code></div>
+<code>accept, getAncestors, getDescendants, getLegacyReportingName, isContainer, isRoot, isTest, mayRegisterTests, prune</code></div>
 </section>
 </li>
 </ul>
@@ -287,14 +283,6 @@ loadScripts(document, 'script');</script>
 <h3>getType</h3>
 <div class="horizontal-scroll">
 <div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type">org.junit.platform.engine.TestDescriptor.Type</span>&nbsp;<span class="element-name">getType</span>()</div>
-</div>
-</section>
-</li>
-<li>
-<section class="detail" id="mayRegisterTests()">
-<h3>mayRegisterTests</h3>
-<div class="horizontal-scroll">
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type">boolean</span>&nbsp;<span class="element-name">mayRegisterTests</span>()</div>
 </div>
 </section>
 </li>
