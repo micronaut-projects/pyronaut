@@ -1,0 +1,17 @@
+# pyronaut.views
+
+## members
+DefaultViewsRendererLocator	CLASS	io.micronaut.views.DefaultViewsRendererLocator
+DefaultViewsResolver	CLASS	io.micronaut.views.DefaultViewsResolver
+ModelAndView	CLASS	io.micronaut.views.ModelAndView
+ModelAndViewRenderer	INTERFACE	io.micronaut.views.ModelAndViewRenderer
+TemplatedBuilder	CLASS	io.micronaut.views.TemplatedBuilder
+View	ANNOTATION	io.micronaut.views.View
+ViewUtils	CLASS	io.micronaut.views.ViewUtils
+ViewsConfiguration	INTERFACE	io.micronaut.views.ViewsConfiguration
+ViewsConfigurationProperties	CLASS	io.micronaut.views.ViewsConfigurationProperties
+ViewsModelDecorator	INTERFACE	io.micronaut.views.ViewsModelDecorator
+ViewsRenderer	INTERFACE	io.micronaut.views.ViewsRenderer
+ViewsRendererConfiguration	INTERFACE	io.micronaut.views.ViewsRendererConfiguration
+ViewsRendererLocator	INTERFACE	io.micronaut.views.ViewsRendererLocator
+ViewsResolver	INTERFACE	io.micronaut.views.ViewsResolver

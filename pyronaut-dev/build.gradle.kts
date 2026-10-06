@@ -51,6 +51,8 @@ dependencies {
 
     // platform processors
     implementation(mn.micronaut.inject.python)
+    // the curated modules (from pyronaut import http, ...) the compiled Python sources may import
+    implementation(project(":micronaut-pyronaut-imports"))
     implementation(project(":micronaut-pyronaut-direct-source"))
     implementation(project(":micronaut-pyronaut-processor"))
     implementation(mnSerde.micronaut.serde.processor)

@@ -1,0 +1,87 @@
+# pyronaut.validation
+
+## clashes
+ConstraintValidator: io.micronaut.validation.validator.constraints.ConstraintValidator (preferPackage io.micronaut.validation.validator.constraints) over jakarta.validation.ConstraintValidator
+ConstraintValidatorContext: io.micronaut.validation.validator.constraints.ConstraintValidatorContext (preferPackage io.micronaut.validation.validator.constraints) over jakarta.validation.ConstraintValidatorContext
+Validator: io.micronaut.validation.validator.Validator (prefer) over jakarta.validation.Validator
+
+## members
+AssertFalse	ANNOTATION	jakarta.validation.constraints.AssertFalse
+AssertTrue	ANNOTATION	jakarta.validation.constraints.AssertTrue
+BeanValidationContext	INTERFACE	io.micronaut.validation.validator.BeanValidationContext
+BootstrapConfiguration	INTERFACE	jakarta.validation.BootstrapConfiguration
+ClockProvider	INTERFACE	jakarta.validation.ClockProvider
+Configuration	INTERFACE	jakarta.validation.Configuration
+Constraint	ANNOTATION	jakarta.validation.Constraint
+ConstraintDeclarationException	CLASS	jakarta.validation.ConstraintDeclarationException
+ConstraintDefinitionException	CLASS	jakarta.validation.ConstraintDefinitionException
+ConstraintExceptionHandler	CLASS	io.micronaut.validation.exceptions.ConstraintExceptionHandler
+ConstraintTarget	ENUM	jakarta.validation.ConstraintTarget
+ConstraintValidator	INTERFACE	io.micronaut.validation.validator.constraints.ConstraintValidator
+ConstraintValidatorContext	INTERFACE	io.micronaut.validation.validator.constraints.ConstraintValidatorContext
+ConstraintValidatorFactory	INTERFACE	jakarta.validation.ConstraintValidatorFactory
+ConstraintValidatorRegistry	INTERFACE	io.micronaut.validation.validator.constraints.ConstraintValidatorRegistry
+ConstraintViolation	INTERFACE	jakarta.validation.ConstraintViolation
+ConstraintViolationException	CLASS	jakarta.validation.ConstraintViolationException
+ConstraintViolationExceptionUtil	CLASS	io.micronaut.validation.ConstraintViolationExceptionUtil
+DecimalMax	ANNOTATION	jakarta.validation.constraints.DecimalMax
+DecimalMaxValidator	INTERFACE	io.micronaut.validation.validator.constraints.DecimalMaxValidator
+DecimalMin	ANNOTATION	jakarta.validation.constraints.DecimalMin
+DecimalMinValidator	INTERFACE	io.micronaut.validation.validator.constraints.DecimalMinValidator
+DefaultClockProvider	CLASS	io.micronaut.validation.validator.DefaultClockProvider
+DefaultConstraintValidators	CLASS	io.micronaut.validation.validator.constraints.DefaultConstraintValidators
+DefaultValidator	CLASS	io.micronaut.validation.validator.DefaultValidator
+DefaultValidatorConfiguration	CLASS	io.micronaut.validation.validator.DefaultValidatorConfiguration
+Digits	ANNOTATION	jakarta.validation.constraints.Digits
+DigitsValidator	INTERFACE	io.micronaut.validation.validator.constraints.DigitsValidator
+DomainNameUtil	CLASS	io.micronaut.validation.validator.constraints.DomainNameUtil
+ElementKind	ENUM	jakarta.validation.ElementKind
+Email	ANNOTATION	jakarta.validation.constraints.Email
+EmailValidator	CLASS	io.micronaut.validation.validator.constraints.EmailValidator
+ExecutableMethodValidator	INTERFACE	io.micronaut.validation.validator.ExecutableMethodValidator
+Future	ANNOTATION	jakarta.validation.constraints.Future
+FutureOrPresent	ANNOTATION	jakarta.validation.constraints.FutureOrPresent
+GroupDefinitionException	CLASS	jakarta.validation.GroupDefinitionException
+GroupSequence	ANNOTATION	jakarta.validation.GroupSequence
+InEnumValidator	CLASS	io.micronaut.validation.validator.constraints.InEnumValidator
+InListValidator	CLASS	io.micronaut.validation.validator.constraints.InListValidator
+Max	ANNOTATION	jakarta.validation.constraints.Max
+MessageInterpolator	INTERFACE	jakarta.validation.MessageInterpolator
+Min	ANNOTATION	jakarta.validation.constraints.Min
+Negative	ANNOTATION	jakarta.validation.constraints.Negative
+NegativeOrZero	ANNOTATION	jakarta.validation.constraints.NegativeOrZero
+NoProviderFoundException	CLASS	jakarta.validation.NoProviderFoundException
+NotBlank	ANNOTATION	jakarta.validation.constraints.NotBlank
+NotEmpty	ANNOTATION	jakarta.validation.constraints.NotEmpty
+NotInEnumValidator	CLASS	io.micronaut.validation.validator.constraints.NotInEnumValidator
+NotInListValidator	CLASS	io.micronaut.validation.validator.constraints.NotInListValidator
+NotNull	ANNOTATION	jakarta.validation.constraints.NotNull
+Null	ANNOTATION	jakarta.validation.constraints.Null
+OverridesAttribute	ANNOTATION	jakarta.validation.OverridesAttribute
+ParameterNameProvider	INTERFACE	jakarta.validation.ParameterNameProvider
+Past	ANNOTATION	jakarta.validation.constraints.Past
+PastOrPresent	ANNOTATION	jakarta.validation.constraints.PastOrPresent
+Path	INTERFACE	jakarta.validation.Path
+Pattern	ANNOTATION	jakarta.validation.constraints.Pattern
+PatternValidator	CLASS	io.micronaut.validation.validator.constraints.PatternValidator
+Payload	INTERFACE	jakarta.validation.Payload
+Positive	ANNOTATION	jakarta.validation.constraints.Positive
+PositiveOrZero	ANNOTATION	jakarta.validation.constraints.PositiveOrZero
+ReactiveValidator	INTERFACE	io.micronaut.validation.validator.ReactiveValidator
+ReportAsSingleViolation	ANNOTATION	jakarta.validation.ReportAsSingleViolation
+Size	ANNOTATION	jakarta.validation.constraints.Size
+SizeValidator	INTERFACE	io.micronaut.validation.validator.constraints.SizeValidator
+TraversableResolver	INTERFACE	jakarta.validation.TraversableResolver
+URLValidator	CLASS	io.micronaut.validation.validator.constraints.URLValidator
+UnexpectedTypeException	CLASS	jakarta.validation.UnexpectedTypeException
+UniqueElementsValidator	CLASS	io.micronaut.validation.validator.constraints.UniqueElementsValidator
+Valid	ANNOTATION	jakarta.validation.Valid
+Validated	ANNOTATION	io.micronaut.validation.Validated
+ValidatingInterceptor	CLASS	io.micronaut.validation.ValidatingInterceptor
+Validation	CLASS	jakarta.validation.Validation
+ValidationException	CLASS	jakarta.validation.ValidationException
+ValidationProviderResolver	INTERFACE	jakarta.validation.ValidationProviderResolver
+Validator	INTERFACE	io.micronaut.validation.validator.Validator
+ValidatorConfiguration	INTERFACE	io.micronaut.validation.validator.ValidatorConfiguration
+ValidatorContext	INTERFACE	jakarta.validation.ValidatorContext
+ValidatorFactory	INTERFACE	jakarta.validation.ValidatorFactory

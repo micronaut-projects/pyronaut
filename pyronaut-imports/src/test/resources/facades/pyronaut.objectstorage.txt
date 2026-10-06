@@ -1,0 +1,21 @@
+# pyronaut.objectstorage
+
+## members
+BytesUploadRequest	CLASS	io.micronaut.objectstorage.request.BytesUploadRequest
+CompletedFileUploadRequest	CLASS	io.micronaut.objectstorage.request.CompletedFileUploadRequest
+CreatePresignedUploadRequest	CLASS	io.micronaut.objectstorage.request.CreatePresignedUploadRequest
+DefaultInputStreamMapper	CLASS	io.micronaut.objectstorage.DefaultInputStreamMapper
+DefaultUploadResponse	CLASS	io.micronaut.objectstorage.response.DefaultUploadResponse
+FileUploadRequest	CLASS	io.micronaut.objectstorage.request.FileUploadRequest
+InputStreamMapper	INTERFACE	io.micronaut.objectstorage.InputStreamMapper
+InputStreamUploadRequest	CLASS	io.micronaut.objectstorage.request.InputStreamUploadRequest
+ListObjectsRequest	CLASS	io.micronaut.objectstorage.request.ListObjectsRequest
+ListObjectsResponse	CLASS	io.micronaut.objectstorage.response.ListObjectsResponse
+ObjectStorageEntry	INTERFACE	io.micronaut.objectstorage.ObjectStorageEntry
+ObjectStorageException	CLASS	io.micronaut.objectstorage.ObjectStorageException
+ObjectStorageOperations	INTERFACE	io.micronaut.objectstorage.ObjectStorageOperations
+PresignedUpload	CLASS	io.micronaut.objectstorage.response.PresignedUpload
+ReactiveObjectStorageOperations	INTERFACE	io.micronaut.objectstorage.ReactiveObjectStorageOperations
+StreamingFileUploadRequest	CLASS	io.micronaut.objectstorage.request.StreamingFileUploadRequest
+UploadRequest	INTERFACE	io.micronaut.objectstorage.request.UploadRequest
+UploadResponse	INTERFACE	io.micronaut.objectstorage.response.UploadResponse

@@ -10,6 +10,7 @@ micronaut-http = { module = "io.micronaut:micronaut-http", version.ref = "micron
 micronaut-runtime = { module = "io.micronaut:micronaut-runtime", version.ref = "micronaut" }
 micronaut-retry = { module = "io.micronaut:micronaut-retry", version.ref = "micronaut" }
 micronaut-http-client = { module = "io.micronaut:micronaut-http-client", version.ref = "micronaut" }
+micronaut-http-client-core = { module = "io.micronaut:micronaut-http-client-core", version.ref = "micronaut" }
 micronaut-http-server = { module = "io.micronaut:micronaut-http-server", version.ref = "micronaut" }
 micronaut-messaging = { module = "io.micronaut:micronaut-messaging", version.ref = "micronaut" }
 micronaut-websocket = { module = "io.micronaut:micronaut-websocket", version.ref = "micronaut" }

@@ -37,6 +37,7 @@ rootProject.name = "pyronaut-parent"
 include("pyronaut")
 include("pyronaut-config-model")
 include("pyronaut-build-annotations")
+include("pyronaut-imports")
 include("pyronaut-direct-source")
 include("pyronaut-install")
 include("pyronaut-processor")
