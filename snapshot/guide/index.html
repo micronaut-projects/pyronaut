@@ -7485,6 +7485,9 @@ Cache image layers when possible, but do not cache <code>.micronaut/test-resourc
 <p>Pyronaut Requests provides a subset of the Python <a href="https://requests.readthedocs.io"><code>requests</code></a> API and delegates HTTP work to the Micronaut HTTP client. Code that uses the supported API can keep <code>import requests</code>, and the client can also target an embedded server in tests.</p>
 </div>
 <div class="paragraph">
+<p>If standard Requests is installed in the virtual environment, <code>import requests</code> selects that package without replacing its transports, <code>Session</code>, or exceptions. The <code>requests.with_context</code> extension remains available for Micronaut-backed test clients. Use <code>from pyronaut import requests</code> to select the Micronaut-backed API explicitly, regardless of installed packages.</p>
+</div>
+<div class="paragraph">
 <p>Add it to the scope where you need it. For application code declare it under <code>runtime</code>; for tests only, under <code>test</code>:</p>
 </div>
 <div class="listingblock">
@@ -7503,14 +7506,14 @@ runtime = [
 <div class="sectionbody">
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-python hljs" data-lang="python">import requests
+<pre class="highlightjs highlight"><code class="language-python hljs" data-lang="python">from pyronaut import requests
 
 response = requests.get("https://httpbin.org/get", params={"q": "pyronaut"})
 print(response.status_code, response.json())</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p><code>import pyronaut.requests as requests</code> is equivalent to the <code>requests</code> shim and avoids shadowing a <code>requests</code> package installed in the virtual environment.</p>
+<p><code>import pyronaut.requests as requests</code> also selects the Micronaut-backed API explicitly.</p>
 </div>
 </div>
 </div>
