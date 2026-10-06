@@ -873,6 +873,39 @@ class OrchestratorTest(unittest.TestCase):
             ]),
         )
 
+    def test_native_dev_command_adds_only_control_panels_for_application_libraries(self):
+        # The object storage panel's bean definition references
+        # ObjectStorageOperations; loading it without object storage on the
+        # classpath failed every bean lookup in `pyronaut dev --native`.
+        bundled = [
+            "/tools/lib/control-panel/micronaut-control-panel-ui-2.2.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-datasource-2.2.0.jar",
+            "/tools/lib/control-panel/micronaut-control-panel-object-storage-2.2.0.jar",
+        ]
+        application = ["/m2/micronaut-jdbc-7.2.0.jar"]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            (project_dir / "__pyronaut__").mkdir()
+            with patch.object(cli, "_use_pyronaut_dev_native_toolchain", return_value=True), \
+                    patch.object(cli, "_resolve_pyronaut_dev_native_executable", return_value="/tmp/pyronaut-dev"), \
+                    patch.object(cli, "_control_panel_requested", return_value=True), \
+                    patch.object(cli, "_direct_control_panel_classpath_entries", return_value=bundled), \
+                    patch.object(cli, "_control_panel_application_entries", return_value=application), \
+                    patch.object(cli, "_build_native_application_classpath", return_value=application[0]):
+                command_line = cli._pyronaut_dev_native_command_line(  # noqa: SLF001
+                    "run",
+                    ["--project-dir", str(project_dir)],
+                    self._resolver(),
+                    classpath_command="dev",
+                    environment="dev",
+                )
+
+        assert command_line is not None
+        selected = os.pathsep.join(bundled[:2])
+        self.assertIn(f"-Dpyronaut.dev.control.panel.class.path={selected}", command_line)
+        self.assertIn(f"-Djava.class.path={application[0]}{os.pathsep}{selected}", command_line)
+        self.assertFalse(any("control-panel-object-storage" in value for value in command_line))
+
     def test_direct_control_panel_keeps_every_panel_off_the_launcher_classpath(self):
         # Control Panel core reads each panel's default configuration through
         # its own classloader, and optional panels need the application's
