@@ -115,13 +115,17 @@ public class PytestTestExecutor {
     public void execute(TestDescriptor descriptor) {
         LOG.debug("Executing test descriptor: {}", descriptor.getDisplayName());
 
+        if (descriptor instanceof PytestTestDescriptor testDescriptor) {
+            // The callback listener owns the source container and its collected invocations.
+            executeTest(testDescriptor);
+            return;
+        }
+
         listener.executionStarted(descriptor);
 
         try {
             if (descriptor instanceof PytestFileDescriptor fileDescriptor) {
                 executeFile(fileDescriptor);
-            } else if (descriptor instanceof PytestTestDescriptor testDescriptor) {
-                executeTest(testDescriptor);
             } else {
                 // For the engine descriptor, run pytest on all discovered test files
                 runPytestForAllTests(descriptor);
@@ -130,137 +134,39 @@ public class PytestTestExecutor {
             listener.executionFinished(descriptor, TestExecutionResult.successful());
 
         } catch (Exception e) {
+            listener.executionFinished(descriptor, TestExecutionResult.failed(compactFailure(e)));
             if (e instanceof PytestPreconditionException preconditionException) {
                 throw preconditionException;
             }
             LOG.error("Error executing test descriptor {}: {}", descriptor.getDisplayName(), e.getMessage());
-            listener.executionFinished(descriptor, TestExecutionResult.failed(compactFailure(e)));
         }
     }
 
-    private void executeFile(PytestFileDescriptor fileDescriptor) {
+    private void executeFile(PytestFileDescriptor fileDescriptor) throws Exception {
         LOG.debug("Executing Python file: {}", fileDescriptor.getDisplayName());
-
-        try {
-            // Run pytest on this file with our custom plugin
-            runPytestForFile(fileDescriptor);
-        } catch (Exception e) {
-            if (e instanceof PytestPreconditionException preconditionException) {
-                throw preconditionException;
-            }
-            LOG.error("Error running pytest for file {}: {}", fileDescriptor.getDisplayName(), e.getMessage());
-            // Mark all child tests as failed
-            for (TestDescriptor child : fileDescriptor.getChildren()) {
-                if (child instanceof PytestTestDescriptor testDescriptor) {
-                    listener.executionStarted(testDescriptor);
-                    listener.executionFinished(testDescriptor, TestExecutionResult.failed(compactFailure(e)));
-                }
-            }
-        }
+        runPytestForFile(fileDescriptor);
     }
 
     private void runPytestForFile(PytestFileDescriptor fileDescriptor) throws Exception {
         LOG.debug("Running pytest for file: {}", fileDescriptor.getDisplayName());
 
         Path filePath = Paths.get(fileDescriptor.getUniqueId().getSegments().get(1).getValue());
-        try {
-            JUnitPytestTestListener testListener = new JUnitPytestTestListener(
-                listener,
-                fileDescriptor.getChildren(),
-                htmlReportPath,
-                lastNodeIdReportPath,
-                eventsReportPath
-            );
-            // Call run_pytest with the file path and listener
-            Value result = pytestRunner().execute(
-                pytestArgumentsForDescriptors(fileDescriptor.getChildren(), List.of(filePath.toString())),
-                testListener,
-                junitXmlReportPath
-            );
-            failIfPytestFailed(testListener, result);
-
-            LOG.debug("Pytest execution completed for file: {}", fileDescriptor.getDisplayName());
-
-        } catch (Exception e) {
-            if (e instanceof PytestPreconditionException preconditionException) {
-                throw preconditionException;
-            }
-            LOG.error("Error running pytest for file {}: {}", fileDescriptor.getDisplayName(), e.getMessage());
-            throw e;
-        }
+        runPytest(fileDescriptor.getChildren(),
+            pytestArgumentsForDescriptors(fileDescriptor.getChildren(), List.of(filePath.toString())));
     }
 
     private void runPytestForAllTests(TestDescriptor engineDescriptor) throws Exception {
         LOG.debug("Running pytest for all discovered tests");
 
-        // Collect all unique test files from the test descriptors
         String[] testArguments = pytestArgumentsForDescriptors(engineDescriptor.getChildren(), List.of());
-        List<Path> testFiles = engineDescriptor.getChildren().stream()
-            .filter(PytestTestDescriptor.class::isInstance)
-            .map(PytestTestDescriptor.class::cast)
-            .map(PytestTestDescriptor::getFilePath)
-            .distinct()
-            .toList();
-
-        if (testArguments.length == 0) {
-            LOG.debug("No test files found to execute");
-            JUnitPytestTestListener testListener = new JUnitPytestTestListener(
-                listener,
-                engineDescriptor.getChildren(),
-                htmlReportPath,
-                lastNodeIdReportPath,
-                eventsReportPath
-            );
-            testListener.onResult(TestExecutionResult.successful());
-            return;
-        }
-
-        LOG.debug("Running pytest on {} test files: {}", testFiles.size(), testFiles);
-
-        try {
-            JUnitPytestTestListener testListener = new JUnitPytestTestListener(
-                listener,
-                engineDescriptor.getChildren(),
-                htmlReportPath,
-                lastNodeIdReportPath,
-                eventsReportPath
-            );
-            // Call run_pytest with the file paths and listener
-            Value result = pytestRunner().execute(
-                testArguments,
-                testListener,
-                junitXmlReportPath
-            );
-            failIfPytestFailed(testListener, result);
-
-            LOG.debug("Pytest execution completed for all tests");
-
-        } catch (Exception e) {
-            if (e instanceof PytestPreconditionException preconditionException) {
-                throw preconditionException;
-            }
-            LOG.error("Error running pytest for all tests: {}", e.getMessage());
-            throw e;
-        }
+        runPytest(engineDescriptor.getChildren(), testArguments);
     }
 
     private void executeTest(PytestTestDescriptor testDescriptor) {
         LOG.debug("Executing Python test: {}", testDescriptor.getDisplayName());
 
         try {
-            JUnitPytestTestListener testListener = new JUnitPytestTestListener(
-                listener,
-                Set.copyOf(List.of(testDescriptor)),
-                htmlReportPath,
-                lastNodeIdReportPath,
-                eventsReportPath
-            );
-            Value result = pytestRunner().execute(
-                new String[]{pytestNodeId(testDescriptor)},
-                testListener,
-                junitXmlReportPath
-            );
-            failIfPytestFailed(testListener, result);
+            runPytest(Set.of(testDescriptor), new String[]{pytestNodeId(testDescriptor)});
             LOG.debug("Test {} executed via pytest", testDescriptor.getDisplayName());
 
         } catch (Exception e) {
@@ -268,9 +174,26 @@ public class PytestTestExecutor {
                 throw preconditionException;
             }
             LOG.error("Test {} failed: {}", testDescriptor.getDisplayName(), e.getMessage());
-            // If pytest invocation fails at the process level, still notify JUnit about the failure
-            listener.executionStarted(testDescriptor);
-            listener.executionFinished(testDescriptor, TestExecutionResult.failed(compactFailure(e)));
+            // runPytest already completed this source container with the failure.
+        }
+    }
+
+    private void runPytest(Set<? extends TestDescriptor> descriptors, String[] arguments) throws Exception {
+        JUnitPytestTestListener testListener = new JUnitPytestTestListener(
+            listener, descriptors, htmlReportPath, lastNodeIdReportPath, eventsReportPath);
+        TestExecutionResult result = TestExecutionResult.successful();
+        try {
+            if (arguments.length == 0) {
+                testListener.onResult(result);
+            } else {
+                Value exitCode = pytestRunner().execute(arguments, testListener, junitXmlReportPath);
+                failIfPytestFailed(testListener, exitCode);
+            }
+        } catch (Exception e) {
+            result = TestExecutionResult.failed(compactFailure(e));
+            throw e;
+        } finally {
+            testListener.finishSources(result);
         }
     }
 
