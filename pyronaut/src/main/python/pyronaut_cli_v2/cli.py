@@ -7073,9 +7073,26 @@ def _github_release_asset(
     )
     if not isinstance(asset, dict) or not isinstance(asset.get("url"), str):
         raise RuntimeError(f"GitHub release '{tag}' has no asset named '{archive_name}'")
+    public_url = _github_public_asset_url(asset, release)
+    if public_url is not None:
+        return public_url, {}
     download_headers = dict(headers)
     download_headers["Accept"] = "application/octet-stream"
     return asset["url"], download_headers
+
+
+def _github_public_asset_url(asset: dict, release: dict) -> str | None:
+    """Return the public download URL of a published asset when no token is configured.
+
+    The REST asset endpoint is only needed to authenticate private or draft
+    downloads. Anonymous requests to it are rate limited and GitHub answers
+    some of them with a persistent HTTP 500, while the public
+    ``releases/download`` URL serves the same bytes from its CDN.
+    """
+    url = asset.get("browser_download_url")
+    if _github_token() is not None or release.get("draft") or not isinstance(url, str) or not url:
+        return None
+    return url
 
 
 def _github_token() -> str | None:
@@ -9732,7 +9749,7 @@ def _sdk_releases(*, allow_draft: bool = False) -> list[_SdkRelease]:
                 version=version,
                 prerelease=bool(item.get("prerelease")) or version.prerelease,
                 wheel_name=wheel["name"] if wheel else None,
-                wheel_url=wheel["url"] if wheel else None,
+                wheel_url=(_github_public_asset_url(wheel, item) or wheel["url"]) if wheel else None,
             ))
         if len(data) < 100:
             break
@@ -9820,8 +9837,10 @@ def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
         with tempfile.TemporaryDirectory(prefix=".update-", dir=update_root) as temp_dir:
             assert release.wheel_name is not None and release.wheel_url is not None
             wheel = Path(temp_dir) / release.wheel_name
-            download_headers = _github_api_headers()
-            download_headers["Accept"] = "application/octet-stream"
+            download_headers: dict[str, str] | None = None
+            if release.wheel_url.startswith("https://api.github.com/"):
+                download_headers = _github_api_headers()
+                download_headers["Accept"] = "application/octet-stream"
             _download_url_with_progress(
                 release.wheel_url, wheel, f"Downloading pyronaut {target} wheel", headers=download_headers
             )

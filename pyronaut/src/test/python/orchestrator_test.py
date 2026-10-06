@@ -7932,6 +7932,28 @@ java-version = 25
             else:
                 self.assertNotIn("Authorization", request_headers)
 
+    def test_github_release_url_prefers_public_download_for_anonymous_published_releases(self):
+        archive_name = "pyronaut-run-macos-aarch64-0.1.0.tar.gz"
+        public_url = f"https://github.com/micronaut-projects/pyronaut/releases/download/v0.1.0/{archive_name}"
+        asset = {"name": archive_name, "url": "https://api.github.com/assets/9", "browser_download_url": public_url}
+
+        def resolve(token, draft):
+            release = {"tag_name": "v0.1.0", "draft": draft, "assets": [asset]}
+            with patch.object(cli, "_github_token", return_value=token), \
+                    patch.object(cli, "_github_api_json", return_value=release):
+                return cli._github_release_asset(
+                    "https://github.com/micronaut-projects/pyronaut/releases",
+                    "0.1.0",
+                    archive_name,
+                    allow_draft=True,
+                )
+
+        self.assertEqual((public_url, {}), resolve(None, False))
+        url, headers = resolve("read-only-token", False)
+        self.assertEqual("https://api.github.com/assets/9", url)
+        self.assertEqual("application/octet-stream", headers["Accept"])
+        self.assertEqual("https://api.github.com/assets/9", resolve(None, True)[0])
+
     def test_github_release_url_uses_explicit_release_tag_without_normalizing_it(self):
         archive_name = "pyronaut-dev-linux-amd64-0.0.1-SNAPSHOT.tar.gz"
         release_tag = "untagged-335b1cec0d28f835a836"
