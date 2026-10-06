@@ -249,6 +249,9 @@ final class SourceDocumentationParser {
                 .map(name -> content.isEmpty() ? ":raises %s:".formatted(name) : ":raises %s: %s".formatted(name, content))
                 .orElse(content);
             case DEPRECATED -> content.isEmpty() ? "Deprecated." : "Deprecated. " + content;
+            // authorship and versioning say nothing about the API to an editor or an agent
+            case AUTHOR, SINCE, VERSION, SERIAL, SERIAL_DATA, SERIAL_FIELD -> null;
+            case SEE -> content.isEmpty() ? null : "See " + content + ".";
             default -> content;
         };
     }
@@ -437,6 +440,22 @@ final class SourceDocumentationParser {
         List<String> methodParameterNames(String methodName, int arity, List<String> parameterTypes) {
             MemberMetadata metadata = lookup(MemberKind.METHOD, methodName, arity, parameterTypes);
             return metadata == null ? List.of() : metadata.parameterNames();
+        }
+
+        /**
+         * The documentation of the first documented overload of a method, whatever its parameters.
+         *
+         * @param methodName The method name
+         * @return The documentation, or null
+         */
+        String anyMethodDocumentation(String methodName) {
+            for (Map.Entry<MemberKey, MemberMetadata> entry : members.entrySet()) {
+                MemberKey key = entry.getKey();
+                if (key.kind() == MemberKind.METHOD && key.name().equals(methodName) && entry.getValue().documentation() != null) {
+                    return entry.getValue().documentation();
+                }
+            }
+            return null;
         }
 
         String fieldDocumentation(String fieldName) {

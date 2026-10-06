@@ -62,6 +62,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipException;
@@ -74,7 +75,7 @@ final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
     static final String GENERATED_MARKER_FILE_NAME = ".generated";
-    private static final String GENERATOR_VERSION = "11";
+    private static final String GENERATOR_VERSION = "12";
     private static final String SHARED_CACHE_DIR_PROPERTY = "pyronaut.ide-stubs.cache-dir";
     private static final String SHARED_CACHE_DIR_NAME = "ide-stubs";
     private static final String VFS_PYTHON_SOURCE_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/src/";
@@ -86,6 +87,11 @@ final class PythonIdeStubGenerator {
     private static final Set<String> EXCLUDED_PACKAGE_SEGMENTS = Set.of(".internal.", ".impl.");
     private static final String INTERNAL_ANNOTATION_NAME = "io.micronaut.core.annotation.Internal";
     private static final Pattern TRIPLE_QUOTES = Pattern.compile("\"\"\"");
+    private static final Set<String> PYTHON_KEYWORDS = Set.of(
+        "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+        "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal",
+        "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"
+    );
 
     WriteResult write(Path projectDir,
                       PyprojectModel.IdeStubs ideStubs,
@@ -96,7 +102,11 @@ final class PythonIdeStubGenerator {
         Path outputDir = resolveOutputDirectory(projectDir, ideStubs.destinationDir());
         validateOutputDirectory(projectDir, outputDir);
         List<ResolvedArtifact> jars = normalizedArtifacts(artifacts);
-        String state = hashClasspath(jars, packageMappings, excludePatterns);
+        // the curated modules (from pyronaut import http): their members' packages are stubbed whatever the
+        // configured packages, so every name a facade exports resolves in the editor
+        FacadeStubWriter.Facades facades = FacadeStubWriter.resolve(jars.stream().map(ResolvedArtifact::binaryJar).toList(), warnings);
+        packageMappings = withFacadePackages(packageMappings, facades.packages());
+        String state = hashClasspath(jars, packageMappings, excludePatterns, facades.fingerprint());
         Path stateFile = outputDir.resolve(STATE_FILE_NAME);
         if (Files.exists(stateFile) && Files.exists(outputDir.resolve(".generated")) && Files.readString(stateFile, StandardCharsets.UTF_8).trim().equals(state)) {
             return new WriteResult(Status.CACHED, 0, 0, List.of());
@@ -130,6 +140,16 @@ final class PythonIdeStubGenerator {
             Path packageFile = writePackage(sharedOutputDir, entry.getKey(), entry.getValue());
             packageFiles.add(packageFile);
             symbolCount += entry.getValue().size();
+        }
+        List<PackageMapping> mappings = packageMappings;
+        try (ClassDocumentation documentation = new ClassDocumentation(jars, warnings)) {
+            packageFiles.addAll(FacadeStubWriter.write(
+                sharedOutputDir,
+                facades,
+                javaPackage -> mapPackage(javaPackage, mappings),
+                (module, name) -> packages.getOrDefault(module, Map.of()).containsKey(name),
+                documentation::of
+            ));
         }
         ensureParentPackages(sharedOutputDir, packageFiles);
         Files.writeString(sharedOutputDir.resolve(".generated"), "generated\n", StandardCharsets.UTF_8);
@@ -215,10 +235,12 @@ final class PythonIdeStubGenerator {
 
     private static String hashClasspath(List<ResolvedArtifact> jars,
                                         List<PackageMapping> packageMappings,
-                                        List<Pattern> excludePatterns) throws IOException {
+                                        List<Pattern> excludePatterns,
+                                        String facadesFingerprint) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(("generator-version=" + GENERATOR_VERSION + "\n").getBytes(StandardCharsets.UTF_8));
+            digest.update(("facades=" + facadesFingerprint + "\n").getBytes(StandardCharsets.UTF_8));
             digest.update("scopes=runtime,test\n".getBytes(StandardCharsets.UTF_8));
             for (PackageMapping mapping : packageMappings) {
                 digest.update(("package-mapping=" + mapping.javaPrefix() + "->" + mapping.pythonPrefix() + "\n")
@@ -2000,6 +2022,99 @@ final class PythonIdeStubGenerator {
             return MappedType.any();
         }
         return MappedType.any();
+    }
+
+    /**
+     * Adds the packages of the facades' members the configured packages do not cover, each under the module
+     * the runtime serves it as: without a leading {@code io.}, keyword segments suffixed by an underscore.
+     */
+    private static List<PackageMapping> withFacadePackages(List<PackageMapping> packageMappings, Set<String> facadePackages) {
+        List<PackageMapping> mappings = new ArrayList<>(packageMappings);
+        for (String javaPackage : facadePackages) {
+            if (mapPackage(javaPackage, mappings) == null) {
+                String pythonName = javaPackage.startsWith("io.") ? javaPackage.substring(3) : javaPackage;
+                pythonName = Arrays.stream(pythonName.split("\\."))
+                    .map(segment -> PYTHON_KEYWORDS.contains(segment) ? segment + "_" : segment)
+                    .collect(Collectors.joining("."));
+                mappings.add(new PackageMapping(javaPackage, pythonName));
+            }
+        }
+        return List.copyOf(mappings);
+    }
+
+    /**
+     * The documentation of the Java types the facades export, read from the sources jar of the jar declaring each.
+     */
+    private static final class ClassDocumentation implements AutoCloseable {
+        private final List<ResolvedArtifact> jars;
+        private final List<WarningDetail> warnings;
+        private final Map<ResolvedArtifact, ZipFile> binaryZips = new HashMap<>();
+        private final Map<ResolvedArtifact, ZipFile> sourceZips = new HashMap<>();
+        private final Map<String, SourceDocumentationParser.ParsedSourceDocumentation> parsed = new HashMap<>();
+
+        ClassDocumentation(List<ResolvedArtifact> jars, List<WarningDetail> warnings) {
+            this.jars = jars;
+            this.warnings = warnings;
+        }
+
+        SourceDocumentationParser.ParsedSourceDocumentation of(String binaryName) {
+            return parsed.computeIfAbsent(binaryName, this::read);
+        }
+
+        private SourceDocumentationParser.ParsedSourceDocumentation read(String binaryName) {
+            String entry = binaryName.replace('.', '/') + ".class";
+            for (ResolvedArtifact jar : jars) {
+                if (jar.sourceJar() == null) {
+                    continue;
+                }
+                try {
+                    ZipFile binary = binaryZips.computeIfAbsent(jar, this::open);
+                    if (binary == null || binary.getEntry(entry) == null) {
+                        continue;
+                    }
+                    ZipFile source = sourceZips.computeIfAbsent(jar, artifact -> open(artifact.sourceJar()));
+                    String outer = binaryName.split("\\$")[0];
+                    return sourceDocumentation(source, outer, simpleName(outer), warnings);
+                } catch (RuntimeException e) {
+                    warnings.add(WarningDetail.fromThrowable("Skipped the documentation of " + binaryName, e));
+                    return null;
+                }
+            }
+            return null;
+        }
+
+        private ZipFile open(ResolvedArtifact artifact) {
+            return open(artifact.binaryJar());
+        }
+
+        private ZipFile open(Path path) {
+            try {
+                return new ZipFile(path.toFile());
+            } catch (IOException e) {
+                warnings.add(WarningDetail.fromThrowable("Skipped " + path + " for the facade documentation", e));
+                return null;
+            }
+        }
+
+        @Override
+        public void close() {
+            for (ZipFile zip : binaryZips.values()) {
+                closeQuietly(zip);
+            }
+            for (ZipFile zip : sourceZips.values()) {
+                closeQuietly(zip);
+            }
+        }
+
+        private static void closeQuietly(ZipFile zip) {
+            if (zip != null) {
+                try {
+                    zip.close();
+                } catch (IOException ignored) {
+                    // read only
+                }
+            }
+        }
     }
 
     private static String mappedPackage(Class<?> type, List<PackageMapping> packageMappings) {
