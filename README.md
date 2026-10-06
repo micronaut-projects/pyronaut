@@ -237,10 +237,10 @@ The source checkout uses the Micronaut Core version declared by
 Create `src/controllers.py`:
 
 ```python
-from micronaut.http.annotation import Get
+from pyronaut import http
 
 
-@Get(value="/", produces="text/plain")
+@http.Get(value="/", produces=http.TEXT_PLAIN)
 def index() -> str:
     return "Hello from Pyronaut"
 ```

@@ -1,0 +1,208 @@
+Micronaut spreads its API over many Java packages: a small controller can need `micronaut.http.annotation`,
+`micronaut.http`, `micronaut.serde.annotation`, `jakarta.inject` and `jakarta.validation.constraints`. Pyronaut
+facades are curated Python modules that gather the types of related packages under one name, so one import line covers
+a feature area:
+
+[source,python]
+----
+from dataclasses import dataclass
+from typing import Annotated
+
+from pyronaut import http, inject, serde, validation
+
+
+@serde.Serdeable
+@dataclass
+class Book:
+    title: Annotated[str, validation.NotBlank]
+
+
+@inject.Singleton
+class BookService:
+    def save(self, book: Book) -> Book:
+        return book
+
+
+@http.Controller("/books")
+class BookController:
+    def __init__(self, service: BookService):
+        self.service = service
+
+    @http.Post("/")
+    def save(self, book: Annotated[Book, http.Body, validation.Valid]) -> http.HttpResponse[Book]:
+        return http.created(self.service.save(book))
+----
+
+== How facades resolve
+
+A facade name is an alias, not a wrapper. During processing the compiler resolves each facade member to the original
+Java type, so `http.Get` is `io.micronaut.http.annotation.Get` and `inject.Singleton` is `jakarta.inject.Singleton`.
+The generated code, the runtime behavior and the line numbers in stack traces are the same as with direct imports.
+At build time the compiler also writes each facade the application imports as a small Python module (for example
+`pyronaut/http/__init__.py`) whose names resolve to the Java types on first use.
+
+Direct imports keep working. `from micronaut.http.annotation import Get` and `from jakarta.inject import Singleton` are
+still valid, and one module can mix both styles, for example to import a type that no facade covers, such as
+`micronaut.aop.Around`. See <<how,How Pyronaut Works>> for the direct import rules.
+
+A facade is available when the Micronaut module it describes is on the classpath. `pyronaut.data`, for example, needs
+Micronaut Data among the project dependencies.
+
+== Importing a facade
+
+Python's import rules decide which name an import binds:
+
+[cols="2,3", options="header"]
+|===
+|Import |Use the members as
+
+|`from pyronaut import http`
+|`@http.Get`, `http.HttpResponse`. This is the recommended form.
+
+|`import pyronaut.http as http`
+|`@http.Get`. Equivalent to the form above.
+
+|`from pyronaut.http import Get, ok`
+|`@Get`, `ok(...)`. Convenient for small modules.
+
+|`from pyronaut.http import *`
+|Every facade member as a bare name.
+|===
+
+`import pyronaut.http` on its own binds the name `pyronaut`, not `http`, so the members are only reachable as
+`pyronaut.http.Get`. Writing `http.Get` after `import pyronaut.http` is an error, and the compiler reports it during
+processing.
+
+`pyronaut.http.client` is also reachable from the HTTP facade as `http.client`, so `from pyronaut import http` is enough
+to write `@http.client.Client("https://api.example.com")`.
+
+== Available facades
+
+[cols="1,3", options="header"]
+|===
+|Facade |Contents
+
+|`pyronaut.http`
+|Routing annotations (`Controller`, `Get`, `Post`, `Body`, `QueryValue`, ...), HTTP types (`HttpRequest`, `HttpResponse`, `HttpStatus`, `MediaType`, `HttpHeaders`, `UriBuilder`), `EmbeddedServer`, server-sent `Event`, multipart and cookie types, file responses, and server exceptions.
+
+|`pyronaut.http.status`
+|The HTTP status codes as constants (`http.status.CREATED`, `http.status.NOT_FOUND`, ...).
+
+|`pyronaut.http.client`
+|The declarative `@Client`, `HttpClient`, the client exceptions, and the `HttpRequest` factories (`GET`, `POST`, ...) as functions.
+
+|`pyronaut.inject`
+|Dependency injection: scopes and qualifiers (`Singleton`, `Prototype`, `Named`), bean definition annotations (`Factory`, `Requires`, `Value`, `ConfigurationProperties`), `PostConstruct` and `PreDestroy`, application events and `EventListener`, `ApplicationContext` and environment types, `ContextPooled`, and core annotations such as `Introspected`.
+
+|`pyronaut.serde`
+|`@Serdeable`, the Micronaut Serialization annotations, and the Jackson annotations it honors (`JsonProperty`, `JsonIgnore`, ...).
+
+|`pyronaut.validation`
+|Bean validation constraints (`NotBlank`, `Size`, `Pattern`, `Min`, ...), `Valid`, `Validated`, and the Micronaut `Validator`.
+
+|`pyronaut.data`
+|Micronaut Data: entity annotations (`MappedEntity`, `Id`, `GeneratedValue`, `Relation`, `Join`, ...), `Query`, `JdbcRepository`, `R2dbcRepository`, `MongoRepository`, repositories, `Page`, `Pageable` and `Sort`, the data exceptions, and the SQL dialects, relation kinds and generation strategies as constants (`POSTGRES`, `MANY_TO_ONE`, `IDENTITY`).
+
+|`pyronaut.tx`
+|Transactions: `@Transactional`, `@ReadOnly` and `@TransactionalEventListener`, the transaction operations and status, and the propagation, isolation and event phase constants (`REQUIRES_NEW`, `READ_COMMITTED`, `AFTER_COMMIT`).
+
+|`pyronaut.security`
+|Micronaut Security: `@Secured`, the security rules as constants (`IS_AUTHENTICATED`, `IS_ANONYMOUS`, `DENY_ALL`), the authentication types and factories, tokens, filters, handlers and events.
+
+|`pyronaut.security.jwt`, `pyronaut.security.oauth2`
+|JSON Web Tokens (generators, signatures, endpoints) and OAuth 2.0 / OpenID Connect (clients, configuration, token responses).
+
+|`pyronaut.scheduling`
+|`@Scheduled`, `@Async`, `@ExecuteOn`, the task scheduler, and the executor names as constants (`IO`, `BLOCKING`, `VIRTUAL`, `SCHEDULED`).
+
+|`pyronaut.reactive`
+|`Publisher`, `Subscriber`, `@SingleResult`, `Publishers` and, with Project Reactor, `Flux`, `Mono` and `FluxSink`.
+
+|`pyronaut.kafka`, `pyronaut.rabbitmq`, `pyronaut.jms`, `pyronaut.mqtt`
+|Messaging: the listener and client annotations of each broker, the shared messaging annotations (`MessageBody`, `MessageHeader`, ...), and constants such as `kafka.EARLIEST` and `rabbitmq.DIRECT`.
+
+|`pyronaut.email`
+|`Email`, `EmailSender`, templates, the JavaMail sender, and the body types (`email.HTML`, `email.TEXT`).
+
+|`pyronaut.websocket`
+|`@ServerWebSocket`, `@ClientWebSocket`, `@OnOpen`, `@OnMessage`, `@OnClose` and `WebSocketSession`.
+
+|`pyronaut.tracing`, `pyronaut.micrometer`
+|Observability: `@NewSpan`, `@ContinueSpan`, `@SpanTag`, the OpenTelemetry `@WithSpan`, and the Micrometer `@Timed`, `@Counted` and meter types. These packages start with `io.`, which Python's own `io` module hides, so the facade is the simplest way to import them.
+
+|`pyronaut.objectstorage`
+|`ObjectStorageOperations`, upload requests and responses, and the AWS, Google Cloud, Oracle Cloud, Azure and local providers.
+
+|`pyronaut.graphql`, `pyronaut.mcp`
+|GraphQL (`GraphQL`, the schema, data fetchers, `newRuntimeWiring`, `newTypeWiring`, data loaders) and Model Context Protocol servers (`@Tool`, `@ToolArg`, `@Prompt`, `@Resource`).
+
+|`pyronaut.openapi`
+|The Swagger annotations from every `io.swagger.v3.oas.annotations` package (`Operation`, `Parameter`, `ApiResponse`, `Schema`, `Tag`, ...) in one module.
+
+|`pyronaut.cache`
+|`@Cacheable`, `@CachePut`, `@CacheInvalidate`, `@CacheConfig`, and the cache types.
+
+|`pyronaut.retry`
+|`@Retryable`, `@CircuitBreaker`, `@Fallback`, and their exceptions.
+
+|`pyronaut.views`
+|Server-side views: `@View`, `ModelAndView`, and the view renderers.
+
+|`pyronaut.management`
+|Management endpoints: `@Endpoint`, the `@Read`, `@Write` and `@Delete` operations, and health indicators.
+|===
+
+When two packages of a facade declare the same simple name, the annotation wins, because facade members are mostly used
+as decorators. When Micronaut and a Jakarta specification both declare a name, Micronaut's wins: `data.Id` is
+Micronaut Data's `Id`, `tx.Transactional` is Micronaut's `@Transactional` and `validation.Validator` is Micronaut's
+`Validator`. `pyronaut.data` does not include `jakarta.persistence`. Import the other type directly from its Java
+package when you need it.
+
+== Functions and constants
+
+Facades also export the static factories and constants that applications use most, so a route does not need to import
+the declaring class:
+
+[cols="2,3", options="header"]
+|===
+|Facade member |Java equivalent
+
+|`http.ok(body)`, `http.created(body)`, `http.notFound()`, `http.HttpResponse.status(http.status.ACCEPTED)`
+|`HttpResponse.ok(body)`, `HttpResponse.created(body)`, `HttpResponse.notFound()`, `HttpResponse.status(HttpStatus.ACCEPTED)`
+
+|`http.status.CREATED`, `http.status.NOT_FOUND`
+|`HttpStatus.CREATED`, `HttpStatus.NOT_FOUND`
+
+|`http.APPLICATION_JSON`, `http.TEXT_PLAIN`, `http.TEXT_EVENT_STREAM`
+|`MediaType.APPLICATION_JSON`, `MediaType.TEXT_PLAIN`, `MediaType.TEXT_EVENT_STREAM`
+
+|`http.client.GET("/books")`
+|`HttpRequest.GET("/books")`
+
+|`scheduling.BLOCKING`
+|`TaskExecutors.BLOCKING`
+
+|`data.POSTGRES`, `data.MANY_TO_ONE`
+|`Dialect.POSTGRES`, `Relation.Kind.MANY_TO_ONE`
+|===
+
+The constants work as annotation members too:
+
+[source,python]
+----
+from pyronaut import http, scheduling
+
+
+@http.Get("/report", produces=http.TEXT_PLAIN)
+@scheduling.ExecuteOn(scheduling.BLOCKING)
+def report() -> str:
+    return build_report()
+----
+
+== Editor support
+
+`pyronaut install` writes a stub for each facade the project can import, such as `pyronaut/http/__init__.pyi`, next to
+the Java package stubs described in <<ideSetup,IDE Setup for VS Code and PyCharm>>. Each stub re-exports the Java types,
+so completion, hover and go-to-definition show the original Javadoc. The stub's module docstring lists every member with
+a one-line summary, and `__pyronaut__/ide-stubs/FACADES.md` indexes all facades, which is a convenient reference for
+coding agents.

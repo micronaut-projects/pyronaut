@@ -24,10 +24,10 @@ Create `app.py`:
 
 [source,python]
 ----
-from micronaut.http.annotation import Get
+from pyronaut import http
 
 
-@Get("/")
+@http.Get("/")
 def index() -> dict[str, str]:
     return {"Hello": "World"}
 ----

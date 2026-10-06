@@ -1,33 +1,30 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from jakarta.validation import Valid
-from jakarta.validation.constraints import NotBlank, Positive
-from micronaut.http.annotation import Body, Get, Put
-from micronaut.serde.annotation import Serdeable
+from pyronaut import http, serde, validation
 
 
-@Serdeable
+@serde.Serdeable
 @dataclass
 class Item:
-    name: Annotated[str, NotBlank]
-    price: Annotated[float, Positive]
+    name: Annotated[str, validation.NotBlank]
+    price: Annotated[float, validation.Positive]
     is_offer: bool | None = None
 
 
-@Get("/")
+@http.Get("/")
 def read_root() -> dict:
     return {"Hello": "World"}
 
 
-@Get("/items/{item_id}")
+@http.Get("/items/{item_id}")
 def read_item(item_id: int, q: str | None = None) -> dict:
     return {"item_id": item_id, "q": q}
 
 
-@Put("/items/{item_id}")
+@http.Put("/items/{item_id}")
 def update_item(
     item_id: int,
-    item: Annotated[Item, Body, Valid],
+    item: Annotated[Item, http.Body, validation.Valid],
 ) -> dict:
     return {"item_name": item.name, "item_id": item_id}

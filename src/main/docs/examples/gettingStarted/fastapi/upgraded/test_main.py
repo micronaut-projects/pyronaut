@@ -2,9 +2,8 @@ from typing import Annotated
 
 import requests
 
-from jakarta.inject import Inject
-from micronaut.context import ApplicationContext
 from micronaut.test.extensions.junit5.annotation import MicronautTest
+from pyronaut import inject
 from pyronaut.build import Dependency
 
 
@@ -17,7 +16,7 @@ Dependency(
 
 MicronautTest()
 
-context: Annotated[ApplicationContext, Inject]
+context: Annotated[inject.ApplicationContext, inject.Inject]
 
 def client():
     return requests.with_context(context)

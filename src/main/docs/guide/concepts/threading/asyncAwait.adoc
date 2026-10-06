@@ -10,16 +10,16 @@ Declare the route with `async def` and await whatever you need. The return type 
 ----
 import asyncio
 
-from micronaut.http.annotation import Get
+from pyronaut import http
 
 
-@Get("/slow-hello")
+@http.Get("/slow-hello")
 async def slow_hello() -> str:
     await asyncio.sleep(0.5)   # does not block the event loop
     return "hello"
 ----
 
-The same works for controller methods and for methods of any `@Singleton` bean.
+The same works for controller methods and for methods of any `@inject.Singleton` bean.
 
 == Async HTTP clients
 
@@ -30,54 +30,48 @@ When you declare a declarative client method as `async def`, it returns an await
 from abc import ABC, abstractmethod
 from typing import Annotated
 
-from jakarta.inject import Inject
-from micronaut.http.annotation import Get
-from micronaut.http.client.annotation import Client
+from pyronaut import http, inject
 
 
-@Client("https://api.example.com")
+@http.client.Client("https://api.example.com")
 class BackendClient(ABC):
-    @Get("/message")
+    @http.Get("/message")
     @abstractmethod
     async def message(self) -> str:
         ...
 
 
-backend: Annotated[BackendClient, Inject]
+backend: Annotated[BackendClient, inject.Inject]
 
 
-@Get("/proxy-message")
+@http.Get("/proxy-message")
 async def proxy_message() -> str:
     return "proxied: " + await backend.message()
 ----
 
-You can await the low-level `HttpClient` too. Inject it with a `@Client` qualifier and await `exchange` or `retrieve`:
+You can await the low-level `http.client.HttpClient` too. Inject it with a `http.client.Client` qualifier and await `exchange` or `retrieve`:
 
 [source,python]
 ----
 import java
 from typing import Annotated
 
-from jakarta.inject import Inject
-from micronaut.http import HttpRequest
-from micronaut.http.annotation import Controller, Get
-from micronaut.http.client import HttpClient
-from micronaut.http.client.annotation import Client
+from pyronaut import http, inject
 
 String = java.type("java.lang.String")
 
 
-@Controller("/demo")
+@http.Controller("/demo")
 class DemoController:
-    http_client: Annotated[HttpClient, Inject, Client("/")]
+    http_client: Annotated[http.client.HttpClient, inject.Inject, http.client.Client("/")]
 
-    @Get("/exchange")
+    @http.Get("/exchange")
     async def exchange(self) -> str:
-        response = await self.http_client.exchange(HttpRequest.GET("/backend/message"), String)
+        response = await self.http_client.exchange(http.HttpRequest.GET("/backend/message"), String)
         return "exchange: " + response.body()
 ----
 
-A failed await raises the Java exception itself, exactly as the blocking call does, so you handle it with `except` on the Java type, for example `except HttpClientResponseException as e:`. As with a blocking Java call, `except Exception` does not catch a Java exception; use the Java type, a Java superclass such as `java.lang.RuntimeException`, or `BaseException`.
+A failed await raises the Java exception itself, exactly as the blocking call does, so you handle it with `except` on the Java type, for example `except http.client.HttpClientResponseException as e:`. As with a blocking Java call, `except Exception` does not catch a Java exception; use the Java type, a Java superclass such as `java.lang.RuntimeException`, or `BaseException`.
 
 Any `CompletionStage` (such as a `CompletableFuture`) or Reactive Streams `Publisher` returned by a Java call is awaitable. A publisher awaits to its first item, so `await Mono.from_(publisher)` and `await Mono.from_(publisher).toFuture()` both work.
 
@@ -89,10 +83,10 @@ Any `CompletionStage` (such as a `CompletableFuture`) or Reactive Streams `Publi
 ----
 import asyncio
 
-from micronaut.http.annotation import Get
+from pyronaut import http
 
 
-@Get("/dashboard")
+@http.Get("/dashboard")
 async def dashboard() -> dict:
     async with asyncio.TaskGroup() as group:
         orders = group.create_task(orders_client.recent())

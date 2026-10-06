@@ -7,7 +7,7 @@ Generated editor files include:
 
 - `__pyronaut__/schemas/pyronaut-pyproject.schema.json`
 - `__pyronaut__/schemas/micronaut-application.schema.json` (the `#:schema` directive is only added to `application.toml` when that file exists)
-- `__pyronaut__/ide-stubs`
+- `__pyronaut__/ide-stubs`, including a `pyronaut/<facade>/__init__.pyi` stub for each <<facades,Pyronaut facade>> and a `FACADES.md` index of the facades
 - `__pyronaut__/resolved-editor-artifacts.json`
 - `__pyronaut__/reports/editor-stubs/stub-generation-report.txt`
 
