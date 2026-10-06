@@ -364,6 +364,7 @@ public final class PyronautTestReload extends MicronautDevMain {
      * @param testResources The test resource directories
      * @param reports The test reports
      * @param reportPath The path the LiveReload server serves the live HTML report at
+     * @param pythonBytecode Whether the build compiles Python modules to bytecode
      */
     record Layout(Path root,
                   Path classes,
