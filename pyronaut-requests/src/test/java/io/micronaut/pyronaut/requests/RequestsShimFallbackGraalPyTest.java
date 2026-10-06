@@ -21,13 +21,15 @@ import io.micronaut.http.HttpResponse;
 import org.graalvm.polyglot.Context;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+
 class RequestsShimFallbackGraalPyTest {
     @Test
     void absentInstalledRequestsKeepsOriginalFrameworkApi() throws Exception {
         Context context = GraalPyContextFactory.bootstrapReusableContext(getClass().getClassLoader());
         try {
             context.getBindings("python").putMember("missing_response", HttpResponse.notFound());
-            context.eval("python", """
+            assertDoesNotThrow(() -> context.eval("python", """
                 import os
                 import sys
                 assert "requests" not in sys.modules
@@ -46,7 +48,7 @@ class RequestsShimFallbackGraalPyTest {
                     assert response.status_code == 404
                 else:
                     raise AssertionError("Expected the original framework HTTPError")
-                """);
+                """));
         } finally {
             PythonContextRuntime.setReuseContext(false);
             PythonContextRuntime.resetContext();

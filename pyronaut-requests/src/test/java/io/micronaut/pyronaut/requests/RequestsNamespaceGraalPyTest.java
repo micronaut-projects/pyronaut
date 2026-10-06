@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -50,35 +51,35 @@ class RequestsNamespaceGraalPyTest {
 
     @Test
     void explicitPyronautRequestsRemainsAvailable() {
-        context.eval("python", "test_explicit_pyronaut_requests_remains_available()");
+        assertDoesNotThrow(() -> context.eval("python", "test_explicit_pyronaut_requests_remains_available()"));
     }
 
     @Test
     void legacyRequestsWithContextRemainsAvailable() {
-        context.eval("python", "test_legacy_requests_with_context_remains_available()");
+        assertDoesNotThrow(() -> context.eval("python", "test_legacy_requests_with_context_remains_available()"));
     }
 
     @Test
     void installedRequestsHttpAdapterIsAvailable() {
-        context.eval("python", "test_installed_requests_http_adapter_is_available()");
+        assertDoesNotThrow(() -> context.eval("python", "test_installed_requests_http_adapter_is_available()"));
     }
 
     @Test
     void installedRequestsSessionKeepsTransportAndHeaders() {
-        context.eval("python", "test_installed_requests_session_keeps_transport_and_headers()");
+        assertDoesNotThrow(() -> context.eval("python", "test_installed_requests_session_keeps_transport_and_headers()"));
     }
 
     @Test
     void installedRequestsSubmodulesPreserveExceptionIdentity() {
-        context.eval("python", "test_installed_requests_submodules_preserve_exception_identity()");
+        assertDoesNotThrow(() -> context.eval("python", "test_installed_requests_submodules_preserve_exception_identity()"));
     }
 
     @Test
     void preservesFrameworkExtensionAndExistingPathPrecedence() {
-        context.eval("python", """
+        assertDoesNotThrow(() -> context.eval("python", """
             assert tuple(sys.path[:len(original_path)]) == original_path
             assert requests.with_context is pyronaut_requests.with_context
-            """);
+            """));
     }
 
     @Test
