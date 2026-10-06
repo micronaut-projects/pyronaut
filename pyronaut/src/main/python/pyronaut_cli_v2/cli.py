@@ -5605,6 +5605,12 @@ def _run_with_auto_restart(
         debounce_seconds = 0.0
 
     project_root = project_dir.resolve()
+    # On the JVM toolchain the application runs in the reloading development
+    # runtime, which watches and compiles the sources itself: only a change to
+    # the dependencies needs a new process.
+    source_snapshotter = snapshotter
+    reload_in_process = _dev_reload_in_process(project_root, run_args, debug_vm=debug_vm)
+    snapshotter = _snapshot_dependency_inputs if reload_in_process else source_snapshotter
     snapshot = snapshotter(project_root)
 
     while True:
@@ -5624,6 +5630,15 @@ def _run_with_auto_restart(
             if preflight_code != SUCCESS:
                 return preflight_code
 
+        # A change to pyproject.toml may switch the toolchain, the reload mode or
+        # the dependencies that provide micronaut-dev: decide again, and watch
+        # the sources again when the next process cannot reload them itself.
+        reload_now = _dev_reload_in_process(project_root, run_args, debug_vm=debug_vm)
+        if reload_now != reload_in_process:
+            reload_in_process = reload_now
+            snapshotter = _snapshot_dependency_inputs if reload_in_process else source_snapshotter
+            snapshot = snapshotter(project_root)
+
         try:
             command_line, env = _build_dev_delegate_invocation(
                 run_args,
@@ -5631,6 +5646,7 @@ def _run_with_auto_restart(
                 debug_vm=debug_vm,
                 env_overrides=env_overrides,
                 java_home_provider=java_home_provider,
+                reload_in_process=reload_in_process,
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
@@ -5968,6 +5984,7 @@ def _build_dev_delegate_invocation(
     debug_vm: bool,
     env_overrides: dict[str, str] | None,
     java_home_provider: JavaHomeProvider | None,
+    reload_in_process: bool = False,
 ) -> tuple[list[str], dict[str, str]]:
     project_dir = Path(_extract_project_dir(args)).resolve()
     delegate_args, dev_jvm_args = _split_dev_delegate_options(args)
@@ -6075,6 +6092,31 @@ def _build_dev_delegate_invocation(
     for jvm_arg in reversed(dev_jvm_args):
         command_line.insert(command_line.index("-cp"), jvm_arg)
     command_line.insert(command_line.index("-cp"), "-Dpyronaut.external.development=true")
+    if reload_in_process:
+        # The development runtime compiles changed sources in this JVM with the
+        # Pyronaut compiler, which must be on the launch classpath, as the
+        # Kotlin compiler is for Gradle. The annotation processors are not: the
+        # compiler loads them from the processor path in a loader of their own,
+        # so they stay out of the application's class loading. The runtime
+        # entries come first, so their versions win.
+        build_entries = _read_manifest_entries(_pyronaut_output_dir(project_dir) / "resolved-build-dependencies")
+        # The reloading launcher itself lives in pyronaut-dev: only its own jar
+        # joins, the rest of that distribution stays out of the application.
+        dev_jar = _pyronaut_dev_jar(resolver)
+        if dev_jar is None:
+            raise RuntimeError(
+                "Reloading in dev mode needs the pyronaut-dev launcher. Run pyronaut setup, "
+                "or set tool.pyronaut.dev.reload = 'process' to restart the process for every change."
+            )
+        classpath_index = command_line.index("-cp") + 1
+        command_line[classpath_index] = os.pathsep.join(
+            dict.fromkeys([
+                *command_line[classpath_index].split(os.pathsep),
+                *_dev_compiler_entries(build_entries),
+                dev_jar,
+            ])
+        )
+        command_line.insert(command_line.index("-cp"), f"-D{DEV_RELOAD_PROPERTY}=true")
     return command_line, env
 
 
@@ -6170,6 +6212,195 @@ def _stop_managed_process(process: ManagedProcess, *, interrupted: bool = False)
             return True
         except Exception:
             return False
+
+
+DEV_RELOAD_PROPERTY = "pyronaut.dev.reload"
+DEV_RELOAD_RESTART = "restart"
+DEV_RELOAD_PROCESS = "process"
+_MICRONAUT_DEV_JAR = re.compile(r"^micronaut-dev-\d[^/\\]*\.jar$")
+
+
+def _read_dev_reload(project_dir: Path) -> str:
+    """How dev mode applies a change: tool.pyronaut.dev.reload, 'restart' by default."""
+    data = _read_pyproject_data(project_dir)
+    section = data.get("tool", {}) if isinstance(data, dict) else {}
+    for key in ("pyronaut", "dev"):
+        section = section.get(key, {}) if isinstance(section, dict) else {}
+    value = section.get("reload", DEV_RELOAD_RESTART) if isinstance(section, dict) else DEV_RELOAD_RESTART
+    return value if value in {DEV_RELOAD_RESTART, DEV_RELOAD_PROCESS} else DEV_RELOAD_RESTART
+
+
+def _dev_reload_in_process(project_dir: Path, args: Sequence[str], *, debug_vm: bool = False) -> bool:
+    """
+    Whether dev mode runs the application in the reloading development runtime of
+    micronaut-dev rather than restarting the process for every change.
+
+    Only the JVM toolchain can: a native image cannot define the classes of a new
+    generation. The project must be a Pyronaut project, not an external build,
+    and its development runtime must hold micronaut-dev, which Micronaut 5.3 and
+    later provide.
+    """
+    if _is_external_build_project(project_dir) or _read_dev_reload(project_dir) == DEV_RELOAD_PROCESS:
+        return False
+    if _restart_excludes_under_watched_roots(project_dir):
+        # The development runtime watches its source and configuration roots
+        # whole; an exclusion inside one is honored by restarting the process.
+        return False
+    try:
+        if _use_pyronaut_dev_native_toolchain("dev", project_dir, debug_vm=debug_vm, args=args):
+            return False
+    except ValueError:
+        return False
+    manifest = _pyronaut_output_dir(project_dir) / "resolved-development-runtime-dependencies"
+    try:
+        entries = _read_manifest_entries(manifest)
+    except RuntimeError:
+        return False
+    return any(_MICRONAUT_DEV_JAR.match(Path(entry).name) for entry in entries)
+
+
+_DEV_COMPILER_JAR = re.compile(
+    r"^(micronaut-inject-python|micronaut-inject-java|micronaut-core-processor|micronaut-sourcegen-[a-z-]+"
+    r"|javaparser-[a-z-]+|asm(-[a-z]+)?|checker-qual)-\d[^/\\]*\.jar$"
+)
+
+
+_PYRONAUT_DEV_JAR = re.compile(r"^micronaut-pyronaut-dev-\d[^/\\]*\.jar$")
+
+
+def _pyronaut_dev_jar(resolver: Callable[[str], str | None]) -> str | None:
+    """The jar of the pyronaut-dev JVM launcher, which holds the reloading launcher."""
+    executable = resolver(COMMAND_TO_EXECUTABLE["dev"])
+    if executable is None:
+        return None
+    for entry in _delegate_lib_entries(executable, include_control_panel=False):
+        if _PYRONAUT_DEV_JAR.match(Path(entry).name):
+            return entry
+    return None
+
+
+def _dev_compiler_entries(build_entries: Sequence[str]) -> list[str]:
+    """The Pyronaut compiler and what it needs beyond the application runtime, from the build scope."""
+    return [entry for entry in build_entries if _DEV_COMPILER_JAR.match(Path(entry).name)]
+
+
+def _snapshot_dependency_inputs(project_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    """
+    What needs a new process when the sources reload in process: the files
+    declaring the dependencies, and whether each configured source and resource
+    directory exists, since the development runtime watches the directories it
+    was started with and a directory created later must be added to them.
+    """
+    entries: list[tuple[str, int, int]] = []
+    for name in ("pyproject.toml", "requirements.txt"):
+        file_path = project_dir / name
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
+        entries.append((name, stat.st_mtime_ns, stat.st_size))
+    layout = _read_pyproject_sources(project_dir)
+    for root_name in (
+        layout.python_source_dir,
+        layout.java_source_dir,
+        layout.resources_dir,
+        *layout.additional_resources_dirs,
+    ):
+        root = _resolve_layout_dir(project_dir, root_name)
+        entries.append((f"dir:{root.as_posix()}", int(root.is_dir()), 0))
+    entries.extend(_processor_option_inputs(project_dir))
+    return tuple(entries)
+
+
+def _restart_excludes_under_watched_roots(project_dir: Path) -> bool:
+    """Whether a restart exclusion lies inside a source or configuration root."""
+    excludes = _read_dev_restart_excludes(project_dir)
+    if not excludes:
+        return False
+    layout = _read_pyproject_sources(project_dir)
+    roots = [
+        _resolve_layout_dir(project_dir, root_name).resolve()
+        for root_name in (layout.python_source_dir, layout.java_source_dir, layout.resources_dir)
+    ]
+    for exclude in excludes:
+        excluded = (project_dir / exclude).resolve()
+        if any(excluded == root or root in excluded.parents for root in roots):
+            return True
+    return False
+
+
+def _processor_option_inputs(project_dir: Path) -> list[tuple[str, int, int]]:
+    """
+    The annotation processor options set in the application configuration.
+
+    pyronaut process reads them from the configuration directory, and the
+    development runtime compiles with the options of its start, so a change to
+    one needs a new process. Other configuration edits are refreshed in place.
+    """
+    supported_file = _pyronaut_output_dir(project_dir) / "annotation-processor-options.properties"
+    supported: set[str] = set()
+    try:
+        for line in supported_file.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("options="):
+                supported = {option.strip() for option in line.split("=", 1)[1].split(",") if option.strip()}
+    except OSError:
+        return []
+    if not supported:
+        return []
+    layout = _read_pyproject_sources(project_dir)
+    config_dir = _resolve_layout_dir(project_dir, layout.resources_dir)
+    values: dict[str, str] = {}
+    entries: list[tuple[str, int, int]] = []
+    toml_file = config_dir / "application.toml"
+    if toml_file.is_file():
+        try:
+            try:
+                import tomllib
+            except ImportError:
+                import tomli as tomllib  # type: ignore[no-redef]
+            with toml_file.open("rb") as fp:
+                _flatten_config(tomllib.load(fp), "", values)
+        except Exception:
+            entries.append(_file_stamp(project_dir, toml_file))
+    properties_file = config_dir / "application.properties"
+    if properties_file.is_file():
+        try:
+            for line in properties_file.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped[0] in "#!":
+                    continue
+                separator = min((index for index in (stripped.find("="), stripped.find(":")) if index > 0), default=-1)
+                if separator > 0:
+                    values[stripped[:separator].strip()] = stripped[separator + 1:].strip()
+        except OSError:
+            entries.append(_file_stamp(project_dir, properties_file))
+    for name in ("application.yml", "application.yaml"):
+        # YAML is not parsed here: any edit needs a new process
+        yaml_file = config_dir / name
+        if yaml_file.is_file():
+            entries.append(_file_stamp(project_dir, yaml_file))
+    for key in sorted(supported):
+        if key in values:
+            entries.append((f"option:{key}={values[key]}", 0, 0))
+    return entries
+
+
+def _flatten_config(data: dict[str, object], prefix: str, values: dict[str, str]) -> None:
+    for key, value in data.items():
+        name = f"{prefix}{key}"
+        if isinstance(value, dict):
+            _flatten_config(value, name + ".", values)
+        else:
+            values[name] = str(value)
+
+
+def _file_stamp(project_dir: Path, file_path: Path) -> tuple[str, int, int]:
+    stat = file_path.stat()
+    try:
+        name = file_path.relative_to(project_dir).as_posix()
+    except ValueError:
+        name = file_path.as_posix()
+    return (name, stat.st_mtime_ns, stat.st_size)
 
 
 def _read_dev_restart_excludes(project_dir: Path) -> tuple[str, ...]:
