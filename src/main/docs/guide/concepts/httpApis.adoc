@@ -57,6 +57,9 @@ Micronaut binds function parameters from the request using the parameter name, t
 |The full request object, for headers, the URI or attributes.
 |===
 
+Each `Annotated` form has a shorter equivalent that calls the annotation as the default value, such as
+`request_id: str = http.Header("X-Request-Id")`: see <<annotationDefaults,Applying Annotations to Parameters and Attributes>>.
+
 Model a JSON body with a dataclass decorated with `@serde.Serdeable` (`micronaut.serde.annotation.Serdeable`). This replaces a Pydantic `BaseModel`: the decorator makes Micronaut generate the JSON encoder and decoder during processing, without reflection or runtime schema building:
 
 [source,python]
