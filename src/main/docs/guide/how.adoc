@@ -44,6 +44,28 @@ def save(name: Annotated[str, NotBlank, Size(min=1, max=30)], payload: Annotated
 A bare name inside `Annotated`, such as `NotBlank`, applies the annotation with its default values. Call the annotation
 to pass members.
 
+=== Python names for DI and validation
+
+Import `singleton`, `not_blank`, and `valid` from `pyronaut.annotations` to use Python spellings of
+`jakarta.inject.Singleton`, `jakarta.validation.constraints.NotBlank`, and `jakarta.validation.Valid`:
+
+[source,python]
+----
+from typing import Annotated
+from pyronaut.annotations import singleton, not_blank
+
+
+@singleton
+class GreetingService:
+    def greet(self, name: Annotated[str, not_blank(message="Name required")]) -> str:
+        return f"Hello {name}"
+----
+
+Use `Annotated[Item, valid]` for cascading validation of an introspected request body or bean argument.
+These names produce the same Micronaut metadata during `pyronaut process`; DI and validation run through
+Micronaut-managed beans. They do not validate ordinary Python calls or dataclass constructors, and do not
+replace `@dataclass`, `@Introspected`, or `@Serdeable`.
+
 === Names that clash with Python keywords
 
 Some Java members and methods use names that Python reserves as keywords. Append an underscore to the Python name, and

@@ -220,6 +220,10 @@ tasks.register("prepareWheelSources", Sync) {
         // the portable SDK wheel.
         exclude("**/__pycache__/**", "**/*.pyc", "**/*.pyo")
     }
+    from(project(":micronaut-pyronaut-build-annotations").file("src/main/resources/META-INF/GRAALPY-VFS/micronaut-application/src")) {
+        into("src")
+        include("pyronaut/annotations.py")
+    }
     from(rootProject.files("README.md", "LICENSE"))
     into(wheelStagingDir)
 
@@ -497,6 +501,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true
+include = ["pyronaut", "pyronaut_cli_v2", "pyronaut_cli_v2.tui"]
+
 [tool.setuptools.package-data]
 pyronaut_cli_v2 = ["tools/**", "tools/shared/lib/*", "tools/shared/maven-poms/*", "toolchain-defaults.properties", "version.properties"]
 """.trim() + System.lineSeparator()
@@ -506,11 +515,15 @@ pyronaut_cli_v2 = ["tools/**", "tools/shared/lib/*", "tools/shared/maven-poms/*"
 [options]
 package_dir =
     = src
-packages = find:
+packages = find_namespace:
 include_package_data = True
 
 [options.packages.find]
 where = src
+include =
+    pyronaut
+    pyronaut_cli_v2
+    pyronaut_cli_v2.tui
 
 [options.package_data]
 pyronaut_cli_v2 =

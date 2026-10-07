@@ -13,6 +13,7 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
 
     implementation(project(":micronaut-pyronaut-config-model"))
+    runtimeOnly(project(":micronaut-pyronaut-build-annotations"))
     implementation(project(":micronaut-pyronaut-pytest"))
     implementation(project(":micronaut-pyronaut-logback"))
     implementation(mn.micronaut.context.python)

@@ -57,6 +57,7 @@ dependencies {
     api("io.micronaut.serde:micronaut-serde-api")
     api(project(":micronaut-pyronaut-logback"))
     implementation(project(":micronaut-pyronaut-config-model"))
+    runtimeOnly(project(":micronaut-pyronaut-build-annotations"))
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)
     testImplementation(project(":micronaut-pyronaut-processor"))

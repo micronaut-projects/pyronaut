@@ -23,6 +23,8 @@ dependencies {
     testImplementation(mnTest.junit.jupiter.engine)
     testImplementation(mn.micronaut.http)
     testImplementation(mn.micronaut.router)
+    testImplementation(mnValidation.micronaut.validation)
+    testRuntimeOnly(mnValidation.micronaut.validation.processor)
     testRuntimeOnly(libs.micronaut.data.jdbc)
     testRuntimeOnly(libs.micronaut.data.processor)
     // The Micronaut Data smoke fixture imports jakarta.data.repository.Save,
