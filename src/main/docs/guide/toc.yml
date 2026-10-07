@@ -8,6 +8,7 @@ gettingStarted:
   fastApiTutorial: The FastAPI Tutorial
 how: How Pyronaut Works
 facades: Pyronaut Facades
+annotationDefaults: Applying Annotations to Parameters and Attributes
 concepts:
   title: Micronaut Concepts for Python Developers
   dependencyInjection: Dependency Injection
