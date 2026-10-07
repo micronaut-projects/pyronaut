@@ -1045,6 +1045,9 @@ final class PythonIdeStubGenerator {
             ? documentation.constructorParameterNames(ownerName, method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method))
             : documentation.methodParameterNames(
                 method.methodName().stringValue(), method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method));
+        // the generic signature omits the synthetic and implicit parameters the descriptor leads with (the
+        // enclosing instance of an inner class constructor, for one), so it lines up with the descriptor's tail
+        int signatureOffset = signature == null ? 0 : method.methodTypeSymbol().parameterCount() - signature.arguments().size();
         StringBuilder parameters = new StringBuilder();
         for (int index = 0; index < method.methodTypeSymbol().parameterCount(); index++) {
             if (!parameters.isEmpty()) {
@@ -1054,8 +1057,8 @@ final class PythonIdeStubGenerator {
             if (name == null && index < documentationNames.size()) {
                 name = documentationNames.get(index);
             }
-            String type = signature == null ? renderClassDesc(method.methodTypeSymbol().parameterType(index))
-                : renderSignature(signature.arguments().get(index), typeVariables);
+            String type = signature == null || index < signatureOffset ? renderClassDesc(method.methodTypeSymbol().parameterType(index))
+                : renderSignature(signature.arguments().get(index - signatureOffset), typeVariables);
             parameters.append(sanitizeParameterName(name, index)).append(": ").append(type);
         }
         return parameters.toString();
