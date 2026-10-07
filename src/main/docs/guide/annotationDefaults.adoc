@@ -55,7 +55,9 @@ def status(ctx: inject.ApplicationContext = inject.Inject()) -> str:
 ----
 
 Pyronaut injects the bean when it creates the controller and passes it on each call, so the route signature Micronaut
-sees has no `ctx` parameter.
+sees has no `ctx` parameter. This works for module functions and for the methods of a controller class, including a
+`@ContextPooled` one, whose instances in every pooled context receive the same bean. Pyronaut reports an injected
+parameter of a static or class method, or of a function that declares `*args`, as a compilation error.
 
 === Module attributes
 
@@ -93,6 +95,9 @@ class Person:
     name: PersonName
     nickname: Nickname | None = None
 ----
+
+An alias is a declaration, not a module attribute: Pyronaut reads it where the module is compiled, so rebinding the name
+later in the module, or using it as a value, does not change the annotations it applies.
 
 == Type checking
 
