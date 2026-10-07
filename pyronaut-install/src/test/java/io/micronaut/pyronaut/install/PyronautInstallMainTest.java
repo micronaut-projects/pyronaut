@@ -2698,6 +2698,41 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void ideStubsRenderGenericConstructorsOfInnerClasses() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-stubs-inner-class");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.Outer", """
+                package io.micronaut.http;
+
+                import java.util.List;
+
+                public class Outer {
+                    /**
+                     * Its generic signature omits the enclosing instance its descriptor leads with.
+                     */
+                    public class Inner<T> {
+                        public Inner(List<T> items, T first) {
+                        }
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-stubs-inner-class");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String httpStub = Files.readString(project.resolve("__pyronaut__/ide-stubs/micronaut/http/__init__.pyi"), StandardCharsets.UTF_8);
+        assertTrue(httpStub.contains("def __init__(self, arg0: Outer, arg1: list[_Inner_T], arg2: _Inner_T) -> None"), httpStub);
+    }
+
+    @Test
     void installGeneratesPythonIdeStubsAndVsCodeSettings() throws Exception {
         Path repository = tempDir.resolve("repo-python-ide-stubs");
         writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
