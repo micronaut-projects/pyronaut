@@ -166,3 +166,4 @@ TypeHint	ANNOTATION	io.micronaut.core.annotation.TypeHint
 Value	ANNOTATION	io.micronaut.context.annotation.Value
 Vetoed	ANNOTATION	io.micronaut.core.annotation.Vetoed
 Writable	INTERFACE	io.micronaut.core.io.Writable
+singleton	ANNOTATION	jakarta.inject.Singleton

@@ -2,12 +2,14 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from pyronaut import http, inject, serde, validation
+from pyronaut.serde import serdeable as json_model, serializable, deserializable
+from micronaut.serde.config.naming import SnakeCaseStrategy
 
 # constraints written once, in a type alias type checkers understand
 type PersonName = Annotated[str, validation.NotBlank(), validation.Size(min=1, max=30)]
 
 
-@serde.Serdeable
+@serde.serdeable
 @dataclass
 class Person:
     name: PersonName
@@ -15,10 +17,40 @@ class Person:
     telephone: Annotated[str | None, validation.Pattern(regexp=r"\d{10}")] = None
 
 
-@inject.Singleton
+@inject.singleton
 class PeopleService:
     def find(self, name: str) -> Person | None:
         return Person(name=name, age=42) if name != "nobody" else None
+
+
+@json_model()
+@dataclass
+class Household:
+    people: list[Person]
+
+
+@json_model(validate=False, naming=SnakeCaseStrategy)
+@dataclass
+class NamedPayload:
+    firstName: str
+
+
+@serializable()
+@dataclass
+class OutputPayload:
+    name: str
+
+
+@deserializable
+@dataclass
+class InputPayload:
+    name: str
+
+
+@inject.Introspected
+@dataclass
+class InternalPayload:
+    name: str
 
 
 @http.Controller("/people")

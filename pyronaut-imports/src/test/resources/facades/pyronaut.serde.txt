@@ -51,3 +51,6 @@ PropertyAccessor	ENUM	com.fasterxml.jackson.annotation.PropertyAccessor
 Serdeable	ANNOTATION	io.micronaut.serde.annotation.Serdeable
 SerdeableGenerated	ANNOTATION	io.micronaut.serde.annotation.SerdeableGenerated
 SimpleObjectIdResolver	CLASS	com.fasterxml.jackson.annotation.SimpleObjectIdResolver
+deserializable	ANNOTATION	io.micronaut.serde.annotation.Serdeable$Deserializable
+serdeable	ANNOTATION	io.micronaut.serde.annotation.Serdeable
+serializable	ANNOTATION	io.micronaut.serde.annotation.Serdeable$Serializable
