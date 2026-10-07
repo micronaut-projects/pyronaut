@@ -45,6 +45,12 @@ public final class PyronautFacades implements PythonImportMapper {
         "TEXT_JSON", "TEXT_MARKDOWN", "TEXT_PLAIN", "TEXT_XML"
     };
 
+    private static final String[] RESPONSE_FACTORIES = {
+        "accepted", "badRequest", "created", "noContent", "notAllowed", "notAllowedGeneric", "notFound", "notModified",
+        "ok", "permanentRedirect", "redirect", "seeOther", "serverError", "temporaryRedirect", "unauthorized",
+        "unprocessableEntity", "uri"
+    };
+
     @Override
     public List<PythonModuleMapping> getMappings() {
         return List.of(http(), httpStatus(), httpClient(), inject(), serde(), validation(), data(), tx(), security(),
@@ -82,11 +88,11 @@ public final class PyronautFacades implements PythonImportMapper {
             .javaPackage("io.micronaut.http.server.util.locale")
             .javaPackage("io.micronaut.runtime.server")
             .javaPackage("io.micronaut.runtime.server.event")
-            .staticMethods("io.micronaut.http.HttpResponse")
+            // every response factory but status: status is the nested module of the status codes, and
+            // HttpResponse.status stays on HttpResponse
+            .staticMethods("io.micronaut.http.HttpResponse", RESPONSE_FACTORIES)
             .constants("io.micronaut.http.HttpMethod")
             .constants("io.micronaut.http.MediaType", MEDIA_TYPES)
-            // status is the nested module of the status codes; HttpResponse.status stays on HttpResponse
-            .exclude("status")
             .clashPolicy(ClashPolicy.PREFER_ANNOTATIONS)
             .requiredArtifact("io.micronaut:micronaut-http")
             .build();
