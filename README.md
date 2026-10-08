@@ -2,7 +2,7 @@
 
 # Pyronaut
 
-Pyronaut is a polyglot runtime for Python and Java applications built on the Micronaut programming model. Both languages can use Micronaut features such as dependency injection, AOP, configuration properties, and serialization.
+Pyronaut, a high-performance Python application platform for building production-ready services built on GraalVM and Micronaut.
 
 For Python developers, Pyronaut provides HTTP routing, dependency injection, configuration, validation, serialization, testing, and access to Java libraries through Python declarations.
 
