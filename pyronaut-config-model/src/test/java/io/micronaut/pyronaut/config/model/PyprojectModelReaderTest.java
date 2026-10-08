@@ -768,6 +768,55 @@ class PyprojectModelReaderTest {
     }
 
     @Test
+    void acceptTheContinuousTestingModes() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        for (String mode : new String[] {"restart", "process"}) {
+            Files.writeString(file, """
+                [project]
+                name = "demo"
+
+                [tool.pyronaut.test]
+                continuous = "%s"
+                """.formatted(mode));
+            assertEquals(mode, reader.readFile(file).pyronaut().test().continuous());
+        }
+    }
+
+    @Test
+    void readTheLiveTestReportPath() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+            """);
+        assertEquals("/tests/", reader.readFile(file).pyronaut().test().reportPathOrDefault());
+
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.test]
+            report-path = "/pyronaut/tests/"
+            """);
+        assertEquals("/pyronaut/tests/", reader.readFile(file).pyronaut().test().reportPathOrDefault());
+    }
+
+    @Test
+    void rejectInvalidContinuousTestingMode() throws IOException {
+        Path file = tempDir.resolve("pyproject.toml");
+        Files.writeString(file, """
+            [project]
+            name = "demo"
+
+            [tool.pyronaut.test]
+            continuous = "reload"
+            """);
+
+        PyprojectModelException exception = assertThrows(PyprojectModelException.class, () -> reader.readFile(file));
+        assertEquals("Invalid value for 'tool.pyronaut.test.continuous': expected one of [restart, process]", exception.getMessage());
+    }
+
+    @Test
     void rejectInvalidTestEngineType() throws IOException {
         Path file = tempDir.resolve("pyproject.toml");
         Files.writeString(file, """

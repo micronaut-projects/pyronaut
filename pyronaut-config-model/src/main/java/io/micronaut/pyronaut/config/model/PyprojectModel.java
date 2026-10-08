@@ -250,8 +250,26 @@ public record PyprojectModel(Project project,
      * @param mode test execution mode (for example jvm or native)
      * @param engine test engine selection
      * @param verbose whether application logs and test framework output stream to the console instead of the report
+     * @param continuous how continuous testing runs the tests again on the JVM toolchain, restart or process
+     * @param reportPath the path the live HTML report of continuous testing is served at, null for the default
      */
-    public record Test(String mode, TestEngine engine, Boolean verbose) {
+    public record Test(String mode, TestEngine engine, Boolean verbose, String continuous, String reportPath) {
+        /**
+         * The path the live HTML report is served at by default.
+         */
+        public static final String DEFAULT_REPORT_PATH = "/tests/";
+
+        /**
+         * Compatibility constructor with the default report path.
+         *
+         * @param mode test execution mode
+         * @param engine test engine selection
+         * @param verbose whether test output streams to the console
+         */
+        public Test(String mode, TestEngine engine, Boolean verbose) {
+            this(mode, engine, verbose, null, null);
+        }
+
         /**
          * Compatibility constructor using the default test engine.
          *
@@ -277,6 +295,13 @@ public record PyprojectModel(Project project,
          */
         public boolean verboseEnabled() {
             return Boolean.TRUE.equals(verbose);
+        }
+
+        /**
+         * @return the path the live HTML report of continuous testing is served at
+         */
+        public String reportPathOrDefault() {
+            return reportPath == null || reportPath.isBlank() ? DEFAULT_REPORT_PATH : reportPath.strip();
         }
     }
 

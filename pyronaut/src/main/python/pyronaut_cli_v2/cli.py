@@ -5761,6 +5761,53 @@ def _run_test_cycle(
     local_repository: str | None,
     external_install_done: bool = False,
 ) -> tuple[int, dict[str, str] | None]:
+    prepare_code, test_resources_env_overrides = _prepare_test_cycle(
+        project_dir=project_dir,
+        no_cache=no_cache,
+        execute=execute,
+        resolver=resolver,
+        tr_session=tr_session,
+        test_resources_env_overrides=test_resources_env_overrides,
+        no_validate=no_validate,
+        java_home_provider=java_home_provider,
+        local_repository=local_repository,
+        external_install_done=external_install_done,
+    )
+    if prepare_code != SUCCESS:
+        return prepare_code, test_resources_env_overrides
+    return (
+        _delegate(
+            "test",
+            delegated_args,
+            execute,
+            resolver,
+            debug_vm=debug_vm,
+            env_overrides=test_resources_env_overrides,
+            java_home_provider=java_home_provider,
+        ),
+        test_resources_env_overrides,
+    )
+
+
+def _prepare_test_cycle(
+    *,
+    project_dir: Path,
+    no_cache: bool,
+    execute: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    tr_session: _OwnedTestResourcesSession | None,
+    test_resources_env_overrides: dict[str, str] | None,
+    no_validate: bool,
+    java_home_provider: JavaHomeProvider | None,
+    local_repository: str | None,
+    external_install_done: bool = False,
+    process_pass: str = "all",
+) -> tuple[int, dict[str, str] | None]:
+    """
+    What a test run needs before its tests run: the processing of the project
+    (an external build or pyronaut process), the owned Test Resources server
+    and the configuration validation.
+    """
     if _is_external_build_project(project_dir):
         preflight_code = _run_preflight(
             str(project_dir),
@@ -5785,7 +5832,7 @@ def _run_test_cycle(
             execute,
             resolver,
             install=False,
-            process_pass="all",
+            process_pass=process_pass,
             java_home_provider=java_home_provider,
         )
         if preflight_code != SUCCESS:
@@ -5810,18 +5857,7 @@ def _run_test_cycle(
         if validation_code != SUCCESS:
             return validation_code, test_resources_env_overrides
 
-    return (
-        _delegate(
-            "test",
-            delegated_args,
-            execute,
-            resolver,
-            debug_vm=debug_vm,
-            env_overrides=test_resources_env_overrides,
-            java_home_provider=java_home_provider,
-        ),
-        test_resources_env_overrides,
-    )
+    return SUCCESS, test_resources_env_overrides
 
 
 def _run_test_continuously(
@@ -5846,6 +5882,22 @@ def _run_test_continuously(
     external_install_done: bool = False,
 ) -> int:
     project_root = project_dir.resolve()
+    if _test_reload_in_process(project_root, delegated_args, debug_vm=debug_vm):
+        return _run_tests_in_process(
+            project_dir=project_root,
+            delegated_args=delegated_args,
+            no_cache=no_cache,
+            execute=execute,
+            resolver=resolver,
+            debug_vm=debug_vm,
+            tr_session=tr_session,
+            test_resources_env_overrides=test_resources_env_overrides,
+            no_validate=no_validate,
+            java_home_provider=java_home_provider,
+            local_repository=local_repository,
+            # without a terminal no key can end the session: run the tests once
+            once=input_reader is None and not _stdin_is_terminal(),
+        )
     snapshot = snapshotter(project_root)
     watch_mode = False
 
@@ -5922,6 +5974,244 @@ def _run_test_continuously(
                         continue
     except KeyboardInterrupt:
         return 130
+
+
+TEST_CONTINUOUS_RESTART = "restart"
+TEST_CONTINUOUS_PROCESS = "process"
+TEST_RELOAD_MAIN = "io.micronaut.pyronaut.dev.PyronautTestReload"
+# The options of the test command that test mode supports; any other runs the
+# tests in a new process for every run, as before.
+_TEST_RELOAD_OPTIONS = {"--project-dir", "--tests", "--verbose", "--debug-vm", "--jvm", "--native"}
+_TEST_RELOAD_VALUE_OPTIONS = {"--project-dir", "--tests"}
+_TEST_MODE_RUNNER_CLASS = "io/micronaut/dev/test/TestRunner.class"
+_MICRONAUT_DEV_MODULES = ("micronaut-dev", "micronaut-dev-test-report", "micronaut-dev-livereload")
+_JUNIT_PLATFORM_LAUNCHER_JAR = re.compile(r"^junit-platform-launcher-\d[^/\\]*\.jar$")
+
+
+def _read_test_continuous(project_dir: Path) -> str:
+    """How pyronaut test -t runs the tests again: tool.pyronaut.test.continuous, 'restart' by default."""
+    data = _read_pyproject_data(project_dir)
+    section = data.get("tool", {}) if isinstance(data, dict) else {}
+    for key in ("pyronaut", "test"):
+        section = section.get(key, {}) if isinstance(section, dict) else {}
+    value = section.get("continuous", TEST_CONTINUOUS_RESTART) if isinstance(section, dict) else TEST_CONTINUOUS_RESTART
+    return value if value in {TEST_CONTINUOUS_RESTART, TEST_CONTINUOUS_PROCESS} else TEST_CONTINUOUS_RESTART
+
+
+def _test_reload_supports_args(args: Sequence[str]) -> bool:
+    """Whether test mode supports every option the test command would receive."""
+    option_args, _ = _split_application_args(_strip_orchestrator_only_args(args))
+    skip_next = False
+    for token in option_args:
+        if skip_next:
+            skip_next = False
+            continue
+        name = token.split("=", 1)[0]
+        if not token.startswith("-"):
+            return False
+        if name not in _TEST_RELOAD_OPTIONS and not name.startswith("--verbose"):
+            return False
+        if token in _TEST_RELOAD_VALUE_OPTIONS:
+            skip_next = True
+    return True
+
+
+def _test_reload_in_process(project_dir: Path, args: Sequence[str], *, debug_vm: bool = False) -> bool:
+    """
+    Whether pyronaut test -t runs the tests in one JVM, in the test mode of the
+    micronaut-dev runtime, rather than processing the project and starting a
+    new test process for every run.
+
+    The conditions are those of reloading dev mode: a Pyronaut project, not an
+    external build, on the JVM toolchain, whose development runtime holds
+    micronaut-dev, with no restart exclusion inside a watched root, and the
+    command's options must be ones test mode supports.
+    """
+    if _is_external_build_project(project_dir) or _read_test_continuous(project_dir) == TEST_CONTINUOUS_PROCESS:
+        return False
+    if not _test_reload_supports_args(args):
+        return False
+    if _restart_excludes_under_watched_roots(project_dir, tests=True):
+        return False
+    try:
+        if (
+            not debug_vm
+            and _extract_build_mode_flag(args) != TOOLCHAIN_TYPE_JVM
+            and _read_pyproject_test_mode(project_dir) == TOOLCHAIN_TYPE_NATIVE
+        ):
+            return False
+        if _use_pyronaut_dev_native_toolchain("test", project_dir, debug_vm=debug_vm, args=args):
+            return False
+    except ValueError:
+        return False
+    manifest = _pyronaut_output_dir(project_dir) / "resolved-development-runtime-dependencies"
+    try:
+        entries = _read_manifest_entries(manifest)
+    except RuntimeError:
+        return False
+    return any(
+        _MICRONAUT_DEV_JAR.match(Path(entry).name) and _has_test_mode(Path(entry))
+        for entry in entries
+    )
+
+
+def _has_test_mode(micronaut_dev_jar: Path) -> bool:
+    """Whether a micronaut-dev jar has the test mode, which a snapshot before it lacks."""
+    try:
+        with zipfile.ZipFile(micronaut_dev_jar) as jar:
+            jar.getinfo(_TEST_MODE_RUNNER_CLASS)
+        return True
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return False
+
+
+def _run_tests_in_process(
+    *,
+    project_dir: Path,
+    delegated_args: Sequence[str],
+    no_cache: bool,
+    execute: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    debug_vm: bool,
+    tr_session: _OwnedTestResourcesSession | None,
+    test_resources_env_overrides: dict[str, str] | None,
+    no_validate: bool,
+    java_home_provider: JavaHomeProvider | None,
+    local_repository: str | None,
+    once: bool = False,
+) -> int:
+    """
+    Continuous testing in one JVM: validate and process the project once, then
+    run the test mode of the development runtime, which compiles every change
+    in process and runs the tests it affects on a new class loader generation,
+    and reads the keys of the terminal itself until it exits. Without a
+    terminal, as in CI, the tests run once, as the loop's first cycle does.
+    """
+    # The development runtime compiles the tests itself, against the processed
+    # classes: processing them here would be thrown away.
+    prepare_code, test_resources_env_overrides = _prepare_test_cycle(
+        project_dir=project_dir,
+        no_cache=no_cache,
+        execute=execute,
+        resolver=resolver,
+        tr_session=tr_session,
+        test_resources_env_overrides=test_resources_env_overrides,
+        no_validate=no_validate,
+        java_home_provider=java_home_provider,
+        local_repository=local_repository,
+        process_pass="main",
+    )
+    if prepare_code != SUCCESS:
+        return prepare_code
+    try:
+        command_line, env = _build_test_reload_invocation(
+            delegated_args,
+            resolver,
+            debug_vm=debug_vm,
+            env_overrides=test_resources_env_overrides,
+            java_home_provider=java_home_provider,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
+    if once:
+        command_line.insert(command_line.index("-cp"), "-Dmicronaut.dev.test.once=true")
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    try:
+        return execute(command_line, env)
+    except KeyboardInterrupt:
+        return 130
+
+
+def _stdin_is_terminal() -> bool:
+    stream = sys.stdin
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def _build_test_reload_invocation(
+    args: Sequence[str],
+    resolver: Callable[[str], str | None],
+    *,
+    debug_vm: bool,
+    env_overrides: dict[str, str] | None,
+    java_home_provider: JavaHomeProvider | None,
+) -> tuple[list[str], dict[str, str] | None]:
+    """
+    The test command's JVM invocation, its classpath and options, running the
+    test mode launcher of pyronaut-dev instead: with the Pyronaut compiler, the
+    launcher's own jar and micronaut-dev, its live HTML report and its
+    LiveReload server.
+    """
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    command_line, env = _build_java_delegate_invocation(
+        "test",
+        [value for value in args if value not in {"--jvm", "--native"}],
+        resolver,
+        debug_vm=debug_vm,
+        env_overrides=env_overrides,
+        java_home_provider=java_home_provider,
+        # C2 and ParallelGC, as for the test JVM this one replaces
+        short_lived=True,
+    )
+    command_line[command_line.index(JAVA_MAIN_BY_COMMAND["test"])] = TEST_RELOAD_MAIN
+    cache_dir = _pyronaut_output_dir(project_dir)
+    dev_jar = _pyronaut_dev_jar(resolver)
+    if dev_jar is None:
+        raise RuntimeError(
+            "Continuous testing in one JVM needs the pyronaut-dev launcher. Run pyronaut setup, "
+            "or set tool.pyronaut.test.continuous = 'process' to start a new test process for every run."
+        )
+    runtime = _test_mode_runtime_entries(
+        _read_manifest_entries(cache_dir / "resolved-development-runtime-dependencies")
+    )
+    classpath_index = command_line.index("-cp") + 1
+    classpath = command_line[classpath_index].split(os.pathsep)
+    if not any(_JUNIT_PLATFORM_LAUNCHER_JAR.match(Path(entry).name) for entry in classpath):
+        raise RuntimeError(
+            "Continuous testing in one JVM needs junit-platform-launcher on the test classpath. "
+            "Run pyronaut install, or set tool.pyronaut.test.continuous = 'process'."
+        )
+    build_entries = _read_manifest_entries(cache_dir / "resolved-build-dependencies")
+    command_line[classpath_index] = os.pathsep.join(
+        dict.fromkeys([*classpath, *_dev_compiler_entries(build_entries), *runtime, dev_jar])
+    )
+    return command_line, env
+
+
+def _test_mode_runtime_entries(development_entries: Sequence[str]) -> list[str]:
+    """
+    micronaut-dev, micronaut-dev-test-report and micronaut-dev-livereload from
+    the development runtime; a module it lacks, as after an install by an older
+    Pyronaut, is taken from the Maven repository micronaut-dev comes from, at
+    its version, when it is there.
+    """
+    by_module: dict[str, str] = {}
+    for entry in development_entries:
+        name = Path(entry).name
+        for module in _MICRONAUT_DEV_MODULES:
+            if re.match(rf"^{re.escape(module)}-\d[^/\\]*\.jar$", name):
+                by_module.setdefault(module, entry)
+    dev = by_module.get("micronaut-dev")
+    if dev is None:
+        raise RuntimeError(
+            "Continuous testing in one JVM needs micronaut-dev (Micronaut 5.3 or later) in the development runtime. "
+            "Run pyronaut install, or set tool.pyronaut.test.continuous = 'process'."
+        )
+    dev_path = Path(dev)
+    version = dev_path.parent.name
+    entries = [dev]
+    for module in _MICRONAUT_DEV_MODULES[1:]:
+        entry = by_module.get(module)
+        if entry is None:
+            sibling = dev_path.parent.parent.parent / module / version / f"{module}-{version}.jar"
+            entry = str(sibling) if sibling.is_file() else None
+        if entry is not None:
+            entries.append(entry)
+    return entries
 
 
 def _print_continuous_test_banner() -> None:
@@ -6293,16 +6583,18 @@ def _snapshot_dependency_inputs(project_dir: Path) -> tuple[tuple[str, int, int]
     return tuple(entries)
 
 
-def _restart_excludes_under_watched_roots(project_dir: Path) -> bool:
-    """Whether a restart exclusion lies inside a source or configuration root."""
+def _restart_excludes_under_watched_roots(project_dir: Path, *, tests: bool = False) -> bool:
+    """Whether a restart exclusion lies inside a source or configuration root, or a test root with ``tests``."""
     excludes = _read_dev_restart_excludes(project_dir)
     if not excludes:
         return False
     layout = _read_pyproject_sources(project_dir)
-    roots = [
-        _resolve_layout_dir(project_dir, root_name).resolve()
-        for root_name in (layout.python_source_dir, layout.java_source_dir, layout.resources_dir)
-    ]
+    root_names = [layout.python_source_dir, layout.java_source_dir, layout.resources_dir]
+    if tests:
+        # test mode watches every resource root whole, the additional ones included
+        root_names.extend((layout.python_test_dir, layout.java_test_dir, layout.test_resources_dir))
+        root_names.extend((*layout.additional_resources_dirs, *layout.additional_test_resources_dirs))
+    roots = [_resolve_layout_dir(project_dir, root_name).resolve() for root_name in root_names]
     for exclude in excludes:
         excluded = (project_dir / exclude).resolve()
         if any(excluded == root or root in excluded.parents for root in roots):
@@ -6636,12 +6928,17 @@ def _launch_label(command_line: Sequence[str]) -> str | None:
     if executable in {"java", "javaw"}:
         # A JVM delegate: the tool is the main class after the JVM options.
         main_index = next(
-            (index for index, value in enumerate(arguments) if value in JAVA_MAIN_BY_COMMAND.values()),
+            (
+                index for index, value in enumerate(arguments)
+                if value in JAVA_MAIN_BY_COMMAND.values() or value == TEST_RELOAD_MAIN
+            ),
             None,
         )
         if main_index is None:
             return None
-        command = next(name for name, main in JAVA_MAIN_BY_COMMAND.items() if main == arguments[main_index])
+        command = "test" if arguments[main_index] == TEST_RELOAD_MAIN else next(
+            name for name, main in JAVA_MAIN_BY_COMMAND.items() if main == arguments[main_index]
+        )
         executable = COMMAND_TO_EXECUTABLE[command]
         arguments = arguments[main_index + 1:]
     if executable == DEV_NATIVE_EXECUTABLE:

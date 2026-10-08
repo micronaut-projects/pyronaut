@@ -225,6 +225,23 @@ public final class PyprojectConfigSpec {
         "Whether test execution streams application logs and test framework output to the console instead of capturing them in the test report.",
         false
     );
+    public static final FieldSpec PYRONAUT_TEST_CONTINUOUS = enumString(
+        "tool.pyronaut.test.continuous",
+        "How 'pyronaut test -t' runs the tests again on the JVM toolchain. 'restart' keeps one JVM in the "
+            + "test mode of the development runtime, which compiles a change in process and runs the tests it affects on "
+            + "a new class loader generation, keeping the dependencies, the compilers and the GraalPy runtime loaded; "
+            + "'process' processes the project and starts a new test process for every run. The native toolchain "
+            + "and external Maven or Gradle builds always start a new process.",
+        "restart",
+        List.of("restart", "process")
+    );
+    public static final FieldSpec PYRONAUT_TEST_REPORT_PATH = string(
+        "tool.pyronaut.test.report-path",
+        "The path the LiveReload server serves the live HTML report of 'pyronaut test -t' at, on the JVM toolchain.",
+        "/tests/",
+        List.of(),
+        List.of()
+    );
     public static final FieldSpec PYRONAUT_RUN_BANNER_ENABLED = bool(
         "tool.pyronaut.run.banner-enabled",
         "Whether the Micronaut banner is printed when running the application.",
@@ -848,6 +865,8 @@ public final class PyprojectConfigSpec {
         PYRONAUT_TEST_MODE,
         PYRONAUT_TEST_ENGINE,
         PYRONAUT_TEST_VERBOSE,
+        PYRONAUT_TEST_CONTINUOUS,
+        PYRONAUT_TEST_REPORT_PATH,
         PYRONAUT_RUN_BANNER_ENABLED,
         PYRONAUT_CONTROL_PANEL_ENABLED,
         PYRONAUT_CONTROL_PANEL_PATH,

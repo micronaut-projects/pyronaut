@@ -100,6 +100,8 @@ final class MavenClasspathResolver {
     private static final String MICRONAUT_MANAGEMENT_MODULE = "io.micronaut:micronaut-management";
     private static final String MICRONAUT_RUNTIME_OSX_MODULE = "io.micronaut:micronaut-runtime-osx";
     private static final String MICRONAUT_DEV_MODULE = "io.micronaut:micronaut-dev";
+    private static final String MICRONAUT_DEV_TEST_REPORT_MODULE = "io.micronaut:micronaut-dev-test-report";
+    private static final String MICRONAUT_DEV_LIVERELOAD_MODULE = "io.micronaut:micronaut-dev-livereload";
     private static final String MICRONAUT_CACHE_CAFFEINE_MODULE = "io.micronaut.cache:micronaut-cache-caffeine";
     private static final String CONTROL_PANEL_MANAGEMENT_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-management";
     private static final String CONTROL_PANEL_UI_MODULE = "io.micronaut.controlpanel:micronaut-control-panel-ui";
@@ -683,6 +685,10 @@ final class MavenClasspathResolver {
                 // for a Pyronaut project only: the development support resolved for an external Maven or Gradle
                 // build has no [project], and that build's versions must not be mixed with the SDK's
                 addDefaultCoordinate(runtime, dependencies, MICRONAUT_DEV_MODULE, managedVersions);
+                // test mode, pyronaut test -t on the JVM toolchain, writes a live HTML report of the runs, which the LiveReload
+                // server serves and updates; dev mode on the JVM toolchain serves LiveReload to the browser with it
+                addDefaultCoordinate(runtime, dependencies, MICRONAUT_DEV_TEST_REPORT_MODULE, managedVersions);
+                addDefaultCoordinate(runtime, dependencies, MICRONAUT_DEV_LIVERELOAD_MODULE, managedVersions);
             }
             addDefaultCacheImplementationIfMissing(runtime, managedVersions);
             if (!model.pyronaut().controlPanelConfigured() || controlPanelEnabled(model)) {

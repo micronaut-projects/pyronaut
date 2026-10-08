@@ -4237,6 +4237,257 @@ type = "{toolchain}"
             (project_dir / "src-java").mkdir()
             self.assertNotEqual(snapshot, cli._snapshot_dependency_inputs(project_dir))  # noqa: SLF001
 
+    def _continuous_test_project(
+        self,
+        temp_dir: str,
+        *,
+        toolchain: str = "jvm",
+        continuous: str | None = None,
+        dev_jar: bool = True,
+        test_mode: bool = True,
+        test_section: str = "",
+    ) -> Path:
+        project_dir = Path(temp_dir) / "demo"
+        (project_dir / "src").mkdir(parents=True, exist_ok=True)
+        (project_dir / "tests").mkdir(parents=True, exist_ok=True)
+        (project_dir / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+        (project_dir / "tests" / "test_app.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+        if continuous:
+            test_section += f'\ncontinuous = "{continuous}"'
+        test_section = f"\n[tool.pyronaut.test]{test_section}\n" if test_section else ""
+        (project_dir / "pyproject.toml").write_text(
+            f"""
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.toolchain]
+type = "{toolchain}"
+
+[tool.pyronaut.test-resources]
+enabled = false
+{test_section}""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        repository = Path(temp_dir) / "repo"
+        cache_dir = project_dir / "__pyronaut__"
+        (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+        dev = repository / "io/micronaut/micronaut-dev/5.3.0/micronaut-dev-5.3.0.jar"
+        report = repository / "io/micronaut/micronaut-dev-test-report/5.3.0/micronaut-dev-test-report-5.3.0.jar"
+        # installed before the development runtime held it: taken from the repository micronaut-dev comes from
+        livereload = repository / "io/micronaut/micronaut-dev-livereload/5.3.0/micronaut-dev-livereload-5.3.0.jar"
+        for jar in (dev, report, livereload):
+            jar.parent.mkdir(parents=True, exist_ok=True)
+            jar.write_text("", encoding="utf-8")
+        with zipfile.ZipFile(dev, "w") as archive:
+            archive.writestr("io/micronaut/dev/test/TestRunner.class" if test_mode else "io/micronaut/dev/DevRuntime.class", b"")
+        development = [str(repository / "io/micronaut/micronaut-context/5.3.0/micronaut-context-5.3.0.jar"), str(report)]
+        if dev_jar:
+            development.append(str(dev))
+        (cache_dir / "resolved-development-runtime-dependencies").write_text("\n".join(development) + "\n", encoding="utf-8")
+        (cache_dir / "resolved-runtime-dependencies").write_text("/tmp/runtime.jar\n", encoding="utf-8")
+        (cache_dir / "resolved-test-dependencies").write_text(
+            "/tmp/test.jar\n/repo/org/junit/platform/junit-platform-launcher/6.1.3/junit-platform-launcher-6.1.3.jar\n",
+            encoding="utf-8",
+        )
+        (cache_dir / "resolved-build-dependencies").write_text(
+            "/repo/io/micronaut/micronaut-inject-python/5.3.0/micronaut-inject-python-5.3.0.jar\n"
+            "/repo/io/micronaut/serde/micronaut-serde-processor/3.2.2/micronaut-serde-processor-3.2.2.jar\n",
+            encoding="utf-8",
+        )
+        return project_dir.resolve()
+
+    def _continuous_test_resolver(self, temp_dir: str):
+        tool = Path(temp_dir) / "pyronaut-dev-dist"
+        (tool / "bin").mkdir(parents=True)
+        (tool / "lib").mkdir()
+        launcher = tool / "bin" / "pyronaut-dev"
+        launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+        jars = ["micronaut-pyronaut-dev-0.0.7.jar", "micronaut-pyronaut-processor-0.0.7.jar"]
+        for jar in jars:
+            (tool / "lib" / jar).write_text("", encoding="utf-8")
+        (tool / "bin" / "pyronaut-classpath.txt").write_text("\n".join(jars) + "\n", encoding="utf-8")
+        base = self._resolver()
+
+        def resolve(command_name):
+            return str(launcher) if command_name == "pyronaut-dev" else base(command_name)
+
+        return resolve, str(tool / "lib" / "micronaut-pyronaut-dev-0.0.7.jar")
+
+    def test_continuous_tests_run_in_one_jvm_on_the_jvm_toolchain_with_micronaut_dev(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir)
+            self.assertTrue(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+            self.assertTrue(cli._test_reload_in_process(project_dir, ["--project-dir", str(project_dir), "--tests", "test_app.py"]))  # noqa: SLF001
+            # the options the CLI consumes itself do not reach test mode
+            self.assertTrue(cli._test_reload_in_process(project_dir, ["--progress", "off", "--offline"]))  # noqa: SLF001
+            # an option test mode does not support runs the tests in a new process for every run
+            self.assertFalse(cli._test_reload_in_process(project_dir, ["--select-class", "com.example.AppTest"]))  # noqa: SLF001
+
+    def test_continuous_tests_start_a_process_per_run_when_configured_native_or_without_micronaut_dev(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir, continuous="process")
+            self.assertFalse(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir, toolchain="native")
+            self.assertFalse(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+            self.assertTrue(cli._test_reload_in_process(project_dir, ["--jvm"]))  # noqa: SLF001
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir, dev_jar=False)
+            self.assertFalse(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # a micronaut-dev snapshot from before test mode
+            project_dir = self._continuous_test_project(temp_dir, test_mode=False)
+            self.assertFalse(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir, test_section='\nmode = "native"')
+            self.assertFalse(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+            self.assertTrue(cli._test_reload_in_process(project_dir, ["--jvm"]))  # noqa: SLF001
+
+    def test_continuous_tests_of_an_external_build_start_a_process_per_run(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir)
+            (project_dir / "build.gradle.kts").write_text("plugins { java }\n", encoding="utf-8")
+            self.assertFalse(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+
+    def test_continuous_tests_restart_for_an_exclusion_inside_a_test_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir)
+            pyproject = project_dir / "pyproject.toml"
+            pyproject.write_text(
+                pyproject.read_text(encoding="utf-8") + '\n[tool.pyronaut.dev]\nrestart-excludes = ["tests/generated"]\n',
+                encoding="utf-8",
+            )
+            self.assertFalse(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir)
+            pyproject = project_dir / "pyproject.toml"
+            pyproject.write_text(
+                pyproject.read_text(encoding="utf-8")
+                + '\n[tool.pyronaut.sources]\nadditional-resources = ["views"]\n\n[tool.pyronaut.dev]\nrestart-excludes = ["views/dist"]\n',
+                encoding="utf-8",
+            )
+            self.assertFalse(cli._test_reload_in_process(project_dir, []))  # noqa: SLF001
+
+    def test_continuous_tests_validate_and_process_once_then_run_test_mode_in_one_jvm(self):
+        executed: list[tuple[list[str], dict[str, str] | None]] = []
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir)
+            resolver, dev_jar = self._continuous_test_resolver(temp_dir)
+
+            def runner(command_line, env=None):
+                executed.append((command_line, env))
+                return 7 if cli.TEST_RELOAD_MAIN in command_line else 0
+
+            def input_reader(_timeout):
+                raise AssertionError("test mode reads the keys of the terminal itself")
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir), "-t", "--tests", "test_app.py"],
+                    runner_with_env=runner,
+                    resolver=resolver,
+                    platform_name="linux",
+                    input_reader=input_reader,
+                )
+
+        # the status of the last run
+        self.assertEqual(7, exit_code)
+        self.assertNotIn("Continuous Testing Active", stdout.getvalue())
+        self.assertEqual(3, len(executed), [command_line for command_line, _ in executed])
+        # processing generates the configuration metadata the validator reads;
+        # the development runtime compiles the tests itself
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "main"], executed[0][0])
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"], executed[1][0])
+        command_line, env = executed[2]
+        self.assertNotIn(cli.JAVA_MAIN_BY_COMMAND["test"], command_line)
+        main_index = command_line.index(cli.TEST_RELOAD_MAIN)
+        self.assertEqual(["--project-dir", str(project_dir), "--tests", "test_app.py"], command_line[main_index + 1:])
+        self.assertIn("-Dmicronaut.environments=test", command_line)
+        for flag in cli._SHORT_LIVED_JVM_FLAGS:  # noqa: SLF001
+            self.assertIn(flag, command_line[: command_line.index("-cp")])
+        # on a terminal, where the keys end the session
+        self.assertNotIn("-Dmicronaut.dev.test.once=true", command_line)
+        classpath = command_line[command_line.index("-cp") + 1].split(os.pathsep)
+        names = [Path(entry).name for entry in classpath]
+        # the test command's classpath, then the compiler, the runtime of test mode and the launcher
+        self.assertIn("/tmp/pyronaut-test.jar", classpath)
+        self.assertIn("/tmp/test.jar", classpath)
+        self.assertIn("junit-platform-launcher-6.1.3.jar", names)
+        self.assertIn("micronaut-inject-python-5.3.0.jar", names)
+        self.assertEqual(1, names.count("micronaut-inject-python-5.3.0.jar"))
+        self.assertIn("micronaut-dev-5.3.0.jar", names)
+        self.assertIn("micronaut-dev-test-report-5.3.0.jar", names)
+        self.assertIn("micronaut-dev-livereload-5.3.0.jar", names)
+        self.assertEqual(str(Path(dev_jar).resolve()), str(Path(classpath[-1]).resolve()))
+        self.assertNotIn("micronaut-context-5.3.0.jar", names)
+        self.assertNotIn("micronaut-pyronaut-processor-0.0.7.jar", names)
+
+    def test_continuous_tests_without_a_terminal_run_once_in_test_mode(self):
+        executed: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir)
+            resolver, _ = self._continuous_test_resolver(temp_dir)
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_stdin_is_terminal", return_value=False), redirect_stdout(io.StringIO()):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir), "-t"],
+                    runner_with_env=runner,
+                    resolver=resolver,
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertIn(cli.TEST_RELOAD_MAIN, executed[-1])
+        self.assertIn("-Dmicronaut.dev.test.once=true", executed[-1])
+
+    def test_continuous_tests_configured_to_start_a_process_per_run_keep_the_loop(self):
+        executed: list[list[str]] = []
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._continuous_test_project(temp_dir, continuous="process")
+            resolver, _ = self._continuous_test_resolver(temp_dir)
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with redirect_stdout(stdout):
+                exit_code = cli.run(
+                    ["test", "--project-dir", str(project_dir), "-t"],
+                    runner_with_env=runner,
+                    resolver=resolver,
+                    platform_name="linux",
+                    input_reader=lambda _timeout: "q",
+                )
+
+        self.assertEqual(0, exit_code)
+        self.assertIn("Continuous Testing Active", stdout.getvalue())
+        self.assertEqual(["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "all"], executed[0])
+        self.assertEqual(["/tmp/pyronaut-validate-config", "--project-dir", str(project_dir), "--scenario", "test"], executed[1])
+        self.assertIn(cli.JAVA_MAIN_BY_COMMAND["test"], executed[2])
+        self.assertFalse(any(cli.TEST_RELOAD_MAIN in command_line for command_line in executed))
+
+    def test_test_mode_takes_a_module_the_development_runtime_lacks_from_the_repository_of_micronaut_dev(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = Path(temp_dir)
+            dev = repository / "io/micronaut/micronaut-dev/5.3.0/micronaut-dev-5.3.0.jar"
+            livereload = repository / "io/micronaut/micronaut-dev-livereload/5.3.0/micronaut-dev-livereload-5.3.0.jar"
+            for jar in (dev, livereload):
+                jar.parent.mkdir(parents=True, exist_ok=True)
+                jar.write_text("", encoding="utf-8")
+            entries = cli._test_mode_runtime_entries(["/repo/micronaut-context-5.3.0.jar", str(dev)])  # noqa: SLF001
+            # micronaut-dev-test-report is in neither: the report is left out
+            self.assertEqual([str(dev), str(livereload)], entries)
+            with self.assertRaises(RuntimeError):
+                cli._test_mode_runtime_entries(["/repo/micronaut-context-5.3.0.jar"])  # noqa: SLF001
+
     def test_snapshot_watched_files_honors_configured_layout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = Path(temp_dir) / "demo"
