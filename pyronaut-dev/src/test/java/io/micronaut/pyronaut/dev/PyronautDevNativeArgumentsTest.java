@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class PyronautDevNativeArgumentsTest {
     @Test
-    void reusableImagePreservesNettyAndMicrometerRuntimeClasses() throws IOException {
+    void reusableImagePreservesRuntimeClasses() throws IOException {
         Path repositoryRoot = Path.of("").toAbsolutePath().normalize();
         while (repositoryRoot != null && !Files.isRegularFile(repositoryRoot.resolve("settings.gradle.kts"))) {
             repositoryRoot = repositoryRoot.getParent();
@@ -38,6 +38,10 @@ final class PyronautDevNativeArgumentsTest {
         int argsEnd = buildScript.indexOf("val nativeImageBuildReportArgs", argsStart);
         assertTrue(argsStart >= 0 && argsEnd > argsStart, "Could not locate nativeImageRuntimeArgs");
         String nativeImageArgs = buildScript.substring(argsStart, argsEnd);
+        assertTrue(
+            nativeImageArgs.lines().anyMatch(argument -> argument.contains("-H:Preserve=") && argument.contains("module=java.naming")),
+            "The reusable image must preserve java.naming for runtime-loaded LDAP authentication"
+        );
         assertTrue(
             nativeImageArgs.contains("-H:Preserve=package=io.netty.handler.logging.*"),
             "The reusable image must preserve Netty logging classes"
