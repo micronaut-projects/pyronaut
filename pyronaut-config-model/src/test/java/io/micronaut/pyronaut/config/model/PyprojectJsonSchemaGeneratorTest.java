@@ -47,6 +47,7 @@ class PyprojectJsonSchemaGeneratorTest {
         assertTrue(schema.contains("\"validate-dependency-injection\""));
         assertTrue(schema.contains("\"client-timeout\""));
         assertTrue(schema.contains("\"aot-cache\""));
+        assertTrue(schema.contains("\"manage-dependencies\""));
         assertTrue(schema.contains("\"additionalProperties\": false"));
         assertTrue(schema.contains("\"default\": \"wheel-jvm\""));
         assertTrue(schema.contains("\"enum\": [\"fat-jar\", \"wheel-jvm\", \"wheel-native\", \"wheel-crema\", \"docker-jvm\", \"docker-native\", \"docker-crema\"]"));

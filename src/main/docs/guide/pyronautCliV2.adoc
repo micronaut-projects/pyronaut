@@ -248,6 +248,37 @@ Before resolving Java dependencies, `pyronaut install` prepares the project Pyth
 
 An existing `.venv` that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run `pyronaut install` again.
 
+[[python-uv-projects]]
+==== uv projects
+
+When the project has a `uv.lock` file, is a member of a uv workspace (an ancestor `pyproject.toml` declares `[tool.uv.workspace]` and has a `uv.lock`), or declares a `[tool.uv]` table, and `uv` is on the `PATH`, `pyronaut install` runs `uv sync` instead of `pip`:
+
+[source,bash]
+----
+uv sync --project <project-dir> --python <project-dir>/.venv/bin/python
+----
+
+`UV_PROJECT_ENVIRONMENT` points uv at the project's `.venv`, so a workspace member is synced into its own `.venv` rather than the workspace root's.
+uv resolves `[tool.uv.sources]` (including `{ workspace = true }` members), `[[tool.uv.index]]` indexes and the lock file itself, none of which `pip` can see, and works in a venv without `pip`.
+`.venv` is still created with GraalPy first, and the command fails if `uv sync` replaces it with another interpreter.
+Pyronaut records the lock file's hash and syncs again when it changes; `--refresh` always syncs and `--offline` skips the sync.
+uv installs only what the project declares (including its default dependency groups) and ignores `requirements.txt`, so declare `pytest` in a dependency group if the project has Python tests.
+Without `uv` on the `PATH`, Pyronaut falls back to `pip`.
+
+[[python-self-managed-venv]]
+==== Managing `.venv` yourself
+
+To keep Pyronaut from installing anything into `.venv`, for example because another tool creates it, disable dependency management in `pyproject.toml`:
+
+[source,toml]
+----
+[tool.pyronaut.python]
+manage-dependencies = false
+----
+
+or pass `--no-python-deps` for a single run.
+`pyronaut install` then uses the existing `.venv` as is. It still fails when `.venv` does not exist or was not created by GraalPy, because the embedded runtime cannot use packages installed for another interpreter, so create it with GraalPy, for example `uv sync --python graalpy`.
+
 By default, Pyronaut installs dependency artifacts into Maven local (`~/.m2/repository`, or the path configured by the `maven.repo.local` system property).
 
 Common options:
@@ -259,6 +290,7 @@ Common options:
 - `--progress <auto|on|off>`: progress display mode
 - `--color <auto|always|never>`: dependency output color mode
 - `--refresh`: force re-resolution and manifest rewrite without clearing the selected local repository
+- `--no-python-deps`: use the existing GraalPy `.venv` without installing Python dependencies (see <<python-self-managed-venv,Managing `.venv` yourself>>)
 - `--no-cache`: bypass Pyronaut manifest cache reads before rewriting manifests
 - `--offline`: resolve using offline repository mode
 
