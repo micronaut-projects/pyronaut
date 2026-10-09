@@ -404,6 +404,10 @@ def run(
     forwarded_args = _normalize_tests_selection_flag(forwarded_args)
     no_validate = _extract_no_validate(forwarded_args)
     forwarded_args = _remove_no_validate(forwarded_args)
+    no_install = False
+    if command in {"dev", "run", "test"}:
+        no_install = _extract_flag(forwarded_args, NO_INSTALL_FLAG)
+        forwarded_args = _remove_no_install(forwarded_args)
     continuous = _extract_continuous(forwarded_args)
     forwarded_args = _remove_continuous(forwarded_args)
     try:
@@ -611,6 +615,19 @@ def run(
             if install_code != SUCCESS:
                 return install_code
             external_install_done = True
+        if command in {"dev", "run"}:
+            install_code = _ensure_install_current(
+                Path(project_dir).resolve(),
+                command,
+                no_install=no_install,
+                no_cache=no_cache,
+                local_repository=local_repository,
+                runner=execute,
+                resolver=locate,
+                java_home_provider=effective_java_home_provider,
+            )
+            if install_code != SUCCESS:
+                return install_code
         disable_test_resources_requested = _extract_flag(forwarded_args, "--disable-test-resources")
         test_resources_enabled = (
             not disable_test_resources_requested
@@ -677,6 +694,7 @@ def run(
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
                 process_pass="main",
+                no_install=no_install,
             )
 
         if command in {"dev", "run"}:
@@ -760,6 +778,7 @@ def run(
                     java_home_provider=effective_java_home_provider,
                     local_repository=local_repository,
                     external_install_done=external_install_done,
+                    no_install=no_install,
                 )
 
             test_exit_code, _ = _run_test_cycle(
@@ -775,6 +794,7 @@ def run(
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
                 external_install_done=external_install_done,
+                no_install=no_install,
             )
             return test_exit_code
 
@@ -794,13 +814,21 @@ def run(
                 if venv_code != SUCCESS:
                     return venv_code
         if command in {"install", "process", "validate-config"}:
-            return _delegate(
+            delegate_code = _delegate(
                 command,
                 forwarded_args,
                 execute,
                 locate,
                 java_home_provider=effective_java_home_provider,
             )
+            if (
+                command == "install"
+                and delegate_code == SUCCESS
+                and not _has_direct_install_sources(forwarded_args)
+                and not _is_external_build_project(Path(project_dir))
+            ):
+                _record_install_state(Path(project_dir).resolve())
+            return delegate_code
         if command == "test-resources-server":
             return _delegate(
                 command,
@@ -5601,6 +5629,7 @@ def _run_with_auto_restart(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     process_pass: str | None = None,
+    no_install: bool = False,
 ) -> int:
     validate_on_restart = True
     if poll_interval <= 0:
@@ -5674,6 +5703,9 @@ def _run_with_auto_restart(
                 stop_ok: bool | None = None
                 refresh_code: int | None = None
                 refresh_exception: BaseException | None = None
+                # A dependency change reinstalls before processing. Stop the
+                # application first so the install owns the terminal alone.
+                reinstall = _stale_install_reason(project_root) is not None
 
                 def _stop_worker() -> None:
                     nonlocal stop_ok
@@ -5682,6 +5714,19 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
+                        if reinstall:
+                            refresh_code = _ensure_install_current(
+                                project_root,
+                                "restarting",
+                                no_install=no_install,
+                                no_cache=no_cache,
+                                local_repository=local_repository,
+                                runner=execute,
+                                resolver=resolver,
+                                java_home_provider=java_home_provider,
+                            )
+                            if refresh_code != SUCCESS:
+                                return
                         # validation reads the configuration metadata of this processing pass
                         refresh_code = _run_preflight(
                             str(project_root),
@@ -5707,6 +5752,8 @@ def _run_with_auto_restart(
                 stop_thread = threading.Thread(target=_stop_worker, name="pyronaut-stop-for-restart", daemon=True)
                 refresh_thread = threading.Thread(target=_refresh_worker, name="pyronaut-refresh-for-restart", daemon=True)
                 stop_thread.start()
+                if reinstall:
+                    stop_thread.join()
                 refresh_thread.start()
                 stop_thread.join()
                 refresh_thread.join()
@@ -5748,6 +5795,7 @@ def _run_test_cycle(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     external_install_done: bool = False,
+    no_install: bool = False,
 ) -> tuple[int, dict[str, str] | None]:
     if _is_external_build_project(project_dir):
         preflight_code = _run_preflight(
@@ -5764,6 +5812,18 @@ def _run_test_cycle(
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
     else:
+        install_code = _ensure_install_current(
+            project_dir.resolve(),
+            "test",
+            no_install=no_install,
+            no_cache=no_cache,
+            local_repository=local_repository,
+            runner=execute,
+            resolver=resolver,
+            java_home_provider=java_home_provider,
+        )
+        if install_code != SUCCESS:
+            return install_code, test_resources_env_overrides
         # The validator reads the configuration metadata processing generates:
         # validating first checks the configuration against the previous pass.
         preflight_code = _run_preflight(
@@ -5832,6 +5892,7 @@ def _run_test_continuously(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     external_install_done: bool = False,
+    no_install: bool = False,
 ) -> int:
     project_root = project_dir.resolve()
     snapshot = snapshotter(project_root)
@@ -5882,6 +5943,7 @@ def _run_test_continuously(
                     java_home_provider=java_home_provider,
                     local_repository=local_repository,
                     external_install_done=external_install_done,
+                    no_install=no_install,
                 )
                 # Only the first cycle can reuse the install performed by run().
                 external_install_done = False
@@ -7822,6 +7884,11 @@ def _remove_no_python_deps(args: Sequence[str]) -> list[str]:
     return [token for token in option_args if token != NO_PYTHON_DEPS_FLAG] + application_args
 
 
+def _remove_no_install(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token != NO_INSTALL_FLAG] + application_args
+
+
 def _extract_continuous(args: Sequence[str]) -> bool:
     return any(token in {"-t", "--continuous"} for token in _orchestrator_args(args))
 
@@ -7854,6 +7921,112 @@ def _required_install_manifests(project_dir: Path) -> tuple[Path, ...]:
 
 def _install_required(project_dir: Path) -> bool:
     return not all(path.exists() for path in _required_install_manifests(project_dir))
+
+
+# -- Automatic install ---------------------------------------------------------
+#
+# `dev`, `run` and `test` reinstall a managed project when its declared
+# dependencies no longer match what the last `pyronaut install` recorded, so a
+# pyproject.toml edit does not require a manual install first.
+
+_INSTALL_STATE_FILE = "install-state.json"
+NO_INSTALL_FLAG = "--no-install"
+
+
+def _install_inputs_state(project_dir: Path) -> dict[str, object]:
+    """Fingerprint the declared inputs the Java resolver reads for a managed project."""
+    data = _read_pyproject_data(project_dir) or {}
+    tool = data.get("tool")
+    pyronaut_table = tool.get("pyronaut") if isinstance(tool, dict) else None
+    canonical = json.dumps(pyronaut_table or {}, sort_keys=True, default=str)
+    return {
+        "pyronaut": _installed_pyronaut_version(),
+        "toolPyronautSha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    }
+
+
+def _record_install_state(project_dir: Path) -> None:
+    if _install_required(project_dir):
+        # Nothing was installed (or the install wrote elsewhere); keep it stale.
+        return
+    state_file = _pyronaut_output_dir(project_dir) / _INSTALL_STATE_FILE
+    try:
+        state_file.write_text(
+            json.dumps(_install_inputs_state(project_dir), indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        # The record only saves a later install; never fail the command for it.
+        pass
+
+
+def _java_install_stale_reason(project_dir: Path) -> str | None:
+    manifests = _required_install_manifests(project_dir)
+    if not all(path.exists() for path in manifests):
+        return "dependencies are not installed"
+    try:
+        recorded = json.loads((_pyronaut_output_dir(project_dir) / _INSTALL_STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        recorded = None
+    if not isinstance(recorded, dict):
+        # Installed before the state was recorded. Timestamps cannot tell:
+        # install itself rewrites pyproject.toml (the schema directive).
+        return None
+    current = _install_inputs_state(project_dir)
+    if recorded.get("pyronaut") != current["pyronaut"]:
+        return "Pyronaut changed since the last install"
+    if recorded.get("toolPyronautSha256") != current["toolPyronautSha256"]:
+        return "[tool.pyronaut] settings changed since the last install"
+    return None
+
+
+def _stale_install_reason(project_dir: Path) -> tuple[str, bool] | None:
+    """Return why a managed project needs installing and whether Java must resolve.
+
+    External Gradle/Maven projects are excluded: their commands either install
+    on every run or let the build tool own dependency resolution.
+    """
+    if _is_external_build_project(project_dir) or not (project_dir / "pyproject.toml").is_file():
+        return None
+    java_reason = _java_install_stale_reason(project_dir)
+    if java_reason is not None:
+        return java_reason, True
+    if _python_requirements_stale(project_dir):
+        return "Python dependencies changed since the last install", False
+    return None
+
+
+def _ensure_install_current(
+    project_dir: Path,
+    command: str,
+    *,
+    no_install: bool,
+    no_cache: bool,
+    local_repository: str | None,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    """Run the install step first when the recorded install state is stale."""
+    stale = _stale_install_reason(project_dir)
+    if stale is None:
+        return SUCCESS
+    reason, java_install = stale
+    reason = reason[:1].upper() + reason[1:]
+    progress = _progress_console()
+    if no_install:
+        progress.warn(f"{reason}; skipped install ({NO_INSTALL_FLAG}), run pyronaut install")
+        return SUCCESS
+    progress.note(f"{reason}; running pyronaut install before {command}")
+    venv_code = _ensure_project_virtualenv(project_dir, runner)
+    if venv_code != SUCCESS or not java_install:
+        return venv_code
+    install_args = ["--project-dir", str(project_dir), *_local_repository_install_args(local_repository)]
+    if no_cache:
+        install_args.append("--no-cache")
+    install_code = _delegate("install", install_args, runner, resolver, java_home_provider=java_home_provider)
+    if install_code == SUCCESS:
+        _record_install_state(project_dir)
+    return install_code
 
 
 def _process_required(project_dir: Path, command: str) -> bool:
@@ -12034,7 +12207,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
     _write_command_help(
         stream,
         usage_lines=[
-            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-validate]"
+            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-install] [--no-validate]"
             + (" [--control-panel]" if command == "dev" else ""),
             "                    [--classes-dir=<classesDir>]",
             "                    [--config-dir=<configDir>]",
@@ -12077,6 +12250,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
             ("--no-cache", "Bypass run preflight cache reads where applicable"),
+            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install"),
             ("--no-validate", "Skip run scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
             ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),
@@ -12093,7 +12267,8 @@ def _print_test_usage(stream=None) -> None:
     _write_command_help(
         stream,
         usage_lines=[
-            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-validate] [-t|--continuous]",
+            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-install] [--no-validate]",
+            "                     [-t|--continuous]",
             "                     [--classes-dir=<classesDir>]",
             "                     [--config-dir=<configDir>]",
             "                     [--project-dir=<projectDir>]",
@@ -12122,6 +12297,7 @@ def _print_test_usage(stream=None) -> None:
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),
+            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install"),
             ("--no-validate", "Skip test scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
             ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),
