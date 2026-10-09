@@ -23,13 +23,16 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.classfile.ClassFile;
+import java.lang.constant.ConstantDescs;
 import java.lang.classfile.ClassModel;
 import java.lang.classfile.FieldModel;
 import java.lang.classfile.MethodModel;
 import java.lang.classfile.Attributes;
 import java.lang.classfile.MethodSignature;
 import java.lang.classfile.Signature;
+import java.lang.classfile.attribute.MethodParametersAttribute;
 import java.lang.classfile.attribute.SignatureAttribute;
+import java.lang.classfile.constantpool.Utf8Entry;
 import java.lang.constant.ClassDesc;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -75,7 +78,7 @@ final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
     static final String GENERATED_MARKER_FILE_NAME = ".generated";
-    private static final String GENERATOR_VERSION = "11";
+    private static final String GENERATOR_VERSION = "12";
     private static final String SHARED_CACHE_DIR_PROPERTY = "pyronaut.ide-stubs.cache-dir";
     private static final String SHARED_CACHE_DIR_NAME = "ide-stubs";
     private static final String VFS_PYTHON_SOURCE_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/src/";
@@ -87,6 +90,7 @@ final class PythonIdeStubGenerator {
     private static final Set<String> EXCLUDED_PACKAGE_SEGMENTS = Set.of(".internal.", ".impl.");
     private static final String INTERNAL_ANNOTATION_NAME = "io.micronaut.core.annotation.Internal";
     private static final Pattern TRIPLE_QUOTES = Pattern.compile("\"\"\"");
+    private static final Pattern SYNTHETIC_PARAMETER_NAME = Pattern.compile("arg\\d*");
 
     WriteResult write(Path projectDir,
                       PyprojectModel.IdeStubs ideStubs,
@@ -1036,16 +1040,20 @@ final class PythonIdeStubGenerator {
                                            SourceDocumentationParser.ParsedSourceDocumentation documentation,
                                            String ownerName) {
         MethodSignature signature = method.findAttribute(Attributes.signature()).map(SignatureAttribute::asMethodSignature).orElse(null);
+        List<String> compiledNames = classFileParameterNames(method);
+        List<String> documentationNames = method.methodName().equalsString(ConstantDescs.INIT_NAME)
+            ? documentation.constructorParameterNames(ownerName, method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method))
+            : documentation.methodParameterNames(
+                method.methodName().stringValue(), method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method));
         StringBuilder parameters = new StringBuilder();
         for (int index = 0; index < method.methodTypeSymbol().parameterCount(); index++) {
             if (!parameters.isEmpty()) {
                 parameters.append(", ");
             }
-            List<String> documentationNames = method.methodName().equalsString("<init>")
-                ? documentation.constructorParameterNames(ownerName, method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method))
-                : documentation.methodParameterNames(
-                    method.methodName().stringValue(), method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method));
-            String name = index < documentationNames.size() ? documentationNames.get(index) : "arg" + index;
+            String name = index < compiledNames.size() ? compiledNames.get(index) : null;
+            if (name == null && index < documentationNames.size()) {
+                name = documentationNames.get(index);
+            }
             String type = signature == null ? renderClassDesc(method.methodTypeSymbol().parameterType(index))
                 : renderSignature(signature.arguments().get(index), typeVariables);
             parameters.append(sanitizeParameterName(name, index)).append(": ").append(type);
@@ -1053,8 +1061,28 @@ final class PythonIdeStubGenerator {
         return parameters.toString();
     }
 
-    private static List<String> parameterTypeSignature(MethodModel method) {
-        return method.methodTypeSymbol().parameterList().stream().map(ClassDesc::displayName).toList();
+    /**
+     * The erased parameter types as simple names, matching {@link SourceDocumentationParser}'s keys. A nested
+     * type's display name is its binary name ({@code PropertySource$Origin}), while source refers to it as
+     * {@code Origin}.
+     */
+    static List<String> parameterTypeSignature(MethodModel method) {
+        return method.methodTypeSymbol().parameterList().stream()
+            .map(ClassDesc::displayName)
+            .map(name -> name.substring(name.lastIndexOf('$') + 1))
+            .toList();
+    }
+
+    private static List<String> classFileParameterNames(MethodModel method) {
+        int parameterCount = method.methodTypeSymbol().parameterCount();
+        return method.findAttribute(Attributes.methodParameters())
+            .map(MethodParametersAttribute::parameters)
+            // Implicit (outer instance, enum name/ordinal) parameters can make the attribute disagree with the descriptor.
+            .filter(parameters -> parameters.size() == parameterCount)
+            .map(parameters -> parameters.stream()
+                .map(parameter -> parameter.name().map(Utf8Entry::stringValue).orElse(null))
+                .toList())
+            .orElse(List.of());
     }
 
     private static Map<String, String> typeVariables(List<Signature.TypeParam> parameters, String prefix) {
@@ -1541,7 +1569,8 @@ final class PythonIdeStubGenerator {
                                               GenericTypeContext genericContext,
                                               SourceDocumentationParser.ParsedSourceDocumentation documentation) {
         Constructor<?>[] constructors = type.getDeclaredConstructors();
-        Arrays.sort(constructors, Comparator.comparingInt(Constructor::getParameterCount));
+        Arrays.sort(constructors, Comparator.<Constructor<?>>comparingInt(Constructor::getParameterCount)
+            .thenComparing(constructor -> erasedDescriptor(constructor.getParameterTypes(), void.class)));
         List<Constructor<?>> publicConstructors = Arrays.stream(constructors)
             .filter(constructor -> Modifier.isPublic(constructor.getModifiers()))
             .filter(constructor -> !constructor.isSynthetic())
@@ -1553,7 +1582,7 @@ final class PythonIdeStubGenerator {
         boolean overloaded = publicConstructors.size() > 1;
         List<String> constructorDocs = new ArrayList<>();
         for (Constructor<?> constructor : publicConstructors) {
-            List<String> parameterTypes = parameterTypeSignature(constructor.getGenericParameterTypes());
+            List<String> parameterTypes = parameterTypeSignature(constructor.getParameterTypes());
             String renderedParameters = renderParameters(
                 constructor.getParameters(),
                 currentModule,
@@ -1596,7 +1625,10 @@ final class PythonIdeStubGenerator {
                                          Set<TypeVarBinding> typeVarBindings,
                                          SourceDocumentationParser.ParsedSourceDocumentation documentation) {
         Method[] methods = type.getDeclaredMethods();
-        Arrays.sort(methods, Comparator.comparing(Method::getName).thenComparingInt(Method::getParameterCount));
+        // getDeclaredMethods() has no defined order, so same-arity overloads are ordered by their erased descriptor.
+        Arrays.sort(methods, Comparator.comparing(Method::getName)
+            .thenComparingInt(Method::getParameterCount)
+            .thenComparing(method -> erasedDescriptor(method.getParameterTypes(), method.getReturnType())));
         Map<MethodGroupKey, List<Method>> grouped = new LinkedHashMap<>();
         for (Method method : methods) {
             if (!Modifier.isPublic(method.getModifiers()) || method.isSynthetic() || method.isBridge()) {
@@ -1619,7 +1651,7 @@ final class PythonIdeStubGenerator {
                 );
                 typeVarBindings.addAll(genericContext.bindings().values());
                 genericContext.bindings().values().forEach(binding -> imports.addAll(binding.imports()));
-                List<String> parameterTypes = parameterTypeSignature(method.getGenericParameterTypes());
+                List<String> parameterTypes = parameterTypeSignature(method.getParameterTypes());
                 MappedType returnType = mapType(method.getGenericReturnType(), currentModule, symbolRegistry, genericContext);
                 imports.addAll(returnType.imports());
                 String renderedParameters = renderParameters(
@@ -1754,8 +1786,8 @@ final class PythonIdeStubGenerator {
             Parameter parameter = parameters[i];
             MappedType mappedType = mapType(parameter.getParameterizedType(), currentModule, symbolRegistry, genericContext);
             imports.addAll(mappedType.imports());
-            String candidateName = parameter.getName();
-            if ((candidateName == null || candidateName.startsWith("arg"))
+            String candidateName = parameter.isNamePresent() ? parameter.getName() : null;
+            if (candidateName == null
                 && sourceParameterNames != null
                 && i < sourceParameterNames.size()) {
                 candidateName = sourceParameterNames.get(i);
@@ -1766,7 +1798,7 @@ final class PythonIdeStubGenerator {
     }
 
     private static String sanitizeParameterName(String candidate, int index) {
-        if (candidate == null || candidate.isBlank() || candidate.startsWith("arg")) {
+        if (candidate == null || candidate.isBlank() || SYNTHETIC_PARAMETER_NAME.matcher(candidate).matches()) {
             return "arg" + index;
         }
         StringBuilder builder = new StringBuilder();
@@ -1785,6 +1817,10 @@ final class PythonIdeStubGenerator {
                 "except", "finally", "yield", "del", "assert", "break", "continue", "await", "async", "match", "case" -> sanitized + "_";
             default -> sanitized;
         };
+    }
+
+    private static String erasedDescriptor(Class<?>[] parameterTypes, Class<?> returnType) {
+        return java.lang.invoke.MethodType.methodType(returnType, parameterTypes).toMethodDescriptorString();
     }
 
     private static List<String> parameterTypeSignature(Type[] parameterTypes) {

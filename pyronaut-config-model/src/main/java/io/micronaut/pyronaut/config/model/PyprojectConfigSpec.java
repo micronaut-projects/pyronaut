@@ -313,6 +313,15 @@ public final class PyprojectConfigSpec {
         List.of(),
         List.of("tool.pyronaut.dev.restartExcludes")
     );
+    public static final FieldSpec PYRONAUT_PYTHON_MANAGE_DEPENDENCIES = bool(
+        "tool.pyronaut.python.manage-dependencies",
+        "Whether pyronaut install creates .venv and installs the project's Python dependencies into it "
+            + "(with uv sync for uv projects, pip otherwise). Set to false when another tool manages .venv; "
+            + "it must still be a GraalPy virtual environment.",
+        true,
+        List.of(),
+        List.of("tool.pyronaut.python.manageDependencies")
+    );
     public static final FieldSpec PYRONAUT_SOURCES_ADDITIONAL_TEST_RESOURCES = stringArray(
         "tool.pyronaut.sources.additional-test-resources",
         "Additional test resources directories included for test scope.",
@@ -926,7 +935,8 @@ public final class PyprojectConfigSpec {
         PYRONAUT_TEST_RESOURCES_JAVA_EXECUTABLE,
         PYRONAUT_TEST_RESOURCES_STARTUP_OPTIMIZATION,
         PYRONAUT_TEST_RESOURCES_LEYDEN_JVM_ARGS,
-        PYRONAUT_DEV_RESTART_EXCLUDES
+        PYRONAUT_DEV_RESTART_EXCLUDES,
+        PYRONAUT_PYTHON_MANAGE_DEPENDENCIES
     );
 
     public static final List<SectionSpec> STRICT_SECTIONS = List.of(
@@ -941,6 +951,7 @@ public final class PyprojectConfigSpec {
         section("tool.pyronaut.test", true),
         section("tool.pyronaut.run", true),
         section("tool.pyronaut.dev", true),
+        section("tool.pyronaut.python", true),
         section("tool.pyronaut.control-panel", true, "tool.pyronaut.controlPanel"),
         PYRONAUT_SOURCES_SECTION,
         section("tool.pyronaut.toolchain", true),

@@ -409,6 +409,10 @@ def run(
     forwarded_args = _normalize_tests_selection_flag(forwarded_args)
     no_validate = _extract_no_validate(forwarded_args)
     forwarded_args = _remove_no_validate(forwarded_args)
+    no_install = False
+    if command in {"dev", "run", "test"}:
+        no_install = _extract_flag(forwarded_args, NO_INSTALL_FLAG)
+        forwarded_args = _remove_no_install(forwarded_args)
     continuous = _extract_continuous(forwarded_args)
     forwarded_args = _remove_continuous(forwarded_args)
     try:
@@ -616,6 +620,19 @@ def run(
             if install_code != SUCCESS:
                 return install_code
             external_install_done = True
+        if command in {"dev", "run"}:
+            install_code = _ensure_install_current(
+                Path(project_dir).resolve(),
+                command,
+                no_install=no_install,
+                no_cache=no_cache,
+                local_repository=local_repository,
+                runner=execute,
+                resolver=locate,
+                java_home_provider=effective_java_home_provider,
+            )
+            if install_code != SUCCESS:
+                return install_code
         disable_test_resources_requested = _extract_flag(forwarded_args, "--disable-test-resources")
         test_resources_enabled = (
             not disable_test_resources_requested
@@ -682,6 +699,7 @@ def run(
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
                 process_pass="main",
+                no_install=no_install,
             )
 
         if command in {"dev", "run"}:
@@ -765,6 +783,7 @@ def run(
                     java_home_provider=effective_java_home_provider,
                     local_repository=local_repository,
                     external_install_done=external_install_done,
+                    no_install=no_install,
                 )
 
             test_exit_code, _ = _run_test_cycle(
@@ -780,9 +799,13 @@ def run(
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
                 external_install_done=external_install_done,
+                no_install=no_install,
             )
             return test_exit_code
 
+        if command == "install":
+            manage_python_dependencies = not _extract_flag(forwarded_args, NO_PYTHON_DEPS_FLAG)
+            forwarded_args = _remove_no_python_deps(forwarded_args)
         if command == "install" and not _has_direct_install_sources(forwarded_args):
             install_project_dir = Path(project_dir).resolve()
             if (install_project_dir / "pyproject.toml").is_file() or (install_project_dir / "requirements.txt").is_file():
@@ -791,17 +814,26 @@ def run(
                     execute,
                     refresh=_extract_flag(forwarded_args, "--refresh"),
                     offline=_extract_offline(forwarded_args),
+                    manage_dependencies=manage_python_dependencies,
                 )
                 if venv_code != SUCCESS:
                     return venv_code
         if command in {"install", "process", "validate-config"}:
-            return _delegate(
+            delegate_code = _delegate(
                 command,
                 forwarded_args,
                 execute,
                 locate,
                 java_home_provider=effective_java_home_provider,
             )
+            if (
+                command == "install"
+                and delegate_code == SUCCESS
+                and not _has_direct_install_sources(forwarded_args)
+                and not _is_external_build_project(Path(project_dir))
+            ):
+                _record_install_state(Path(project_dir).resolve())
+            return delegate_code
         if command == "test-resources-server":
             return _delegate(
                 command,
@@ -5602,6 +5634,7 @@ def _run_with_auto_restart(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     process_pass: str | None = None,
+    no_install: bool = False,
 ) -> int:
     validate_on_restart = True
     if poll_interval <= 0:
@@ -5675,6 +5708,9 @@ def _run_with_auto_restart(
                 stop_ok: bool | None = None
                 refresh_code: int | None = None
                 refresh_exception: BaseException | None = None
+                # A dependency change reinstalls before processing. Stop the
+                # application first so the install owns the terminal alone.
+                reinstall = _stale_install_reason(project_root) is not None
 
                 def _stop_worker() -> None:
                     nonlocal stop_ok
@@ -5683,6 +5719,19 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
+                        if reinstall:
+                            refresh_code = _ensure_install_current(
+                                project_root,
+                                "restarting",
+                                no_install=no_install,
+                                no_cache=no_cache,
+                                local_repository=local_repository,
+                                runner=execute,
+                                resolver=resolver,
+                                java_home_provider=java_home_provider,
+                            )
+                            if refresh_code != SUCCESS:
+                                return
                         # validation reads the configuration metadata of this processing pass
                         refresh_code = _run_preflight(
                             str(project_root),
@@ -5708,6 +5757,8 @@ def _run_with_auto_restart(
                 stop_thread = threading.Thread(target=_stop_worker, name="pyronaut-stop-for-restart", daemon=True)
                 refresh_thread = threading.Thread(target=_refresh_worker, name="pyronaut-refresh-for-restart", daemon=True)
                 stop_thread.start()
+                if reinstall:
+                    stop_thread.join()
                 refresh_thread.start()
                 stop_thread.join()
                 refresh_thread.join()
@@ -5749,6 +5800,7 @@ def _run_test_cycle(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     external_install_done: bool = False,
+    no_install: bool = False,
 ) -> tuple[int, dict[str, str] | None]:
     if _is_external_build_project(project_dir):
         preflight_code = _run_preflight(
@@ -5765,6 +5817,18 @@ def _run_test_cycle(
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
     else:
+        install_code = _ensure_install_current(
+            project_dir.resolve(),
+            "test",
+            no_install=no_install,
+            no_cache=no_cache,
+            local_repository=local_repository,
+            runner=execute,
+            resolver=resolver,
+            java_home_provider=java_home_provider,
+        )
+        if install_code != SUCCESS:
+            return install_code, test_resources_env_overrides
         # The validator reads the configuration metadata processing generates:
         # validating first checks the configuration against the previous pass.
         preflight_code = _run_preflight(
@@ -5833,6 +5897,7 @@ def _run_test_continuously(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     external_install_done: bool = False,
+    no_install: bool = False,
 ) -> int:
     project_root = project_dir.resolve()
     snapshot = snapshotter(project_root)
@@ -5883,6 +5948,7 @@ def _run_test_continuously(
                     java_home_provider=java_home_provider,
                     local_repository=local_repository,
                     external_install_done=external_install_done,
+                    no_install=no_install,
                 )
                 # Only the first cycle can reuse the install performed by run().
                 external_install_done = False
@@ -7817,6 +7883,17 @@ def _remove_no_validate(args: Sequence[str]) -> list[str]:
     return [token for token in option_args if token != "--no-validate"] + application_args
 
 
+def _remove_no_python_deps(args: Sequence[str]) -> list[str]:
+    """Drop ``--no-python-deps``, which the Java installer does not understand."""
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token != NO_PYTHON_DEPS_FLAG] + application_args
+
+
+def _remove_no_install(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token != NO_INSTALL_FLAG] + application_args
+
+
 def _extract_continuous(args: Sequence[str]) -> bool:
     return any(token in {"-t", "--continuous"} for token in _orchestrator_args(args))
 
@@ -7849,6 +7926,140 @@ def _required_install_manifests(project_dir: Path) -> tuple[Path, ...]:
 
 def _install_required(project_dir: Path) -> bool:
     return not all(path.exists() for path in _required_install_manifests(project_dir))
+
+
+# -- Automatic install ---------------------------------------------------------
+#
+# `dev`, `run` and `test` reinstall a managed project when its declared
+# dependencies no longer match what the last `pyronaut install` recorded, so a
+# pyproject.toml edit does not require a manual install first.
+
+_INSTALL_STATE_FILE = "install-state.json"
+NO_INSTALL_FLAG = "--no-install"
+AUTO_INSTALL_ENV = "PYRONAUT_AUTO_INSTALL"
+_AUTO_INSTALL_SETTINGS_TABLE = "install"
+
+
+def _auto_install_disabled_by() -> str | None:
+    """Name the setting that turns automatic install off, if any.
+
+    ``PYRONAUT_AUTO_INSTALL`` overrides ``[install] auto`` in
+    ``~/.pyronaut/settings.toml``; both default to enabled.
+    """
+    value = _read_env(AUTO_INSTALL_ENV)
+    if value is not None:
+        normalized = value.lower()
+        if normalized in {"0", "false", "no", "off"}:
+            return f"{AUTO_INSTALL_ENV}={value}"
+        if normalized in {"1", "true", "yes", "on"}:
+            return None
+        raise RuntimeError(f"{AUTO_INSTALL_ENV} must be true or false, got {value!r}")
+    table = _read_pyronaut_user_settings().get(_AUTO_INSTALL_SETTINGS_TABLE)
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        raise RuntimeError("[install] in ~/.pyronaut/settings.toml must be a table")
+    auto = table.get("auto", True)
+    if not isinstance(auto, bool):
+        raise RuntimeError("[install].auto in ~/.pyronaut/settings.toml must be true or false")
+    return None if auto else "[install] auto = false in ~/.pyronaut/settings.toml"
+
+
+def _install_inputs_state(project_dir: Path) -> dict[str, object]:
+    """Fingerprint the declared inputs the Java resolver reads for a managed project."""
+    data = _read_pyproject_data(project_dir) or {}
+    tool = data.get("tool")
+    pyronaut_table = tool.get("pyronaut") if isinstance(tool, dict) else None
+    canonical = json.dumps(pyronaut_table or {}, sort_keys=True, default=str)
+    return {
+        "pyronaut": _installed_pyronaut_version(),
+        "toolPyronautSha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    }
+
+
+def _record_install_state(project_dir: Path) -> None:
+    if _install_required(project_dir):
+        # Nothing was installed (or the install wrote elsewhere); keep it stale.
+        return
+    state_file = _pyronaut_output_dir(project_dir) / _INSTALL_STATE_FILE
+    try:
+        state_file.write_text(
+            json.dumps(_install_inputs_state(project_dir), indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        # The record only saves a later install; never fail the command for it.
+        pass
+
+
+def _java_install_stale_reason(project_dir: Path) -> str | None:
+    manifests = _required_install_manifests(project_dir)
+    if not all(path.exists() for path in manifests):
+        return "dependencies are not installed"
+    try:
+        recorded = json.loads((_pyronaut_output_dir(project_dir) / _INSTALL_STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        recorded = None
+    if not isinstance(recorded, dict):
+        # Installed before the state was recorded. Timestamps cannot tell:
+        # install itself rewrites pyproject.toml (the schema directive).
+        return None
+    current = _install_inputs_state(project_dir)
+    if recorded.get("pyronaut") != current["pyronaut"]:
+        return "Pyronaut changed since the last install"
+    if recorded.get("toolPyronautSha256") != current["toolPyronautSha256"]:
+        return "[tool.pyronaut] settings changed since the last install"
+    return None
+
+
+def _stale_install_reason(project_dir: Path) -> tuple[str, bool] | None:
+    """Return why a managed project needs installing and whether Java must resolve.
+
+    External Gradle/Maven projects are excluded: their commands either install
+    on every run or let the build tool own dependency resolution.
+    """
+    if _is_external_build_project(project_dir) or not (project_dir / "pyproject.toml").is_file():
+        return None
+    java_reason = _java_install_stale_reason(project_dir)
+    if java_reason is not None:
+        return java_reason, True
+    if _python_requirements_stale(project_dir):
+        return "Python dependencies changed since the last install", False
+    return None
+
+
+def _ensure_install_current(
+    project_dir: Path,
+    command: str,
+    *,
+    no_install: bool,
+    no_cache: bool,
+    local_repository: str | None,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    """Run the install step first when the recorded install state is stale."""
+    stale = _stale_install_reason(project_dir)
+    if stale is None:
+        return SUCCESS
+    reason, java_install = stale
+    reason = reason[:1].upper() + reason[1:]
+    progress = _progress_console()
+    disabled_by = NO_INSTALL_FLAG if no_install else _auto_install_disabled_by()
+    if disabled_by is not None:
+        progress.warn(f"{reason}; skipped install ({disabled_by}), run pyronaut install")
+        return SUCCESS
+    progress.note(f"{reason}; running pyronaut install before {command}")
+    venv_code = _ensure_project_virtualenv(project_dir, runner)
+    if venv_code != SUCCESS or not java_install:
+        return venv_code
+    install_args = ["--project-dir", str(project_dir), *_local_repository_install_args(local_repository)]
+    if no_cache:
+        install_args.append("--no-cache")
+    install_code = _delegate("install", install_args, runner, resolver, java_home_provider=java_home_provider)
+    if install_code == SUCCESS:
+        _record_install_state(project_dir)
+    return install_code
 
 
 def _process_required(project_dir: Path, command: str) -> bool:
@@ -10227,13 +10438,64 @@ def _graalpy_for_project_environment() -> Path | None:
 #
 # `pyronaut install` creates the project `.venv` with the configured GraalPy and
 # installs the Python dependencies declared in pyproject.toml and
-# requirements.txt, so the embedded runtime and pytest can import them.
+# requirements.txt, so the embedded runtime and pytest can import them. A uv
+# project is synced with `uv sync` instead, because pip can neither run in a uv
+# venv nor see uv workspace members and indexes; a project that manages `.venv`
+# itself opts out with `[tool.pyronaut.python] manage-dependencies = false`.
 
 _PROJECT_VENV_STATE = ".pyronaut-requirements.json"
+NO_PYTHON_DEPS_FLAG = "--no-python-deps"
+
+
+def _python_dependencies_managed(project_dir: Path) -> bool:
+    """``[tool.pyronaut.python] manage-dependencies``, true by default."""
+    data = _read_pyproject_data(project_dir)
+    section: object = data.get("tool") if isinstance(data, dict) else None
+    for key in ("pyronaut", "python"):
+        section = section.get(key) if isinstance(section, dict) else None
+    if not isinstance(section, dict):
+        return True
+    value = section.get("manage-dependencies", section.get("manageDependencies", True))
+    if not isinstance(value, bool):
+        raise ValueError("Invalid tool.pyronaut.python.manage-dependencies in pyproject.toml: expected true or false")
+    return value
+
+
+def _find_uv() -> str | None:
+    return shutil.which("uv")
+
+
+def _uv_lock_file(project_dir: Path) -> Path | None:
+    """The ``uv.lock`` of the project, or of the uv workspace it belongs to."""
+    if (project_dir / "uv.lock").is_file():
+        return project_dir / "uv.lock"
+    for parent in project_dir.parents:
+        data = _read_pyproject_data(parent)
+        tool = data.get("tool") if isinstance(data, dict) else None
+        uv = tool.get("uv") if isinstance(tool, dict) else None
+        if isinstance(uv, dict) and isinstance(uv.get("workspace"), dict):
+            lock = parent / "uv.lock"
+            return lock if lock.is_file() else None
+    return None
+
+
+def _is_uv_project(project_dir: Path) -> bool:
+    """Whether uv manages the project: it has a ``uv.lock`` or a ``[tool.uv]`` table."""
+    if _uv_lock_file(project_dir) is not None:
+        return True
+    data = _read_pyproject_data(project_dir)
+    tool = data.get("tool") if isinstance(data, dict) else None
+    return isinstance(tool, dict) and isinstance(tool.get("uv"), dict)
 
 
 def _project_python_requirements(project_dir: Path) -> tuple[list[str], list[Path]]:
     """Return declared requirement specifiers and requirements files."""
+    requirements, requirement_files, _ = _project_python_requirements_and_implicit_pytest(project_dir)
+    return requirements, requirement_files
+
+
+def _project_python_requirements_and_implicit_pytest(project_dir: Path) -> tuple[list[str], list[Path], bool]:
+    """Like ``_project_python_requirements``, plus whether Pyronaut added ``pytest`` itself."""
     requirements: list[str] = []
     data = _read_pyproject_data(project_dir)
     project = data.get("project") if isinstance(data, dict) else None
@@ -10253,14 +10515,15 @@ def _project_python_requirements(project_dir: Path) -> tuple[list[str], list[Pat
         re.search(r"(?im)^\s*pytest\b", path.read_text(encoding="utf-8")) for path in requirement_files
     )
     has_tests = (project_dir / _read_pyproject_sources(project_dir).python_test_dir).is_dir()
-    if has_tests and not declares_pytest:
+    implicit_pytest = has_tests and not declares_pytest
+    if implicit_pytest:
         # `pyronaut test` imports pytest from the project environment.
         requirements.append("pytest")
     unique: list[str] = []
     for requirement in requirements:
         if requirement not in unique:
             unique.append(requirement)
-    return unique, requirement_files
+    return unique, requirement_files, implicit_pytest
 
 
 def _expand_dependency_groups(groups: dict[str, object]) -> list[str]:
@@ -10284,15 +10547,89 @@ def _expand_dependency_groups(groups: dict[str, object]) -> list[str]:
     return requirements
 
 
-def _project_venv_state(graalpy: Path, requirements: Sequence[str], requirement_files: Sequence[Path]) -> dict[str, object]:
+def _project_venv_state(
+    graalpy: Path,
+    requirements: Sequence[str],
+    requirement_files: Sequence[Path],
+    installer: str = "pip",
+) -> dict[str, object]:
     digest = hashlib.sha256()
     for path in requirement_files:
         digest.update(path.name.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
     return {
         "graalpy": str(graalpy),
+        "installer": installer,
         "requirements": list(requirements),
         "requirementFilesSha256": digest.hexdigest(),
     }
+
+
+class _PythonDependencyPlan(NamedTuple):
+    """How ``pyronaut install`` keeps ``.venv`` current, and what it records."""
+
+    requirements: list[str]
+    requirement_files: list[Path]
+    implicit_pytest: bool
+    uv: str | None
+    # Files whose content decides whether `.venv` is stale: uv.lock (or
+    # pyproject.toml without one) for uv, requirements.txt for pip.
+    state_files: list[Path]
+
+    @property
+    def installer(self) -> str:
+        return "uv" if self.uv is not None else "pip"
+
+    def state(self, graalpy: Path) -> dict[str, object]:
+        return _project_venv_state(graalpy, self.requirements, self.state_files, self.installer)
+
+
+def _python_dependency_plan(project_dir: Path, *, manage_dependencies: bool = True) -> _PythonDependencyPlan | None:
+    """The Python dependency work ``pyronaut install`` owns, or ``None`` when it owns none.
+
+    ``None`` means the project declares no Python dependencies, or
+    ``[tool.pyronaut.python] manage-dependencies = false`` / ``--no-python-deps``
+    left ``.venv`` to another tool. Raises ``ValueError`` for an invalid setting.
+    """
+    requirements, requirement_files, implicit_pytest = _project_python_requirements_and_implicit_pytest(project_dir)
+    if not requirements and not requirement_files:
+        return None
+    if not manage_dependencies or not _python_dependencies_managed(project_dir):
+        return None
+    uv = _find_uv() if _is_uv_project(project_dir) else None
+    if uv is not None:
+        state_files = [_uv_lock_file(project_dir) or project_dir / "pyproject.toml"]
+    else:
+        state_files = list(requirement_files)
+    return _PythonDependencyPlan(requirements, requirement_files, implicit_pytest, uv, state_files)
+
+
+def _venv_state_is_current(venv_dir: Path, expected: dict[str, object]) -> bool:
+    """Whether ``.venv`` recorded the installer and declarations of ``expected``."""
+    try:
+        recorded = json.loads((venv_dir / _PROJECT_VENV_STATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(recorded, dict)
+        and recorded.get("installer", "pip") == expected["installer"]
+        and recorded.get("requirements") == expected["requirements"]
+        and recorded.get("requirementFilesSha256") == expected["requirementFilesSha256"]
+    )
+
+
+def _python_requirements_stale(project_dir: Path) -> bool:
+    """Whether ``pyronaut install`` would change ``.venv`` now.
+
+    A project that leaves ``.venv`` to another tool is never stale; an invalid
+    setting is, so that install reports it.
+    """
+    try:
+        plan = _python_dependency_plan(project_dir)
+    except ValueError:
+        return True
+    if plan is None:
+        return False
+    return not _venv_state_is_current(project_dir / ".venv", plan.state(Path()))
 
 
 def _ensure_project_virtualenv(
@@ -10301,15 +10638,35 @@ def _ensure_project_virtualenv(
     *,
     refresh: bool = False,
     offline: bool = False,
+    manage_dependencies: bool = True,
 ) -> int:
-    """Create ``.venv`` with GraalPy and install declared Python dependencies."""
+    """Create ``.venv`` with GraalPy and install declared Python dependencies.
+
+    ``manage_dependencies=False`` (``--no-python-deps``) and
+    ``[tool.pyronaut.python] manage-dependencies = false`` trust an existing
+    ``.venv`` as is, after checking that GraalPy created it.
+    """
     requirements, requirement_files = _project_python_requirements(project_dir)
     if not requirements and not requirement_files:
         return SUCCESS
+    try:
+        plan = _python_dependency_plan(project_dir, manage_dependencies=manage_dependencies)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
+    manage_dependencies = plan is not None
     progress = _progress_console()
     venv_dir = project_dir / ".venv"
     venv_bin = _virtualenv_bin(venv_dir)
     venv_python = _resolve_virtualenv_python(venv_bin) if venv_dir.is_dir() else None
+    if not manage_dependencies and not venv_dir.is_dir():
+        print(
+            f"Python dependency management is disabled, but {venv_dir} does not exist. "
+            f"Create it with GraalPy and install the project's dependencies (for example: uv sync --python graalpy), "
+            f"or enable [tool.pyronaut.python] manage-dependencies.",
+            file=sys.stderr,
+        )
+        return PRECONDITION_FAILED
     if venv_dir.is_dir():
         if venv_python is None or not _virtualenv_is_graalpy(venv_python):
             print(
@@ -10327,6 +10684,8 @@ def _ensure_project_virtualenv(
             )
             return PRECONDITION_FAILED
         graalpy = venv_python
+        if not manage_dependencies:
+            return SUCCESS
     else:
         graalpy = _graalpy_for_project_environment()
         if graalpy is None:
@@ -10349,37 +10708,51 @@ def _ensure_project_virtualenv(
             print(f"GraalPy did not create an interpreter in {venv_dir}", file=sys.stderr)
             return PRECONDITION_FAILED
 
-    state_file = venv_dir / _PROJECT_VENV_STATE
-    state = _project_venv_state(graalpy, requirements, requirement_files)
-    if not refresh:
-        try:
-            recorded = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            recorded = None
-        if isinstance(recorded, dict) and recorded.get("requirements") == state["requirements"] and recorded.get(
-            "requirementFilesSha256"
-        ) == state["requirementFilesSha256"]:
-            return SUCCESS
+    assert plan is not None
+    uv = plan.uv
+    state = plan.state(graalpy)
+    if not refresh and _venv_state_is_current(venv_dir, state):
+        return SUCCESS
     if offline:
-        progress.warn("Python dependencies are not installed in .venv; skipped pip install (--offline)")
+        progress.warn(f"Python dependencies are not installed in .venv; skipped {'uv sync' if uv else 'pip install'} (--offline)")
         return SUCCESS
 
-    command_line = [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check"]
-    for path in requirement_files:
-        command_line.extend(["-r", str(path)])
-    command_line.extend(requirements)
-    if _delegation_trace_enabled():
-        print(shlex.join(command_line), file=sys.stderr)
     env = dict(os.environ)
     env.pop("VIRTUAL_ENV", None)
     env.pop("PYTHONHOME", None)
     env["PATH"] = _prepend_path_entry(env.get("PATH", ""), str(venv_bin))
-    with progress.step("Installing Python dependencies into .venv", done="Python dependencies installed into .venv") as step:
+    if uv is not None:
+        # Sync into the project's .venv even when the project is a workspace
+        # member, whose environment uv would otherwise put at the workspace root.
+        env["UV_PROJECT_ENVIRONMENT"] = str(venv_dir)
+        command_line = [uv, "sync", "--project", str(project_dir), "--python", str(venv_python)]
+        label, done = "Syncing Python dependencies into .venv with uv", "Python dependencies synced into .venv with uv"
+    else:
+        command_line = [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check"]
+        for path in requirement_files:
+            command_line.extend(["-r", str(path)])
+        command_line.extend(requirements)
+        label, done = "Installing Python dependencies into .venv", "Python dependencies installed into .venv"
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    with progress.step(label, done=done) as step:
         exit_code = _run_showing_output_on_failure(runner, command_line, env)
         step.failed = exit_code != SUCCESS
     if exit_code != SUCCESS:
         return exit_code
-    state_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    if uv is not None:
+        synced_python = _resolve_virtualenv_python(_virtualenv_bin(venv_dir))
+        if synced_python is None or not _virtualenv_is_graalpy(synced_python):
+            print(
+                f"uv sync replaced {venv_dir} with an interpreter other than GraalPy. "
+                f"Check the requires-python and python-preference settings of the uv project.",
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
+        if plan.implicit_pytest:
+            # uv installs only what the project declares.
+            progress.warn("The project has Python tests but does not declare pytest; add it to a uv dependency group")
+    (venv_dir / _PROJECT_VENV_STATE).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     return SUCCESS
 
 
@@ -11867,7 +12240,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
     _write_command_help(
         stream,
         usage_lines=[
-            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-validate]"
+            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-install] [--no-validate]"
             + (" [--control-panel]" if command == "dev" else ""),
             "                    [--classes-dir=<classesDir>]",
             "                    [--config-dir=<configDir>]",
@@ -11910,6 +12283,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
             ("--no-cache", "Bypass run preflight cache reads where applicable"),
+            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install (also: PYRONAUT_AUTO_INSTALL=false, or [install] auto = false in ~/.pyronaut/settings.toml)"),
             ("--no-validate", "Skip run scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
             ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),
@@ -11926,7 +12300,8 @@ def _print_test_usage(stream=None) -> None:
     _write_command_help(
         stream,
         usage_lines=[
-            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-validate] [-t|--continuous]",
+            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-install] [--no-validate]",
+            "                     [-t|--continuous]",
             "                     [--classes-dir=<classesDir>]",
             "                     [--config-dir=<configDir>]",
             "                     [--project-dir=<projectDir>]",
@@ -11955,6 +12330,7 @@ def _print_test_usage(stream=None) -> None:
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),
+            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install (also: PYRONAUT_AUTO_INSTALL=false, or [install] auto = false in ~/.pyronaut/settings.toml)"),
             ("--no-validate", "Skip test scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
             ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),
