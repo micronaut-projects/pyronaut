@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.classfile.ClassFile;
+import java.lang.constant.ConstantDescs;
 import java.lang.classfile.ClassModel;
 import java.lang.classfile.FieldModel;
 import java.lang.classfile.MethodModel;
@@ -88,7 +89,6 @@ final class PythonIdeStubGenerator {
     private static final Set<String> EXCLUDED_PACKAGE_SEGMENTS = Set.of(".internal.", ".impl.");
     private static final String INTERNAL_ANNOTATION_NAME = "io.micronaut.core.annotation.Internal";
     private static final Pattern TRIPLE_QUOTES = Pattern.compile("\"\"\"");
-    private static final String CONSTRUCTOR_NAME = "<init>";
     private static final Pattern SYNTHETIC_PARAMETER_NAME = Pattern.compile("arg[0-9]*");
 
     WriteResult write(Path projectDir,
@@ -742,7 +742,7 @@ final class PythonIdeStubGenerator {
             members = true;
         }
         List<MethodModel> constructors = model.methods().stream()
-            .filter(method -> method.methodName().equalsString(CONSTRUCTOR_NAME) && method.flags().has(AccessFlag.PUBLIC))
+            .filter(method -> method.methodName().equalsString("<init>") && method.flags().has(AccessFlag.PUBLIC))
             .sorted(Comparator.comparingInt(method -> method.methodTypeSymbol().parameterCount())).toList();
         if (!model.flags().has(AccessFlag.INTERFACE) && !constructors.isEmpty()) {
             boolean overloadedConstructors = constructors.size() > 1;
@@ -774,7 +774,7 @@ final class PythonIdeStubGenerator {
         }
         Map<MethodGroupKey, List<MethodModel>> methodGroups = new LinkedHashMap<>();
         model.methods().stream()
-            .filter(method -> !method.methodName().equalsString(CONSTRUCTOR_NAME) && !method.methodName().equalsString("<clinit>"))
+            .filter(method -> !method.methodName().equalsString("<init>") && !method.methodName().equalsString("<clinit>"))
             .filter(method -> method.flags().has(AccessFlag.PUBLIC) && !method.flags().has(AccessFlag.SYNTHETIC) && !method.flags().has(AccessFlag.BRIDGE))
             .sorted(Comparator.comparing((MethodModel method) -> method.methodName().stringValue()).thenComparing(method -> method.methodType().stringValue()))
             .forEach(method -> methodGroups.computeIfAbsent(
@@ -917,7 +917,7 @@ final class PythonIdeStubGenerator {
         for (MethodModel method : model.methods().stream()
             .filter(candidate -> candidate.flags().has(AccessFlag.PUBLIC))
             .filter(candidate -> candidate.methodTypeSymbol().parameterCount() == 0)
-            .filter(candidate -> !candidate.methodName().equalsString(CONSTRUCTOR_NAME) && !candidate.methodName().equalsString("<clinit>"))
+            .filter(candidate -> !candidate.methodName().equalsString("<init>") && !candidate.methodName().equalsString("<clinit>"))
             .sorted(Comparator
                 .comparing((MethodModel candidate) -> !candidate.methodName().equalsString("value"))
                 .thenComparing(candidate -> candidate.methodName().stringValue()))
@@ -955,7 +955,7 @@ final class PythonIdeStubGenerator {
         List<MethodModel> annotationMembers = model.methods().stream()
             .filter(candidate -> candidate.flags().has(AccessFlag.PUBLIC))
             .filter(candidate -> candidate.methodTypeSymbol().parameterCount() == 0)
-            .filter(candidate -> !candidate.methodName().equalsString(CONSTRUCTOR_NAME) && !candidate.methodName().equalsString("<clinit>"))
+            .filter(candidate -> !candidate.methodName().equalsString("<init>") && !candidate.methodName().equalsString("<clinit>"))
             .sorted(Comparator
                 .comparing((MethodModel candidate) -> !candidate.methodName().equalsString("value"))
                 .thenComparing(candidate -> candidate.methodName().stringValue()))
@@ -1040,7 +1040,7 @@ final class PythonIdeStubGenerator {
                                            String ownerName) {
         MethodSignature signature = method.findAttribute(Attributes.signature()).map(SignatureAttribute::asMethodSignature).orElse(null);
         List<String> compiledNames = classFileParameterNames(method);
-        List<String> documentationNames = method.methodName().equalsString(CONSTRUCTOR_NAME)
+        List<String> documentationNames = method.methodName().equalsString(ConstantDescs.INIT_NAME)
             ? documentation.constructorParameterNames(ownerName, method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method))
             : documentation.methodParameterNames(
                 method.methodName().stringValue(), method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method));
