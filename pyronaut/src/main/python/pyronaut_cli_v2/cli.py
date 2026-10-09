@@ -10358,6 +10358,74 @@ def _project_venv_state(
     }
 
 
+class _PythonDependencyPlan(NamedTuple):
+    """How ``pyronaut install`` keeps ``.venv`` current, and what it records."""
+
+    requirements: list[str]
+    requirement_files: list[Path]
+    implicit_pytest: bool
+    uv: str | None
+    # Files whose content decides whether `.venv` is stale: uv.lock (or
+    # pyproject.toml without one) for uv, requirements.txt for pip.
+    state_files: list[Path]
+
+    @property
+    def installer(self) -> str:
+        return "uv" if self.uv is not None else "pip"
+
+    def state(self, graalpy: Path) -> dict[str, object]:
+        return _project_venv_state(graalpy, self.requirements, self.state_files, self.installer)
+
+
+def _python_dependency_plan(project_dir: Path, *, manage_dependencies: bool = True) -> _PythonDependencyPlan | None:
+    """The Python dependency work ``pyronaut install`` owns, or ``None`` when it owns none.
+
+    ``None`` means the project declares no Python dependencies, or
+    ``[tool.pyronaut.python] manage-dependencies = false`` / ``--no-python-deps``
+    left ``.venv`` to another tool. Raises ``ValueError`` for an invalid setting.
+    """
+    requirements, requirement_files, implicit_pytest = _project_python_requirements_and_implicit_pytest(project_dir)
+    if not requirements and not requirement_files:
+        return None
+    if not manage_dependencies or not _python_dependencies_managed(project_dir):
+        return None
+    uv = _find_uv() if _is_uv_project(project_dir) else None
+    if uv is not None:
+        state_files = [_uv_lock_file(project_dir) or project_dir / "pyproject.toml"]
+    else:
+        state_files = list(requirement_files)
+    return _PythonDependencyPlan(requirements, requirement_files, implicit_pytest, uv, state_files)
+
+
+def _venv_state_is_current(venv_dir: Path, expected: dict[str, object]) -> bool:
+    """Whether ``.venv`` recorded the installer and declarations of ``expected``."""
+    try:
+        recorded = json.loads((venv_dir / _PROJECT_VENV_STATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(recorded, dict)
+        and recorded.get("installer", "pip") == expected["installer"]
+        and recorded.get("requirements") == expected["requirements"]
+        and recorded.get("requirementFilesSha256") == expected["requirementFilesSha256"]
+    )
+
+
+def _python_requirements_stale(project_dir: Path) -> bool:
+    """Whether ``pyronaut install`` would change ``.venv`` now.
+
+    A project that leaves ``.venv`` to another tool is never stale; an invalid
+    setting is, so that install reports it.
+    """
+    try:
+        plan = _python_dependency_plan(project_dir)
+    except ValueError:
+        return True
+    if plan is None:
+        return False
+    return not _venv_state_is_current(project_dir / ".venv", plan.state(Path()))
+
+
 def _ensure_project_virtualenv(
     project_dir: Path,
     runner: RunnerWithEnv,
@@ -10372,14 +10440,15 @@ def _ensure_project_virtualenv(
     ``[tool.pyronaut.python] manage-dependencies = false`` trust an existing
     ``.venv`` as is, after checking that GraalPy created it.
     """
-    requirements, requirement_files, implicit_pytest = _project_python_requirements_and_implicit_pytest(project_dir)
+    requirements, requirement_files = _project_python_requirements(project_dir)
     if not requirements and not requirement_files:
         return SUCCESS
     try:
-        manage_dependencies = manage_dependencies and _python_dependencies_managed(project_dir)
+        plan = _python_dependency_plan(project_dir, manage_dependencies=manage_dependencies)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
+    manage_dependencies = plan is not None
     progress = _progress_console()
     venv_dir = project_dir / ".venv"
     venv_bin = _virtualenv_bin(venv_dir)
@@ -10433,31 +10502,11 @@ def _ensure_project_virtualenv(
             print(f"GraalPy did not create an interpreter in {venv_dir}", file=sys.stderr)
             return PRECONDITION_FAILED
 
-    uv = _find_uv() if _is_uv_project(project_dir) else None
-    if uv is not None:
-        # uv reads the dependencies, sources and indexes from pyproject.toml and
-        # uv.lock; the lock file (or pyproject.toml without one) decides staleness.
-        lock_file = _uv_lock_file(project_dir)
-        installer = "uv"
-        state = _project_venv_state(
-            graalpy, requirements, [lock_file or project_dir / "pyproject.toml"], installer
-        )
-    else:
-        installer = "pip"
-        state = _project_venv_state(graalpy, requirements, requirement_files, installer)
-    state_file = venv_dir / _PROJECT_VENV_STATE
-    if not refresh:
-        try:
-            recorded = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            recorded = None
-        if (
-            isinstance(recorded, dict)
-            and recorded.get("installer", "pip") == installer
-            and recorded.get("requirements") == state["requirements"]
-            and recorded.get("requirementFilesSha256") == state["requirementFilesSha256"]
-        ):
-            return SUCCESS
+    assert plan is not None
+    uv = plan.uv
+    state = plan.state(graalpy)
+    if not refresh and _venv_state_is_current(venv_dir, state):
+        return SUCCESS
     if offline:
         progress.warn(f"Python dependencies are not installed in .venv; skipped {'uv sync' if uv else 'pip install'} (--offline)")
         return SUCCESS
@@ -10494,10 +10543,10 @@ def _ensure_project_virtualenv(
                 file=sys.stderr,
             )
             return PRECONDITION_FAILED
-        if implicit_pytest:
+        if plan.implicit_pytest:
             # uv installs only what the project declares.
             progress.warn("The project has Python tests but does not declare pytest; add it to a uv dependency group")
-    state_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    (venv_dir / _PROJECT_VENV_STATE).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     return SUCCESS
 
 

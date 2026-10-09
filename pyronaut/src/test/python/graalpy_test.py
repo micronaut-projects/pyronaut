@@ -525,6 +525,44 @@ class ProjectVirtualenvTest(unittest.TestCase):
         self.assertEqual(1, len(delegated))
         self.assertNotIn("--no-python-deps", delegated[0])
 
+    def test_staleness_check_agrees_with_pip_install(self):
+        (self.project / "requirements.txt").write_text("attrs==24.2.0\n", encoding="utf-8")
+        self.assertTrue(cli._python_requirements_stale(self.project))
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertFalse(cli._python_requirements_stale(self.project))
+        (self.project / "requirements.txt").write_text("attrs==25.1.0\n", encoding="utf-8")
+        self.assertTrue(cli._python_requirements_stale(self.project))
+
+    def test_staleness_check_agrees_with_uv_sync(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['weather-core']\n", encoding="utf-8"
+        )
+        (self.project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+        with patch.object(cli, "_find_uv", return_value="uv"):
+            self.assertTrue(cli._python_requirements_stale(self.project))
+            self.assertEqual(cli.SUCCESS, self.ensure())
+            self.assertFalse(cli._python_requirements_stale(self.project))
+            (self.project / "uv.lock").write_text("version = 1\nrevision = 2\n", encoding="utf-8")
+            self.assertTrue(cli._python_requirements_stale(self.project))
+
+    def test_self_managed_venv_is_never_stale(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n\n"
+            "[tool.pyronaut.python]\nmanage-dependencies = false\n",
+            encoding="utf-8",
+        )
+        self.create_graalpy_venv()
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertFalse(cli._python_requirements_stale(self.project))
+
+    def test_invalid_manage_dependencies_value_is_stale_so_install_reports_it(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n\n"
+            "[tool.pyronaut.python]\nmanage-dependencies = 'no'\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(cli._python_requirements_stale(self.project))
+
 
 if __name__ == "__main__":
     unittest.main()
