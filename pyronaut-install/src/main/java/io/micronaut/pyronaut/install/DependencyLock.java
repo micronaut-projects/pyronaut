@@ -44,6 +44,7 @@ import java.util.SortedMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The {@code pyronaut.lock} file: every Maven artifact (JARs and the POMs needed
@@ -70,10 +71,15 @@ final class DependencyLock {
     static final String LOCK_REPOSITORY_ENV = "PYRONAUT_LOCK_REPOSITORY";
     static final String LOCK_REPOSITORY_ID = "pyronaut-lock";
     static final int FORMAT_VERSION = 1;
+    /** The {@code repository} of a Pyronaut module seeded into the local repository from the SDK wheel. */
+    static final String BUNDLED_REPOSITORY = "bundled";
+    /** The {@code repository} of an artifact found in the local repository without a recorded origin. */
+    static final String LOCAL_REPOSITORY = "local";
+    private static final String PYRONAUT_GROUP = "io.micronaut.pyronaut";
     private static final int MAX_REPORTED_VIOLATIONS = 20;
     private static final Set<String> UNLOCKED_CLASSIFIERS = Set.of("sources", "javadoc");
     private static final DependencyLock OFF = new DependencyLock(null, Mode.OFF, Map.of(), null);
-    private static volatile DependencyLock current = OFF;
+    private static final AtomicReference<DependencyLock> CURRENT = new AtomicReference<>(OFF);
 
     private final Path file;
     private final Mode mode;
@@ -109,8 +115,10 @@ final class DependencyLock {
      *
      * @param coordinates the Maven coordinates, {@code group:artifact:extension[:classifier]:version}
      * @param path        the path in the Maven repository layout
-     * @param repository  the URL of the repository the artifact was resolved from
-     * @param url         the URL the artifact can be downloaded from
+     * @param repository  the URL of the repository the artifact was resolved from, or
+     *                    {@code bundled} or {@code local} when it has no remote origin
+     * @param url         the URL the artifact can be downloaded from; empty for
+     *                    {@link #BUNDLED_REPOSITORY bundled} and {@link #LOCAL_REPOSITORY local} artifacts
      * @param sha256      the SHA-256 checksum of the artifact
      */
     record Entry(String coordinates, String path, String repository, String url, String sha256) {
@@ -121,11 +129,11 @@ final class DependencyLock {
     }
 
     static DependencyLock current() {
-        return current;
+        return CURRENT.get();
     }
 
     static void activate(DependencyLock lock) {
-        current = lock == null ? OFF : lock;
+        CURRENT.set(lock == null ? OFF : lock);
     }
 
     /**
@@ -236,11 +244,8 @@ final class DependencyLock {
      * @param artifact     the resolved artifact
      * @param origin       the repository the artifact was resolved from; the
      *                     local repository when its origin is unknown
-     * @param repositories the repositories of the request, used as the origin
-     *                     of an artifact found in the local repository without
-     *                     provenance
      */
-    void artifactResolved(Artifact artifact, ArtifactRepository origin, List<RemoteRepository> repositories) {
+    void artifactResolved(Artifact artifact, ArtifactRepository origin) {
         if (mode == Mode.OFF || artifact == null || artifact.getPath() == null) {
             return;
         }
@@ -259,10 +264,18 @@ final class DependencyLock {
             return;
         }
         if (mode == Mode.RECORD) {
-            RemoteRepository remote = originRepository(origin, repositories);
-            String repositoryUrl = remote == null ? "" : withTrailingSlash(remote.getUrl());
-            recorded.put(path, new Entry(coordinates(artifact), path, repositoryUrl,
-                repositoryUrl.isEmpty() ? "" : repositoryUrl + path, checksum));
+            if (origin instanceof RemoteRepository remote) {
+                String repositoryUrl = withTrailingSlash(remote.getUrl());
+                recorded.put(path, new Entry(coordinates(artifact), path, repositoryUrl, repositoryUrl + path, checksum));
+            } else {
+                // Found in the local repository without a recorded origin. The
+                // Pyronaut modules are seeded there from the SDK wheel and are
+                // not necessarily published anywhere, so no download URL is
+                // guessed: fetchers skip these entries and locked resolution
+                // takes them from the local repository, verifying the checksum.
+                String repository = PYRONAUT_GROUP.equals(artifact.getGroupId()) ? BUNDLED_REPOSITORY : LOCAL_REPOSITORY;
+                recorded.put(path, new Entry(coordinates(artifact), path, repository, "", checksum));
+            }
             return;
         }
         Entry entry = locked.get(path);
@@ -306,6 +319,7 @@ final class DependencyLock {
         if (repository != null) {
             return ". Locked resolution only uses the lock repository " + repository
                 + "; make sure it contains every artifact listed in " + file
+                + " (artifacts recorded as bundled or local are taken from the local Maven repository instead)"
                 + ", or run `pyronaut lock` if the dependencies changed";
         }
         return "";
@@ -340,7 +354,7 @@ final class DependencyLock {
                 .append("coordinates = ").append(quote(entry.coordinates())).append('\n')
                 .append("path = ").append(quote(entry.path())).append('\n')
                 .append("repository = ").append(quote(entry.repository())).append('\n')
-                .append("url = ").append(quote(entry.url())).append('\n')
+                .append(entry.url().isEmpty() ? "" : "url = " + quote(entry.url()) + "\n")
                 .append("sha256 = ").append(quote(entry.sha256())).append('\n'));
         return toml.toString();
     }
@@ -400,22 +414,6 @@ final class DependencyLock {
 
     private static String coordinates(Artifact artifact) {
         return artifact.toString();
-    }
-
-    private static RemoteRepository originRepository(ArtifactRepository origin, List<RemoteRepository> repositories) {
-        if (origin instanceof RemoteRepository remote) {
-            return remote;
-        }
-        // Found in the local repository without provenance, for example a
-        // module seeded from the SDK wheel: attribute it to the first
-        // configured network repository, which is where it is published.
-        if (repositories == null || repositories.isEmpty()) {
-            return null;
-        }
-        return repositories.stream()
-            .filter(repository -> !"file".equalsIgnoreCase(repository.getProtocol()))
-            .findFirst()
-            .orElse(repositories.getFirst());
     }
 
     private static String withTrailingSlash(String url) {

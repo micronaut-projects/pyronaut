@@ -193,6 +193,115 @@ final class DependencyLockTest {
     }
 
     @Test
+    void recordsSeededAndUntrackedArtifactsWithoutGuessingADownloadUrl() throws Exception {
+        Path repository = remoteRepository();
+        Path project = project(repository, "\"com.example:app:1.0\", \"io.micronaut.pyronaut:micronaut-pyronaut-logback:0.1.0\", \"com.other:copied:1.0\"");
+        // Seeded from the SDK wheel or copied by hand: present in the local
+        // repository without the _remote.repositories record of an origin.
+        Path localRepository = tempDir.resolve("local");
+        writeArtifact(localRepository, "io.micronaut.pyronaut", "micronaut-pyronaut-logback", "0.1.0", null, new byte[]{3});
+        writeArtifact(localRepository, "com.other", "copied", "1.0", null, new byte[]{4});
+
+        assertEquals(InstallExitCode.SUCCESS.code(), install(project, command -> command.writeLock = true));
+
+        Path lockFile = project.resolve(DependencyLock.FILE_NAME);
+        Map<String, DependencyLock.Entry> entries = new java.util.HashMap<>();
+        DependencyLock.read(lockFile).forEach(entry -> entries.put(entry.path(), entry));
+        DependencyLock.Entry bundled = entries.get("io/micronaut/pyronaut/micronaut-pyronaut-logback/0.1.0/micronaut-pyronaut-logback-0.1.0.jar");
+        assertEquals(DependencyLock.BUNDLED_REPOSITORY, bundled.repository());
+        assertEquals("", bundled.url());
+        assertEquals(DependencyLock.sha256(localRepository.resolve(bundled.path())), bundled.sha256());
+        DependencyLock.Entry copied = entries.get("com/other/copied/1.0/copied-1.0.pom");
+        assertEquals(DependencyLock.LOCAL_REPOSITORY, copied.repository());
+        assertEquals("", copied.url());
+        assertFalse(Files.readString(lockFile).contains("url = \"\""));
+        assertEquals(repository.toUri() + "com/example/app/1.0/app-1.0.jar",
+            entries.get("com/example/app/1.0/app-1.0.jar").url());
+
+        // A lock repository built only from the downloadable entries resolves
+        // offline, taking the other entries from the local repository.
+        Path lockRepository = tempDir.resolve("lock-repository");
+        for (DependencyLock.Entry entry : entries.values()) {
+            if (!entry.url().isEmpty()) {
+                Path target = lockRepository.resolve(entry.path());
+                Files.createDirectories(target.getParent());
+                Files.copy(repository.resolve(entry.path()), target);
+            }
+        }
+        assertEquals(InstallExitCode.SUCCESS.code(), install(project, command -> {
+            command.offline = true;
+            command.noCache = true;
+            command.lockRepository = lockRepository;
+        }));
+
+        // Their checksums are still verified.
+        Files.write(localRepository.resolve(bundled.path()), new byte[]{9});
+        ByteArrayOutputStream errors = new ByteArrayOutputStream();
+        int exitCode = captureErrors(errors, () -> install(project, command -> {
+            command.offline = true;
+            command.noCache = true;
+            command.lockRepository = lockRepository;
+        }));
+        assertEquals(InstallExitCode.CONFIG_ERROR.code(), exitCode);
+        assertTrue(errors.toString(StandardCharsets.UTF_8)
+            .contains("io.micronaut.pyronaut:micronaut-pyronaut-logback:jar:0.1.0 does not match pyronaut.lock"));
+    }
+
+    @Test
+    void rejectsConflictingOrInvalidLockOptions() throws Exception {
+        Path repository = remoteRepository();
+        Path project = project(repository);
+
+        ByteArrayOutputStream errors = new ByteArrayOutputStream();
+        assertEquals(InstallExitCode.CONFIG_ERROR.code(), captureErrors(errors, () -> install(project, command -> {
+            command.writeLock = true;
+            command.locked = true;
+        })));
+        assertTrue(errors.toString(StandardCharsets.UTF_8).contains("--write-lock cannot be combined"));
+
+        assertEquals(InstallExitCode.SUCCESS.code(), install(project, command -> command.writeLock = true));
+        errors.reset();
+        assertEquals(InstallExitCode.CONFIG_ERROR.code(), captureErrors(errors, () -> install(project, command ->
+            command.lockRepository = Path.of("missing-directory"))));
+        assertTrue(errors.toString(StandardCharsets.UTF_8).contains("is not a directory"));
+
+        // A locked mode inherited from the environment does not apply while recording.
+        assertEquals(InstallExitCode.SUCCESS.code(), install(project, command -> {
+            command.writeLock = true;
+            command.setEnvReader(Map.of(DependencyLock.LOCKED_ENV, "true", DependencyLock.LOCK_REPOSITORY_ENV, "missing")::get);
+        }));
+    }
+
+    @Test
+    void lockingIsRejectedForMavenAndGradleProjects() throws Exception {
+        Path project = tempDir.resolve("maven-project");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pom.xml"), "<project/>");
+
+        ByteArrayOutputStream errors = new ByteArrayOutputStream();
+        assertEquals(InstallExitCode.CONFIG_ERROR.code(), captureErrors(errors, () -> install(project, command -> command.writeLock = true)));
+        assertTrue(errors.toString(StandardCharsets.UTF_8).contains("Dependency locking is not supported"), errors.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void verifyModeAcceptsAnUpToDateLockAndCachesTheResult() throws Exception {
+        Path repository = remoteRepository();
+        Path project = project(repository);
+        assertEquals(InstallExitCode.SUCCESS.code(), install(project, command -> command.writeLock = true));
+
+        Path lockFile = project.resolve(DependencyLock.FILE_NAME);
+        DependencyLock lock = DependencyLock.open(lockFile, false, false, null);
+        assertEquals(DependencyLock.Mode.VERIFY, lock.mode());
+        assertFalse(lock.requiresResolution());
+        assertTrue(lock.fingerprint().startsWith("VERIFY:"));
+        assertEquals("off", DependencyLock.off().fingerprint());
+        assertEquals(InstallExitCode.SUCCESS.code(), install(project, command -> { }));
+        String hash = ResolutionCache.installHash(project.resolve("pyproject.toml"), tempDir.resolve("local"), lock.fingerprint());
+        assertTrue(ResolutionCache.cacheHit(project.resolve("__pyronaut__"), hash, List.of(InstallScope.RUNTIME)));
+        assertFalse(hash.equals(ResolutionCache.installHash(project.resolve("pyproject.toml"), tempDir.resolve("local"))));
+    }
+
+    @Test
     void lockModeIsReadFromTheEnvironment() throws Exception {
         Path repository = remoteRepository();
         Path project = project(repository);
@@ -238,6 +347,10 @@ final class DependencyLockTest {
     }
 
     private Path project(Path repository) throws IOException {
+        return project(repository, "\"com.example:app:1.0\"");
+    }
+
+    private Path project(Path repository, String runtime) throws IOException {
         Path project = tempDir.resolve("project");
         Files.createDirectories(project);
         Files.writeString(project.resolve("pyproject.toml"), """
@@ -248,13 +361,13 @@ final class DependencyLockTest {
             repositories = ["%s"]
 
             [tool.pyronaut.dependencies]
-            runtime = ["com.example:app:1.0"]
+            runtime = [%s]
             build = []
             test = []
 
             [tool.pyronaut.test-resources]
             enabled = false
-            """.formatted(repository.toUri()));
+            """.formatted(repository.toUri(), runtime));
         return project;
     }
 

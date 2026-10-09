@@ -42,8 +42,10 @@ sha256 = "..."
 
 - `coordinates`: `group:artifact:extension[:classifier]:version`.
 - `path`: the location in the standard Maven repository layout.
-- `repository`: the repository the artifact was resolved from. An artifact found in the local repository without a record of its origin (for example a Pyronaut module seeded from the SDK wheel) is attributed to the first configured network repository.
-- `url`: `repository` followed by `path`.
+- `repository`: the repository the artifact was resolved from, or one of two markers for an artifact that has no remote origin:
+** `bundled`: an `io.micronaut.pyronaut` module that Pyronaut seeds into the local repository from the SDK wheel. These modules ship with the SDK and are not necessarily published to any Maven repository.
+** `local`: any other artifact found in the local repository without a record of where it came from, for example one copied there by hand.
+- `url`: `repository` followed by `path`. Entries marked `bundled` or `local` have no `url`.
 - `sha256`: the checksum of the artifact.
 
 Artifacts resolved from `mavenLocal` or a file repository keep their `file:` URL; such a lock is only portable when those repositories are available to the build too.
@@ -77,6 +79,8 @@ PYRONAUT_LOCK_REPOSITORY=/path/to/locked-artifacts pyronaut install --offline
 An artifact missing from the lock repository fails resolution and names the missing coordinates.
 
 A sandboxed build fetches every `url` with its `sha256`, places each file at its `path`, and passes the resulting directory as the lock repository.
+Entries without a `url` are skipped: locked resolution takes them from the local repository instead (`pyronaut setup` and `pyronaut install` seed the `bundled` ones there from the installed SDK) and still verifies their checksums against the lock.
+Running `pyronaut lock` against a clean local repository records a download URL for every artifact that is not bundled.
 With Nix, for example:
 
 [source,nix]
@@ -86,7 +90,7 @@ let
   lockRepository = pkgs.linkFarm "pyronaut-maven-repository" (map (artifact: {
     name = artifact.path;
     path = pkgs.fetchurl { inherit (artifact) url sha256; };
-  }) lock.artifact);
+  }) (builtins.filter (artifact: artifact ? url) lock.artifact));
 in
 # ... then, in the build: PYRONAUT_LOCK_REPOSITORY=${lockRepository} pyronaut install --offline
 ----

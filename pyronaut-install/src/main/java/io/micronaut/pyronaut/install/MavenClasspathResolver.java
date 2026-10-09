@@ -313,7 +313,7 @@ final class MavenClasspathResolver {
             toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory)
         );
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock, repositories)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock)) {
             List<ArtifactRequest> requests = artifacts.stream()
                 .map(artifact -> new ArtifactRequest(artifact, repositories, null))
                 .toList();
@@ -378,7 +378,7 @@ final class MavenClasspathResolver {
             toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory)
         );
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock, repositories)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
             if (progressListener != null) progressListener.reset();
             Map<String, String> managedVersions = new LinkedHashMap<>();
@@ -1460,8 +1460,7 @@ final class MavenClasspathResolver {
                                         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration,
                                         boolean forceUpdates,
                                         DependencyProgressListener progressListener,
-                                        DependencyLock lock,
-                                        List<RemoteRepository> repositories) {
+                                        DependencyLock lock) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
         if (lock.repository() != null) {
@@ -1474,7 +1473,7 @@ final class MavenClasspathResolver {
                 @Override
                 public void artifactResolved(RepositoryEvent event) {
                     if (event.getExceptions() == null || event.getExceptions().isEmpty()) {
-                        lock.artifactResolved(event.getArtifact(), event.getRepository(), repositories);
+                        lock.artifactResolved(event.getArtifact(), event.getRepository());
                     }
                 }
             });
