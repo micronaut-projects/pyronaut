@@ -2698,6 +2698,41 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void ideStubsRenderGenericConstructorsOfInnerClasses() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-stubs-inner-class");
+        writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.http.Outer", """
+                package io.micronaut.http;
+
+                import java.util.List;
+
+                public class Outer {
+                    /**
+                     * Its generic signature omits the enclosing instance its descriptor leads with.
+                     */
+                    public class Inner<T> {
+                        public Inner(List<T> items, T first) {
+                        }
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-stubs-inner-class");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        String httpStub = Files.readString(project.resolve("__pyronaut__/ide-stubs/micronaut/http/__init__.pyi"), StandardCharsets.UTF_8);
+        assertTrue(httpStub.contains("def __init__(self, arg0: Outer, arg1: list[_Inner_T], arg2: _Inner_T) -> None"), httpStub);
+    }
+
+    @Test
     void installGeneratesPythonIdeStubsAndVsCodeSettings() throws Exception {
         Path repository = tempDir.resolve("repo-python-ide-stubs");
         writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
@@ -2896,6 +2931,24 @@ class PyronautInstallMainTest {
         assertTrue(injectStub.contains("def Inject(*args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T:\n    \"\"\""));
         assertTrue(injectStub.contains("    Injects a dependency from the Micronaut context."));
         assertTrue(settings.contains("__pyronaut__/ide-stubs"));
+
+        // the facades re-export the Java types and alias the static methods and constants of their declaring types
+        String httpFacade = Files.readString(stubsRoot.resolve("pyronaut/http/__init__.pyi"), StandardCharsets.UTF_8);
+        assertTrue(httpFacade.contains("from micronaut.http.annotation import Body as Body, Get as Get, Post as Post\n"), httpFacade);
+        assertTrue(httpFacade.contains("from micronaut.http import HttpMethod as HttpMethod, HttpRequest as HttpRequest, HttpResponse as HttpResponse\n"), httpFacade);
+        assertTrue(httpFacade.contains("\nok = HttpResponse.ok\n"), httpFacade);
+        assertTrue(httpFacade.contains("\nGET = HttpMethod.GET\n\"\"\"See https://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html#sec9.3.\"\"\"\n"), httpFacade);
+        assertTrue(httpFacade.contains("    Get (annotation, io.micronaut.http.annotation.Get): Handles HTTP GET requests.\n"), httpFacade);
+        assertTrue(httpFacade.contains("    ok (function, io.micronaut.http.HttpResponse#ok)\n"), httpFacade);
+        assertTrue(httpFacade.contains("    \"ok\",\n"), httpFacade);
+        String injectFacade = Files.readString(stubsRoot.resolve("pyronaut/inject/__init__.pyi"), StandardCharsets.UTF_8);
+        assertTrue(injectFacade.contains("from jakarta.inject import Inject as Inject, Singleton as Singleton\n"), injectFacade);
+        // a facade whose first package is missing has no stub
+        assertFalse(Files.exists(stubsRoot.resolve("pyronaut/http/client/__init__.pyi")));
+        assertTrue(Files.exists(stubsRoot.resolve("pyronaut/__init__.pyi")));
+        String index = Files.readString(stubsRoot.resolve("FACADES.md"), StandardCharsets.UTF_8);
+        assertTrue(index.contains("## pyronaut.http\n"), index);
+        assertTrue(index.contains("| `Get` | annotation | `io.micronaut.http.annotation.Get` | Handles HTTP GET requests. |\n"), index);
     }
 
     @Test
