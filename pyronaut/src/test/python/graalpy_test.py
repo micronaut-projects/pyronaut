@@ -375,6 +375,194 @@ class ProjectVirtualenvTest(unittest.TestCase):
         self.assertEqual("pip", self.commands[1][0][2])
         self.assertEqual(("delegate", "install"), self.commands[2])
 
+    def create_graalpy_venv(self):
+        self.runner([str(self.graalpy), "-m", "venv", str(self.project / ".venv")])
+        self.commands.clear()
+
+    def test_uv_project_is_synced_with_uv_instead_of_pip(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['weather-core']\n\n"
+            "[tool.uv.sources]\nweather-core = { workspace = true }\n",
+            encoding="utf-8",
+        )
+        (self.project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+
+        with (
+            patch.object(cli, "_find_uv", return_value="/usr/bin/uv"),
+            patch.dict(os.environ, {"VIRTUAL_ENV": str(self.root / "outer-venv")}),
+        ):
+            self.assertEqual(cli.SUCCESS, self.ensure())
+
+            venv = self.project / ".venv"
+            self.assertEqual(["-m", "venv"], self.commands[0][0][1:3])
+            uv_command, uv_env = self.commands[1]
+            self.assertEqual(
+                ["/usr/bin/uv", "sync", "--project", str(self.project), "--python", str(venv / "bin" / "python")],
+                uv_command,
+            )
+            self.assertEqual(str(venv), uv_env["UV_PROJECT_ENVIRONMENT"])
+            self.assertNotIn("VIRTUAL_ENV", uv_env)
+            state = json.loads((venv / ".pyronaut-requirements.json").read_text(encoding="utf-8"))
+            self.assertEqual("uv", state["installer"])
+
+            # An unchanged lock file does not sync again; a changed one does.
+            self.commands.clear()
+            self.assertEqual(cli.SUCCESS, self.ensure())
+            self.assertEqual([], self.commands)
+            (self.project / "uv.lock").write_text("version = 1\nrevision = 2\n", encoding="utf-8")
+            self.assertEqual(cli.SUCCESS, self.ensure())
+            self.assertEqual(["/usr/bin/uv", "sync"], self.commands[0][0][:2])
+
+    def test_uv_workspace_member_uses_the_workspace_lock_file(self):
+        workspace = self.root
+        (workspace / "pyproject.toml").write_text(
+            "[project]\nname = 'ws'\n\n[tool.uv.workspace]\nmembers = ['app']\n", encoding="utf-8"
+        )
+        (workspace / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['weather-core']\n", encoding="utf-8"
+        )
+        self.assertEqual(workspace / "uv.lock", cli._uv_lock_file(self.project))
+        self.assertTrue(cli._is_uv_project(self.project))
+        with patch.object(cli, "_find_uv", return_value="uv"):
+            self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertEqual(["uv", "sync"], self.commands[1][0][:2])
+
+    def test_uv_project_falls_back_to_pip_without_uv_on_path(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n\n[tool.uv]\npackage = false\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(cli._is_uv_project(self.project))
+        with patch.object(cli, "_find_uv", return_value=None):
+            self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertEqual("pip", self.commands[1][0][2])
+
+    def test_switching_to_uv_resyncs_a_venv_installed_with_pip(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n", encoding="utf-8"
+        )
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.commands.clear()
+        (self.project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+        with patch.object(cli, "_find_uv", return_value="uv"):
+            self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertEqual(["uv", "sync"], self.commands[0][0][:2])
+
+    def test_uv_sync_that_replaces_graalpy_fails(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n\n[tool.uv]\n", encoding="utf-8"
+        )
+        cpython = self.root / "cpython" / "bin"
+
+        def runner(command, env=None):
+            if command[:2] == ["uv", "sync"]:
+                self.commands.append((command, env))
+                (self.project / ".venv" / "pyvenv.cfg").write_text(f"home = {cpython}\n", encoding="utf-8")
+                return 0
+            return self.runner(command, env)
+
+        with patch.object(cli, "_find_uv", return_value="uv"), redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(cli.PRECONDITION_FAILED, cli._ensure_project_virtualenv(self.project, runner))
+        self.assertIn("other than GraalPy", stderr.getvalue())
+        self.assertFalse((self.project / ".venv" / ".pyronaut-requirements.json").exists())
+
+    def test_manage_dependencies_false_trusts_existing_graalpy_venv(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n\n"
+            "[tool.pyronaut.python]\nmanage-dependencies = false\n",
+            encoding="utf-8",
+        )
+        self.create_graalpy_venv()
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertEqual([], self.commands)
+        self.assertFalse((self.project / ".venv" / ".pyronaut-requirements.json").exists())
+
+    def test_no_python_deps_still_rejects_a_venv_not_created_by_graalpy(self):
+        (self.project / "requirements.txt").write_text("attrs\n", encoding="utf-8")
+        venv_bin = self.project / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "python").write_text("# fake CPython interpreter\n", encoding="utf-8")
+        (self.project / ".venv" / "pyvenv.cfg").write_text(f"home = {self.root / 'cpython' / 'bin'}\n", encoding="utf-8")
+        self.assertEqual(cli.PRECONDITION_FAILED, self.ensure(manage_dependencies=False))
+        self.assertEqual([], self.commands)
+
+    def test_no_python_deps_requires_an_existing_venv(self):
+        (self.project / "requirements.txt").write_text("attrs\n", encoding="utf-8")
+        with redirect_stderr(io.StringIO()) as stderr:
+            exit_code = cli._ensure_project_virtualenv(self.project, self.runner, manage_dependencies=False)
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        self.assertIn("does not exist", stderr.getvalue())
+        self.assertEqual([], self.commands)
+
+    def test_invalid_manage_dependencies_value_is_a_usage_error(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n\n"
+            "[tool.pyronaut.python]\nmanage-dependencies = 'no'\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(cli.USAGE_ERROR, self.ensure())
+        self.assertEqual([], self.commands)
+
+    def test_install_command_no_python_deps_skips_pip_and_is_not_forwarded(self):
+        (self.project / "requirements.txt").write_text("attrs\n", encoding="utf-8")
+        (self.project / "pyproject.toml").write_text("[project]\nname = 'app'\n", encoding="utf-8")
+        self.create_graalpy_venv()
+        delegated = []
+        with (
+            patch.object(cli, "_delegate", side_effect=lambda *args, **kwargs: delegated.append(list(args[1])) or 0),
+            redirect_stderr(io.StringIO()),
+        ):
+            exit_code = cli.run(
+                ["install", "--project-dir", str(self.project), "--no-python-deps"],
+                runner_with_env=self.runner,
+                resolver=lambda name: None,
+                platform_name="linux",
+                java_home_provider=lambda: "/tmp/graalvm",
+            )
+        self.assertEqual(cli.SUCCESS, exit_code)
+        self.assertEqual([], self.commands)
+        self.assertEqual(1, len(delegated))
+        self.assertNotIn("--no-python-deps", delegated[0])
+
+    def test_staleness_check_agrees_with_pip_install(self):
+        (self.project / "requirements.txt").write_text("attrs==24.2.0\n", encoding="utf-8")
+        self.assertTrue(cli._python_requirements_stale(self.project))
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertFalse(cli._python_requirements_stale(self.project))
+        (self.project / "requirements.txt").write_text("attrs==25.1.0\n", encoding="utf-8")
+        self.assertTrue(cli._python_requirements_stale(self.project))
+
+    def test_staleness_check_agrees_with_uv_sync(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['weather-core']\n", encoding="utf-8"
+        )
+        (self.project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+        with patch.object(cli, "_find_uv", return_value="uv"):
+            self.assertTrue(cli._python_requirements_stale(self.project))
+            self.assertEqual(cli.SUCCESS, self.ensure())
+            self.assertFalse(cli._python_requirements_stale(self.project))
+            (self.project / "uv.lock").write_text("version = 1\nrevision = 2\n", encoding="utf-8")
+            self.assertTrue(cli._python_requirements_stale(self.project))
+
+    def test_self_managed_venv_is_never_stale(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n\n"
+            "[tool.pyronaut.python]\nmanage-dependencies = false\n",
+            encoding="utf-8",
+        )
+        self.create_graalpy_venv()
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertFalse(cli._python_requirements_stale(self.project))
+
+    def test_invalid_manage_dependencies_value_is_stale_so_install_reports_it(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['attrs']\n\n"
+            "[tool.pyronaut.python]\nmanage-dependencies = 'no'\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(cli._python_requirements_stale(self.project))
+
 
 if __name__ == "__main__":
     unittest.main()

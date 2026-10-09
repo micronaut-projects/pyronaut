@@ -28,6 +28,9 @@ destination-dir = "__pyronaut__/ide-stubs"
 The default IDE target is `vscode`.
 Stub generation is best effort; Pyronaut skips APIs that it cannot render cleanly and reports them in the stub generation report.
 
+Generated stubs are deterministic: the same classpath always produces byte-identical files.
+Non-interactive builds such as CI or sandboxed packaging that have no use for editor support can skip stub generation without editing `pyproject.toml` by setting the `PYRONAUT_IDE_STUBS_ENABLED=false` environment variable (or the `pyronaut.ide-stubs.enabled=false` system property), which takes precedence over `enabled`.
+
 == VS Code
 
 When `ide = "vscode"` and the project does not already own Pyright configuration, Pyronaut writes `.vscode/settings.json` with `python.analysis.extraPaths` pointing at the generated stub directory. When Pyronaut knows the Python executable or site-packages directory (from the project `.venv`, the `PYRONAUT_PYTHON_EXECUTABLE` or `PYRONAUT_PYTHON_SITE_PACKAGES` environment variables, or the matching `pyronaut.python.*` system properties), it adds the site-packages directory to `extraPaths` and sets `python.defaultInterpreterPath` as well.

@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -97,7 +98,7 @@ final class ToolClasspathInstallerTest {
         Files.delete(current.resolve("tools/shared/lib/micronaut-pyronaut-run-1.0.jar"));
         installer.install(null, tempDir.resolve("repository"), true, false);
         Path repairedGeneration = Files.readSymbolicLink(current);
-        assertNotEquals(firstGeneration, repairedGeneration);
+        assertEquals(firstGeneration, repairedGeneration);
         assertTrue(Files.isRegularFile(current.resolve("tools/shared/lib/micronaut-pyronaut-run-1.0.jar")));
 
         Path corruptTarget = tempDir.resolve("corrupt.jar");
@@ -107,11 +108,45 @@ final class ToolClasspathInstallerTest {
         Files.createSymbolicLink(cachedArtifact, corruptTarget);
         installer.install(null, tempDir.resolve("repository"), true, false);
         Path correctedGeneration = Files.readSymbolicLink(current);
-        assertNotEquals(repairedGeneration, correctedGeneration);
+        assertEquals(repairedGeneration, correctedGeneration);
         assertArrayEquals(new byte[]{9, 8, 7}, Files.readAllBytes(cachedArtifact));
 
         installer.install(null, tempDir.resolve("repository"), true, true);
-        assertNotEquals(correctedGeneration, Files.readSymbolicLink(current));
+        assertEquals(correctedGeneration, Files.readSymbolicLink(current));
+        try (var entries = Files.list(tempDir.resolve("cache/1.2.3"))) {
+            assertEquals(java.util.Set.of(".install.lock", "current", firstGeneration.toString()),
+                entries.map(entry -> entry.getFileName().toString()).collect(java.util.stream.Collectors.toSet()));
+        }
+    }
+
+    @Test
+    void layoutIsNamedByContentAndWrittenWithoutTimestamps(@TempDir Path tempDir) throws Exception {
+        List<Path> generations = new ArrayList<>();
+        List<String> metadata = new ArrayList<>();
+        for (String home : List.of("a", "b")) {
+            Path root = tempDir.resolve(home);
+            Path packagedTools = packagedTools(root);
+            Path localRepository = root.resolve("repository");
+            writeArtifact(localRepository, "com.example", "external", "1.0", new byte[]{1, 2, 3});
+            writeTool(packagedTools, "pyronaut-run", List.of(
+                "bundled\tmicronaut-pyronaut-run-1.0.jar",
+                "maven\tcom.example\texternal\t1.0\tjar\t\texternal-1.0.jar"
+            ));
+            ToolClasspathInstaller installer = new ToolClasspathInstaller(
+                new MavenClasspathResolver(), packagedTools, root.resolve("cache")
+            );
+
+            Path current = installer.install(null, localRepository, true, false);
+
+            generations.add(Files.readSymbolicLink(current));
+            metadata.add(Files.readString(current.resolve(ToolClasspathInstaller.RUNTIME_PROPERTIES_FILE))
+                .replace(localRepository.toAbsolutePath().normalize().toString(), "<repository>"));
+        }
+
+        assertEquals(generations.get(0), generations.get(1));
+        assertTrue(generations.get(0).toString().matches("[0-9a-f]{64}"), generations.get(0).toString());
+        assertEquals(metadata.get(0), metadata.get(1));
+        assertFalse(metadata.get(0).contains("#"), metadata.get(0));
     }
 
     @Test
@@ -239,6 +274,18 @@ final class ToolClasspathInstallerTest {
 
         installer.install(null, localRepository, true, false);
         assertEquals(firstGeneration, Files.readSymbolicLink(current));
+    }
+
+    @Test
+    void contentHashSeparatesEntriesUnambiguously(@TempDir Path tempDir) throws Exception {
+        // With delimiter-only framing, one file holding "x\0b\0f" encoded exactly like files "a" = "x" and "b" = "".
+        Path single = Files.createDirectories(tempDir.resolve("single"));
+        Files.write(single.resolve("a"), new byte[]{'x', 0, 'b', 0, 'f'});
+        Path split = Files.createDirectories(tempDir.resolve("split"));
+        Files.write(split.resolve("a"), new byte[]{'x'});
+        Files.write(split.resolve("b"), new byte[0]);
+
+        assertNotEquals(ToolClasspathInstaller.contentHash(single), ToolClasspathInstaller.contentHash(split));
     }
 
     private static Path packagedTools(Path tempDir) throws Exception {

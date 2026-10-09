@@ -108,6 +108,38 @@ class PytestFunctionInvokerTest {
     }
 
     @Test
+    void applicationContextWrapperFallsBackToTheGeneratedPackageOfAPythonClass() throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String testSupport = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
+            context.getBindings("python").putMember("failingContext", new FailingContext());
+
+            context.eval("python", """
+                wrapper = ApplicationContextWrapper(failingContext)
+                top_level = wrapper._python_type_lookup_candidates(
+                    type("TopLevelBean", (), {"__module__": "test_top_level_beans"}))
+                packaged = wrapper._python_type_lookup_candidates(
+                    type("MessageService", (), {"__module__": "helloworld.services"}))
+                same_name = wrapper._python_type_lookup_candidates(type("Bar", (), {"__module__": "Bar"}))
+                top_level = "|".join(top_level)
+                packaged = "|".join(packaged)
+                same_name = "|".join(same_name)
+                """);
+
+            Value bindings = context.getBindings("python");
+            assertEquals("test_top_level_beans.TopLevelBean|python.TopLevelBean", bindings.getMember("top_level").asString());
+            assertEquals("helloworld.services.MessageService|helloworld.MessageService", bindings.getMember("packaged").asString());
+            assertEquals("Bar.Bar|python.Bar", bindings.getMember("same_name").asString());
+        }
+    }
+
+    @Test
     void applicationContextWrapperResolvesMicronautJavaTypeKeys() throws Exception {
         try (Context context = Context.newBuilder("python")
             .allowAllAccess(true)
