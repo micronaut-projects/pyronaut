@@ -265,6 +265,49 @@ class AutoInstallTest(unittest.TestCase):
         )
         self.assertTrue(cli._python_requirements_stale(self.project_dir))
 
+    def _forbid_virtualenv_install(self):
+        def fail(*_args, **_kwargs):
+            raise AssertionError("dev/run/test must not reinstall Python dependencies")
+
+        return patch.object(cli, "_ensure_project_virtualenv", side_effect=fail)
+
+    def test_uv_project_recorded_by_install_is_not_reinstalled(self):
+        (self.project_dir / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\nversion = "0.1"\ndependencies = ["requests==2.0"]\n', encoding="utf-8"
+        )
+        lock = self.project_dir / "uv.lock"
+        lock.write_text("version = 1\n", encoding="utf-8")
+        self._write_installed_state()
+        with patch.object(cli, "_find_uv", return_value="/tmp/uv"):
+            plan = cli._python_dependency_plan(self.project_dir)
+            self.assertEqual("uv", plan.installer)
+            venv_dir = self.project_dir / ".venv"
+            venv_dir.mkdir()
+            # What `pyronaut install` records after `uv sync`.
+            (venv_dir / cli._PROJECT_VENV_STATE).write_text(
+                json.dumps(plan.state(Path("/tmp/graalpy"))), encoding="utf-8"
+            )
+
+            with self._forbid_virtualenv_install():
+                self.assertEqual(cli.SUCCESS, self._run(["run", "--project-dir", str(self.project_dir)]))
+            self.assertEqual(["process", "run"], self._commands())
+
+            lock.write_text("version = 1\n# requests 2.1\n", encoding="utf-8")
+            self.assertTrue(cli._python_requirements_stale(self.project_dir))
+
+    def test_self_managed_virtualenv_is_never_reinstalled(self):
+        (self.project_dir / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\nversion = "0.1"\ndependencies = ["requests==2.0"]\n\n'
+            "[tool.pyronaut.python]\nmanage-dependencies = false\n",
+            encoding="utf-8",
+        )
+        self._write_installed_state()
+
+        with self._forbid_virtualenv_install():
+            self.assertEqual(cli.SUCCESS, self._run(["run", "--project-dir", str(self.project_dir)]))
+
+        self.assertEqual(["process", "run"], self._commands())
+
     def test_failed_install_stops_before_processing(self):
         self._write_pyproject()
 

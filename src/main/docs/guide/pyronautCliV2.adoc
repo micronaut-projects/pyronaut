@@ -459,7 +459,7 @@ The command refuses to run in a directory without a `pyproject.toml`, `pom.xml`,
 `pyronaut dev`, `pyronaut run` and `pyronaut test` run the install step first when the project dependencies changed since the last `pyronaut install`, so editing `pyproject.toml` does not require a manual install:
 
 - Java dependencies: the CLI records the `[tool.pyronaut]` table and the Pyronaut version in `__pyronaut__/install-state.json` after each install. A difference, or missing classpath manifests, runs `pyronaut install`.
-- Python dependencies: `[project].dependencies`, `[dependency-groups]` and `requirements.txt` are compared with `.venv/.pyronaut-requirements.json`. A difference installs only the Python dependencies into `.venv`.
+- Python dependencies: the declarations `pyronaut install` last applied to `.venv` (recorded in `.venv/.pyronaut-requirements.json`) are compared with the current ones: `[project].dependencies`, `[dependency-groups]` and `requirements.txt` for pip, or `uv.lock` for uv projects. A difference installs only the Python dependencies into `.venv`. A project that sets `[tool.pyronaut.python] manage-dependencies = false` manages `.venv` itself and is never reinstalled.
 
 The CLI prints one line naming the reason before the install renders its own progress, for example:
 
