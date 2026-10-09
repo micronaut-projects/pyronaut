@@ -235,18 +235,7 @@ final class ToolClasspathInstaller {
                                    String sdkVersion,
                                    String descriptorHash,
                                    Path localRepository) {
-        Path metadataFile = layout.resolve("tool-runtime.properties");
-        if (!Files.isRegularFile(metadataFile)) {
-            return false;
-        }
-        Properties metadata = new Properties();
-        try (InputStream input = Files.newInputStream(metadataFile)) {
-            metadata.load(input);
-        } catch (IOException e) {
-            return false;
-        }
-        if (!sdkVersion.equals(metadata.getProperty(SDK_VERSION_PROPERTY))
-            || !descriptorHash.equals(metadata.getProperty(DESCRIPTOR_HASH_PROPERTY))) {
+        if (!metadataMatches(layout, sdkVersion, descriptorHash)) {
             return false;
         }
         Map<String, Path> sharedSources = preferredSources(descriptors, localRepository);
@@ -268,6 +257,21 @@ final class ToolClasspathInstaller {
             }
         }
         return true;
+    }
+
+    private static boolean metadataMatches(Path layout, String sdkVersion, String descriptorHash) {
+        Path metadataFile = layout.resolve(RUNTIME_PROPERTIES_FILE);
+        if (!Files.isRegularFile(metadataFile)) {
+            return false;
+        }
+        Properties metadata = new Properties();
+        try (InputStream input = Files.newInputStream(metadataFile)) {
+            metadata.load(input);
+        } catch (IOException e) {
+            return false;
+        }
+        return sdkVersion.equals(metadata.getProperty(SDK_VERSION_PROPERTY))
+            && descriptorHash.equals(metadata.getProperty(DESCRIPTOR_HASH_PROPERTY));
     }
 
     private Map<String, Path> preferredSources(List<ToolDescriptor> descriptors, Path localRepository) {
