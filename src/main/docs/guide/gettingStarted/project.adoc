@@ -86,22 +86,23 @@ For dependency syntax, Python packages, and additional Java dependency options, 
 == Step 3: Add an HTTP route
 
 An HTTP route maps an HTTP method and path to a Python function. Although the example uses `controllers.py` as its filename, the
-example does not define a controller class annotated with `@Controller`; it defines a module-level route function.
+example does not define a controller class annotated with `@http.Controller`; it defines a module-level route function.
 
 Create `src/controllers.py`:
 
 [source,python]
 ----
-from micronaut.http.annotation import Get
+from pyronaut import http
 
 
-@Get(value="/", produces="text/plain")
+@http.Get(value="/", produces=http.TEXT_PLAIN)
 def index() -> str:
     return "Hello from Pyronaut"
 ----
 
-The `@Get` decorator maps `GET /` to the `index` function. Group routes in a `@Controller` class when they share a
-prefix or need injected services. See <<httpApis,Building HTTP APIs>> for more options.
+The `@http.Get` decorator maps `GET /` to the `index` function. `pyronaut.http` is one of the Pyronaut facades, which
+gather Micronaut's annotations and types into a few Python modules; see <<facades,Pyronaut Facades>>. Group routes in a
+`@http.Controller` class when they share a prefix or need injected services. See <<httpApis,Building HTTP APIs>> for more options.
 
 == Step 4: Add application configuration
 

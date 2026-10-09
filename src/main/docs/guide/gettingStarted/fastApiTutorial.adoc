@@ -18,7 +18,8 @@ Create an empty project directory, change into it, and create `main.py`:
 include::src/main/docs/examples/gettingStarted/fastapi/initial/main.py[]
 ----
 
-The `@Get` decorators declare two HTTP `GET` operations. The `item_id: int` type hint tells Pyronaut to convert and
+`from pyronaut import http` imports the `pyronaut.http` facade, which gathers Micronaut's HTTP annotations and types in
+one module (see <<facades,Pyronaut Facades>>). The `@http.Get` decorators declare two HTTP `GET` operations. The `item_id: int` type hint tells Pyronaut to convert and
 validate the path value as an integer. Because `q` defaults to `None`, it is optional.
 
 == Start the development server
@@ -101,10 +102,10 @@ Replace `main.py` with the following version to accept an `Item` request body:
 include::src/main/docs/examples/gettingStarted/fastapi/upgraded/main.py[]
 ----
 
-`Item` is a standard Python dataclass. `@Serdeable` enables generated JSON serialization, while `Valid`, `NotBlank`, and
-`Positive` apply Micronaut Validation to the request body.
-The HTTP operations remain module-level functions. `Valid` enables validation for the request body, so an explicit
-`@Validated` declaration is not needed. This example does not require reflection or a Pydantic model.
+`Item` is a standard Python dataclass. `@serde.Serdeable` enables generated JSON serialization, while `validation.Valid`,
+`validation.NotBlank`, and `validation.Positive` apply Micronaut Validation to the request body.
+The HTTP operations remain module-level functions. `validation.Valid` enables validation for the request body, so an explicit
+`@validation.Validated` declaration is not needed. This example does not require reflection or a Pydantic model.
 
 The development server reloads the application automatically. Verify the new `PUT` operation:
 
@@ -156,7 +157,7 @@ pyronaut test main.py -- test_main.py
 ----
 
 `MicronautTest()` starts and stops an embedded server for the generated JUnit 5 test module.
-`requests.with_context` accepts the injected `ApplicationContext` and provides a `requests`-compatible client backed by
+`requests.with_context` accepts the injected `inject.ApplicationContext` and provides a `requests`-compatible client backed by
 the Micronaut HTTP client. The test covers the root response, path and query binding, a valid request body, and a
 validation failure.
 Functions whose names start with `test` become JUnit 5 test methods automatically. You do not need a top-level test

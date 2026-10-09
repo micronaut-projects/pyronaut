@@ -204,10 +204,10 @@ mkdir -p "$LOCAL_REPOSITORY"
 
 mkdir -p /work/projects/direct-python /work/projects/direct-java
 cat > /work/projects/direct-python/app.py <<'EOF'
-from micronaut.http.annotation import Get
+from pyronaut import http
 
 
-@Get(value="/hello", produces="text/plain")
+@http.Get(value="/hello", produces=http.TEXT_PLAIN)
 def hello() -> str:
     return "Hello World"
 EOF
@@ -280,20 +280,18 @@ EOF
 cat > /work/projects/simple-python/src/simple_python/controller.py <<'EOF'
 from dataclasses import dataclass
 
-from micronaut.http import HttpResponse
-from micronaut.http.annotation import Get
-from micronaut.serde.annotation import Serdeable
+from pyronaut import http, serde
 
 
-@Serdeable
+@serde.Serdeable
 @dataclass
 class HelloResponse:
     message: str
 
 
-@Get(value="/", produces="application/json")
-def index() -> HttpResponse[HelloResponse]:
-    return HttpResponse.ok(HelloResponse("Hello World")).header("Foo", "Bar!!!")
+@http.Get(value="/", produces=http.APPLICATION_JSON)
+def index() -> http.HttpResponse[HelloResponse]:
+    return http.ok(HelloResponse("Hello World")).header("Foo", "Bar!!!")
 EOF
 cat > /work/projects/simple-python/tests/test_simple_python.py <<'EOF'
 from typing import Any

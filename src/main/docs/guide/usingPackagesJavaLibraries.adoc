@@ -79,15 +79,15 @@ public class PriceCalculator {
 [source,python]
 ----
 from bookstore import PriceCalculator
-from micronaut.http.annotation import Controller, Get
+from pyronaut import http
 
 
-@Controller("/orders")
+@http.Controller("/orders")
 class OrderController:
     def __init__(self, calculator: PriceCalculator):
         self.calculator = calculator
 
-    @Get("/{order_id}/total")
+    @http.Get("/{order_id}/total")
     def total(self, order_id: int) -> float:
         prices = load_prices(order_id)
         return self.calculator.total(prices, 0.2)
@@ -128,6 +128,8 @@ message = StringUtils.capitalize("hello from java")
 
 print(message)
 ----
+
+Direct imports like this work for every Java package, including Micronaut's own (`from micronaut.http.annotation import Get`). For the Micronaut and Jakarta APIs that applications use most, the Pyronaut facades are the recommended shorthand: `from pyronaut import http, inject` gathers the types of many packages under one module, and the compiler resolves each name to the same Java type. See <<facades,Pyronaut Facades>>.
 
 Use `group:artifact:version` coordinates for libraries such as Apache Commons Lang that are not managed by the configured Micronaut BOMs.
 Micronaut dependencies managed by the Micronaut platform, Micronaut core, or Pyronaut BOMs can use versionless `group:artifact` coordinates.

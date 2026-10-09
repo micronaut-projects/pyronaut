@@ -37,60 +37,58 @@ This replaces the common Python pattern of `if os.environ.get("ENV") == "product
 
 == Injecting single values
 
-`@Value` injects one property into an attribute or a constructor parameter. The `${name:default}` syntax provides a fallback:
+`@inject.Value` injects one property into an attribute or a constructor parameter. The `${name:default}` syntax provides a fallback:
 
 [source,python]
 ----
 from typing import Annotated
 
-from jakarta.inject import Singleton
-from micronaut.context.annotation import Value
+from pyronaut import inject
 
 
-@Singleton
+@inject.Singleton
 class CatalogClient:
-    url: Annotated[str, Value("${bookstore.catalog.url}")]
-    page_size: Annotated[int, Value("${bookstore.catalog.page-size:20}")]
+    url: Annotated[str, inject.Value("${bookstore.catalog.url}")]
+    page_size: Annotated[int, inject.Value("${bookstore.catalog.page-size:20}")]
 ----
 
 The configuration binder converts the raw string to the declared type, so `page_size` is an `int`. Durations such as `"5s"` convert to `java.time.Duration`, and comma-separated values convert to `list[str]`.
 
-`@Property(name="...")` does the same without the placeholder syntax and is slightly clearer when no default is needed:
+`@inject.Property(name="...")` does the same without the placeholder syntax and is slightly clearer when no default is needed:
 
 [source,python]
 ----
-from micronaut.context.annotation import Property
+from pyronaut import inject
 
 
-@Singleton
+@inject.Singleton
 class CatalogClient:
-    url: Annotated[str, Property(name="bookstore.catalog.url")]
+    url: Annotated[str, inject.Property(name="bookstore.catalog.url")]
 ----
 
 == Configuration classes
 
-Injecting values one at a time does not scale. `@ConfigurationProperties` binds an entire prefix to a class, the way a `pydantic-settings` model binds environment variables. Each attribute maps to a property under the prefix, type hints drive conversion and the configuration binder enforces `jakarta.validation` constraints when it creates the bean:
+Injecting values one at a time does not scale. `@inject.ConfigurationProperties` binds an entire prefix to a class, the way a `pydantic-settings` model binds environment variables. Each attribute maps to a property under the prefix, type hints drive conversion and the configuration binder enforces `jakarta.validation` constraints when it creates the bean:
 
 [source,python]
 ----
 from typing import Annotated
 
-from jakarta.validation.constraints import Min, NotBlank
-from micronaut.context.annotation import ConfigurationProperties
+from pyronaut import inject, validation
 
 
-@ConfigurationProperties("bookstore.catalog")
+@inject.ConfigurationProperties("bookstore.catalog")
 class CatalogConfig:
-    url: Annotated[str, NotBlank]
+    url: Annotated[str, validation.NotBlank]
     timeout: str = "5s"
-    page_size: Annotated[int, Min(1)] = 20
+    page_size: Annotated[int, validation.Min(1)] = 20
 ----
 
 Configuration classes are beans, so any other bean can receive one through its constructor:
 
 [source,python]
 ----
-@Singleton
+@inject.Singleton
 class CatalogClient:
     def __init__(self, config: CatalogConfig):
         self.config = config
@@ -100,9 +98,9 @@ Nested classes map to nested tables:
 
 [source,python]
 ----
-@ConfigurationProperties("bookstore")
+@inject.ConfigurationProperties("bookstore")
 class BookstoreConfig:
-    @ConfigurationProperties("catalog")
+    @inject.ConfigurationProperties("catalog")
     class Catalog:
         url: str | None = None
 
@@ -128,23 +126,22 @@ A frozen dataclass produces an immutable configuration bean. The configuration b
 from dataclasses import dataclass
 from typing import Annotated
 
-from jakarta.validation.constraints import NotNull
-from micronaut.context.annotation import ConfigurationProperties
+from pyronaut import inject, validation
 
 
-@ConfigurationProperties("vat")
+@inject.ConfigurationProperties("vat")
 @dataclass(frozen=True)
 class ValueAddedTaxConfiguration:
-    percentage: Annotated[float, NotNull]
+    percentage: Annotated[float, validation.NotNull]
 ----
 
 === Validating at startup
 
-The application context checks constraints on a configuration class when it first creates the bean. Add `@Context` from `micronaut.context.annotation` to a configuration class to create it eagerly, so an invalid deployment fails immediately at startup rather than on the first request that touches it.
+The application context checks constraints on a configuration class when it first creates the bean. Add `@inject.Context` (`micronaut.context.annotation.Context`) to a configuration class to create it eagerly, so an invalid deployment fails immediately at startup rather than on the first request that touches it.
 
 === Repeated configuration
 
-`@EachProperty` creates one bean per entry under a prefix. It is the Micronaut equivalent of a dictionary of settings, for example several named data sources:
+`@inject.EachProperty` creates one bean per entry under a prefix. It is the Micronaut equivalent of a dictionary of settings, for example several named data sources:
 
 [source,toml]
 ----
@@ -159,27 +156,27 @@ url = "jdbc:postgresql://db2/app"
 ----
 from typing import Annotated
 
-from micronaut.context.annotation import EachProperty, Parameter
+from pyronaut import inject
 
 
-@EachProperty("datasources")
+@inject.EachProperty("datasources")
 class DataSourceConfig:
     url: str | None = None
 
-    def __init__(self, name: Annotated[str, Parameter]):
+    def __init__(self, name: Annotated[str, inject.Parameter]):
         self.name = name   # "primary" or "reporting"
 ----
 
-Injecting `list[DataSourceConfig]` returns every entry, and `Annotated[DataSourceConfig, Named("reporting")]` selects one.
+Injecting `list[DataSourceConfig]` returns every entry, and `Annotated[DataSourceConfig, inject.Named("reporting")]` selects one.
 
 == Conditional beans and configuration
 
-`@Requires` from <<dependencyInjection,Dependency Injection>> reads configuration too. Use it to enable optional features:
+`@inject.Requires` from <<dependencyInjection,Dependency Injection>> reads configuration too. Use it to enable optional features:
 
 [source,python]
 ----
-@Singleton
-@Requires(property="bookstore.cache.enabled", value="true")
+@inject.Singleton
+@inject.Requires(property="bookstore.cache.enabled", value="true")
 class CachingCatalogClient(CatalogClient):
     ...
 ----

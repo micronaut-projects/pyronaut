@@ -27,10 +27,10 @@ Use the await behavior shown in the table. For example, an async client returnin
 
 [source,python]
 ----
-from micronaut.http.annotation import Get
+from pyronaut import http
 
 
-@Get("/first-headline")
+@http.Get("/first-headline")
 async def first_headline() -> str:
     headline = await headline_client.latest()   # client method returns Mono[Headline]
     return headline.title
@@ -40,7 +40,7 @@ To await every item from a `Flux`, collect the stream first:
 
 [source,python]
 ----
-@Get("/all-headlines")
+@http.Get("/all-headlines")
 async def all_headlines() -> list[str]:
     headlines = await headline_client.stream().collectList()
     return [h.title for h in headlines]
@@ -55,15 +55,15 @@ Return a reactive value from a plain `def` route to let Micronaut subscribe on t
 import java
 
 from micronaut.core.async_.annotation import SingleResult
-from micronaut.http.annotation import Controller, Get
+from pyronaut import http
 
 Mono = java.type("reactor.core.publisher.Mono")
 Publisher = java.type("org.reactivestreams.Publisher")
 
 
-@Controller("/reactive")
+@http.Controller("/reactive")
 class ReactiveController:
-    @Get("/message")
+    @http.Get("/message")
     @SingleResult
     def message(self) -> Publisher[str]:
         return Mono.just("hello")
@@ -73,30 +73,28 @@ This example obtains `Mono` and `Publisher` with `java.type(...)`; `from reactor
 
 == Streaming responses
 
-Return a `Publisher` to stream items. Use `MediaType.APPLICATION_JSON_STREAM` for JSON documents or `MediaType.TEXT_EVENT_STREAM` for server-sent events:
+Return a `Publisher` to stream items. Use `http.APPLICATION_JSON_STREAM` for JSON documents or `http.TEXT_EVENT_STREAM` for server-sent events (the `MediaType` constants of the same names):
 
 [source,python]
 ----
 import java
 
-from micronaut.http import MediaType
-from micronaut.http.annotation import Controller, Get
-from micronaut.http.sse import Event
+from pyronaut import http
 
 Duration = java.type("java.time.Duration")
 Flux = java.type("reactor.core.publisher.Flux")
 Publisher = java.type("org.reactivestreams.Publisher")
 
 
-@Controller("/headlines")
+@http.Controller("/headlines")
 class HeadlineController:
-    @Get(value="/stream", processes=MediaType.APPLICATION_JSON_STREAM)
+    @http.Get(value="/stream", processes=http.APPLICATION_JSON_STREAM)
     def stream(self) -> Publisher[Headline]:
         return Flux.fromIterable([Headline("one"), Headline("two")]).delayElements(Duration.ofSeconds(1))
 
-    @Get(value="/events", produces=MediaType.TEXT_EVENT_STREAM)
+    @http.Get(value="/events", produces=http.TEXT_EVENT_STREAM)
     def events(self) -> Publisher:
-        return Flux.fromIterable([Event.of(Headline("one")), Event.of(Headline("two"))])
+        return Flux.fromIterable([http.Event.of(Headline("one")), http.Event.of(Headline("two"))])
 ----
 
 Reactive operators run on Reactor schedulers or the event loop, not Python threads. For blocking Python producers, wrap the call with `Flux.fromCallable(...)` and schedule it on the injected `io` executor with `subscribeOn(...)`; see the https://docs.micronaut.io/latest/guide/#reactiveServer[Reactive HTTP Request Processing] section.
