@@ -55,6 +55,7 @@ final class ToolClasspathInstaller {
     static final String TOOLS_DIR_ENV = "PYRONAUT_PACKAGED_TOOLS_DIR";
     static final String CACHE_DIR_PROPERTY = "pyronaut.tools.cache.dir";
     static final String CACHE_DIR_ENV = "PYRONAUT_TOOLS_CACHE_DIR";
+    private static final String TOOLS_DIR_NAME = "tools";
     private static final Map<Path, Object> JVM_LOCKS = new ConcurrentHashMap<>();
 
     private final MavenClasspathResolver resolver;
@@ -141,7 +142,7 @@ final class ToolClasspathInstaller {
 
         Path temporary = Files.createTempDirectory(layout.getParent(), "." + layout.getFileName() + "-");
         try {
-            Path temporaryTools = temporary.resolve("tools");
+            Path temporaryTools = temporary.resolve(TOOLS_DIR_NAME);
             Path sharedLib = temporaryTools.resolve("shared/lib");
             Files.createDirectories(sharedLib);
             Map<String, Path> sourcesByFileName = new LinkedHashMap<>();
@@ -213,7 +214,7 @@ final class ToolClasspathInstaller {
         }
         Map<String, Path> sharedSources = preferredSources(descriptors, localRepository);
         for (ToolDescriptor descriptor : descriptors) {
-            Path bin = layout.resolve("tools").resolve(descriptor.command()).resolve("bin").resolve(descriptor.command());
+            Path bin = layout.resolve(TOOLS_DIR_NAME).resolve(descriptor.command()).resolve("bin").resolve(descriptor.command());
             if (!Files.isRegularFile(bin)) {
                 return false;
             }
@@ -451,7 +452,7 @@ final class ToolClasspathInstaller {
             configured = System.getenv(CACHE_DIR_ENV);
         }
         return configured == null || configured.isBlank()
-            ? PyronautHome.pyronautHome().resolve("tools")
+            ? PyronautHome.pyronautHome().resolve(TOOLS_DIR_NAME)
             : Path.of(configured).toAbsolutePath().normalize();
     }
 
