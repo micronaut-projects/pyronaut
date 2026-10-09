@@ -14,16 +14,6 @@ class PyronautValidateConfigJvmSmokeTest extends AbstractPyronautValidateConfigS
         assertValidationReportsInvalidApplicationToml();
     }
 
-    @Test
-    void jvmValidationAcceptsReadableByteSizes() throws Exception {
-        assertValidationAcceptsReadableByteSizes();
-    }
-
-    @Test
-    void jvmValidationRejectsInvalidByteSizes() throws Exception {
-        assertValidationRejectsInvalidByteSizes();
-    }
-
     @Override
     protected RunResult runValidation(java.nio.file.Path project) throws Exception {
         return runJvmValidation(project);

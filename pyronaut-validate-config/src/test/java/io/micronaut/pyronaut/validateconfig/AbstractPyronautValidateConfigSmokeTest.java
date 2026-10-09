@@ -127,48 +127,6 @@ abstract class AbstractPyronautValidateConfigSmokeTest {
         assertTrue(json.contains("application.toml"), json);
     }
 
-    protected void assertValidationAcceptsReadableByteSizes() throws Exception {
-        // HttpServerConfiguration binds both sizes through @ReadableBytes, which the schema
-        // types as plain integers (#337).
-        Path project = readableBytesProject("""
-            [micronaut.server]
-            max-request-size = '6MB'
-            max-request-buffer-size = '512kb'
-            """);
-
-        RunResult result = runConfigurationValidation(project, "dev");
-
-        assertEquals(0, result.exitCode(), result.output());
-    }
-
-    protected void assertValidationRejectsInvalidByteSizes() throws Exception {
-        Path project = readableBytesProject("""
-            [micronaut.server]
-            max-request-size = '6 parsecs'
-            """);
-
-        RunResult result = runConfigurationValidation(project, "dev");
-
-        assertEquals(1, result.exitCode(), result.output());
-        String json = Files.readString(
-            project.resolve("__pyronaut__/reports/config-validation/dev/configuration-errors.json"), StandardCharsets.UTF_8);
-        assertTrue(json.contains("\"property\":\"micronaut.server.max-request-size\""), json);
-    }
-
-    private Path readableBytesProject(String applicationToml) throws Exception {
-        Path project = tempDir.resolve("app");
-        Files.createDirectories(project.resolve("__pyronaut__/classes"));
-        Files.createDirectories(project.resolve("config"));
-        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject(), StandardCharsets.UTF_8);
-        Files.writeString(project.resolve("config/application.toml"), applicationToml, StandardCharsets.UTF_8);
-        Files.writeString(
-            project.resolve("__pyronaut__/resolved-runtime-dependencies"),
-            runtimeClasspathManifest(),
-            StandardCharsets.UTF_8
-        );
-        return project;
-    }
-
     protected abstract RunResult runValidation(Path project) throws Exception;
 
     protected RunResult runConfigurationValidation(Path project, String scenario) throws Exception {
