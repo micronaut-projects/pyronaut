@@ -217,13 +217,31 @@ public record PyprojectModel(Project project,
      * @param incremental whether incremental compilation is enabled
      * @param pythonIncrementalMode handling of dynamic or unresolved Python relationships
      * @param daemon whether the compiler daemon is enabled
+     * @param exclude qualified Python class name patterns to generate no Java type for
      */
-    public record Processor(String mode, Boolean incremental, String pythonIncrementalMode, Boolean daemon) {
+    public record Processor(String mode, Boolean incremental, String pythonIncrementalMode, Boolean daemon, List<String> exclude) {
+        /**
+         * Normalizes a missing exclusion list to an empty one.
+         */
+        public Processor {
+            exclude = exclude == null ? List.of() : List.copyOf(exclude);
+        }
+
         /**
          * @param mode processor execution mode
          */
         public Processor(String mode) {
             this(mode, Boolean.FALSE, "conservative", Boolean.FALSE);
+        }
+
+        /**
+         * @param mode processor execution mode
+         * @param incremental whether incremental compilation is enabled
+         * @param pythonIncrementalMode handling of dynamic or unresolved Python relationships
+         * @param daemon whether the compiler daemon is enabled
+         */
+        public Processor(String mode, Boolean incremental, String pythonIncrementalMode, Boolean daemon) {
+            this(mode, incremental, pythonIncrementalMode, daemon, List.of());
         }
 
         /**

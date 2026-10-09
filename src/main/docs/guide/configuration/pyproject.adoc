@@ -72,6 +72,7 @@ mode = "jvm" # jvm|native
 incremental = false
 python-incremental-mode = "conservative" # conservative|optimistic
 daemon = false
+exclude = [] # Python classes to generate no Java type for
 
 [tool.pyronaut.test]
 mode = "jvm" # jvm|native
@@ -110,6 +111,22 @@ A closed-world
 `wheel-native` or `docker-native` format rejects a configured reusable base.
 See the CLI reference for the full build option surface.
 See <<incrementalProcessing,Incremental processing>> before enabling incremental processing, the compiler daemon, or the optimistic Python dependency policy.
+
+The processor generates a Java type for every Python class of the sources so that Micronaut and Java code
+can use it. It skips private helpers by itself: a top-level class whose name starts with `_`, that has no
+decorator and that extends no class other than another such helper, `object`, `ABC` or `Generic`. To keep
+other plain Python classes out of Java, list them under `exclude` by qualified name, where `*` matches any
+sequence of characters:
+
+[source,toml]
+----
+[tool.pyronaut.processor]
+exclude = ["weather_agent.core.*", "weather_agent.util.Formatter"]
+----
+
+An excluded class still runs as Python and can be imported by every module of the application. Java sees a
+type hint naming it as `Object`, so do not exclude beans, classes with Micronaut decorators, or classes that
+cross into Java as typed values. A class that another, non-excluded class extends is kept.
 
 == Control panel
 
