@@ -28,6 +28,7 @@ import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitResult;
+import java.nio.file.LinkOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
@@ -43,7 +44,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Materializes the non-installer launcher classpaths omitted from the SDK wheel. */
@@ -102,8 +102,7 @@ final class ToolClasspathInstaller {
                 if (!refresh && completeLayout(current, descriptors, sdkVersion, descriptorHash, localRepository)) {
                     return current;
                 }
-                Path layout = versionRoot.resolve(descriptorHash + "-" + UUID.randomUUID());
-                materialize(layout, descriptors, sdkVersion, descriptorHash,
+                Path layout = materialize(versionRoot, descriptors, sdkVersion, descriptorHash,
                     model == null ? defaultModel() : model, localRepository, offline, refresh, progressListener);
                 updateCurrentLink(versionRoot, layout.getFileName());
             }
@@ -111,7 +110,11 @@ final class ToolClasspathInstaller {
         return versionRoot.resolve("current");
     }
 
-    private void materialize(Path layout,
+    /**
+     * Builds the layout in a temporary directory and publishes it under the hash of its contents, so identical
+     * inputs always produce the same directory name.
+     */
+    private Path materialize(Path versionRoot,
                              List<ToolDescriptor> descriptors,
                              String sdkVersion,
                              String descriptorHash,
@@ -138,7 +141,7 @@ final class ToolClasspathInstaller {
             resolvedByKey.put(ArtifactKey.of(artifacts.get(i)), resolved.get(i));
         }
 
-        Path temporary = Files.createTempDirectory(layout.getParent(), "." + layout.getFileName() + "-");
+        Path temporary = Files.createTempDirectory(versionRoot, "." + descriptorHash + "-");
         try {
             Path temporaryTools = temporary.resolve("tools");
             Path sharedLib = temporaryTools.resolve("shared/lib");
@@ -176,14 +179,30 @@ final class ToolClasspathInstaller {
             for (Map.Entry<String, Path> entry : controlPanelSourcesByFileName.entrySet()) {
                 linkOrCopy(entry.getValue(), controlPanelLib.resolve(entry.getKey()));
             }
+            // Named before the metadata is written: it records the local repository path, which must not
+            // change the name when only the location of identical artifacts differs.
+            Path layout = versionRoot.resolve(contentHash(temporary));
             Properties metadata = new Properties();
             metadata.setProperty("descriptor.sha256", descriptorHash);
             metadata.setProperty("sdk.version", sdkVersion);
             metadata.setProperty("local.repository", localRepository.toAbsolutePath().normalize().toString());
-            try (var output = Files.newOutputStream(temporary.resolve("tool-runtime.properties"))) {
-                metadata.store(output, null);
+            ReproducibleProperties.write(metadata, temporary.resolve(RUNTIME_PROPERTIES_FILE), null);
+            if (Files.isDirectory(layout, LinkOption.NOFOLLOW_LINKS)) {
+                if (completeLayout(layout, descriptors, sdkVersion, descriptorHash, localRepository)) {
+                    return layout;
+                }
+                // A damaged layout with the same name is moved aside first, as directories cannot be replaced atomically.
+                Path damaged = Files.createTempDirectory(versionRoot, "." + layout.getFileName() + "-damaged-");
+                moveAtomically(layout, damaged.resolve("layout"));
+                try {
+                    moveAtomically(temporary, layout);
+                } finally {
+                    deleteDirectory(damaged);
+                }
+            } else {
+                moveAtomically(temporary, layout);
             }
-            moveAtomically(temporary, layout);
+            return layout;
         } finally {
             if (Files.exists(temporary)) {
                 deleteDirectory(temporary);
@@ -366,6 +385,46 @@ final class ToolClasspathInstaller {
         } catch (IOException e) {
             throw new PyprojectModelException("Unable to fingerprint Pyronaut tool descriptors", e);
         }
+    }
+
+    /**
+     * Hashes the relative path, kind and bytes of every entry in a layout. Linked artifacts are hashed by the
+     * contents they resolve to, so the hash does not depend on where the Maven repository lives.
+     */
+    static String contentHash(Path root) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
+        }
+        List<Path> entries;
+        try (var paths = Files.walk(root)) {
+            entries = paths.filter(path -> !path.equals(root))
+                .sorted(Comparator.comparing(path -> relativeName(root, path)))
+                .toList();
+        }
+        for (Path entry : entries) {
+            digest.update(relativeName(root, entry).getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
+                digest.update((byte) 'd');
+            } else {
+                digest.update((byte) (Files.isExecutable(entry) ? 'x' : 'f'));
+                try (InputStream input = Files.newInputStream(entry)) {
+                    byte[] buffer = new byte[8192];
+                    for (int read = input.read(buffer); read != -1; read = input.read(buffer)) {
+                        digest.update(buffer, 0, read);
+                    }
+                }
+            }
+            digest.update((byte) 0);
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static String relativeName(Path root, Path path) {
+        return root.relativize(path).toString().replace(path.getFileSystem().getSeparator(), "/");
     }
 
     private static void copyDirectory(Path source, Path target) throws IOException {
