@@ -185,10 +185,6 @@ final class DependencyLock {
         return mode;
     }
 
-    Path file() {
-        return file;
-    }
-
     boolean active() {
         return mode != Mode.OFF;
     }

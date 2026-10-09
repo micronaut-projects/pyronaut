@@ -1,5 +1,6 @@
 package io.micronaut.pyronaut.install;
 
+import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -299,6 +300,91 @@ final class DependencyLockTest {
         String hash = ResolutionCache.installHash(project.resolve("pyproject.toml"), tempDir.resolve("local"), lock.fingerprint());
         assertTrue(ResolutionCache.cacheHit(project.resolve("__pyronaut__"), hash, List.of(InstallScope.RUNTIME)));
         assertFalse(hash.equals(ResolutionCache.installHash(project.resolve("pyproject.toml"), tempDir.resolve("local"))));
+    }
+
+    @Test
+    void quotesEveryStringItWrites() throws IOException {
+        DependencyLock.Entry entry = new DependencyLock.Entry("odd\"\\\n\t\u0001name", "a/b/1/b-1.jar",
+            "https://repo.example/", "", "a".repeat(64));
+        Path file = tempDir.resolve(DependencyLock.FILE_NAME);
+        Files.writeString(file, DependencyLock.render(List.of(entry)));
+
+        assertEquals(List.of(entry), DependencyLock.read(file));
+    }
+
+    @Test
+    void readsEmptyLocksAndRejectsMalformedOnes() throws IOException {
+        Path file = tempDir.resolve(DependencyLock.FILE_NAME);
+        Files.writeString(file, "version = 1\n");
+        assertEquals(List.of(), DependencyLock.read(file));
+
+        Files.writeString(file, "version = 1\nartifact = \"x\"\n");
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> DependencyLock.read(file))
+            .getMessage().contains("array of tables"));
+
+        Files.writeString(file, "version = 1\n[[artifact]]\nsha256 = \"" + "a".repeat(64) + "\"\n");
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> DependencyLock.read(file))
+            .getMessage().contains("every artifact requires path"));
+
+        Files.writeString(file, "version = = 1\n");
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> DependencyLock.read(file))
+            .getMessage().startsWith("Invalid "));
+    }
+
+    @Test
+    void ignoresUnresolvedAndEditorOnlyArtifactsAndReportsUnreadableOnes() throws IOException {
+        Path lockFile = tempDir.resolve(DependencyLock.FILE_NAME);
+        Files.writeString(lockFile, DependencyLock.render(List.of()));
+        DependencyLock lock = DependencyLock.open(lockFile, false, true, null);
+        org.eclipse.aether.artifact.Artifact unresolved = new org.eclipse.aether.artifact.DefaultArtifact("com.example:app:1.0");
+        Path sourcesJar = Files.writeString(tempDir.resolve("app-1.0-sources.jar"), "sources");
+
+        lock.artifactResolved(null, null);
+        lock.artifactResolved(unresolved, null);
+        lock.artifactResolved(new org.eclipse.aether.artifact.DefaultArtifact("com.example:app:jar:sources:1.0")
+            .setPath(sourcesJar), null);
+        lock.check();
+
+        lock.artifactResolved(unresolved.setPath(tempDir.resolve("missing.jar")), null);
+        PyprojectModelException failure = assertThrows(PyprojectModelException.class, lock::check);
+        assertTrue(failure.getMessage().contains("Unable to compute the checksum of com.example:app:jar:1.0"), failure.getMessage());
+    }
+
+    @Test
+    void summarizesManyViolations() throws IOException {
+        Path lockFile = tempDir.resolve(DependencyLock.FILE_NAME);
+        Files.writeString(lockFile, DependencyLock.render(List.of()));
+        DependencyLock lock = DependencyLock.open(lockFile, false, true, null);
+        Path jar = Files.writeString(tempDir.resolve("artifact.jar"), "jar");
+        for (int i = 0; i < 25; i++) {
+            lock.artifactResolved(new org.eclipse.aether.artifact.DefaultArtifact("com.example:lib" + i + ":1.0").setPath(jar), null);
+        }
+
+        PyprojectModelException failure = assertThrows(PyprojectModelException.class, lock::check);
+        assertTrue(failure.getMessage().contains("(+5 more)"), failure.getMessage());
+    }
+
+    @Test
+    void externalProjectsReuseTheirCachedLayoutWhenALockIsOnlyVerified() throws Exception {
+        Path project = tempDir.resolve("gradle-project");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("build.gradle"), "plugins { id 'java' }\n");
+        Files.writeString(project.resolve(DependencyLock.FILE_NAME), DependencyLock.render(List.of()));
+        new io.micronaut.pyronaut.config.model.ExternalProjectLayout(
+            io.micronaut.pyronaut.config.model.ExternalProjectLayout.ProjectKind.GRADLE,
+            List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+            false,
+            List.of()
+        ).write(project);
+        Path cacheDir = io.micronaut.pyronaut.config.model.ExternalProjectLayout.outputDirectory(project);
+        Files.writeString(cacheDir.resolve("external-build.sha256"),
+            ResolutionCache.externalInstallHash(project, tempDir.resolve("local")));
+
+        ByteArrayOutputStream errors = new ByteArrayOutputStream();
+        int exitCode = captureErrors(errors, () -> install(project, command -> command.progress = "auto"));
+
+        assertEquals(InstallExitCode.SUCCESS.code(), exitCode, errors.toString(StandardCharsets.UTF_8));
+        assertTrue(errors.toString(StandardCharsets.UTF_8).contains("dependencies already configured (cache hit)"));
     }
 
     @Test
