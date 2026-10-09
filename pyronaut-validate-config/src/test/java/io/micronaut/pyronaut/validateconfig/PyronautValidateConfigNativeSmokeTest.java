@@ -19,6 +19,16 @@ class PyronautValidateConfigNativeSmokeTest extends AbstractPyronautValidateConf
         assertValidationReportsInvalidApplicationToml();
     }
 
+    @Test
+    void nativeBinaryAcceptsReadableByteSizes() throws Exception {
+        assertValidationAcceptsReadableByteSizes();
+    }
+
+    @Test
+    void nativeBinaryRejectsInvalidByteSizes() throws Exception {
+        assertValidationRejectsInvalidByteSizes();
+    }
+
     @Override
     protected RunResult runConfigurationValidation(Path project, String scenario) throws Exception {
         return runNative(project, "--scenario", scenario, "--no-cache");

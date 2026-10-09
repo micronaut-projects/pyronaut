@@ -104,6 +104,49 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void cachedFailurePrintsFirstErrorsFromJsonReport() throws Exception {
+        Path project = prepareProject();
+        AtomicInteger runs = new AtomicInteger();
+        PyronautValidateConfigMain command = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                runs.incrementAndGet();
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                StringBuilder errors = new StringBuilder();
+                for (int i = 0; i < 7; i++) {
+                    errors.append(i == 0 ? "" : ",").append("""
+                        {"property":"micronaut.server.p%d","type":"ERROR","message":"Expected integer","originLocation":"application.toml","lineNumber":2}
+                        """.formatted(i).trim());
+                }
+                Files.writeString(reportDir.resolve("configuration-errors.json"),
+                    "{\"configurationErrors\":[" + errors + "],\"dependencyInjectionErrors\":[]}\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(true);
+            }
+        );
+
+        assertEquals(1, new CommandLine(command).execute("--project-dir", project.toString(), "--format", "json"));
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        int exit;
+        try {
+            System.setErr(new PrintStream(err, true, UTF_8));
+            exit = new CommandLine(command).execute("--project-dir", project.toString(), "--format", "json");
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        assertEquals(1, exit);
+        assertEquals(1, runs.get());
+        String output = err.toString(UTF_8);
+        assertTrue(output.contains("Configuration validation failed (cached)"), output);
+        assertTrue(output.contains("  micronaut.server.p0: Expected integer (application.toml)"), output);
+        assertTrue(output.contains("  micronaut.server.p4: Expected integer"), output);
+        assertFalse(output.contains("micronaut.server.p5"), output);
+        assertTrue(output.contains("  ... and 2 more"), output);
+    }
+
+    @Test
     void validateConfigReturnsValidationErrorWhenDiErrorsPresentAndEnabled() throws Exception {
         Path project = prepareProject();
         PyronautValidateConfigMain command = new PyronautValidateConfigMain(

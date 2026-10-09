@@ -149,6 +149,9 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
                 environment.stop();
             }
         }
+        if (ReadableBytesProperties.hasCandidates(errors)) {
+            errors = withoutReadableBytesErrors(settings, validationClasspath, errors);
+        }
         Set<DependencyInjectionError> dependencyInjectionErrors = Set.of();
 
         if (settings.validateDependencyInjection()) {
@@ -191,6 +194,26 @@ final class MicronautConfigurationValidatorExecutor implements PyronautValidateC
             printSuppressionSnippet(System.err, suppressionPatterns(errors));
         }
         return new PyronautValidateConfigMain.ValidationExecutionResult(hasErrors);
+    }
+
+    /**
+     * Drops "Expected integer" errors for human-readable byte sizes ({@code 6MB}) assigned to
+     * properties that Micronaut binds through {@code @ReadableBytes}.
+     */
+    private static Set<ConfigurationError> withoutReadableBytesErrors(
+        PyronautValidateConfigMain.ValidationSettings settings,
+        List<URL> validationClasspath,
+        Set<ConfigurationError> errors
+    ) throws Exception {
+        try (URLClassLoader classLoader = environmentClassLoader(validationClasspath);
+             ApplicationContext context = contextBuilder(settings, classLoader).build()) {
+            ConfigurableApplicationContext configurableContext = (ConfigurableApplicationContext) context;
+            try (Environment ignored = configurableContext.getEnvironment().start()) {
+                configurableContext.configure();
+                return ReadableBytesProperties.withoutReadableBytesErrors(
+                    errors, ReadableBytesProperties.fromBeanContext(configurableContext));
+            }
+        }
     }
 
     /**

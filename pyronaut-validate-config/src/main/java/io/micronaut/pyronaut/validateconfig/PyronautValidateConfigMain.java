@@ -15,6 +15,8 @@
  */
 package io.micronaut.pyronaut.validateconfig;
 
+import io.micronaut.core.type.Argument;
+import io.micronaut.json.JsonMapper;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
@@ -33,6 +35,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
@@ -46,6 +49,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
     private static final int VALIDATION_ERROR = 1;
     private static final int PRECONDITION_FAILED = 8;
     private static final int INTERNAL_ERROR = 10;
+    private static final int CACHED_ERRORS_SHOWN = 5;
     private static final List<String> DEFAULT_CACHE_IGNORE = List.of("META-INF/*", "logback.xml", "logback-test.xml");
     private static final String TEST_RESOURCES_CLIENT_ARTIFACT = "micronaut-test-resources-client";
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "__pyronaut__/resolved-runtime-dependencies";
@@ -178,6 +182,7 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
                 if (cache != null) {
                     if (cache.lastResult() == ConfigurationValidationCache.LastResult.FAILURE) {
                         System.err.println("Configuration validation failed (cached). Report directory: " + settings.outputDir());
+                        printCachedErrors(System.err, settings.outputDir());
                         return VALIDATION_ERROR;
                     }
                     passed(null, "(cached)");
@@ -218,6 +223,46 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
             }
             System.err.println("validate-config failed: " + e.getMessage());
             return INTERNAL_ERROR;
+        }
+    }
+
+    /**
+     * Prints the first errors of the JSON report left by the failed run, so that a cached failure
+     * explains itself without opening the report.
+     */
+    static void printCachedErrors(PrintStream err, Path outputDir) {
+        Path jsonReport = outputDir.resolve("configuration-errors.json");
+        if (!Files.isRegularFile(jsonReport)) {
+            return;
+        }
+        Map<String, Object> report;
+        try {
+            report = JsonMapper.createDefault().readValue(Files.readAllBytes(jsonReport), Argument.mapOf(String.class, Object.class));
+        } catch (IOException | RuntimeException e) {
+            return;
+        }
+        if (report == null) {
+            return;
+        }
+        List<String> messages = new ArrayList<>();
+        if (report.get("configurationErrors") instanceof List<?> errors) {
+            for (Object entry : errors) {
+                if (entry instanceof Map<?, ?> error && "ERROR".equals(String.valueOf(error.get("type")))) {
+                    String origin = error.get("originLocation") instanceof String location ? " (" + location + ")" : "";
+                    messages.add(error.get("property") + ": " + error.get("message") + origin);
+                }
+            }
+        }
+        if (report.get("dependencyInjectionErrors") instanceof List<?> errors) {
+            for (Object entry : errors) {
+                if (entry instanceof Map<?, ?> error) {
+                    messages.add(error.get("bean") + ": " + error.get("details"));
+                }
+            }
+        }
+        messages.stream().limit(CACHED_ERRORS_SHOWN).forEach(message -> err.println("  " + message));
+        if (messages.size() > CACHED_ERRORS_SHOWN) {
+            err.println("  ... and " + (messages.size() - CACHED_ERRORS_SHOWN) + " more");
         }
     }
 
