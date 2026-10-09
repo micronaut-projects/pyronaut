@@ -105,7 +105,13 @@ class IndexedJarClassLoaderDirectoryTest {
                 assertEquals(0, input.readAllBytes().length);
             }
         }
-        try (JarFile view = connection.getJarFile()) {
+        connection.getJarFile().close();
+    }
+
+    @Test
+    void connectionJarFileIsAViewOfTheRoot() throws IOException {
+        List<URL> urls = Collections.list(loader.getResources("db/migration"));
+        try (JarFile view = ((JarURLConnection) urls.get(0).openConnection()).getJarFile()) {
             List<String> names = Collections.list(view.entries()).stream().map(JarEntry::getName).toList();
             assertTrue(names.containsAll(List.of(
                 "db/", "db/migration/", "db/migration/nested/",

@@ -233,33 +233,29 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
      * directory lookup so plain resource and class loading never pay for it.
      */
     private Map<String, Set<String>> directoryIndex() {
-        Map<String, Set<String>> index = directoryIndex.get();
-        if (index != null) {
-            return index;
+        // Building is idempotent, so a rare concurrent duplicate build is harmless.
+        return directoryIndex.updateAndGet(existing -> existing != null ? existing : buildDirectoryIndex());
+    }
+
+    private Map<String, Set<String>> buildDirectoryIndex() {
+        Map<String, Set<String>> byPrefix = new HashMap<>();
+        for (Root root : roots) {
+            byPrefix.put(root.prefix(), new HashSet<>());
         }
-        synchronized (directoryIndex) {
-            if (directoryIndex.get() == null) {
-                Map<String, Set<String>> byPrefix = new HashMap<>();
-                for (Root root : roots) {
-                    byPrefix.put(root.prefix(), new HashSet<>());
+        Enumeration<JarEntry> entries = jarFile.entries();
+        while (entries.hasMoreElements()) {
+            String name = entries.nextElement().getName();
+            for (int slash = name.indexOf('/'); slash >= 0; slash = name.indexOf('/', slash + 1)) {
+                Set<String> directories = byPrefix.get(name.substring(0, slash + 1));
+                if (directories != null) {
+                    addParentDirectories(directories, name.substring(slash + 1));
+                    break;
                 }
-                Enumeration<JarEntry> entries = jarFile.entries();
-                while (entries.hasMoreElements()) {
-                    String name = entries.nextElement().getName();
-                    for (int slash = name.indexOf('/'); slash >= 0; slash = name.indexOf('/', slash + 1)) {
-                        Set<String> directories = byPrefix.get(name.substring(0, slash + 1));
-                        if (directories != null) {
-                            addParentDirectories(directories, name.substring(slash + 1));
-                            break;
-                        }
-                    }
-                }
-                Map<String, Set<String>> completed = new HashMap<>();
-                byPrefix.forEach((prefix, directories) -> completed.put(prefix, Set.copyOf(directories)));
-                directoryIndex.set(Map.copyOf(completed));
             }
-            return directoryIndex.get();
         }
+        Map<String, Set<String>> completed = new HashMap<>();
+        byPrefix.forEach((prefix, directories) -> completed.put(prefix, Set.copyOf(directories)));
+        return Map.copyOf(completed);
     }
 
     private Set<String> directories(String prefix) {
