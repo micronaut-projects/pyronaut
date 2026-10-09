@@ -844,7 +844,7 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         patcher = patch("pathlib.Path.home", return_value=self.home)
         patcher.start()
         self.addCleanup(patcher.stop)
-        env = patch.dict(os.environ, {"HOME": str(self.home)}, clear=False)
+        env = patch.dict(os.environ, {"HOME": str(self.home), "PYRONAUT_XDG": "false"}, clear=False)
         env.start()
         self.addCleanup(env.stop)
         for name in ("PYRONAUT_PYTHON_EXECUTABLE", "VIRTUAL_ENV", "PYENV_VERSION", "PYENV_ROOT"):
