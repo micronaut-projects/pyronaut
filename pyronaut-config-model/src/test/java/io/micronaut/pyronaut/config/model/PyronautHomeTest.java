@@ -80,13 +80,41 @@ class PyronautHomeTest {
     }
 
     @Test
-    void defaultLayoutKeepsEverythingUnderDotPyronaut(@TempDir Path home) {
+    void defaultLayoutOutsideLinuxKeepsEverythingUnderDotPyronaut(@TempDir Path home) {
         Map<String, String> env = Map.of("HOME", home.toString());
-        UnaryOperator<String> props = properties("Linux", Map.of());
+        UnaryOperator<String> props = properties("Mac OS X", Map.of());
         assertFalse(PyronautHome.xdgEnabled(props, env));
         assertEquals(home.resolve(".pyronaut"), PyronautHome.configHome(props, env));
         assertEquals(home.resolve(".pyronaut"), PyronautHome.cacheHome(props, env));
         assertEquals(home.resolve(".pyronaut"), PyronautHome.dataHome(props, env));
+    }
+
+    @Test
+    void freshLinuxInstallationDefaultsToXdg(@TempDir Path home) {
+        Map<String, String> env = Map.of("HOME", home.toString());
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        assertTrue(PyronautHome.xdgEnabled(props, env));
+        assertEquals(home.resolve(".config/pyronaut"), PyronautHome.configHome(props, env));
+        assertEquals(home.resolve(".cache/pyronaut"), PyronautHome.cacheHome(props, env));
+        assertEquals(home.resolve(".local/share/pyronaut"), PyronautHome.dataHome(props, env));
+    }
+
+    @Test
+    void xdgBaseVariableEnablesXdgByDefaultOnAnyPlatform(@TempDir Path home) {
+        UnaryOperator<String> props = properties("Mac OS X", Map.of());
+        assertTrue(PyronautHome.xdgEnabled(props,
+            Map.of("HOME", home.toString(), "XDG_DATA_HOME", home.resolve("data").toString())));
+        assertFalse(PyronautHome.xdgEnabled(props, Map.of("HOME", home.toString(), "XDG_DATA_HOME", "relative")));
+    }
+
+    @Test
+    void existingDotPyronautKeepsItsLayoutOnLinux(@TempDir Path home) throws IOException {
+        Files.createDirectories(home.resolve(".pyronaut"));
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        Map<String, String> env = Map.of("HOME", home.toString(), "XDG_CONFIG_HOME", home.resolve("cfg").toString());
+        assertFalse(PyronautHome.xdgEnabled(props, env));
+        assertEquals(home.resolve(".pyronaut"), PyronautHome.dataHome(props, env));
+        assertTrue(PyronautHome.xdgEnabled(props, Map.of("HOME", home.toString(), PyronautHome.XDG_ENV, "true")));
     }
 
     @Test

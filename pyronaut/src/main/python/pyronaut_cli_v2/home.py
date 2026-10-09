@@ -1,13 +1,11 @@
 """Locations of Pyronaut state: configuration, caches and data.
 
-By default all three live in one directory, ``~/.pyronaut``. ``PYRONAUT_HOME``
-relocates that directory and always keeps everything together. Otherwise the
-XDG base directory layout can be opted into, which splits state into
-``$XDG_CONFIG_HOME/pyronaut`` (``settings.toml``), ``$XDG_CACHE_HOME/pyronaut``
-(re-creatable caches) and ``$XDG_DATA_HOME/pyronaut`` (provisioned SDKs,
-launchers and tool runtimes). The layout is enabled by ``PYRONAUT_XDG=true``,
-or, without that variable, by the existence of ``$XDG_CONFIG_HOME/pyronaut``,
-which ``pyronaut setup --xdg`` creates.
+``PYRONAUT_HOME`` keeps all of them in one directory. Otherwise the XDG base
+directory layout splits state into ``$XDG_CONFIG_HOME/pyronaut``
+(``settings.toml``), ``$XDG_CACHE_HOME/pyronaut`` (re-creatable caches) and
+``$XDG_DATA_HOME/pyronaut`` (provisioned SDKs, launchers and tool runtimes),
+or everything lives in ``~/.pyronaut``. See ``xdg_enabled`` for how the
+layout is chosen.
 
 The Java tools the CLI starts resolve the directories the same way
 (``PyronautHome`` in pyronaut-config-model). The CLI exports the resolved
@@ -21,6 +19,7 @@ Imports only the standard library.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import MutableMapping, NamedTuple
 
@@ -35,6 +34,7 @@ LAYOUT_HOME = "home"
 LAYOUT_CUSTOM = "PYRONAUT_HOME"
 LAYOUT_XDG = "xdg"
 
+_XDG_BASE_VARIABLES = ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME")
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
@@ -87,14 +87,40 @@ def xdg_flag(environment: MutableMapping[str, str] | None = None) -> bool | None
     return None
 
 
+def _is_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
+def xdg_by_default(environment: MutableMapping[str, str] | None = None) -> bool:
+    """Whether a fresh installation uses the XDG layout: on Linux, or when an
+    ``XDG_*_HOME`` base directory is set."""
+    env = _environment(environment)
+    for variable in _XDG_BASE_VARIABLES:
+        value = (env.get(variable) or "").strip()
+        if value and Path(value).is_absolute():
+            return True
+    return _is_linux()
+
+
 def xdg_enabled(environment: MutableMapping[str, str] | None = None) -> bool:
+    """Whether configuration, caches and data follow the XDG base directories.
+
+    Never with an explicit ``PYRONAUT_HOME``. Otherwise ``PYRONAUT_XDG``
+    decides when set; then an existing ``$XDG_CONFIG_HOME/pyronaut`` enables
+    the layout, an existing ``~/.pyronaut`` keeps that installation where it
+    is, and a fresh installation follows ``xdg_by_default``.
+    """
     env = _environment(environment)
     if _explicit_home(env) is not None:
         return False
     flag = xdg_flag(env)
     if flag is not None:
         return flag
-    return xdg_config_dir(env).is_dir()
+    if xdg_config_dir(env).is_dir():
+        return True
+    if (Path.home() / ".pyronaut").is_dir():
+        return False
+    return xdg_by_default(env)
 
 
 def pyronaut_dirs(environment: MutableMapping[str, str] | None = None) -> PyronautDirs:

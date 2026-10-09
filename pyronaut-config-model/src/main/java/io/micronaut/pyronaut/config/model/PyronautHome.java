@@ -38,7 +38,7 @@ import java.util.function.UnaryOperator;
  * otherwise each one is, in order: the directory the CLI exported for it
  * ({@value #CONFIG_DIR_ENV}, {@value #CACHE_DIR_ENV}, {@value #DATA_DIR_ENV}),
  * the XDG base directory layout when it is enabled (see {@link #xdgEnabled()}),
- * and finally the Pyronaut home.</p>
+ * and finally {@code ~/.pyronaut}.</p>
  */
 public final class PyronautHome {
     public static final String PROPERTY = "pyronaut.home";
@@ -91,9 +91,11 @@ public final class PyronautHome {
     /**
      * Whether the XDG base directory layout is in use. It never is when a
      * Pyronaut home is configured explicitly. Otherwise {@value #XDG_ENV}
-     * ({@code true} or {@code false}) decides, and without it the layout is
-     * enabled by the existence of {@code $XDG_CONFIG_HOME/pyronaut}, which
-     * {@code pyronaut setup --xdg} creates.
+     * ({@code true} or {@code false}) decides when set. Without it, an
+     * existing {@code $XDG_CONFIG_HOME/pyronaut} (which {@code pyronaut setup}
+     * creates) enables the layout, an existing {@code ~/.pyronaut} keeps that
+     * installation where it is, and a fresh installation uses the layout on
+     * Linux or when an {@code XDG_*_HOME} base directory is set.
      *
      * @return true if configuration, caches and data follow the XDG base directories
      */
@@ -132,7 +134,20 @@ public final class PyronautHome {
                 return false;
             }
         }
-        return Files.isDirectory(xdgBase(properties, environment, "XDG_CONFIG_HOME", ".config").resolve(XDG_DIR_NAME));
+        if (Files.isDirectory(xdgBase(properties, environment, "XDG_CONFIG_HOME", ".config").resolve(XDG_DIR_NAME))) {
+            return true;
+        }
+        if (Files.isDirectory(userHome(properties, environment).resolve(".pyronaut"))) {
+            return false;
+        }
+        for (String variable : new String[] {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"}) {
+            String configured = nonBlank(environment.get(variable));
+            if (configured != null && Path.of(configured).isAbsolute()) {
+                return true;
+            }
+        }
+        String osName = properties.apply("os.name");
+        return osName != null && osName.toLowerCase(Locale.ROOT).startsWith("linux");
     }
 
     private static Path kindHome(UnaryOperator<String> properties,

@@ -9151,9 +9151,10 @@ def _print_setup_usage(stream=None) -> None:
     )
     stream.write("Provision the global Pyronaut SDK toolchain, GraalPy interpreter, launchers, and native compiler classpaths.\n")
     stream.write("\nOptions:\n")
-    stream.write("      --xdg      Switch to the XDG base directory layout: configuration in $XDG_CONFIG_HOME/pyronaut,\n")
-    stream.write("                 caches in $XDG_CACHE_HOME/pyronaut and data in $XDG_DATA_HOME/pyronaut. Creates the\n")
-    stream.write("                 configuration folder, which keeps the layout enabled; remove it to switch back.\n")
+    stream.write("      --xdg      Switch an existing ~/.pyronaut installation to the XDG base directory layout:\n")
+    stream.write("                 configuration in $XDG_CONFIG_HOME/pyronaut, caches in $XDG_CACHE_HOME/pyronaut and\n")
+    stream.write("                 data in $XDG_DATA_HOME/pyronaut. New installations use it by default on Linux or\n")
+    stream.write("                 when XDG_*_HOME is set. Set PYRONAUT_XDG=false to keep ~/.pyronaut.\n")
     stream.write(f"\nState: {_describe_pyronaut_dirs()}\n")
 
 
@@ -9480,7 +9481,7 @@ def _enable_xdg_layout() -> None:
     if legacy.is_dir():
         print(
             f"{_home_display(legacy)} is no longer used and can be removed once setup has finished. "
-            f"To switch back, remove {_home_display(_home.xdg_config_dir())}."
+            f"To switch back, set {_home.PYRONAUT_XDG_ENV}=false."
         )
 
 
@@ -9495,6 +9496,10 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
             # Before anything is resolved: setup then provisions into the
             # XDG data directory rather than ~/.pyronaut.
             _enable_xdg_layout()
+        elif _home.xdg_enabled():
+            # Pin a default XDG layout, so that a ~/.pyronaut created later
+            # (for example for settings.toml) does not switch layouts.
+            _home.xdg_config_dir().mkdir(parents=True, exist_ok=True)
         manifest_path = _setup_manifest_path()
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = manifest_path.with_suffix(".lock")
@@ -10780,13 +10785,15 @@ def _doctor_check_pyronaut_dirs() -> _doctor.CheckResult:
         "data": str(dirs.data),
     }
     detail = _describe_pyronaut_dirs()
+    if dirs.layout == _home.LAYOUT_HOME and _home.xdg_flag() is None and _home.xdg_by_default():
+        detail += "; run pyronaut setup --xdg to switch to the XDG layout"
     if dirs.layout == _home.LAYOUT_XDG:
         legacy = _home.pyronaut_home()
         if legacy.is_dir():
             return _doctor.CheckResult(
                 "home", "Pyronaut state", _doctor.WARN,
                 f"{detail}; {_home_display(legacy)} is no longer used",
-                f"Remove {_home_display(legacy)}, or remove {_home_display(_home.xdg_config_dir())} to switch back to it",
+                f"Remove {_home_display(legacy)}, or set {_home.PYRONAUT_XDG_ENV}=false to switch back to it",
                 data,
             )
     return _doctor.CheckResult("home", "Pyronaut state", _doctor.PASS, detail, data=data)

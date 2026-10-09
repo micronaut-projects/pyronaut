@@ -95,6 +95,8 @@ apt-get install --yes --no-install-recommends ca-certificates curl docker.io jq 
 rm -rf /work
 mkdir -p /work/downloads /work/home /work/logs /work/projects
 export HOME=/work/home
+# The checks below inspect ~/.pyronaut; Linux otherwise defaults to the XDG layout.
+export PYRONAUT_XDG=false
 export PATH=/work/cpython-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 : "${PYRONAUT_RELEASE_TOKEN:?PYRONAUT_RELEASE_TOKEN is required}"

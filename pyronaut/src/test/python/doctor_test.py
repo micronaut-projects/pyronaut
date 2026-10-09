@@ -280,7 +280,8 @@ class DoctorChecksTest(unittest.TestCase):
         self._home_patch = patch("pathlib.Path.home", return_value=self.home)
         self._home_patch.start()
         self.addCleanup(self._home_patch.stop)
-        self._env_patch = patch.dict(os.environ, {"HOME": str(self.home)}, clear=False)
+        # These checks cover the ~/.pyronaut layout, also on Linux.
+        self._env_patch = patch.dict(os.environ, {"HOME": str(self.home), "PYRONAUT_XDG": "false"}, clear=False)
         self._env_patch.start()
         self.addCleanup(self._env_patch.stop)
         for name in ("JAVA_HOME", "PYENV_VERSION", "PYENV_ROOT", "SDKMAN_DIR", "DOCKER_HOST", *_PROXY_ENV):

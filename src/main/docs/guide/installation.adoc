@@ -106,8 +106,10 @@ TIP: See
 [[pyronautHome]]
 == Relocate Pyronaut state
 
-All global Pyronaut state (setup records, the SDK tool runtime, native launchers, JDKs, caches and
-`settings.toml`) lives in `~/.pyronaut`, where `~` is `$HOME`. Set `PYRONAUT_HOME` to keep it somewhere else:
+Global Pyronaut state (setup records, the SDK tool runtime, native launchers, JDKs, caches and `settings.toml`)
+follows the XDG base directory layout described below on Linux, and whenever an `XDG_*_HOME` variable is set.
+Otherwise it lives in `~/.pyronaut`, where `~` is `$HOME`. Set `PYRONAUT_HOME` to keep all of it in one directory
+of your choice instead:
 
 [source,bash]
 ----
@@ -122,14 +124,8 @@ repository defaults to `$HOME/.m2/repository` on both sides; use `--local-reposi
 
 === Use the XDG base directory layout
 
-Instead of a single directory, Pyronaut can follow the
-https://specifications.freedesktop.org/basedir-spec/latest/[XDG Base Directory Specification]. Opt in with:
-
-[source,bash]
-----
-pyronaut setup --xdg
-----
-
+Pyronaut follows the https://specifications.freedesktop.org/basedir-spec/latest/[XDG Base Directory Specification]
+for new installations on Linux, and on any platform when `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` or `XDG_DATA_HOME` is set.
 State is then split by kind:
 
 [cols="1,2,3"]
@@ -149,17 +145,26 @@ State is then split by kind:
 |JDKs and SDKs (`sdks`), native launchers (`bin`), setup records (`setup`) and the SDK tool runtime (`tools`)
 |===
 
-`setup --xdg` creates `$XDG_CONFIG_HOME/pyronaut`. Its existence is what enables the layout, so later commands (and the
-Java tools they start) use it without further flags. Setup copies an existing `~/.pyronaut/settings.toml` to the new
-configuration directory when that directory has none, provisions the SDK into the data directory, and prints a note
-that `~/.pyronaut` is no longer used and can be removed. `pyronaut doctor` reports the active layout and its paths in
-the *Pyronaut state* row.
+An existing `~/.pyronaut` installation keeps working where it is. To move it to the XDG layout, run:
 
-Instead of the folder, you can set `PYRONAUT_XDG=true` to enable the layout, or `PYRONAUT_XDG=false` to disable it
-even when the folder exists. `PYRONAUT_HOME` always takes precedence and keeps everything in one directory.
+[source,bash]
+----
+pyronaut setup --xdg
+----
 
-To switch back to `~/.pyronaut`, move `settings.toml` back if you changed it, remove `$XDG_CONFIG_HOME/pyronaut` and run
-`pyronaut setup` again. The XDG cache and data directories can then be removed.
+Setup copies `~/.pyronaut/settings.toml` to the XDG configuration directory when that directory has none, provisions
+the SDK into the data directory, and prints a note that `~/.pyronaut` is no longer used and can be removed.
+
+`pyronaut setup` creates `$XDG_CONFIG_HOME/pyronaut` whenever the XDG layout is in use. Its existence keeps the layout
+enabled, so later commands (and the Java tools they start) use it even if a `~/.pyronaut` directory appears.
+`pyronaut doctor` reports the active layout and its paths in the *Pyronaut state* row.
+
+Set `PYRONAUT_XDG=true` or `PYRONAUT_XDG=false` to choose the layout explicitly; `false` keeps `~/.pyronaut` even on
+Linux. `PYRONAUT_HOME` always takes precedence and keeps everything in one directory.
+
+To switch back to `~/.pyronaut`, export `PYRONAUT_XDG=false` (or, outside Linux and without `XDG_*_HOME` variables,
+remove `$XDG_CONFIG_HOME/pyronaut`), move `settings.toml` back into `~/.pyronaut` and run `pyronaut setup` again. The
+XDG cache and data directories can then be removed.
 
 == Project installation
 

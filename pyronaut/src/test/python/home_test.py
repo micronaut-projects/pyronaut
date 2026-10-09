@@ -41,6 +41,10 @@ class PyronautHomeTest(unittest.TestCase):
         home_patch = patch("pathlib.Path.home", return_value=self.user_home)
         home_patch.start()
         self.addCleanup(home_patch.stop)
+        # macOS unless a test opts into Linux, where XDG is the default.
+        linux_patch = patch.object(home, "_is_linux", return_value=False)
+        self.is_linux = linux_patch.start()
+        self.addCleanup(linux_patch.stop)
 
     def test_defaults_to_dot_pyronaut_under_home(self):
         self.assertEqual(self.user_home / ".pyronaut", home.pyronaut_home())
@@ -94,6 +98,48 @@ class PyronautHomeTest(unittest.TestCase):
         self.assertEqual(home.LAYOUT_HOME, dirs.layout)
         self.assertEqual((legacy, legacy, legacy), (dirs.config, dirs.cache, dirs.data))
         self.assertFalse(home.xdg_enabled())
+
+    def test_fresh_linux_installation_defaults_to_xdg(self):
+        self.is_linux.return_value = True
+        dirs = home.pyronaut_dirs()
+        self.assertEqual(home.LAYOUT_XDG, dirs.layout)
+        self.assertEqual(self.user_home / ".config" / "pyronaut", dirs.config)
+        self.assertEqual(self.user_home / ".cache" / "pyronaut", dirs.cache)
+        self.assertEqual(self.user_home / ".local" / "share" / "pyronaut", dirs.data)
+
+    def test_xdg_base_variable_enables_xdg_by_default_on_any_platform(self):
+        os.environ["XDG_CACHE_HOME"] = str(self.temp / "cache")
+        dirs = home.pyronaut_dirs()
+        self.assertEqual(home.LAYOUT_XDG, dirs.layout)
+        self.assertEqual(self.temp / "cache" / "pyronaut", dirs.cache)
+        self.assertEqual(self.user_home / ".config" / "pyronaut", dirs.config)
+
+    def test_relative_xdg_base_variable_does_not_enable_xdg(self):
+        os.environ["XDG_DATA_HOME"] = "relative"
+        self.assertFalse(home.xdg_enabled())
+
+    def test_existing_dot_pyronaut_keeps_its_layout_on_linux(self):
+        self.is_linux.return_value = True
+        os.environ["XDG_CONFIG_HOME"] = str(self.temp / "cfg")
+        (self.user_home / ".pyronaut").mkdir(parents=True)
+        self.assertEqual(home.LAYOUT_HOME, home.pyronaut_dirs().layout)
+        os.environ["PYRONAUT_XDG"] = "true"
+        self.assertEqual(home.LAYOUT_XDG, home.pyronaut_dirs().layout)
+
+    def test_pyronaut_xdg_false_keeps_dot_pyronaut_on_linux(self):
+        self.is_linux.return_value = True
+        os.environ["PYRONAUT_XDG"] = "false"
+        self.assertEqual(self.user_home / ".pyronaut", home.data_home())
+
+    def test_setup_pins_the_default_xdg_layout(self):
+        self.is_linux.return_value = True
+        with patch.object(cli, "_setup_manifest_path", side_effect=RuntimeError("stop")), \
+                patch.object(cli, "_progress_console"), patch("builtins.print"):
+            cli._run_setup([], lambda command, env: 0)
+        self.assertTrue((self.user_home / ".config" / "pyronaut").is_dir())
+        # A ~/.pyronaut created afterwards no longer switches the layout.
+        (self.user_home / ".pyronaut").mkdir()
+        self.assertEqual(home.LAYOUT_XDG, home.pyronaut_dirs().layout)
 
     def test_xdg_config_folder_enables_split_layout(self):
         (self.user_home / ".config" / "pyronaut").mkdir(parents=True)
@@ -158,7 +204,7 @@ class PyronautHomeTest(unittest.TestCase):
         self.assertEqual(str(self.user_home / ".local" / "share" / "pyronaut"), os.environ["PYRONAUT_DATA_DIR"])
         self.assertNotIn("PYRONAUT_HOME", os.environ)
         self.assertIn("~/.pyronaut is no longer used", output)
-        self.assertIn("remove ~/.config/pyronaut", output)
+        self.assertIn("set PYRONAUT_XDG=false", output)
 
         # An existing XDG settings file is never overwritten.
         (legacy / "settings.toml").write_text("changed", encoding="utf-8")
@@ -189,8 +235,13 @@ class PyronautHomeTest(unittest.TestCase):
         result = cli._doctor_check_pyronaut_dirs()
         self.assertEqual("pass", result.status.lower())
         self.assertEqual("~/.pyronaut", result.detail)
+        self.is_linux.return_value = True
+        (self.user_home / ".pyronaut").mkdir(parents=True)
+        result = cli._doctor_check_pyronaut_dirs()
+        self.assertEqual("pass", result.status.lower())
+        self.assertIn("run pyronaut setup --xdg", result.detail)
+        self.is_linux.return_value = False
         (self.user_home / ".config" / "pyronaut").mkdir(parents=True)
-        (self.user_home / ".pyronaut").mkdir()
         result = cli._doctor_check_pyronaut_dirs()
         self.assertEqual("xdg", result.data["layout"])
         self.assertIn("XDG layout", result.detail)
