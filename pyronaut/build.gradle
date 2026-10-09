@@ -158,7 +158,9 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
     inputs.property("micronautCoreVersion", micronautCoreVersion)
     inputs.property("pyronautVersion", providers.provider { project.version.toString() })
     inputs.dir(effectiveMavenLocalRepositoryDir).optional()
-    outputs.dir(sdkMavenLocalRepositoryDir)
+    // only the Pyronaut artifacts are written: declaring the whole repository would make every task that resolves
+    // a Micronaut snapshot from Maven local depend on this one
+    outputs.dir(sdkMavenLocalRepositoryDir.map { new File(it, "io/micronaut/pyronaut") })
     outputs.upToDateWhen { false }
     doLast {
         def sourceRepository = effectiveMavenLocalRepositoryDir.get().canonicalFile

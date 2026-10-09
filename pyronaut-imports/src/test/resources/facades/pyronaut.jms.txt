@@ -1,0 +1,17 @@
+# pyronaut.jms
+
+## members
+JMSConnectionFactory	ANNOTATION	io.micronaut.jms.annotations.JMSConnectionFactory
+JMSListener	ANNOTATION	io.micronaut.jms.annotations.JMSListener
+JMSProducer	ANNOTATION	io.micronaut.jms.annotations.JMSProducer
+Message	ANNOTATION	io.micronaut.jms.annotations.Message
+MessageBody	ANNOTATION	io.micronaut.messaging.annotation.MessageBody
+MessageHeader	ANNOTATION	io.micronaut.messaging.annotation.MessageHeader
+MessageHeaders	ANNOTATION	io.micronaut.messaging.annotation.MessageHeaders
+MessageListener	ANNOTATION	io.micronaut.messaging.annotation.MessageListener
+MessageMapping	ANNOTATION	io.micronaut.messaging.annotation.MessageMapping
+MessageProducer	ANNOTATION	io.micronaut.messaging.annotation.MessageProducer
+MessageTTL	ANNOTATION	io.micronaut.jms.annotations.MessageTTL
+Queue	ANNOTATION	io.micronaut.jms.annotations.Queue
+SendTo	ANNOTATION	io.micronaut.messaging.annotation.SendTo
+Topic	ANNOTATION	io.micronaut.jms.annotations.Topic

@@ -1,0 +1,12 @@
+# pyronaut.mcp
+
+## members
+McpPrimitive	ANNOTATION	io.micronaut.mcp.annotations.McpPrimitive
+Prompt	ANNOTATION	io.micronaut.mcp.annotations.Prompt
+PromptArg	ANNOTATION	io.micronaut.mcp.annotations.PromptArg
+PromptCompletion	ANNOTATION	io.micronaut.mcp.annotations.PromptCompletion
+Resource	ANNOTATION	io.micronaut.mcp.annotations.Resource
+ResourceCompletion	ANNOTATION	io.micronaut.mcp.annotations.ResourceCompletion
+ResourceTemplate	ANNOTATION	io.micronaut.mcp.annotations.ResourceTemplate
+Tool	ANNOTATION	io.micronaut.mcp.annotations.Tool
+ToolArg	ANNOTATION	io.micronaut.mcp.annotations.ToolArg
