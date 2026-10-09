@@ -40,9 +40,13 @@ Provision the SDK after installing or upgrading the Pyronaut CLI:
 pyronaut setup
 ----
 
-Setup locates or provisions a compatible GraalVM JDK and the exact GraalPy interpreter the SDK was built with, downloads
-the native Pyronaut launchers, resolves the SDK dependencies, and stores validated machine-local state under
-`~/.pyronaut`. You do not need to install GraalVM or GraalPy manually for the default setup.
+Setup locates or provisions a compatible GraalVM JDK and the exact GraalPy interpreter the SDK was built with, resolves
+the SDK dependencies, and stores validated machine-local state under `~/.pyronaut`. You do not need to install GraalVM
+or GraalPy manually for the default setup.
+
+Setup does not download the native Pyronaut launchers. A command that runs a native launcher downloads it the first time
+it needs one, so projects that only use the JVM toolchain never download them. Run `pyronaut setup --native-launchers`
+to download them during setup.
 
 Setup reuses a matching GraalPy that is already installed with pyenv or under `~/.pyronaut/sdks`. When none is
 installed, setup runs `pyenv install` if pyenv is available, and otherwise downloads GraalPy into
@@ -57,7 +61,7 @@ Pyronaut records setup state in `setup.json` under the Pyronaut home directory:
 
 The placeholders `<sdk-version>`, `<os>`, and `<architecture>` identify the SDK version and the platform where setup runs.
 
-The setup command is idempotent. Run `pyronaut setup --refresh` when you need to re-resolve setup dependencies or rewrite setup state. Use `pyronaut setup --offline` only when the required JDK, native launchers, and Maven artifacts are already cached.
+The setup command is idempotent. Run `pyronaut setup --refresh` when you need to re-resolve setup dependencies or rewrite setup state. Use `pyronaut setup --offline` only when the required JDK and Maven artifacts are already cached. To use the native toolchain offline, run `pyronaut setup --native-launchers` while online first.
 If Pyronaut cannot find a recorded artifact, or if the SDK, platform, repository, or native bundle configuration changes, execution commands exit with code `8` and instruct you to run `pyronaut setup` again.
 Help and version commands remain available before setup.
 

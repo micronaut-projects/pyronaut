@@ -1019,11 +1019,15 @@ def _delegate(
     env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
     if command == "install" and _has_direct_install_sources(args):
         try:
-            direct_launcher = _resolve_pyronaut_dev_native_executable(resolver)
+            # Only the compiler classpath is needed here, which setup resolved
+            # from the wheel's descriptor; do not download the native launcher.
+            direct_launcher = _resolve_pyronaut_dev_native_executable(resolver, provision=False)
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return PRECONDITION_FAILED
-        direct_classpath = _native_launcher_compile_classpath_entries(direct_launcher)
+        direct_classpath = _native_launcher_compile_classpath_entries(
+            direct_launcher, image_name=DEV_NATIVE_EXECUTABLE
+        )
         if direct_classpath:
             env = dict(env or os.environ)
             env["PYRONAUT_DIRECT_CLASSPATH"] = os.pathsep.join(direct_classpath)
@@ -2099,10 +2103,18 @@ def _native_launcher_provided_manifest_file_names(launcher_executable: str | Non
 def _native_launcher_compile_classpath_entries(
     launcher_executable: str | None,
     local_repository: str | None = None,
+    *,
+    image_name: str | None = None,
 ) -> list[str]:
-    if not launcher_executable:
+    """Return the resolved compiler classpath of a native launcher.
+
+    An installed SDK records it during setup, so ``image_name`` can stand in
+    for a launcher that has not been downloaded.
+    """
+    if launcher_executable:
+        image_name = _native_image_command_name(launcher_executable)
+    elif image_name is None or not _setup_is_required() or local_repository:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
-    image_name = _native_image_command_name(launcher_executable)
     if image_name not in _NATIVE_IMAGE_COMMANDS:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
     if local_repository or not _setup_is_required():
@@ -2153,7 +2165,11 @@ def _native_launcher_compile_classpath_entries(
     try:
         manifest = _validated_setup_manifest or _read_valid_setup_manifest(())
         image = manifest["images"][image_name]
-        entries = _native_compile_descriptor_entries(launcher_executable)
+        entries = (
+            _native_compile_descriptor_entries(launcher_executable)
+            if launcher_executable
+            else _packaged_native_compile_descriptor_entries(image_name)
+        )
         if image["descriptorSha256"] != _native_descriptor_hash(entries):
             raise ValueError("native descriptor changed")
         resolved = image["classpath"]
@@ -8578,17 +8594,19 @@ def _resolve_native_preferred_executable(
         return str(bundled)
 
     if command_name in {"pyronaut-run", "pyronaut-run-python"} and resolver is _resolve_executable:
-        try:
-            return str(_cached_native_image(command_name))
-        except RuntimeError:
-            return None
+        executable = _provision_native_image(command_name)
+        return str(executable) if executable is not None else None
 
     if fallback_to_resolver:
         return resolver(command_name)
     return None
 
 
-def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None]) -> str | None:
+def _resolve_pyronaut_dev_native_executable(
+    resolver: Callable[[str], str | None],
+    *,
+    provision: bool = True,
+) -> str | None:
     env_key = DEV_NATIVE_EXECUTABLE.upper().replace("-", "_") + "_NATIVE_EXECUTABLE"
     override = _read_env(env_key)
     if override:
@@ -8599,10 +8617,36 @@ def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None
         return str(bundled)
     if resolver is not _resolve_executable:
         return resolver(DEV_NATIVE_EXECUTABLE)
+    if not provision:
+        try:
+            return str(_cached_native_image(DEV_NATIVE_EXECUTABLE))
+        except RuntimeError:
+            return None
+    executable = _provision_native_image(DEV_NATIVE_EXECUTABLE)
+    return str(executable) if executable is not None else None
+
+
+def _provision_native_image(image_name: str) -> Path | None:
+    """Return the cached native launcher, downloading it on first use.
+
+    Setup does not download the native launchers, so that projects using only
+    the JVM toolchain never fetch them. Callers reach this only once a command
+    has selected a native launcher. A source checkout has no release to
+    download from and keeps reporting the launcher as missing.
+    """
     try:
-        return str(_cached_native_image(DEV_NATIVE_EXECUTABLE))
+        return _cached_native_image(image_name)
     except RuntimeError:
-        return None
+        if not _setup_is_required():
+            return None
+    try:
+        return _ensure_native_image(image_name)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"{exc}\nThe {image_name} native launcher is downloaded on first use. "
+            "Run pyronaut setup --native-launchers while online to download it in advance, "
+            "or set tool.pyronaut.toolchain.type = 'jvm'."
+        ) from exc
 
 
 def _pyronaut_dev_native_command_line(
@@ -9122,9 +9166,13 @@ def _print_setup_usage(stream=None) -> None:
         stream = sys.stdout
     stream.write(
         "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] "
-        "[--progress <auto|on|off>] [--allow-draft-release]\n"
+        "[--native-launchers] [--progress <auto|on|off>] [--allow-draft-release]\n"
     )
     stream.write("Provision the global Pyronaut SDK toolchain, GraalPy interpreter, launchers, and native compiler classpaths.\n")
+    stream.write(
+        "Native launchers are downloaded when a command first needs one; "
+        "--native-launchers downloads them during setup.\n"
+    )
 
 
 def _setup_local_repository(args: Sequence[str]) -> Path:
@@ -9228,22 +9276,42 @@ def _resolved_tool_executables(tool_root: Path) -> dict[str, str]:
 
 def _native_compile_descriptor_entries(executable: str | Path) -> list[str]:
     entries = _native_launcher_manifest_entries(str(executable), "native-compile-classpath.txt")
+    return _validated_native_compile_descriptor(Path(executable).name, entries)
+
+
+def _packaged_native_compile_descriptor_entries(image_name: str) -> list[str]:
+    """Read the compiler classpath descriptor that the wheel ships for a native launcher.
+
+    The wheel embeds the JVM distribution of every native launcher, and that
+    distribution carries the same descriptor as the native bundle. Setup reads
+    it from the wheel so that it never has to download the launchers.
+    """
+    descriptor = _packaged_tool_dir(image_name) / "bin" / "native-compile-classpath.txt"
+    try:
+        lines = descriptor.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    entries = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+    return _validated_native_compile_descriptor(image_name, entries)
+
+
+def _validated_native_compile_descriptor(image_name: str, entries: list[str]) -> list[str]:
     if not entries:
-        raise RuntimeError(f"Missing native compiler classpath descriptor for {Path(executable).name}")
+        raise RuntimeError(f"Missing native compiler classpath descriptor for {image_name}")
     for entry in entries:
         fields = entry.split("\t")
         if len(fields) != 7 or fields[0] != "maven":
-            raise RuntimeError(f"Invalid native compiler classpath descriptor for {Path(executable).name}")
+            raise RuntimeError(f"Invalid native compiler classpath descriptor for {image_name}")
         if any(not field or "/" in field or "\\" in field for field in fields[1:5]):
-            raise RuntimeError(f"Invalid native compiler Maven coordinate for {Path(executable).name}")
+            raise RuntimeError(f"Invalid native compiler Maven coordinate for {image_name}")
         if "/" in fields[5] or "\\" in fields[5]:
-            raise RuntimeError(f"Invalid native compiler Maven classifier for {Path(executable).name}")
+            raise RuntimeError(f"Invalid native compiler Maven classifier for {image_name}")
         expected_filename = (
             f"{fields[2]}-{fields[3]}"
             f"{'-' + fields[5] if fields[5] else ''}.{fields[4]}"
         )
         if not fields[6] or Path(fields[6]).name != fields[6] or fields[6] != expected_filename:
-            raise RuntimeError(f"Invalid native compiler artifact filename for {Path(executable).name}")
+            raise RuntimeError(f"Invalid native compiler artifact filename for {image_name}")
     return entries
 
 
@@ -9325,21 +9393,21 @@ def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
     images = manifest.get("images")
     if not isinstance(images, dict):
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    # Setup records the compiler classpath of every native launcher, but not
+    # the launchers themselves: they are downloaded on first use, so projects
+    # that only use the JVM toolchain never fetch them.
     for image_name in _SETUP_IMAGE_COMMANDS:
         image = images.get(image_name)
         if not isinstance(image, dict):
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
-        executable = image.get("executable")
         classpath = image.get("classpath")
         descriptor_hash = image.get("descriptorSha256")
-        if not isinstance(executable, str) or not _is_executable_file(Path(executable)):
-            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
         if not isinstance(classpath, list) or not classpath:
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
         if not all(isinstance(path, str) and Path(path).is_file() for path in classpath):
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
         try:
-            current_hash = _native_descriptor_hash(_native_compile_descriptor_entries(executable))
+            current_hash = _native_descriptor_hash(_packaged_native_compile_descriptor_entries(image_name))
         except RuntimeError as exc:
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
         if descriptor_hash != current_hash:
@@ -9393,7 +9461,7 @@ def _cached_native_image(
 
 def _validate_setup_arguments(args: Sequence[str]) -> None:
     value_options = {"--local-repository", "--local-repo", "--progress"}
-    flag_options = {"--offline", "--refresh"}
+    flag_options = {"--offline", "--refresh", "--native-launchers"}
     index = 0
     while index < len(args):
         token = args[index]
@@ -9455,14 +9523,17 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                             f"Install it with: pyenv install {graalpy_spec.name}"
                         )
                     graalpy_step.done_label = f"GraalPy ready: {graalpy.executable}"
-            with progress.step("Provisioning native launchers", done="Native launchers ready"):
-                images: dict[str, Path] = {}
-                for image_name in _SETUP_IMAGE_COMMANDS:
-                    images[image_name] = (
-                        _cached_native_image(image_name)
-                        if offline
-                        else _ensure_native_image(image_name)
-                    )
+            # The compiler classpaths come from descriptors in the wheel, so
+            # setup does not need the native launchers (about 1.6 GB). Commands
+            # that run a native launcher download it on first use; the flag
+            # prefetches them, for example while building a CI image.
+            if _extract_flag(args, "--native-launchers"):
+                with progress.step("Provisioning native launchers", done="Native launchers ready"):
+                    for image_name in _SETUP_IMAGE_COMMANDS:
+                        if offline:
+                            _cached_native_image(image_name)
+                        else:
+                            _ensure_native_image(image_name)
 
             installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
             if installer is None or not _is_executable_file(installer):
@@ -9477,8 +9548,8 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 request_dir = Path(temp_dir) / "native-classpaths"
                 request_dir.mkdir()
                 descriptor_entries: dict[str, list[str]] = {}
-                for image_name, executable in images.items():
-                    entries = _native_compile_descriptor_entries(executable)
+                for image_name in _SETUP_IMAGE_COMMANDS:
+                    entries = _packaged_native_compile_descriptor_entries(image_name)
                     descriptor_entries[image_name] = entries
                     (request_dir / f"{image_name}.tsv").write_text(
                         "\n".join(entries) + "\n", encoding="utf-8"
@@ -9525,7 +9596,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     raise RuntimeError("pyronaut-install produced an incomplete SDK tool runtime")
                 executables = _resolved_tool_executables(tool_root)
                 image_state: dict[str, object] = {}
-                for image_name, executable in images.items():
+                for image_name in _SETUP_IMAGE_COMMANDS:
                     resolved_file = request_dir / "resolved" / f"{image_name}.txt"
                     resolved = [
                         line.strip()
@@ -9537,7 +9608,6 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     if not all(Path(path).is_file() for path in resolved):
                         raise RuntimeError(f"Resolved compiler classpath for {image_name} contains missing files")
                     image_state[image_name] = {
-                        "executable": str(executable.resolve()),
                         "descriptorSha256": _native_descriptor_hash(descriptor_entries[image_name]),
                         "classpath": resolved,
                     }
@@ -10968,13 +11038,26 @@ def _doctor_check_native_launchers() -> _doctor.CheckResult:
             f"{', '.join(_SETUP_IMAGE_COMMANDS)} cached in {cache_dir}", data=data,
         )
     stale = any("not cached" not in reason for reason in missing.values())
-    status = _doctor.FAIL if _setup_is_required() else _doctor.WARN
-    return _doctor.CheckResult(
-        "launchers", "Native launchers", status,
+    summary = (
         f"{len(missing)} of {len(_SETUP_IMAGE_COMMANDS)} launchers {'stale' if stale else 'missing'} in {cache_dir}: "
-        + ", ".join(sorted(missing)),
-        "Run pyronaut setup --refresh" if stale else "Run pyronaut setup",
-        data,
+        + ", ".join(sorted(missing))
+    )
+    if not _setup_is_required():
+        return _doctor.CheckResult(
+            "launchers", "Native launchers", _doctor.WARN, summary,
+            "Run pyronaut setup --refresh" if stale else "Run pyronaut setup", data,
+        )
+    # An installed SDK downloads a launcher when a native command first needs
+    # it, so JVM-only projects never have the launchers in their cache.
+    if not stale:
+        return _doctor.CheckResult(
+            "launchers", "Native launchers", _doctor.PASS,
+            f"{summary} (downloaded when a native command first needs them)", data=data,
+        )
+    return _doctor.CheckResult(
+        "launchers", "Native launchers", _doctor.WARN,
+        f"{summary} (replaced when a native command next needs them)",
+        "Run pyronaut setup --native-launchers", data,
     )
 
 

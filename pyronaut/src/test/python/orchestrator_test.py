@@ -9979,19 +9979,17 @@ java-version = 25
             java.write_text("#!/bin/sh\n", encoding="utf-8")
             java.chmod(0o755)
 
-            images = {}
+            # The wheel ships each native launcher's compiler classpath
+            # descriptor beside its JVM distribution; setup reads it there.
             resolved_by_image = {}
             for image_name in cli._SETUP_IMAGE_COMMANDS:
-                executable = root / "images" / image_name / image_name
-                executable.parent.mkdir(parents=True)
-                executable.write_text("native", encoding="utf-8")
-                executable.chmod(0o755)
+                packaged_launcher = tools / image_name / "bin" / image_name
+                packaged_launcher.parent.mkdir(parents=True, exist_ok=True)
                 resolved_by_image[image_name] = self._write_native_compile_descriptor(
-                    executable,
+                    packaged_launcher,
                     home,
                     [("com.example", f"{image_name}-compiler", "1.0", f"{image_name}-compiler-1.0.jar")],
                 )[0].resolve()
-                images[image_name] = executable
 
             manifest_path = home / ".pyronaut" / "setup" / "1.2.3" / "linux-amd64" / "setup.json"
             expectation = {
@@ -10029,13 +10027,14 @@ java-version = 25
                 self.assertFalse(offline)
                 return graalpy
 
-            def provision_image(name):
-                provisioning_order.append(name)
-                return images[name]
-
             def runner(command_line, env=None):
                 commands.append((command_line, env))
                 request_dir = Path(command_line[command_line.index("--native-classpaths-dir") + 1])
+                for image_name in cli._SETUP_IMAGE_COMMANDS:
+                    self.assertEqual(
+                        (tools / image_name / "bin" / "native-compile-classpath.txt").read_text(encoding="utf-8"),
+                        (request_dir / f"{image_name}.tsv").read_text(encoding="utf-8"),
+                    )
                 output = request_dir / "resolved"
                 output.mkdir()
                 for image_name, artifact in resolved_by_image.items():
@@ -10052,7 +10051,8 @@ java-version = 25
                 patch.object(cli, "_ensure_graalvm_java_home", side_effect=provision_jdk),
                 patch.object(cli, "_required_graalpy", return_value=cli._GraalPySpec("graalpy3.13-25.4.4", "25.4.4.1.1", "graal-25.4.4")),
                 patch.object(cli, "_ensure_graalpy", side_effect=provision_graalpy),
-                patch.object(cli, "_ensure_native_image", side_effect=provision_image),
+                patch.object(cli, "_ensure_native_image", side_effect=AssertionError("setup downloaded a native launcher")),
+                patch.object(cli, "_cached_native_image", side_effect=AssertionError("setup required a native launcher")),
                 patch.object(cli, "_bundled_executable", return_value=installer),
                 patch.object(cli, "_seed_bundled_pyronaut_maven_repository") as seed_repository,
                 patch.object(cli, "_resolved_tool_cache_root", return_value=tool_root),
@@ -10065,12 +10065,12 @@ java-version = 25
 
             self.assertEqual(cli.SUCCESS, exit_code)
             self.assertIn("Locating GraalVM JDK (25+)...", stderr.getvalue())
-            self.assertIn("Provisioning native launchers...", stderr.getvalue())
+            self.assertNotIn("Provisioning native launchers...", stderr.getvalue())
             self.assertIn("Resolving SDK dependencies...", stderr.getvalue())
             self.assertNotIn("\r", stderr.getvalue())
             self.assertNotIn("\x1b", stderr.getvalue())
             self.assertIn("Locating GraalPy graalpy3.13-25.4.4...", stderr.getvalue())
-            self.assertEqual(["graalvm", "graalpy", *cli._SETUP_IMAGE_COMMANDS], provisioning_order)
+            self.assertEqual(["graalvm", "graalpy"], provisioning_order)
             seed_repository.assert_called_once()
             self.assertEqual(1, len(commands))
             command_line, environment = commands[0]
@@ -10099,18 +10099,36 @@ java-version = 25
                     [str(resolved_by_image[image_name])],
                     state["images"][image_name]["classpath"],
                 )
+                self.assertNotIn("executable", state["images"][image_name])
+
+            def validate_manifest():
+                with (
+                    patch.object(cli, "__file__", str(package / "cli.py")),
+                    patch.object(cli, "_setup_manifest_path", return_value=manifest_path),
+                    patch.object(cli, "_setup_expectation", return_value=expectation),
+                    patch.object(cli, "_resolved_tools_cache_complete", return_value=True),
+                    patch.object(cli, "_read_graalvm_metadata", return_value=metadata),
+                    patch("pathlib.Path.home", return_value=home),
+                ):
+                    return cli._read_valid_setup_manifest([])
+
+            graalpy.executable.parent.mkdir(parents=True)
+            graalpy.executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            graalpy.executable.chmod(0o755)
+            # The state is valid although no native launcher was downloaded.
+            self.assertEqual(state, validate_manifest())
+
+            # A wheel whose descriptor changed invalidates the recorded classpath.
+            descriptor = tools / "pyronaut-run" / "bin" / "native-compile-classpath.txt"
+            original_descriptor = descriptor.read_text(encoding="utf-8")
+            descriptor.write_text(original_descriptor.replace("1.0", "1.1"), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, cli._SETUP_REQUIRED_MESSAGE):
+                validate_manifest()
+            descriptor.write_text(original_descriptor, encoding="utf-8")
 
             resolved_by_image["pyronaut-dev"].unlink()
-            with (
-                patch.object(cli, "__file__", str(package / "cli.py")),
-                patch.object(cli, "_setup_manifest_path", return_value=manifest_path),
-                patch.object(cli, "_setup_expectation", return_value=expectation),
-                patch.object(cli, "_resolved_tools_cache_complete", return_value=True),
-                patch.object(cli, "_read_graalvm_metadata", return_value=metadata),
-                patch("pathlib.Path.home", return_value=home),
-            ):
-                with self.assertRaisesRegex(RuntimeError, cli._SETUP_REQUIRED_MESSAGE):
-                    cli._read_valid_setup_manifest([])
+            with self.assertRaisesRegex(RuntimeError, cli._SETUP_REQUIRED_MESSAGE):
+                validate_manifest()
 
     def test_setup_is_idempotent_without_refresh(self):
         runner = Mock(side_effect=AssertionError("setup cache hit invoked installer"))
@@ -10121,6 +10139,135 @@ java-version = 25
         ):
             self.assertEqual(cli.SUCCESS, cli._run_setup([], runner))
         ensure_jdk.assert_not_called()
+
+    def test_setup_downloads_native_launchers_only_when_requested(self):
+        # Stop setup right after the launcher step by withholding the installer.
+        def run_setup(args):
+            stderr = io.StringIO()
+            with (
+                patch.object(cli, "_setup_manifest_path", return_value=Path(temp_dir) / "setup.json"),
+                patch.object(cli, "_read_valid_setup_manifest", side_effect=RuntimeError("missing")),
+                patch.object(cli, "_setup_expectation", return_value={}),
+                patch.object(cli, "_ensure_graalvm_java_home", return_value="/opt/graalvm"),
+                patch.object(cli, "_required_graalpy", return_value=None),
+                patch.object(cli, "_ensure_native_image") as ensure_image,
+                patch.object(cli, "_cached_native_image") as cached_image,
+                patch.object(cli, "_bundled_executable", return_value=None),
+                redirect_stderr(stderr),
+            ):
+                exit_code = cli._run_setup(args, Mock())
+            self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+            self.assertIn("missing executable pyronaut-install", stderr.getvalue())
+            return ensure_image, cached_image
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ensure_image, cached_image = run_setup([])
+            ensure_image.assert_not_called()
+            cached_image.assert_not_called()
+
+            ensure_image, cached_image = run_setup(["--native-launchers"])
+            self.assertEqual(
+                [call.args[0] for call in ensure_image.call_args_list],
+                list(cli._SETUP_IMAGE_COMMANDS),
+            )
+            cached_image.assert_not_called()
+
+            ensure_image, cached_image = run_setup(["--native-launchers", "--offline"])
+            ensure_image.assert_not_called()
+            self.assertEqual(
+                [call.args[0] for call in cached_image.call_args_list],
+                list(cli._SETUP_IMAGE_COMMANDS),
+            )
+
+    def test_native_launcher_is_downloaded_on_first_use(self):
+        cached = Path("/cache/pyronaut-run")
+        with (
+            patch.object(cli, "_setup_is_required", return_value=True),
+            patch.object(cli, "_cached_native_image", return_value=cached),
+            patch.object(cli, "_ensure_native_image") as ensure_image,
+        ):
+            self.assertEqual(cached, cli._provision_native_image("pyronaut-run"))
+        ensure_image.assert_not_called()
+
+        downloaded = Path("/downloaded/pyronaut-run")
+        with (
+            patch.object(cli, "_setup_is_required", return_value=True),
+            patch.object(cli, "_cached_native_image", side_effect=RuntimeError("Native image pyronaut-run is not cached")),
+            patch.object(cli, "_ensure_native_image", return_value=downloaded) as ensure_image,
+        ):
+            self.assertEqual(downloaded, cli._provision_native_image("pyronaut-run"))
+            self.assertEqual(
+                str(downloaded),
+                cli._resolve_native_preferred_executable("pyronaut-run", cli._resolve_executable, fallback_to_resolver=False),
+            )
+        ensure_image.assert_called_with("pyronaut-run")
+
+        with (
+            patch.object(cli, "_setup_is_required", return_value=True),
+            patch.object(cli, "_cached_native_image", side_effect=RuntimeError("Native image pyronaut-run is not cached")),
+            patch.object(cli, "_ensure_native_image", side_effect=RuntimeError("Failed downloading pyronaut-run")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "pyronaut setup --native-launchers") as raised:
+                cli._provision_native_image("pyronaut-run")
+        self.assertIn("Failed downloading pyronaut-run", str(raised.exception))
+
+        # A source checkout has no release to download its launchers from.
+        with (
+            patch.object(cli, "_setup_is_required", return_value=False),
+            patch.object(cli, "_cached_native_image", side_effect=RuntimeError("Native image pyronaut-run is not cached")),
+            patch.object(cli, "_ensure_native_image") as ensure_image,
+        ):
+            self.assertIsNone(cli._provision_native_image("pyronaut-run"))
+        ensure_image.assert_not_called()
+
+    def test_pyronaut_dev_native_launcher_is_downloaded_on_first_use_unless_disabled(self):
+        downloaded = Path("/downloaded/pyronaut-dev")
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch.object(cli, "_bundled_native_executable", return_value=None),
+            patch.object(cli, "_setup_is_required", return_value=True),
+            patch.object(cli, "_cached_native_image", side_effect=RuntimeError("Native image pyronaut-dev is not cached")),
+            patch.object(cli, "_ensure_native_image", return_value=downloaded) as ensure_image,
+        ):
+            os.environ.pop("PYRONAUT_DEV_NATIVE_EXECUTABLE", None)
+            self.assertIsNone(cli._resolve_pyronaut_dev_native_executable(cli._resolve_executable, provision=False))
+            ensure_image.assert_not_called()
+            self.assertEqual(str(downloaded), cli._resolve_pyronaut_dev_native_executable(cli._resolve_executable))
+            ensure_image.assert_called_once_with("pyronaut-dev")
+
+    def test_native_compiler_classpath_does_not_need_the_native_launcher(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            package = root / "package"
+            packaged_launcher = package / "tools" / "pyronaut-dev" / "bin" / "pyronaut-dev"
+            packaged_launcher.parent.mkdir(parents=True)
+            artifacts = self._write_native_compile_descriptor(
+                packaged_launcher,
+                root / "home",
+                [("com.example", "compiler", "1.0", "compiler-1.0.jar")],
+            )
+            with patch.object(cli, "__file__", str(package / "cli.py")):
+                entries = cli._packaged_native_compile_descriptor_entries("pyronaut-dev")
+                manifest = {
+                    "images": {
+                        "pyronaut-dev": {
+                            "descriptorSha256": cli._native_descriptor_hash(entries),
+                            "classpath": [str(artifacts[0])],
+                        }
+                    }
+                }
+                with (
+                    patch.object(cli, "_setup_is_required", return_value=True),
+                    patch.object(cli, "_validated_setup_manifest", manifest),
+                ):
+                    self.assertEqual(
+                        [str(artifacts[0])],
+                        cli._native_launcher_compile_classpath_entries(None, image_name="pyronaut-dev"),
+                    )
+                    with self.assertRaisesRegex(RuntimeError, cli._SETUP_REQUIRED_MESSAGE):
+                        cli._native_launcher_compile_classpath_entries(None)
+                with self.assertRaisesRegex(RuntimeError, "Missing native compiler classpath descriptor for pyronaut-run"):
+                    cli._packaged_native_compile_descriptor_entries("pyronaut-run")
 
     def test_bundled_pyronaut_maven_repository_stages_jars_and_bom_in_default_repository(self):
         with tempfile.TemporaryDirectory() as temp_dir:
