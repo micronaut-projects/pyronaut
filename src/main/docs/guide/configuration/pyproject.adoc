@@ -191,3 +191,16 @@ It starts more slowly and prints `AOTConfiguration recorded` as it exits.
 The cache is then created in the background under `~/.pyronaut/caches/aot`, and later launches start from it.
 A cache is replaced when the JDK, the JVM options or a class path JAR changes, so a dependency change means one more training run.
 Each cache takes up to a few hundred megabytes; delete `~/.pyronaut/caches/aot` to reclaim the space.
+
+== Python environment
+
+`pyronaut install` creates `.venv` with GraalPy and installs the project's Python dependencies into it, with `uv sync` for uv projects and `pip` otherwise (see <<python-uv-projects,uv projects>>).
+Set `manage-dependencies = false` when another tool manages `.venv`; Pyronaut then only checks that GraalPy created it:
+
+[source,toml]
+----
+[tool.pyronaut.python]
+manage-dependencies = false
+----
+
+`pyronaut install --no-python-deps` does the same for a single run.

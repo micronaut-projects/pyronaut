@@ -778,6 +778,9 @@ def run(
             )
             return test_exit_code
 
+        if command == "install":
+            manage_python_dependencies = not _extract_flag(forwarded_args, NO_PYTHON_DEPS_FLAG)
+            forwarded_args = _remove_no_python_deps(forwarded_args)
         if command == "install" and not _has_direct_install_sources(forwarded_args):
             install_project_dir = Path(project_dir).resolve()
             if (install_project_dir / "pyproject.toml").is_file() or (install_project_dir / "requirements.txt").is_file():
@@ -786,6 +789,7 @@ def run(
                     execute,
                     refresh=_extract_flag(forwarded_args, "--refresh"),
                     offline=_extract_offline(forwarded_args),
+                    manage_dependencies=manage_python_dependencies,
                 )
                 if venv_code != SUCCESS:
                     return venv_code
@@ -7812,6 +7816,12 @@ def _remove_no_validate(args: Sequence[str]) -> list[str]:
     return [token for token in option_args if token != "--no-validate"] + application_args
 
 
+def _remove_no_python_deps(args: Sequence[str]) -> list[str]:
+    """Drop ``--no-python-deps``, which the Java installer does not understand."""
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token != NO_PYTHON_DEPS_FLAG] + application_args
+
+
 def _extract_continuous(args: Sequence[str]) -> bool:
     return any(token in {"-t", "--continuous"} for token in _orchestrator_args(args))
 
@@ -10222,13 +10232,64 @@ def _graalpy_for_project_environment() -> Path | None:
 #
 # `pyronaut install` creates the project `.venv` with the configured GraalPy and
 # installs the Python dependencies declared in pyproject.toml and
-# requirements.txt, so the embedded runtime and pytest can import them.
+# requirements.txt, so the embedded runtime and pytest can import them. A uv
+# project is synced with `uv sync` instead, because pip can neither run in a uv
+# venv nor see uv workspace members and indexes; a project that manages `.venv`
+# itself opts out with `[tool.pyronaut.python] manage-dependencies = false`.
 
 _PROJECT_VENV_STATE = ".pyronaut-requirements.json"
+NO_PYTHON_DEPS_FLAG = "--no-python-deps"
+
+
+def _python_dependencies_managed(project_dir: Path) -> bool:
+    """``[tool.pyronaut.python] manage-dependencies``, true by default."""
+    data = _read_pyproject_data(project_dir)
+    section: object = data.get("tool") if isinstance(data, dict) else None
+    for key in ("pyronaut", "python"):
+        section = section.get(key) if isinstance(section, dict) else None
+    if not isinstance(section, dict):
+        return True
+    value = section.get("manage-dependencies", section.get("manageDependencies", True))
+    if not isinstance(value, bool):
+        raise ValueError("Invalid tool.pyronaut.python.manage-dependencies in pyproject.toml: expected true or false")
+    return value
+
+
+def _find_uv() -> str | None:
+    return shutil.which("uv")
+
+
+def _uv_lock_file(project_dir: Path) -> Path | None:
+    """The ``uv.lock`` of the project, or of the uv workspace it belongs to."""
+    if (project_dir / "uv.lock").is_file():
+        return project_dir / "uv.lock"
+    for parent in project_dir.parents:
+        data = _read_pyproject_data(parent)
+        tool = data.get("tool") if isinstance(data, dict) else None
+        uv = tool.get("uv") if isinstance(tool, dict) else None
+        if isinstance(uv, dict) and isinstance(uv.get("workspace"), dict):
+            lock = parent / "uv.lock"
+            return lock if lock.is_file() else None
+    return None
+
+
+def _is_uv_project(project_dir: Path) -> bool:
+    """Whether uv manages the project: it has a ``uv.lock`` or a ``[tool.uv]`` table."""
+    if _uv_lock_file(project_dir) is not None:
+        return True
+    data = _read_pyproject_data(project_dir)
+    tool = data.get("tool") if isinstance(data, dict) else None
+    return isinstance(tool, dict) and isinstance(tool.get("uv"), dict)
 
 
 def _project_python_requirements(project_dir: Path) -> tuple[list[str], list[Path]]:
     """Return declared requirement specifiers and requirements files."""
+    requirements, requirement_files, _ = _project_python_requirements_and_implicit_pytest(project_dir)
+    return requirements, requirement_files
+
+
+def _project_python_requirements_and_implicit_pytest(project_dir: Path) -> tuple[list[str], list[Path], bool]:
+    """Like ``_project_python_requirements``, plus whether Pyronaut added ``pytest`` itself."""
     requirements: list[str] = []
     data = _read_pyproject_data(project_dir)
     project = data.get("project") if isinstance(data, dict) else None
@@ -10248,14 +10309,15 @@ def _project_python_requirements(project_dir: Path) -> tuple[list[str], list[Pat
         re.search(r"(?im)^\s*pytest\b", path.read_text(encoding="utf-8")) for path in requirement_files
     )
     has_tests = (project_dir / _read_pyproject_sources(project_dir).python_test_dir).is_dir()
-    if has_tests and not declares_pytest:
+    implicit_pytest = has_tests and not declares_pytest
+    if implicit_pytest:
         # `pyronaut test` imports pytest from the project environment.
         requirements.append("pytest")
     unique: list[str] = []
     for requirement in requirements:
         if requirement not in unique:
             unique.append(requirement)
-    return unique, requirement_files
+    return unique, requirement_files, implicit_pytest
 
 
 def _expand_dependency_groups(groups: dict[str, object]) -> list[str]:
@@ -10279,15 +10341,89 @@ def _expand_dependency_groups(groups: dict[str, object]) -> list[str]:
     return requirements
 
 
-def _project_venv_state(graalpy: Path, requirements: Sequence[str], requirement_files: Sequence[Path]) -> dict[str, object]:
+def _project_venv_state(
+    graalpy: Path,
+    requirements: Sequence[str],
+    requirement_files: Sequence[Path],
+    installer: str = "pip",
+) -> dict[str, object]:
     digest = hashlib.sha256()
     for path in requirement_files:
         digest.update(path.name.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
     return {
         "graalpy": str(graalpy),
+        "installer": installer,
         "requirements": list(requirements),
         "requirementFilesSha256": digest.hexdigest(),
     }
+
+
+class _PythonDependencyPlan(NamedTuple):
+    """How ``pyronaut install`` keeps ``.venv`` current, and what it records."""
+
+    requirements: list[str]
+    requirement_files: list[Path]
+    implicit_pytest: bool
+    uv: str | None
+    # Files whose content decides whether `.venv` is stale: uv.lock (or
+    # pyproject.toml without one) for uv, requirements.txt for pip.
+    state_files: list[Path]
+
+    @property
+    def installer(self) -> str:
+        return "uv" if self.uv is not None else "pip"
+
+    def state(self, graalpy: Path) -> dict[str, object]:
+        return _project_venv_state(graalpy, self.requirements, self.state_files, self.installer)
+
+
+def _python_dependency_plan(project_dir: Path, *, manage_dependencies: bool = True) -> _PythonDependencyPlan | None:
+    """The Python dependency work ``pyronaut install`` owns, or ``None`` when it owns none.
+
+    ``None`` means the project declares no Python dependencies, or
+    ``[tool.pyronaut.python] manage-dependencies = false`` / ``--no-python-deps``
+    left ``.venv`` to another tool. Raises ``ValueError`` for an invalid setting.
+    """
+    requirements, requirement_files, implicit_pytest = _project_python_requirements_and_implicit_pytest(project_dir)
+    if not requirements and not requirement_files:
+        return None
+    if not manage_dependencies or not _python_dependencies_managed(project_dir):
+        return None
+    uv = _find_uv() if _is_uv_project(project_dir) else None
+    if uv is not None:
+        state_files = [_uv_lock_file(project_dir) or project_dir / "pyproject.toml"]
+    else:
+        state_files = list(requirement_files)
+    return _PythonDependencyPlan(requirements, requirement_files, implicit_pytest, uv, state_files)
+
+
+def _venv_state_is_current(venv_dir: Path, expected: dict[str, object]) -> bool:
+    """Whether ``.venv`` recorded the installer and declarations of ``expected``."""
+    try:
+        recorded = json.loads((venv_dir / _PROJECT_VENV_STATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(recorded, dict)
+        and recorded.get("installer", "pip") == expected["installer"]
+        and recorded.get("requirements") == expected["requirements"]
+        and recorded.get("requirementFilesSha256") == expected["requirementFilesSha256"]
+    )
+
+
+def _python_requirements_stale(project_dir: Path) -> bool:
+    """Whether ``pyronaut install`` would change ``.venv`` now.
+
+    A project that leaves ``.venv`` to another tool is never stale; an invalid
+    setting is, so that install reports it.
+    """
+    try:
+        plan = _python_dependency_plan(project_dir)
+    except ValueError:
+        return True
+    if plan is None:
+        return False
+    return not _venv_state_is_current(project_dir / ".venv", plan.state(Path()))
 
 
 def _ensure_project_virtualenv(
@@ -10296,15 +10432,35 @@ def _ensure_project_virtualenv(
     *,
     refresh: bool = False,
     offline: bool = False,
+    manage_dependencies: bool = True,
 ) -> int:
-    """Create ``.venv`` with GraalPy and install declared Python dependencies."""
+    """Create ``.venv`` with GraalPy and install declared Python dependencies.
+
+    ``manage_dependencies=False`` (``--no-python-deps``) and
+    ``[tool.pyronaut.python] manage-dependencies = false`` trust an existing
+    ``.venv`` as is, after checking that GraalPy created it.
+    """
     requirements, requirement_files = _project_python_requirements(project_dir)
     if not requirements and not requirement_files:
         return SUCCESS
+    try:
+        plan = _python_dependency_plan(project_dir, manage_dependencies=manage_dependencies)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
+    manage_dependencies = plan is not None
     progress = _progress_console()
     venv_dir = project_dir / ".venv"
     venv_bin = _virtualenv_bin(venv_dir)
     venv_python = _resolve_virtualenv_python(venv_bin) if venv_dir.is_dir() else None
+    if not manage_dependencies and not venv_dir.is_dir():
+        print(
+            f"Python dependency management is disabled, but {venv_dir} does not exist. "
+            f"Create it with GraalPy and install the project's dependencies (for example: uv sync --python graalpy), "
+            f"or enable [tool.pyronaut.python] manage-dependencies.",
+            file=sys.stderr,
+        )
+        return PRECONDITION_FAILED
     if venv_dir.is_dir():
         if venv_python is None or not _virtualenv_is_graalpy(venv_python):
             print(
@@ -10322,6 +10478,8 @@ def _ensure_project_virtualenv(
             )
             return PRECONDITION_FAILED
         graalpy = venv_python
+        if not manage_dependencies:
+            return SUCCESS
     else:
         graalpy = _graalpy_for_project_environment()
         if graalpy is None:
@@ -10344,37 +10502,51 @@ def _ensure_project_virtualenv(
             print(f"GraalPy did not create an interpreter in {venv_dir}", file=sys.stderr)
             return PRECONDITION_FAILED
 
-    state_file = venv_dir / _PROJECT_VENV_STATE
-    state = _project_venv_state(graalpy, requirements, requirement_files)
-    if not refresh:
-        try:
-            recorded = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            recorded = None
-        if isinstance(recorded, dict) and recorded.get("requirements") == state["requirements"] and recorded.get(
-            "requirementFilesSha256"
-        ) == state["requirementFilesSha256"]:
-            return SUCCESS
+    assert plan is not None
+    uv = plan.uv
+    state = plan.state(graalpy)
+    if not refresh and _venv_state_is_current(venv_dir, state):
+        return SUCCESS
     if offline:
-        progress.warn("Python dependencies are not installed in .venv; skipped pip install (--offline)")
+        progress.warn(f"Python dependencies are not installed in .venv; skipped {'uv sync' if uv else 'pip install'} (--offline)")
         return SUCCESS
 
-    command_line = [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check"]
-    for path in requirement_files:
-        command_line.extend(["-r", str(path)])
-    command_line.extend(requirements)
-    if _delegation_trace_enabled():
-        print(shlex.join(command_line), file=sys.stderr)
     env = dict(os.environ)
     env.pop("VIRTUAL_ENV", None)
     env.pop("PYTHONHOME", None)
     env["PATH"] = _prepend_path_entry(env.get("PATH", ""), str(venv_bin))
-    with progress.step("Installing Python dependencies into .venv", done="Python dependencies installed into .venv") as step:
+    if uv is not None:
+        # Sync into the project's .venv even when the project is a workspace
+        # member, whose environment uv would otherwise put at the workspace root.
+        env["UV_PROJECT_ENVIRONMENT"] = str(venv_dir)
+        command_line = [uv, "sync", "--project", str(project_dir), "--python", str(venv_python)]
+        label, done = "Syncing Python dependencies into .venv with uv", "Python dependencies synced into .venv with uv"
+    else:
+        command_line = [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check"]
+        for path in requirement_files:
+            command_line.extend(["-r", str(path)])
+        command_line.extend(requirements)
+        label, done = "Installing Python dependencies into .venv", "Python dependencies installed into .venv"
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    with progress.step(label, done=done) as step:
         exit_code = _run_showing_output_on_failure(runner, command_line, env)
         step.failed = exit_code != SUCCESS
     if exit_code != SUCCESS:
         return exit_code
-    state_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    if uv is not None:
+        synced_python = _resolve_virtualenv_python(_virtualenv_bin(venv_dir))
+        if synced_python is None or not _virtualenv_is_graalpy(synced_python):
+            print(
+                f"uv sync replaced {venv_dir} with an interpreter other than GraalPy. "
+                f"Check the requires-python and python-preference settings of the uv project.",
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
+        if plan.implicit_pytest:
+            # uv installs only what the project declares.
+            progress.warn("The project has Python tests but does not declare pytest; add it to a uv dependency group")
+    (venv_dir / _PROJECT_VENV_STATE).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     return SUCCESS
 
 
