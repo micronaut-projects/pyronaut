@@ -70,7 +70,6 @@ loadScripts(document, 'script');</script>
 <li><a href="#beforeTest(java.lang.String,org.graalvm.polyglot.Value)" tabindex="0">beforeTest(String, Value)</a></li>
 <li><a href="#afterTest(java.lang.String,org.graalvm.polyglot.Value,org.junit.platform.engine.TestExecutionResult)" tabindex="0">afterTest(String, Value, TestExecutionResult)</a></li>
 <li><a href="#onResult(org.junit.platform.engine.TestExecutionResult)" tabindex="0">onResult(TestExecutionResult)</a></li>
-<li><a href="#finishSources(org.junit.platform.engine.TestExecutionResult)" tabindex="0">finishSources(TestExecutionResult)</a></li>
 <li><a href="#drainConsoleOutput(java.lang.String,java.lang.String)" tabindex="0">drainConsoleOutput(String, String)</a></li>
 <li><a href="#stashSessionConsoleOutput()" tabindex="0">stashSessionConsoleOutput()</a></li>
 <li><a href="#onOutput(java.lang.String,java.lang.String,java.lang.String)" tabindex="0">onOutput(String, String, String)</a></li>
@@ -170,25 +169,20 @@ example application logging) since the previous call, so the pytest
 plugin can attach it to the current test phase as a report section.</div>
 </div>
 <div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#finishSources(org.junit.platform.engine.TestExecutionResult)" class="member-name-link">finishSources</a><wbr>(org.junit.platform.engine.TestExecutionResult&nbsp;result)</code></div>
-<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">
-<div class="block">Completes source containers after the executor has validated the pytest session.</div>
-</div>
-<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#onOutput(java.lang.String,java.lang.String,java.lang.String)" class="member-name-link">onOutput</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html" title="class or interface in java.lang" class="external-link">String</a>&nbsp;testId,
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#onOutput(java.lang.String,java.lang.String,java.lang.String)" class="member-name-link">onOutput</a><wbr>(<a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html" title="class or interface in java.lang" class="external-link">String</a>&nbsp;testId,
  <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html" title="class or interface in java.lang" class="external-link">String</a>&nbsp;stream,
  <a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html" title="class or interface in java.lang" class="external-link">String</a>&nbsp;text)</code></div>
-<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">
+<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">
 <div class="block">Forward per-test output captured by the pytest plugin.</div>
 </div>
-<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
-<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#onResult(org.junit.platform.engine.TestExecutionResult)" class="member-name-link">onResult</a><wbr>(org.junit.platform.engine.TestExecutionResult&nbsp;result)</code></div>
-<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">
+<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
+<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#onResult(org.junit.platform.engine.TestExecutionResult)" class="member-name-link">onResult</a><wbr>(org.junit.platform.engine.TestExecutionResult&nbsp;result)</code></div>
+<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">
 <div class="block">Called when test execution is complete.</div>
 </div>
-<div class="col-first even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
-<div class="col-second even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#stashSessionConsoleOutput()" class="member-name-link">stashSessionConsoleOutput</a>()</code></div>
-<div class="col-last even-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">
+<div class="col-first odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code>void</code></div>
+<div class="col-second odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4"><code><a href="#stashSessionConsoleOutput()" class="member-name-link">stashSessionConsoleOutput</a>()</code></div>
+<div class="col-last odd-row-color method-summary-table method-summary-table-tab2 method-summary-table-tab4">
 <div class="block">Mark the end of the session bootstrap: console output written so far
 (test session banner, application startup logging) belongs to the
 session rather than to the first test that runs.</div>
@@ -337,19 +331,6 @@ session rather than to the first test that runs.</div>
 <dd><code><a href="../listener/PytestTestListener.html#onResult(org.junit.platform.engine.TestExecutionResult)">onResult</a></code>&nbsp;in interface&nbsp;<code><a href="../listener/PytestTestListener.html" title="interface in io.micronaut.test.pytest.listener">PytestTestListener</a></code></dd>
 <dt>Parameters:</dt>
 <dd><code>result</code> - The overall test execution result</dd>
-</dl>
-</div>
-</section>
-</li>
-<li>
-<section class="detail" id="finishSources(org.junit.platform.engine.TestExecutionResult)">
-<h3>finishSources</h3>
-<div class="horizontal-scroll">
-<div class="member-signature"><span class="modifiers">public</span>&nbsp;<span class="return-type">void</span>&nbsp;<span class="element-name">finishSources</span><wbr><span class="parameters">(org.junit.platform.engine.TestExecutionResult&nbsp;result)</span></div>
-<div class="block">Completes source containers after the executor has validated the pytest session.</div>
-<dl class="notes">
-<dt>Parameters:</dt>
-<dd><code>result</code> - the validated session result</dd>
 </dl>
 </div>
 </section>
