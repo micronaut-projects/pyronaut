@@ -126,24 +126,56 @@ class PyronautValidateConfigMainTest {
         );
 
         assertEquals(1, new CommandLine(command).execute("--project-dir", project.toString(), "--format", "json"));
-        ByteArrayOutputStream err = new ByteArrayOutputStream();
-        PrintStream originalErr = System.err;
         int exit;
-        try {
-            System.setErr(new PrintStream(err, true, UTF_8));
+        String output;
+        try (CapturedStderr err = new CapturedStderr()) {
             exit = new CommandLine(command).execute("--project-dir", project.toString(), "--format", "json");
-        } finally {
-            System.setErr(originalErr);
+            output = err.output();
         }
 
         assertEquals(1, exit);
         assertEquals(1, runs.get());
-        String output = err.toString(UTF_8);
         assertTrue(output.contains("Configuration validation failed (cached)"), output);
         assertTrue(output.contains("  micronaut.server.p0: Expected integer (application.toml)"), output);
         assertTrue(output.contains("  micronaut.server.p4: Expected integer"), output);
         assertFalse(output.contains("micronaut.server.p5"), output);
         assertTrue(output.contains("  ... and 2 more"), output);
+    }
+
+    @Test
+    void cachedErrorsIncludeDependencyInjectionErrorsAndSkipWarnings() throws Exception {
+        Path reportDir = Files.createDirectories(tempDir.resolve("reports"));
+        Files.writeString(reportDir.resolve("configuration-errors.json"), """
+            {"configurationErrors":[
+              {"property":"a.b","type":"WARNING","message":"Suppressed"},
+              {"property":"micronaut.server.port","type":"ERROR","message":"Expected integer"}
+            ],"dependencyInjectionErrors":[{"bean":"Consumer","details":"No bean of type [Collaborator] exists"}]}
+            """);
+
+        String output;
+        try (CapturedStderr err = new CapturedStderr()) {
+            PyronautValidateConfigMain.printCachedErrors(System.err, reportDir);
+            output = err.output();
+        }
+
+        assertEquals(String.join(System.lineSeparator(),
+            "  micronaut.server.port: Expected integer",
+            "  Consumer: No bean of type [Collaborator] exists",
+            ""), output);
+    }
+
+    @Test
+    void cachedErrorsPrintNothingWithoutAReadableJsonReport() throws Exception {
+        Path reportDir = Files.createDirectories(tempDir.resolve("reports"));
+        String output;
+        try (CapturedStderr err = new CapturedStderr()) {
+            PyronautValidateConfigMain.printCachedErrors(System.err, reportDir);
+            Files.writeString(reportDir.resolve("configuration-errors.json"), "not json");
+            PyronautValidateConfigMain.printCachedErrors(System.err, reportDir);
+            output = err.output();
+        }
+
+        assertEquals("", output);
     }
 
     @Test
@@ -726,6 +758,24 @@ class PyronautValidateConfigMainTest {
             return (String) method.invoke(null, property);
         } catch (ReflectiveOperationException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private static final class CapturedStderr implements AutoCloseable {
+        private final PrintStream original = System.err;
+        private final ByteArrayOutputStream captured = new ByteArrayOutputStream();
+
+        CapturedStderr() {
+            System.setErr(new PrintStream(captured, true, UTF_8));
+        }
+
+        String output() {
+            return captured.toString(UTF_8);
+        }
+
+        @Override
+        public void close() {
+            System.setErr(original);
         }
     }
 

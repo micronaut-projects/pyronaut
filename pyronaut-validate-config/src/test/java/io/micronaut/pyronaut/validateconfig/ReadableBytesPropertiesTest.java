@@ -64,9 +64,11 @@ class ReadableBytesPropertiesTest {
 
     public static class SetterConfig {
         public void setMaxSize(@ReadableBytes long maxSize) {
+            // Only the signature matters to the lookup.
         }
 
         public void setPort(int port) {
+            // Only the signature matters to the lookup.
         }
     }
 

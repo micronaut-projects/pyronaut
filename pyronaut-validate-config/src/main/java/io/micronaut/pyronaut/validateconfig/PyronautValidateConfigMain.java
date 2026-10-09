@@ -231,39 +231,49 @@ public final class PyronautValidateConfigMain implements Callable<Integer> {
      * explains itself without opening the report.
      */
     static void printCachedErrors(PrintStream err, Path outputDir) {
-        Path jsonReport = outputDir.resolve("configuration-errors.json");
-        if (!Files.isRegularFile(jsonReport)) {
-            return;
-        }
-        Map<String, Object> report;
-        try {
-            report = JsonMapper.createDefault().readValue(Files.readAllBytes(jsonReport), Argument.mapOf(String.class, Object.class));
-        } catch (IOException | RuntimeException e) {
-            return;
-        }
-        if (report == null) {
-            return;
-        }
-        List<String> messages = new ArrayList<>();
-        if (report.get("configurationErrors") instanceof List<?> errors) {
-            for (Object entry : errors) {
-                if (entry instanceof Map<?, ?> error && "ERROR".equals(String.valueOf(error.get("type")))) {
-                    String origin = error.get("originLocation") instanceof String location ? " (" + location + ")" : "";
-                    messages.add(error.get("property") + ": " + error.get("message") + origin);
-                }
-            }
-        }
-        if (report.get("dependencyInjectionErrors") instanceof List<?> errors) {
-            for (Object entry : errors) {
-                if (entry instanceof Map<?, ?> error) {
-                    messages.add(error.get("bean") + ": " + error.get("details"));
-                }
-            }
-        }
+        List<String> messages = cachedErrorMessages(outputDir.resolve("configuration-errors.json"));
         messages.stream().limit(CACHED_ERRORS_SHOWN).forEach(message -> err.println("  " + message));
         if (messages.size() > CACHED_ERRORS_SHOWN) {
             err.println("  ... and " + (messages.size() - CACHED_ERRORS_SHOWN) + " more");
         }
+    }
+
+    private static List<String> cachedErrorMessages(Path jsonReport) {
+        Map<String, Object> report;
+        try {
+            report = Files.isRegularFile(jsonReport)
+                ? JsonMapper.createDefault().readValue(Files.readAllBytes(jsonReport), Argument.mapOf(String.class, Object.class))
+                : null;
+        } catch (IOException | RuntimeException e) {
+            report = null;
+        }
+        if (report == null) {
+            return List.of();
+        }
+        List<String> messages = new ArrayList<>();
+        for (Map<?, ?> error : entries(report.get("configurationErrors"))) {
+            if ("ERROR".equals(String.valueOf(error.get("type")))) {
+                String origin = error.get("originLocation") instanceof String location ? " (" + location + ")" : "";
+                messages.add(error.get("property") + ": " + error.get("message") + origin);
+            }
+        }
+        for (Map<?, ?> error : entries(report.get("dependencyInjectionErrors"))) {
+            messages.add(error.get("bean") + ": " + error.get("details"));
+        }
+        return messages;
+    }
+
+    private static List<Map<?, ?>> entries(Object section) {
+        if (!(section instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<?, ?>> entries = new ArrayList<>();
+        for (Object entry : list) {
+            if (entry instanceof Map<?, ?> map) {
+                entries.add(map);
+            }
+        }
+        return entries;
     }
 
     /**

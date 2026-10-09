@@ -23,10 +23,7 @@ import io.micronaut.inject.BeanDefinitionReference;
 import io.micronaut.jsonschema.configuration.validator.ConfigurationError;
 
 import java.lang.reflect.AnnotatedElement;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.RecordComponent;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -34,6 +31,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Accepts human-readable byte sizes such as {@code 6MB} for properties bound through
@@ -91,13 +89,9 @@ final class ReadableBytesProperties {
      * @return The retained errors
      */
     static Set<ConfigurationError> withoutReadableBytesErrors(Set<ConfigurationError> errors, Predicate<String> readableBytesProperty) {
-        Set<ConfigurationError> retained = new LinkedHashSet<>(errors.size());
-        for (ConfigurationError error : errors) {
-            if (!(isCandidate(error) && readableBytesProperty.test(error.property()))) {
-                retained.add(error);
-            }
-        }
-        return retained;
+        return errors.stream()
+            .filter(error -> !(isCandidate(error) && readableBytesProperty.test(error.property())))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /**
@@ -107,12 +101,9 @@ final class ReadableBytesProperties {
      * @return Whether a property is bound through {@link ReadableBytes}
      */
     static Predicate<String> fromBeanContext(ConfigurableBeanContext beanContext) {
-        List<BeanDefinitionReference<Object>> readers = new ArrayList<>();
-        for (BeanDefinitionReference<Object> reference : beanContext.getBeanDefinitionReferences()) {
-            if (reference.stringValue(ConfigurationReader.class, "prefix").isPresent()) {
-                readers.add(reference);
-            }
-        }
+        List<BeanDefinitionReference<Object>> readers = beanContext.getBeanDefinitionReferences().stream()
+            .filter(reference -> reference.stringValue(ConfigurationReader.class, "prefix").isPresent())
+            .toList();
         return property -> {
             int lastDot = property.lastIndexOf('.');
             if (lastDot <= 0) {
@@ -140,35 +131,35 @@ final class ReadableBytesProperties {
             return false;
         }
         try {
-            String capitalized = NameUtils.capitalize(propertyName);
-            for (Method method : type.getMethods()) {
-                String methodName = method.getName();
-                if (methodName.equals("set" + capitalized) && method.getParameterCount() == 1) {
-                    if (annotated(method) || annotated(method.getParameters()[0])) {
-                        return true;
-                    }
-                } else if (method.getParameterCount() == 0
-                    && (methodName.equals("get" + capitalized) || methodName.equals(propertyName))
-                    && annotated(method)) {
-                    return true;
-                }
-            }
-            if (type.isRecord()) {
-                for (RecordComponent component : type.getRecordComponents()) {
-                    if (component.getName().equals(propertyName) && annotated(component)) {
-                        return true;
-                    }
-                }
-            }
-            for (Class<?> current = type; current != null && current != Object.class; current = current.getSuperclass()) {
-                for (Field field : current.getDeclaredFields()) {
-                    if (field.getName().equals(propertyName) && annotated(field)) {
-                        return true;
-                    }
-                }
-            }
+            return hasAnnotatedAccessor(type, propertyName)
+                || hasAnnotatedRecordComponent(type, propertyName)
+                || hasAnnotatedField(type, propertyName);
         } catch (LinkageError | RuntimeException e) {
             // The class or its reflection metadata is unavailable; keep the error.
+            return false;
+        }
+    }
+
+    private static boolean hasAnnotatedAccessor(Class<?> type, String propertyName) {
+        String setter = NameUtils.setterNameFor(propertyName);
+        String getter = NameUtils.getterNameFor(propertyName);
+        return Arrays.stream(type.getMethods()).anyMatch(method -> switch (method.getParameterCount()) {
+            case 0 -> (method.getName().equals(getter) || method.getName().equals(propertyName)) && annotated(method);
+            case 1 -> method.getName().equals(setter) && (annotated(method) || annotated(method.getParameters()[0]));
+            default -> false;
+        });
+    }
+
+    private static boolean hasAnnotatedRecordComponent(Class<?> type, String propertyName) {
+        return type.isRecord() && Arrays.stream(type.getRecordComponents())
+            .anyMatch(component -> component.getName().equals(propertyName) && annotated(component));
+    }
+
+    private static boolean hasAnnotatedField(Class<?> type, String propertyName) {
+        for (Class<?> current = type; current != null && current != Object.class; current = current.getSuperclass()) {
+            if (Arrays.stream(current.getDeclaredFields()).anyMatch(field -> field.getName().equals(propertyName) && annotated(field))) {
+                return true;
+            }
         }
         return false;
     }
