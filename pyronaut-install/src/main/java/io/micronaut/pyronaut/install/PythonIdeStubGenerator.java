@@ -89,7 +89,7 @@ final class PythonIdeStubGenerator {
     private static final Set<String> EXCLUDED_PACKAGE_SEGMENTS = Set.of(".internal.", ".impl.");
     private static final String INTERNAL_ANNOTATION_NAME = "io.micronaut.core.annotation.Internal";
     private static final Pattern TRIPLE_QUOTES = Pattern.compile("\"\"\"");
-    private static final Pattern SYNTHETIC_PARAMETER_NAME = Pattern.compile("arg[0-9]*");
+    private static final Pattern SYNTHETIC_PARAMETER_NAME = Pattern.compile("arg\\d*");
 
     WriteResult write(Path projectDir,
                       PyprojectModel.IdeStubs ideStubs,

@@ -267,7 +267,7 @@ final class ToolClasspathInstaller {
         Properties metadata = new Properties();
         try (InputStream input = Files.newInputStream(metadataFile)) {
             metadata.load(input);
-        } catch (IOException e) {
+        } catch (IOException _) {
             return false;
         }
         return sdkVersion.equals(metadata.getProperty(SDK_VERSION_PROPERTY))
@@ -428,7 +428,7 @@ final class ToolClasspathInstaller {
         }
         for (Path entry : entries) {
             boolean directory = Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS);
-            digest.update((byte) (directory ? 'd' : Files.isExecutable(entry) ? 'x' : 'f'));
+            digest.update(kindTag(entry, directory));
             byte[] name = relativeName(root, entry).getBytes(StandardCharsets.UTF_8);
             digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(name.length).array());
             digest.update(name);
@@ -437,6 +437,13 @@ final class ToolClasspathInstaller {
             }
         }
         return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static byte kindTag(Path entry, boolean directory) {
+        if (directory) {
+            return 'd';
+        }
+        return (byte) (Files.isExecutable(entry) ? 'x' : 'f');
     }
 
     private static byte[] fileHash(Path file) throws IOException {
