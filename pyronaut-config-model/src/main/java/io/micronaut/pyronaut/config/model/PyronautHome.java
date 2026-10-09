@@ -49,6 +49,11 @@ public final class PyronautHome {
     public static final String XDG_ENV = "PYRONAUT_XDG";
     public static final String XDG_DIR_NAME = "pyronaut";
 
+    private static final String DOT_PYRONAUT = ".pyronaut";
+    private static final String XDG_CONFIG_HOME = "XDG_CONFIG_HOME";
+    private static final String XDG_CACHE_HOME = "XDG_CACHE_HOME";
+    private static final String XDG_DATA_HOME = "XDG_DATA_HOME";
+
     private PyronautHome() {
     }
 
@@ -105,19 +110,19 @@ public final class PyronautHome {
 
     static Path pyronautHome(UnaryOperator<String> properties, Map<String, String> environment) {
         Path explicit = explicitHome(properties, environment);
-        return explicit != null ? explicit : userHome(properties, environment).resolve(".pyronaut");
+        return explicit != null ? explicit : userHome(properties, environment).resolve(DOT_PYRONAUT);
     }
 
     static Path configHome(UnaryOperator<String> properties, Map<String, String> environment) {
-        return kindHome(properties, environment, CONFIG_DIR_ENV, "XDG_CONFIG_HOME", ".config");
+        return kindHome(properties, environment, CONFIG_DIR_ENV, XDG_CONFIG_HOME, ".config");
     }
 
     static Path cacheHome(UnaryOperator<String> properties, Map<String, String> environment) {
-        return kindHome(properties, environment, CACHE_DIR_ENV, "XDG_CACHE_HOME", ".cache");
+        return kindHome(properties, environment, CACHE_DIR_ENV, XDG_CACHE_HOME, ".cache");
     }
 
     static Path dataHome(UnaryOperator<String> properties, Map<String, String> environment) {
-        return kindHome(properties, environment, DATA_DIR_ENV, "XDG_DATA_HOME", ".local", "share");
+        return kindHome(properties, environment, DATA_DIR_ENV, XDG_DATA_HOME, ".local", "share");
     }
 
     static boolean xdgEnabled(UnaryOperator<String> properties, Map<String, String> environment) {
@@ -134,13 +139,13 @@ public final class PyronautHome {
                 return false;
             }
         }
-        if (Files.isDirectory(xdgBase(properties, environment, "XDG_CONFIG_HOME", ".config").resolve(XDG_DIR_NAME))) {
+        if (Files.isDirectory(xdgBase(properties, environment, XDG_CONFIG_HOME, ".config").resolve(XDG_DIR_NAME))) {
             return true;
         }
-        if (Files.isDirectory(userHome(properties, environment).resolve(".pyronaut"))) {
+        if (Files.isDirectory(userHome(properties, environment).resolve(DOT_PYRONAUT))) {
             return false;
         }
-        for (String variable : new String[] {"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"}) {
+        for (String variable : new String[] {XDG_CONFIG_HOME, XDG_CACHE_HOME, XDG_DATA_HOME}) {
             String configured = nonBlank(environment.get(variable));
             if (configured != null && Path.of(configured).isAbsolute()) {
                 return true;
@@ -166,7 +171,7 @@ public final class PyronautHome {
         if (xdgEnabled(properties, environment)) {
             return xdgBase(properties, environment, xdgEnv, xdgDefault).resolve(XDG_DIR_NAME);
         }
-        return userHome(properties, environment).resolve(".pyronaut");
+        return userHome(properties, environment).resolve(DOT_PYRONAUT);
     }
 
     private static Path explicitHome(UnaryOperator<String> properties, Map<String, String> environment) {
