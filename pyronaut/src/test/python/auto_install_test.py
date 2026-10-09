@@ -308,6 +308,20 @@ class AutoInstallTest(unittest.TestCase):
 
         self.assertEqual(["process", "run"], self._commands())
 
+    def test_invalid_manage_dependencies_setting_fails_instead_of_looping(self):
+        (self.project_dir / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\nversion = "0.1"\ndependencies = ["requests==2.0"]\n\n'
+            '[tool.pyronaut.python]\nmanage-dependencies = "sometimes"\n',
+            encoding="utf-8",
+        )
+        self._write_installed_state()
+
+        exit_code = self._run(["run", "--project-dir", str(self.project_dir)])
+
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertEqual([], self._commands())
+        self.assertIn("manage-dependencies", self.output.getvalue())
+
     def test_failed_install_stops_before_processing(self):
         self._write_pyproject()
 
