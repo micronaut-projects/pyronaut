@@ -32,6 +32,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -51,7 +52,7 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
     private final JarFile jarFile;
     private final List<Root> roots;
     private final String mainClass;
-    private volatile Map<String, Set<String>> directoryIndex;
+    private final AtomicReference<Map<String, Set<String>>> directoryIndex = new AtomicReference<>();
 
     IndexedJarClassLoader(Path archive) throws IOException {
         super(ClassLoader.getPlatformClassLoader());
@@ -232,12 +233,12 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
      * directory lookup so plain resource and class loading never pay for it.
      */
     private Map<String, Set<String>> directoryIndex() {
-        Map<String, Set<String>> index = directoryIndex;
+        Map<String, Set<String>> index = directoryIndex.get();
         if (index != null) {
             return index;
         }
-        synchronized (this) {
-            if (directoryIndex == null) {
+        synchronized (directoryIndex) {
+            if (directoryIndex.get() == null) {
                 Map<String, Set<String>> byPrefix = new HashMap<>();
                 for (Root root : roots) {
                     byPrefix.put(root.prefix(), new HashSet<>());
@@ -255,9 +256,9 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
                 }
                 Map<String, Set<String>> completed = new HashMap<>();
                 byPrefix.forEach((prefix, directories) -> completed.put(prefix, Set.copyOf(directories)));
-                directoryIndex = Map.copyOf(completed);
+                directoryIndex.set(Map.copyOf(completed));
             }
-            return directoryIndex;
+            return directoryIndex.get();
         }
     }
 

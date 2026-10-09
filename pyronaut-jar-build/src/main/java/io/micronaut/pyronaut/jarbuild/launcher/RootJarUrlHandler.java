@@ -28,6 +28,8 @@ import java.net.URLConnection;
 import java.net.URLStreamHandler;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.jar.JarEntry;
@@ -73,7 +75,7 @@ final class RootJarUrlHandler extends URLStreamHandler {
     URL url(String relativeName) {
         try {
             return URL.of(URI.create("jar:" + archive.toUri() + marker + IndexedJarClassLoader.encodeEntryName(relativeName)), this);
-        } catch (MalformedURLException | IllegalArgumentException e) {
+        } catch (MalformedURLException | IllegalArgumentException _) {
             return null;
         }
     }
@@ -90,13 +92,9 @@ final class RootJarUrlHandler extends URLStreamHandler {
 
     @Override
     protected void parseURL(URL url, String spec, int start, int limit) {
+        // URL has already split off the fragment, so limit excludes it.
         String target = spec.substring(start, limit);
-        String ref = null;
-        int hash = target.indexOf('#');
-        if (hash >= 0) {
-            ref = target.substring(hash + 1);
-            target = target.substring(0, hash);
-        }
+        String ref = url.getRef();
         String file;
         if (spec.regionMatches(true, 0, "jar:", 0, 4)) {
             file = target;
@@ -109,13 +107,37 @@ final class RootJarUrlHandler extends URLStreamHandler {
                 throw new IllegalArgumentException("Invalid FAT JAR root URL: " + url);
             }
             int rootEnd = rootIndex + marker.length();
-            if (target.startsWith("/")) {
-                file = base.substring(0, rootEnd) + target.substring(1);
-            } else {
-                file = base.substring(0, Math.max(base.lastIndexOf('/') + 1, rootEnd)) + target;
-            }
+            String path = target.startsWith("/")
+                ? target.substring(1)
+                : base.substring(rootEnd, Math.max(base.lastIndexOf('/') + 1, rootEnd)) + target;
+            file = base.substring(0, rootEnd) + normalize(path);
         }
         setURL(url, "jar", "", -1, null, null, file, null, ref);
+    }
+
+    /**
+     * Removes {@code .} and {@code ..} segments, never climbing above the root.
+     */
+    private static String normalize(String path) {
+        Deque<String> segments = new ArrayDeque<>();
+        String[] parts = path.split("/", -1);
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
+            boolean last = i == parts.length - 1;
+            if (part.equals("..")) {
+                segments.pollLast();
+                if (last) {
+                    segments.add("");
+                }
+            } else if (part.equals(".")) {
+                if (last) {
+                    segments.add("");
+                }
+            } else if (!part.isEmpty() || last) {
+                segments.add(part);
+            }
+        }
+        return String.join("/", segments);
     }
 
     private static String decode(String encoded) {
@@ -123,13 +145,15 @@ final class RootJarUrlHandler extends URLStreamHandler {
             return encoded;
         }
         ByteArrayOutputStream bytes = new ByteArrayOutputStream(encoded.length());
-        for (int i = 0; i < encoded.length(); i++) {
+        int i = 0;
+        while (i < encoded.length()) {
             char c = encoded.charAt(i);
             if (c == '%' && i + 2 < encoded.length()) {
                 bytes.write(Integer.parseInt(encoded, i + 1, i + 3, 16));
-                i += 2;
+                i += 3;
             } else {
                 bytes.writeBytes(String.valueOf(c).getBytes(StandardCharsets.UTF_8));
+                i++;
             }
         }
         return bytes.toString(StandardCharsets.UTF_8);
@@ -140,6 +164,7 @@ final class RootJarUrlHandler extends URLStreamHandler {
         private JarFile jarFile;
         private JarEntry jarEntry;
         private boolean jarFileExposed;
+        private boolean viewOwnedByStream;
 
         Connection(URL url, String entryName) throws MalformedURLException {
             super(url);
@@ -166,6 +191,11 @@ final class RootJarUrlHandler extends URLStreamHandler {
         @Override
         public JarFile getJarFile() throws IOException {
             connect();
+            if (viewOwnedByStream) {
+                // An earlier stream closes its view with it; hand out a fresh one.
+                jarFile = new RootJarFile(archive, prefix, directories.get());
+                viewOwnedByStream = false;
+            }
             jarFileExposed = true;
             return jarFile;
         }
@@ -187,6 +217,9 @@ final class RootJarUrlHandler extends URLStreamHandler {
             if (jarEntry == null) {
                 throw new IOException("no entry name specified");
             }
+            if (viewOwnedByStream) {
+                jarFile = new RootJarFile(archive, prefix, directories.get());
+            }
             InputStream input = jarFile.getInputStream(jarEntry);
             if (input == null) {
                 throw new FileNotFoundException("JAR entry " + entryName + " not found in " + archive + "!/" + prefix);
@@ -196,6 +229,7 @@ final class RootJarUrlHandler extends URLStreamHandler {
             }
             // Nobody else holds the view, so release its archive handle with the stream.
             JarFile view = jarFile;
+            viewOwnedByStream = true;
             return new FilterInputStream(input) {
                 @Override
                 public void close() throws IOException {
@@ -213,7 +247,7 @@ final class RootJarUrlHandler extends URLStreamHandler {
             try {
                 connect();
                 return jarEntry == null ? -1 : jarEntry.getSize();
-            } catch (IOException e) {
+            } catch (IOException _) {
                 return -1;
             }
         }

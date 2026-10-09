@@ -114,19 +114,14 @@ final class RootJarFile extends JarFile {
 
     private List<JarEntry> entryList() {
         List<JarEntry> entries = new ArrayList<>();
-        for (String directory : new TreeSet<>(directories)) {
-            if (!directory.isEmpty()) {
-                entries.add(new JarEntry(directory + "/"));
-            }
-        }
-        Enumeration<JarEntry> archiveEntries = super.entries();
-        while (archiveEntries.hasMoreElements()) {
-            JarEntry entry = archiveEntries.nextElement();
-            String name = entry.getName();
-            if (!entry.isDirectory() && name.length() > prefix.length() && name.startsWith(prefix)) {
-                entries.add(relative(entry, name.substring(prefix.length())));
-            }
-        }
+        new TreeSet<>(directories).stream()
+            .filter(directory -> !directory.isEmpty())
+            .map(directory -> new JarEntry(directory + "/"))
+            .forEach(entries::add);
+        super.stream()
+            .filter(entry -> !entry.isDirectory() && entry.getName().length() > prefix.length() && entry.getName().startsWith(prefix))
+            .map(entry -> relative(entry, entry.getName().substring(prefix.length())))
+            .forEach(entries::add);
         return entries;
     }
 
