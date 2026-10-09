@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import types
@@ -40,6 +41,14 @@ class AutoInstallTest(unittest.TestCase):
         self.project_dir.mkdir()
         self.calls: list[list[str]] = []
         self.output = io.StringIO()
+        # Keep the developer's own auto-install preferences out of the tests.
+        for patcher in (
+            patch.object(cli, "_read_pyronaut_user_settings", return_value={}),
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        os.environ.pop(cli.AUTO_INSTALL_ENV, None)
 
     def tearDown(self):
         self._temp_dir.cleanup()
@@ -162,6 +171,52 @@ class AutoInstallTest(unittest.TestCase):
             "run pyronaut install",
             self.output.getvalue(),
         )
+
+    def test_auto_install_can_be_disabled_in_user_settings(self):
+        self._write_pyproject()
+        self._write_installed_state()
+        self._write_pyproject("io.example:lib:2.0")
+
+        with patch.object(cli, "_read_pyronaut_user_settings", return_value={"install": {"auto": False}}):
+            self.assertEqual(cli.SUCCESS, self._run(["run", "--project-dir", str(self.project_dir)]))
+
+        self.assertEqual(["process", "run"], self._commands())
+        self.assertIn(
+            "skipped install ([install] auto = false in ~/.pyronaut/settings.toml), run pyronaut install",
+            self.output.getvalue(),
+        )
+
+    def test_auto_install_can_be_disabled_with_environment_variable(self):
+        self._write_pyproject()
+        self._write_installed_state()
+        self._write_pyproject("io.example:lib:2.0")
+
+        with patch.dict(os.environ, {cli.AUTO_INSTALL_ENV: "false"}):
+            self.assertEqual(cli.SUCCESS, self._run(["test", "--project-dir", str(self.project_dir)]))
+
+        self.assertEqual(["process", "test"], self._commands())
+        self.assertIn("skipped install (PYRONAUT_AUTO_INSTALL=false)", self.output.getvalue())
+
+    def test_environment_variable_overrides_user_settings(self):
+        with patch.object(cli, "_read_pyronaut_user_settings", return_value={"install": {"auto": False}}), \
+                patch.dict(os.environ, {cli.AUTO_INSTALL_ENV: "true"}):
+            self.assertIsNone(cli._auto_install_disabled_by())
+
+    def test_auto_install_is_enabled_by_default(self):
+        self.assertIsNone(cli._auto_install_disabled_by())
+
+    def test_invalid_auto_install_configuration_fails_the_command(self):
+        self._write_pyproject()
+        self._write_installed_state()
+        self._write_pyproject("io.example:lib:2.0")
+
+        with patch.dict(os.environ, {cli.AUTO_INSTALL_ENV: "sometimes"}):
+            self.assertEqual(cli.PRECONDITION_FAILED, self._run(["run", "--project-dir", str(self.project_dir)]))
+        self.assertIn("PYRONAUT_AUTO_INSTALL must be true or false", self.output.getvalue())
+
+        with patch.object(cli, "_read_pyronaut_user_settings", return_value={"install": {"auto": "no"}}):
+            with self.assertRaisesRegex(RuntimeError, r"\[install\]\.auto"):
+                cli._auto_install_disabled_by()
 
     def test_no_install_after_double_dash_is_an_application_argument(self):
         self._write_pyproject()

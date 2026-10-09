@@ -7931,6 +7931,33 @@ def _install_required(project_dir: Path) -> bool:
 
 _INSTALL_STATE_FILE = "install-state.json"
 NO_INSTALL_FLAG = "--no-install"
+AUTO_INSTALL_ENV = "PYRONAUT_AUTO_INSTALL"
+_AUTO_INSTALL_SETTINGS_TABLE = "install"
+
+
+def _auto_install_disabled_by() -> str | None:
+    """Name the setting that turns automatic install off, if any.
+
+    ``PYRONAUT_AUTO_INSTALL`` overrides ``[install] auto`` in
+    ``~/.pyronaut/settings.toml``; both default to enabled.
+    """
+    value = _read_env(AUTO_INSTALL_ENV)
+    if value is not None:
+        normalized = value.lower()
+        if normalized in {"0", "false", "no", "off"}:
+            return f"{AUTO_INSTALL_ENV}={value}"
+        if normalized in {"1", "true", "yes", "on"}:
+            return None
+        raise RuntimeError(f"{AUTO_INSTALL_ENV} must be true or false, got {value!r}")
+    table = _read_pyronaut_user_settings().get(_AUTO_INSTALL_SETTINGS_TABLE)
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        raise RuntimeError("[install] in ~/.pyronaut/settings.toml must be a table")
+    auto = table.get("auto", True)
+    if not isinstance(auto, bool):
+        raise RuntimeError("[install].auto in ~/.pyronaut/settings.toml must be true or false")
+    return None if auto else "[install] auto = false in ~/.pyronaut/settings.toml"
 
 
 def _install_inputs_state(project_dir: Path) -> dict[str, object]:
@@ -8013,8 +8040,9 @@ def _ensure_install_current(
     reason, java_install = stale
     reason = reason[:1].upper() + reason[1:]
     progress = _progress_console()
-    if no_install:
-        progress.warn(f"{reason}; skipped install ({NO_INSTALL_FLAG}), run pyronaut install")
+    disabled_by = NO_INSTALL_FLAG if no_install else _auto_install_disabled_by()
+    if disabled_by is not None:
+        progress.warn(f"{reason}; skipped install ({disabled_by}), run pyronaut install")
         return SUCCESS
     progress.note(f"{reason}; running pyronaut install before {command}")
     venv_code = _ensure_project_virtualenv(project_dir, runner)
@@ -12250,7 +12278,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
             ("--no-cache", "Bypass run preflight cache reads where applicable"),
-            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install"),
+            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install (also: PYRONAUT_AUTO_INSTALL=false, or [install] auto = false in ~/.pyronaut/settings.toml)"),
             ("--no-validate", "Skip run scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
             ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),
@@ -12297,7 +12325,7 @@ def _print_test_usage(stream=None) -> None:
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),
-            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install"),
+            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install (also: PYRONAUT_AUTO_INSTALL=false, or [install] auto = false in ~/.pyronaut/settings.toml)"),
             ("--no-validate", "Skip test scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
             ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),

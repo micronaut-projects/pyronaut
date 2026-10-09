@@ -468,7 +468,21 @@ The CLI prints one line naming the reason before the install renders its own pro
 • [tool.pyronaut] settings changed since the last install; running pyronaut install before dev
 ----
 
-`pyronaut dev` watches `pyproject.toml` too: a dependency change stops the application, installs, processes and restarts it. Pass `--no-install` to skip the install step; the command then warns that the installed dependencies are stale. Gradle and Maven projects are not affected, because their build tool resolves dependencies.
+`pyronaut dev` watches `pyproject.toml` too: a dependency change stops the application, installs, processes and restarts it. Gradle and Maven projects are not affected, because their build tool resolves dependencies.
+
+To turn automatic install off, use one of the following (listed from highest to lowest precedence):
+
+- `--no-install` on a single `dev`, `run` or `test` invocation.
+- The `PYRONAUT_AUTO_INSTALL=false` environment variable (`true` re-enables it, overriding the settings file).
+- The user setting in `~/.pyronaut/settings.toml`:
++
+[source,toml]
+----
+[install]
+auto = false
+----
+
+With automatic install off, the commands still warn that the installed dependencies are stale and name the setting that skipped the install.
 
 === `pyronaut dev`
 
@@ -478,7 +492,7 @@ Common options:
 
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
-- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>>)
+- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>> for the persistent settings)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 - `--control-panel`: enables the development Control Panel, overriding project configuration
 - `--disable-test-resources`: disables configured project orchestration and conditional direct-source Test Resources inference
@@ -506,7 +520,7 @@ Common options:
 
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
-- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>>)
+- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>> for the persistent settings)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 
 Behavior:
@@ -531,7 +545,7 @@ Common options:
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
 - `--tests <selector>`: repeatable Gradle-like test selector filter
-- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>>)
+- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>> for the persistent settings)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 - `--disable-test-resources`: disables configured project orchestration and conditional direct-source Test Resources inference
 
