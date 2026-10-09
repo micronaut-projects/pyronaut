@@ -32,6 +32,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -84,6 +85,20 @@ class PyronautFacadesTest {
         }
         assertTrue(changed.isEmpty(), "The facades " + changed + " no longer match their snapshots: if the change is intended, "
             + "run the test with -Dpyronaut.facades.update=true and review the diff of src/test/resources/facades");
+    }
+
+    @Test
+    void pythonAnnotationAliasesResolveToCanonicalAnnotations() {
+        assertAll(
+            () -> assertEquals(new Member("serdeable", Kind.ANNOTATION, "io.micronaut.serde.annotation.Serdeable", null),
+                member("pyronaut.serde", "serdeable")),
+            () -> assertEquals(new Member("serializable", Kind.ANNOTATION, "io.micronaut.serde.annotation.Serdeable$Serializable", null),
+                member("pyronaut.serde", "serializable")),
+            () -> assertEquals(new Member("deserializable", Kind.ANNOTATION, "io.micronaut.serde.annotation.Serdeable$Deserializable", null),
+                member("pyronaut.serde", "deserializable")),
+            () -> assertEquals(new Member("singleton", Kind.ANNOTATION, "jakarta.inject.Singleton", null),
+                member("pyronaut.inject", "singleton"))
+        );
     }
 
     @Test

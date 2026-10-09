@@ -16,19 +16,28 @@
 package io.micronaut.pyronaut.serialization;
 
 import io.micronaut.context.ApplicationContext;
+import io.micronaut.core.annotation.AnnotationClassValue;
+import io.micronaut.core.beans.BeanIntrospection;
+import io.micronaut.core.beans.exceptions.IntrospectionException;
 import io.micronaut.http.HttpRequest;
 import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.client.BlockingHttpClient;
 import io.micronaut.http.client.HttpClient;
 import io.micronaut.http.client.exceptions.HttpClientResponseException;
+import io.micronaut.json.JsonMapper;
 import io.micronaut.runtime.server.EmbeddedServer;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PythonSerdeSerializationTest {
 
@@ -65,6 +74,51 @@ class PythonSerdeSerializationTest {
             // ctx: inject.ApplicationContext = inject.Inject() receives the bean
             assertEquals("True", client.retrieve("/people/running"));
         }
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void aliasesPreserveSerdeOptInMembersAndSingletonScope() throws Exception {
+        try (var context = ApplicationContext.run()) {
+            JsonMapper mapper = context.getBean(JsonMapper.class);
+            assertTrue(mapper.getClass().getName().startsWith("io.micronaut.serde."));
+            Class service = Class.forName("example.micronaut.PeopleService");
+            assertSame(context.getBean(service), context.getBean(service));
+            assertTrue(context.getBeanDefinition(service).isSingleton());
+
+            var household = introspection("Household");
+            var person = introspection("Person");
+            String nested = "{\"people\":[{\"name\":\"Fred\",\"person_age\":42}]}";
+            assertEquals(nested, mapper.writeValueAsString(household.instantiate(List.of(person.instantiate("Fred", 42, null)))));
+            assertEquals(nested, mapper.writeValueAsString(mapper.readValue(nested, household.getBeanType())));
+
+            var named = introspection("NamedPayload");
+            var metadata = named.getAnnotationMetadata();
+            assertFalse(metadata.booleanValue("io.micronaut.serde.annotation.Serdeable", "validate").orElseThrow());
+            assertEquals("io.micronaut.serde.config.naming.SnakeCaseStrategy", metadata
+                .getValue("io.micronaut.serde.annotation.Serdeable", "naming", AnnotationClassValue.class).orElseThrow().getName());
+            String namedJson = "{\"first_name\":\"Wilma\"}";
+            assertEquals(namedJson, mapper.writeValueAsString(named.instantiate("Wilma")));
+            assertEquals(namedJson, mapper.writeValueAsString(mapper.readValue(namedJson, named.getBeanType())));
+
+            var output = introspection("OutputPayload");
+            var input = introspection("InputPayload");
+            String directional = "{\"name\":\"Fred\"}";
+            assertEquals(directional, mapper.writeValueAsString(output.instantiate("Fred")));
+            assertThrows(IntrospectionException.class, () -> mapper.readValue(directional, output.getBeanType()));
+            Object decoded = mapper.readValue(directional, input.getBeanType());
+            assertEquals("Fred", input.getRequiredProperty("name", String.class).get(decoded));
+            assertThrows(IOException.class, () -> mapper.writeValueAsString(decoded));
+
+            var internal = introspection("InternalPayload");
+            assertThrows(IOException.class, () -> mapper.writeValueAsString(internal.instantiate("Fred")));
+            assertThrows(IntrospectionException.class, () -> mapper.readValue(directional, internal.getBeanType()));
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static BeanIntrospection<Object> introspection(String name) throws ClassNotFoundException {
+        return BeanIntrospection.getIntrospection((Class) Class.forName("example.micronaut." + name));
     }
 
     @Test

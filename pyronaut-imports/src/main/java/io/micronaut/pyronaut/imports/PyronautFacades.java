@@ -124,12 +124,13 @@ public final class PyronautFacades implements PythonImportMapper {
     private static PythonModuleMapping inject() {
         return PythonModuleMapping.builder("pyronaut.inject")
             .documentation("""
-                Dependency injection: the scopes and qualifiers (Singleton, Prototype, Named, Refreshable,
+                Dependency injection: the scopes and qualifiers (Singleton, singleton, Prototype, Named, Refreshable,
                 RequestScope, ...), the bean definition annotations (Factory, Bean, Requires, Value,
                 ConfigurationProperties, ...), lifecycle (PostConstruct, PreDestroy), application events
                 (EventListener, StartupEvent, ...), the context types (ApplicationContext, BeanContext, Environment,
                 MessageSource, ResourceLoader, Argument, ...) and the core annotations (Introspected, Nullable, ...).""")
             .javaPackage("jakarta.inject")
+            .javaType("jakarta.inject.Singleton", "singleton")
             .javaPackage("io.micronaut.context.annotation")
             .javaPackage("io.micronaut.context", TypeKind.INTERFACE)
             .javaType("io.micronaut.context.StaticMessageSource")
@@ -157,8 +158,12 @@ public final class PyronautFacades implements PythonImportMapper {
         return PythonModuleMapping.builder("pyronaut.serde")
             .documentation("""
                 Serialization: @Serdeable and the Micronaut Serialization annotations, and the Jackson annotations
-                it honours (JsonProperty, JsonIgnore, JsonInclude, ...).""")
+                it honours (JsonProperty, JsonIgnore, JsonInclude, ...). The aliases serdeable, serializable and
+                deserializable opt a type into both directions, serialization only or deserialization only.""")
             .javaPackage("io.micronaut.serde.annotation")
+            .javaType("io.micronaut.serde.annotation.Serdeable", "serdeable")
+            .javaType("io.micronaut.serde.annotation.Serdeable$Serializable", "serializable")
+            .javaType("io.micronaut.serde.annotation.Serdeable$Deserializable", "deserializable")
             .javaPackage("com.fasterxml.jackson.annotation")
             .clashPolicy(ClashPolicy.PREFER_ANNOTATIONS)
             .requiredArtifact("io.micronaut.serde:micronaut-serde-api")
