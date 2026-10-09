@@ -4617,6 +4617,24 @@ Each cache takes up to a few hundred megabytes; delete <code>~/.pyronaut/caches/
 </div>
 </div>
 </div>
+<div class="sect1">
+<h2 id="_python_environment">Python environment</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>pyronaut install</code> creates <code>.venv</code> with GraalPy and installs the project&#8217;s Python dependencies into it, with <code>uv sync</code> for uv projects and <code>pip</code> otherwise (see <a href="#python-uv-projects">uv projects</a>).
+Set <code>manage-dependencies = false</code> when another tool manages <code>.venv</code>; Pyronaut then only checks that GraalPy created it:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[tool.pyronaut.python]
+manage-dependencies = false</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>pyronaut install --no-python-deps</code> does the same for a single run.</p>
+</div>
+</div>
+</div>
 
 <h2 id="dependencies"><a class="anchor" href="#dependencies"></a>9.2 Installing Python and Micronaut Dependencies</h2>
 
@@ -8050,7 +8068,7 @@ Unlike the execution commands it never requires valid setup state, so it can dia
 <p>Classpath manifests: the manifests written by <code>pyronaut install</code> exist.</p>
 </li>
 <li>
-<p>Generated state: the check verifies that the manifests are current. Classpath entries that no longer exist (the Maven repository changed) fail the check; a <code>pyproject.toml</code> edited after the last <code>pyronaut install</code> is a warning, because the preflight of <code>dev</code>, <code>run</code> and <code>test</code> only checks that the manifests exist. The check reports sources newer than the processed classes for information because <code>dev</code>, <code>run</code>, and <code>test</code> process changed sources automatically.</p>
+<p>Generated state: the check verifies that the manifests are current. Classpath entries that no longer exist (the Maven repository changed) fail the check; a <code>pyproject.toml</code> edited after the last <code>pyronaut install</code> is a warning (<code>dev</code>, <code>run</code> and <code>test</code> reinstall changed dependencies automatically, unless you pass <code>--no-install</code>). The check reports sources newer than the processed classes for information because <code>dev</code>, <code>run</code>, and <code>test</code> process changed sources automatically.</p>
 </li>
 <li>
 <p>Threading: the application configuration in <code>config/application.toml</code> (or <code>application.properties</code>) is read the way the runtime reads it. An executor with <code>virtual = true</code> fails the check because GraalPy cannot run Python code on virtual threads, and invalid <code>micronaut.python.pool</code> values fail it. The row reports the effective context pool size, executor overrides, and the deployment mode from <code>[tool.pyronaut.packaging]</code> and <code>[tool.pyronaut.toolchain]</code>. Configuration kept in <code>application.yml</code> is not inspected and produces a warning.</p>
@@ -8194,6 +8212,40 @@ before using it.</p>
 <div class="paragraph">
 <p>An existing <code>.venv</code> that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run <code>pyronaut install</code> again.</p>
 </div>
+<div class="sect3">
+<h4 id="python-uv-projects">uv projects</h4>
+<div class="paragraph">
+<p>When the project has a <code>uv.lock</code> file, is a member of a uv workspace (an ancestor <code>pyproject.toml</code> declares <code>[tool.uv.workspace]</code> and has a <code>uv.lock</code>), or declares a <code>[tool.uv]</code> table, and <code>uv</code> is on the <code>PATH</code>, <code>pyronaut install</code> runs <code>uv sync</code> instead of <code>pip</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">uv sync --project &lt;project-dir&gt; --python &lt;project-dir&gt;/.venv/bin/python</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>UV_PROJECT_ENVIRONMENT</code> points uv at the project&#8217;s <code>.venv</code>, so a workspace member is synced into its own <code>.venv</code> rather than the workspace root&#8217;s.
+uv resolves <code>[tool.uv.sources]</code> (including <code>{ workspace = true }</code> members), <code><a id="tool.uv.index"></a></code> indexes and the lock file itself, none of which <code>pip</code> can see, and works in a venv without <code>pip</code>.
+<code>.venv</code> is still created with GraalPy first, and the command fails if <code>uv sync</code> replaces it with another interpreter.
+Pyronaut records the lock file&#8217;s hash and syncs again when it changes; <code>--refresh</code> always syncs and <code>--offline</code> skips the sync.
+uv installs only what the project declares (including its default dependency groups) and ignores <code>requirements.txt</code>, so declare <code>pytest</code> in a dependency group if the project has Python tests.
+Without <code>uv</code> on the <code>PATH</code>, Pyronaut falls back to <code>pip</code>.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="python-self-managed-venv">Managing <code>.venv</code> yourself</h4>
+<div class="paragraph">
+<p>To keep Pyronaut from installing anything into <code>.venv</code>, for example because another tool creates it, disable dependency management in <code>pyproject.toml</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[tool.pyronaut.python]
+manage-dependencies = false</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>or pass <code>--no-python-deps</code> for a single run.
+<code>pyronaut install</code> then uses the existing <code>.venv</code> as is. It still fails when <code>.venv</code> does not exist or was not created by GraalPy, because the embedded runtime cannot use packages installed for another interpreter, so create it with GraalPy, for example <code>uv sync --python graalpy</code>.</p>
+</div>
 <div class="paragraph">
 <p>By default, Pyronaut installs dependency artifacts into Maven local (<code>~/.m2/repository</code>, or the path configured by the <code>maven.repo.local</code> system property).</p>
 </div>
@@ -8222,6 +8274,9 @@ before using it.</p>
 </li>
 <li>
 <p><code>--refresh</code>: force re-resolution and manifest rewrite without clearing the selected local repository</p>
+</li>
+<li>
+<p><code>--no-python-deps</code>: use the existing GraalPy <code>.venv</code> without installing Python dependencies (see <a href="#python-self-managed-venv">Managing <code>.venv</code> yourself</a>)</p>
 </li>
 <li>
 <p><code>--no-cache</code>: bypass Pyronaut manifest cache reads before rewriting manifests</p>
@@ -8446,6 +8501,7 @@ Build-wheel and Docker packaging copy those artifacts into the packaged applicat
 </ul>
 </div>
 </div>
+</div>
 <div class="sect2">
 <h3 id="_pyronaut_process"><code>pyronaut process</code></h3>
 <div class="paragraph">
@@ -8523,6 +8579,58 @@ The command refuses to run in a directory without a <code>pyproject.toml</code>,
 </div>
 </div>
 <div class="sect2">
+<h3 id="autoInstall">Automatic install</h3>
+<div class="paragraph">
+<p><code>pyronaut dev</code>, <code>pyronaut run</code> and <code>pyronaut test</code> run the install step first when the project dependencies changed since the last <code>pyronaut install</code>, so editing <code>pyproject.toml</code> does not require a manual install:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Java dependencies: the CLI records the <code>[tool.pyronaut]</code> table and the Pyronaut version in <code><em>pyronaut</em>/install-state.json</code> after each install. A difference, or missing classpath manifests, runs <code>pyronaut install</code>.</p>
+</li>
+<li>
+<p>Python dependencies: the declarations <code>pyronaut install</code> last applied to <code>.venv</code> (recorded in <code>.venv/.pyronaut-requirements.json</code>) are compared with the current ones: <code>[project].dependencies</code>, <code>[dependency-groups]</code> and <code>requirements.txt</code> for pip, or <code>uv.lock</code> for uv projects. A difference installs only the Python dependencies into <code>.venv</code>. A project that sets <code>[tool.pyronaut.python] manage-dependencies = false</code> manages <code>.venv</code> itself and is never reinstalled.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The CLI prints one line naming the reason before the install renders its own progress, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-text hljs" data-lang="text">• [tool.pyronaut] settings changed since the last install; running pyronaut install before dev</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>pyronaut dev</code> watches <code>pyproject.toml</code> too: a dependency change stops the application, installs, processes and restarts it. Gradle and Maven projects are not affected, because their build tool resolves dependencies.</p>
+</div>
+<div class="paragraph">
+<p>To turn automatic install off, use one of the following (listed from highest to lowest precedence):</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>--no-install</code> on a single <code>dev</code>, <code>run</code> or <code>test</code> invocation.</p>
+</li>
+<li>
+<p>The <code>PYRONAUT_AUTO_INSTALL=false</code> environment variable (<code>true</code> re-enables it, overriding the settings file).</p>
+</li>
+<li>
+<p>The user setting in <code>~/.pyronaut/settings.toml</code>:</p>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[install]
+auto = false</code></pre>
+</div>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>With automatic install off, the commands still warn that the installed dependencies are stale and name the setting that skipped the install.</p>
+</div>
+</div>
+<div class="sect2">
 <h3 id="_pyronaut_dev"><code>pyronaut dev</code></h3>
 <div class="paragraph">
 <p>Runs the processed application via <code>pyronaut-dev</code> in development mode.</p>
@@ -8537,6 +8645,9 @@ The command refuses to run in a directory without a <code>pyproject.toml</code>,
 </li>
 <li>
 <p><code>--debug-vm</code>: enables JDWP JVM debug flags (port 5005)</p>
+</li>
+<li>
+<p><code>--no-install</code>: does not install changed dependencies first; prints a warning instead (see <a href="#autoInstall">Automatic install</a> for the persistent settings)</p>
 </li>
 <li>
 <p><code>--no-validate</code>: explicitly bypasses lifecycle config validation</p>
@@ -8562,6 +8673,9 @@ The command refuses to run in a directory without a <code>pyproject.toml</code>,
 </li>
 <li>
 <p>Automatically performs install/process preflight before launching.</p>
+</li>
+<li>
+<p>Reinstalls before restarting when <code>pyproject.toml</code> dependencies change while the application runs.</p>
 </li>
 <li>
 <p>Starts an owned test-resources server when configuration enables test resources and no reusable external server settings are present.</p>
@@ -8599,6 +8713,9 @@ separate from <code>pyronaut dev</code>, which always uses the development image
 </li>
 <li>
 <p><code>--debug-vm</code>: enables JDWP JVM debug flags (port 5005)</p>
+</li>
+<li>
+<p><code>--no-install</code>: does not install changed dependencies first; prints a warning instead (see <a href="#autoInstall">Automatic install</a> for the persistent settings)</p>
 </li>
 <li>
 <p><code>--no-validate</code>: explicitly bypasses lifecycle config validation</p>
@@ -8657,6 +8774,9 @@ takes precedence over a project dependency with the same module identity.</p>
 </li>
 <li>
 <p><code>--tests &lt;selector&gt;</code>: repeatable Gradle-like test selector filter</p>
+</li>
+<li>
+<p><code>--no-install</code>: does not install changed dependencies first; prints a warning instead (see <a href="#autoInstall">Automatic install</a> for the persistent settings)</p>
 </li>
 <li>
 <p><code>--no-validate</code>: explicitly bypasses lifecycle config validation</p>
