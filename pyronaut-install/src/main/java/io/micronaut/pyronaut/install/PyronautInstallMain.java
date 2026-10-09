@@ -233,127 +233,158 @@ public final class PyronautInstallMain implements Callable<Integer> {
 
     private int install(Path root, Path pyproject, DependencyLock lock) throws Exception {
         if (resolveToolsOnly) {
-            PyprojectModel setupModel = setupRepositories.isEmpty()
-                ? ToolClasspathInstaller.defaultModel()
-                : ToolClasspathInstaller.defaultModel(setupRepositories);
-            try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress, color)) {
-                installToolClasspaths(root, setupModel, progressReporter);
-                if (nativeClasspathsDir != null) {
-                    Path descriptors = nativeClasspathsDir.isAbsolute()
-                        ? nativeClasspathsDir
-                        : root.resolve(nativeClasspathsDir);
-                    InstallScope progressScope = InstallScope.BUILD;
-                    progressReporter.startScope(progressScope);
-                    try {
-                        new NativeClasspathInstaller(resolver).install(
-                            setupModel,
-                            descriptors.toAbsolutePath().normalize(),
-                            resolveLocalRepository(root),
-                            offline,
-                            refresh || noCache,
-                            progressListener(progressReporter, progressScope)
-                        );
-                        progressReporter.finishScope(progressScope);
-                    } catch (RuntimeException | IOException e) {
-                        progressReporter.failScope(progressScope);
-                        throw e;
-                    }
-                }
-            }
-            return InstallExitCode.SUCCESS.code();
+            return installSdkTools(root);
         }
         if (nativeClasspathsDir != null) {
             throw new IllegalArgumentException("--native-classpaths-dir requires --resolve-tools-only");
         }
         if (!sources.isEmpty()) {
-            if (lock.mode() == DependencyLock.Mode.RECORD) {
-                throw new IllegalArgumentException("pyronaut lock requires a pyproject.toml project");
-            }
-            if (Files.exists(pyproject) || ExternalProjectLayout.isExternal(root)) {
-                throw new IllegalArgumentException(
-                    "Direct source arguments cannot be combined with pyproject.toml, Maven, or Gradle project configuration"
-                );
-            }
-            Path localRepo = resolveLocalRepository(root);
-            try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress, color)) {
-                new DirectSourceInstaller().install(
-                    root,
-                    sources,
-                    localRepo,
-                    offline,
-                    refresh || noCache,
-                    !noIdeSupport,
-                    progressReporter
-                );
-            }
-            installToolClasspaths(root, null);
-            return InstallExitCode.SUCCESS.code();
+            return installDirectSources(root, pyproject, lock);
         }
         if (ExternalProjectLayout.isExternal(root)) {
-            if (lock.requiresResolution()) {
-                // Maven and Gradle resolve the application dependencies
-                // themselves; use their own dependency locking instead.
-                throw new IllegalArgumentException(
-                    "Dependency locking is not supported for " + ExternalProjectLayout.detect(root).name()
-                        + " projects; use the build tool's own dependency locking and checksum verification"
-                );
+            return installExternalProject(root, lock);
+        }
+        return installPyprojectProject(root, pyproject, lock);
+    }
+
+    private int installSdkTools(Path root) throws IOException {
+        PyprojectModel setupModel = setupRepositories.isEmpty()
+            ? ToolClasspathInstaller.defaultModel()
+            : ToolClasspathInstaller.defaultModel(setupRepositories);
+        try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress, color)) {
+            installToolClasspaths(root, setupModel, progressReporter);
+            if (nativeClasspathsDir != null) {
+                installNativeClasspaths(root, setupModel, progressReporter);
             }
-            Path cacheDir = ExternalProjectLayout.outputDirectory(root);
-            Path localRepo = resolveLocalRepository(root);
-            String hash = ResolutionCache.externalInstallHash(root, localRepo);
-            Path hashFile = cacheDir.resolve("external-build.sha256");
-            String buildName = ExternalProjectLayout.detect(root).name();
-            boolean showProgress = !"off".equalsIgnoreCase(progress);
-            if (!refresh && !noCache && Files.exists(hashFile) && Files.exists(ExternalProjectLayout.file(root))
-                && hash.equals(Files.readString(hashFile).trim())) {
-                boolean completeCache = false;
-                try {
-                    ExternalProjectLayout cachedLayout = ExternalProjectLayout.read(root);
-                    Path testResourcesManifest = cacheDir.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile());
-                    completeCache = externalCacheComplete(cachedLayout, testResourcesManifest);
-                    if (completeCache) {
-                        editorSupport.ensureExternalWritten(root, cacheDir, cachedLayout.testResourcesEnabled());
-                        AnnotationProcessorOptionDiscovery.refresh(cacheDir,
-                            cachedLayout.annotationProcessorClasspath().isEmpty() ? cachedLayout.buildClasspath() : cachedLayout.annotationProcessorClasspath());
-                        editorSupport.ensureExternalApplicationSchema(cacheDir, cachedLayout.mainResources(),
-                            cachedLayout.runtimeClasspath().stream().map(Path::toString).toList());
-                    }
-                } catch (Exception discoveryFailure) {
-                    // Option discovery is best effort; dependency installation remains usable.
-                }
-                if (completeCache) {
-                    installToolClasspaths(root, null);
-                    if (showProgress) {
-                        System.err.println(buildName + " dependencies already configured (cache hit). Use --refresh to resolve again.");
-                    }
-                    return InstallExitCode.SUCCESS.code();
-                }
-            }
-            if (showProgress) {
-                System.err.println("Resolving dependencies for " + buildName + " project...");
-            }
-            ExternalProjectLayout layout = externalBuildResolver.resolve(root, offline, localRepo);
-            layout.write(root);
-            editorSupport.ensureExternalWritten(root, cacheDir, layout.testResourcesEnabled());
-            hash = ResolutionCache.externalInstallHash(root, localRepo);
-            editorSupport.ensureExternalApplicationSchema(cacheDir, layout.mainResources(),
-                layout.runtimeClasspath().stream().map(Path::toString).toList());
-            AnnotationProcessorOptionDiscovery.refresh(cacheDir,
-                layout.annotationProcessorClasspath().isEmpty() ? layout.buildClasspath() : layout.annotationProcessorClasspath());
-            if (layout.testResourcesEnabled()) {
-                Files.write(cacheDir.resolve("resolved-test-resources-server-dependencies"),
-                    layout.testResourcesClasspath().stream().map(Path::toString).toList());
-            } else {
-                Files.deleteIfExists(cacheDir.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile()));
-            }
-            Files.createDirectories(cacheDir);
-            Files.writeString(hashFile, hash);
-            if (showProgress) {
-                System.err.println(buildName + " Dependencies Configured.");
-            }
+        }
+        return InstallExitCode.SUCCESS.code();
+    }
+
+    private void installNativeClasspaths(Path root,
+                                         PyprojectModel setupModel,
+                                         InstallProgressReporter progressReporter) throws IOException {
+        Path descriptors = nativeClasspathsDir.isAbsolute()
+            ? nativeClasspathsDir
+            : root.resolve(nativeClasspathsDir);
+        InstallScope progressScope = InstallScope.BUILD;
+        progressReporter.startScope(progressScope);
+        try {
+            new NativeClasspathInstaller(resolver).install(
+                setupModel,
+                descriptors.toAbsolutePath().normalize(),
+                resolveLocalRepository(root),
+                offline,
+                refresh || noCache,
+                progressListener(progressReporter, progressScope)
+            );
+            progressReporter.finishScope(progressScope);
+        } catch (RuntimeException | IOException e) {
+            progressReporter.failScope(progressScope);
+            throw e;
+        }
+    }
+
+    private int installDirectSources(Path root, Path pyproject, DependencyLock lock) throws Exception {
+        if (lock.mode() == DependencyLock.Mode.RECORD) {
+            throw new IllegalArgumentException("pyronaut lock requires a pyproject.toml project");
+        }
+        if (Files.exists(pyproject) || ExternalProjectLayout.isExternal(root)) {
+            throw new IllegalArgumentException(
+                "Direct source arguments cannot be combined with pyproject.toml, Maven, or Gradle project configuration"
+            );
+        }
+        Path localRepo = resolveLocalRepository(root);
+        try (InstallProgressReporter progressReporter = InstallProgressReporter.create(progress, color)) {
+            new DirectSourceInstaller().install(
+                root,
+                sources,
+                localRepo,
+                offline,
+                refresh || noCache,
+                !noIdeSupport,
+                progressReporter
+            );
+        }
+        installToolClasspaths(root, null);
+        return InstallExitCode.SUCCESS.code();
+    }
+
+    private int installExternalProject(Path root, DependencyLock lock) throws IOException {
+        String buildName = ExternalProjectLayout.detect(root).name();
+        if (lock.requiresResolution()) {
+            // Maven and Gradle resolve the application dependencies
+            // themselves; use their own dependency locking instead.
+            throw new IllegalArgumentException(
+                "Dependency locking is not supported for " + buildName
+                    + " projects; use the build tool's own dependency locking and checksum verification"
+            );
+        }
+        Path cacheDir = ExternalProjectLayout.outputDirectory(root);
+        Path localRepo = resolveLocalRepository(root);
+        Path hashFile = cacheDir.resolve("external-build.sha256");
+        boolean showProgress = !"off".equalsIgnoreCase(progress);
+        if (!refresh && !noCache && externalCacheHit(root, cacheDir, localRepo, hashFile)) {
             installToolClasspaths(root, null);
+            if (showProgress) {
+                System.err.println(buildName + " dependencies already configured (cache hit). Use --refresh to resolve again.");
+            }
             return InstallExitCode.SUCCESS.code();
         }
+        if (showProgress) {
+            System.err.println("Resolving dependencies for " + buildName + " project...");
+        }
+        ExternalProjectLayout layout = externalBuildResolver.resolve(root, offline, localRepo);
+        layout.write(root);
+        editorSupport.ensureExternalWritten(root, cacheDir, layout.testResourcesEnabled());
+        String hash = ResolutionCache.externalInstallHash(root, localRepo);
+        editorSupport.ensureExternalApplicationSchema(cacheDir, layout.mainResources(),
+            layout.runtimeClasspath().stream().map(Path::toString).toList());
+        AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+            layout.annotationProcessorClasspath().isEmpty() ? layout.buildClasspath() : layout.annotationProcessorClasspath());
+        if (layout.testResourcesEnabled()) {
+            Files.write(cacheDir.resolve("resolved-test-resources-server-dependencies"),
+                layout.testResourcesClasspath().stream().map(Path::toString).toList());
+        } else {
+            Files.deleteIfExists(cacheDir.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile()));
+        }
+        Files.createDirectories(cacheDir);
+        Files.writeString(hashFile, hash);
+        if (showProgress) {
+            System.err.println(buildName + " Dependencies Configured.");
+        }
+        installToolClasspaths(root, null);
+        return InstallExitCode.SUCCESS.code();
+    }
+
+    /**
+     * Whether the external build state written by an earlier install is
+     * complete and current; refreshes the derived editor support when it is.
+     */
+    private boolean externalCacheHit(Path root, Path cacheDir, Path localRepo, Path hashFile) throws IOException {
+        String hash = ResolutionCache.externalInstallHash(root, localRepo);
+        if (!Files.exists(hashFile) || !Files.exists(ExternalProjectLayout.file(root))
+            || !hash.equals(Files.readString(hashFile).trim())) {
+            return false;
+        }
+        boolean completeCache = false;
+        try {
+            ExternalProjectLayout cachedLayout = ExternalProjectLayout.read(root);
+            Path testResourcesManifest = cacheDir.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile());
+            completeCache = externalCacheComplete(cachedLayout, testResourcesManifest);
+            if (completeCache) {
+                editorSupport.ensureExternalWritten(root, cacheDir, cachedLayout.testResourcesEnabled());
+                AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+                    cachedLayout.annotationProcessorClasspath().isEmpty() ? cachedLayout.buildClasspath() : cachedLayout.annotationProcessorClasspath());
+                editorSupport.ensureExternalApplicationSchema(cacheDir, cachedLayout.mainResources(),
+                    cachedLayout.runtimeClasspath().stream().map(Path::toString).toList());
+            }
+        } catch (Exception discoveryFailure) {
+            // Option discovery is best effort; dependency installation remains usable.
+        }
+        return completeCache;
+    }
+
+    private int installPyprojectProject(Path root, Path pyproject, DependencyLock lock) throws IOException {
         InstallProgressReporter.ProgressMode.fromCliValue(progress);
         DependencyTreeRenderer.ColorMode.fromCliValue(color);
         List<InstallScope> scopes = selectedScopes();
@@ -384,100 +415,143 @@ public final class PyronautInstallMain implements Callable<Integer> {
             // manifests of an earlier install are never reused.
             boolean recordLock = lock.mode() == DependencyLock.Mode.RECORD;
             if (!bypassRequested && !recordLock && ResolutionCache.cacheHit(cacheDir, hash, activeScopes)) {
-                try {
-                    AnnotationProcessorOptionDiscovery.refresh(cacheDir,
-                        readManifestClasspath(cacheDir.resolve(InstallScope.BUILD.manifestFile())));
-                } catch (Exception discoveryFailure) {
-                    // Option discovery is best effort; dependency installation remains usable.
-                }
-                progressReporter.cacheHit();
-                if (activeScopes.contains(InstallScope.RUNTIME)) {
-                    editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(),
-                        readManifestClasspath(cacheDir.resolve(InstallScope.RUNTIME.manifestFile())).stream().map(Path::toString).toList(),
-                        AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
-                }
-                emitEditorSupportBestEffort(
-                    progressReporter,
-                    () -> pythonEditorSupport.ensureWrittenFromManifests(root, cacheDir, model.pyronaut().ideStubs())
-                );
-                installToolClasspaths(root, model, progressReporter);
+                installFromCachedManifests(root, cacheDir, model, activeScopes, progressReporter);
                 return InstallExitCode.SUCCESS.code();
             }
             if (bypassRequested) {
                 progressReporter.cacheBypass();
             }
-
-            Map<InstallScope, List<String>> resolved = new EnumMap<>(InstallScope.class);
-            Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> resolvedEditorArtifacts = new EnumMap<>(InstallScope.class);
-            Map<InstallScope, Future<MavenClasspathResolver.ResolvedScopeDetails>> futures = new EnumMap<>(InstallScope.class);
-            for (InstallScope installScope : activeScopes) {
-                progressReporter.startScope(installScope);
-            }
-            RuntimeException firstFailure = null;
-            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                for (InstallScope installScope : activeScopes) {
-                    futures.put(installScope, executor.submit(() -> resolver.resolveScopeDetails(
-                        model,
-                        installScope,
-                        localRepo,
-                        offline,
-                        bypassRequested,
-                        progressListener(progressReporter, installScope),
-                        root
-                    )));
-                }
-                for (InstallScope installScope : activeScopes) {
-                    try {
-                        MavenClasspathResolver.ResolvedScopeDetails details = futures.get(installScope).get();
-                        List<String> classpath = manifestClasspath(installScope, details.classpath());
-                        progressReporter.finishScope(installScope, classpath.size());
-                        resolved.put(installScope, classpath);
-                        resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException("Dependency resolution was interrupted", e);
-                    } catch (ExecutionException e) {
-                        progressReporter.failScope(installScope);
-                        RuntimeException failure = e.getCause() instanceof RuntimeException runtime
-                            ? runtime
-                            : new IllegalStateException("Dependency resolution failed", e.getCause());
-                        if (firstFailure == null) {
-                            firstFailure = failure;
-                        } else {
-                            firstFailure.addSuppressed(failure);
-                        }
-                    }
-                }
-            }
-            if (firstFailure != null) {
-                throw firstFailure;
-            }
-            AnnotationProcessorOptionDiscovery.refresh(cacheDir,
-                resolved.getOrDefault(InstallScope.BUILD, List.of()).stream().map(Path::of).toList());
-            if (resolved.containsKey(InstallScope.RUNTIME)) {
-                progressReporter.generatingApplicationSchema();
-                var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(),
-                    resolved.get(InstallScope.RUNTIME), AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
-                if (schemaResult.status() == MicronautApplicationJsonSchemaBundler.Status.GENERATED) {
-                    progressReporter.generatedApplicationSchema(schemaResult.mergedSchemas());
-                } else {
-                    progressReporter.endTask("Generating application schema");
-                }
-            }
-            emitEditorSupportBestEffort(
-                progressReporter,
-                () -> pythonEditorSupport.ensureWrittenFromResolvedArtifacts(
-                    root,
-                    cacheDir,
-                    model.pyronaut().ideStubs(),
-                    resolvedEditorArtifacts.getOrDefault(InstallScope.RUNTIME, List.of()),
-                    resolvedEditorArtifacts.getOrDefault(InstallScope.TEST, List.of())
-                )
-            );
-            ResolutionCache.write(cacheDir, hash, resolved);
+            ResolvedScopes resolved = resolveScopes(root, model, localRepo, activeScopes, bypassRequested, progressReporter);
+            writeResolvedState(root, cacheDir, model, resolved, progressReporter);
+            ResolutionCache.write(cacheDir, hash, resolved.classpaths());
             installToolClasspaths(root, model, progressReporter);
         }
         return InstallExitCode.SUCCESS.code();
+    }
+
+    private void installFromCachedManifests(Path root,
+                                            Path cacheDir,
+                                            PyprojectModel model,
+                                            List<InstallScope> activeScopes,
+                                            InstallProgressReporter progressReporter) throws IOException {
+        try {
+            AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+                readManifestClasspath(cacheDir.resolve(InstallScope.BUILD.manifestFile())));
+        } catch (Exception discoveryFailure) {
+            // Option discovery is best effort; dependency installation remains usable.
+        }
+        progressReporter.cacheHit();
+        if (activeScopes.contains(InstallScope.RUNTIME)) {
+            editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(),
+                readManifestClasspath(cacheDir.resolve(InstallScope.RUNTIME.manifestFile())).stream().map(Path::toString).toList(),
+                AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
+        }
+        emitEditorSupportBestEffort(
+            progressReporter,
+            () -> pythonEditorSupport.ensureWrittenFromManifests(root, cacheDir, model.pyronaut().ideStubs())
+        );
+        installToolClasspaths(root, model, progressReporter);
+    }
+
+    /**
+     * Resolves the selected scopes in parallel. Every scope is awaited before
+     * the first failure is rethrown, with the others suppressed on it.
+     */
+    private ResolvedScopes resolveScopes(Path root,
+                                         PyprojectModel model,
+                                         Path localRepo,
+                                         List<InstallScope> activeScopes,
+                                         boolean bypassRequested,
+                                         InstallProgressReporter progressReporter) {
+        Map<InstallScope, List<String>> resolved = new EnumMap<>(InstallScope.class);
+        Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> resolvedEditorArtifacts = new EnumMap<>(InstallScope.class);
+        Map<InstallScope, Future<MavenClasspathResolver.ResolvedScopeDetails>> futures = new EnumMap<>(InstallScope.class);
+        for (InstallScope installScope : activeScopes) {
+            progressReporter.startScope(installScope);
+        }
+        RuntimeException firstFailure = null;
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (InstallScope installScope : activeScopes) {
+                futures.put(installScope, executor.submit(() -> resolver.resolveScopeDetails(
+                    model,
+                    installScope,
+                    localRepo,
+                    offline,
+                    bypassRequested,
+                    progressListener(progressReporter, installScope),
+                    root
+                )));
+            }
+            for (InstallScope installScope : activeScopes) {
+                MavenClasspathResolver.ResolvedScopeDetails details;
+                try {
+                    details = futures.get(installScope).get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Dependency resolution was interrupted", e);
+                } catch (ExecutionException e) {
+                    progressReporter.failScope(installScope);
+                    firstFailure = withSuppressed(firstFailure, resolutionFailure(e));
+                    continue;
+                }
+                List<String> classpath = manifestClasspath(installScope, details.classpath());
+                progressReporter.finishScope(installScope, classpath.size());
+                resolved.put(installScope, classpath);
+                resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
+            }
+        }
+        if (firstFailure != null) {
+            throw firstFailure;
+        }
+        return new ResolvedScopes(resolved, resolvedEditorArtifacts);
+    }
+
+    private static RuntimeException resolutionFailure(ExecutionException e) {
+        return e.getCause() instanceof RuntimeException runtime
+            ? runtime
+            : new IllegalStateException("Dependency resolution failed", e.getCause());
+    }
+
+    private static RuntimeException withSuppressed(RuntimeException first, RuntimeException failure) {
+        if (first == null) {
+            return failure;
+        }
+        first.addSuppressed(failure);
+        return first;
+    }
+
+    private void writeResolvedState(Path root,
+                                    Path cacheDir,
+                                    PyprojectModel model,
+                                    ResolvedScopes resolved,
+                                    InstallProgressReporter progressReporter) throws IOException {
+        Map<InstallScope, List<String>> classpaths = resolved.classpaths();
+        AnnotationProcessorOptionDiscovery.refresh(cacheDir,
+            classpaths.getOrDefault(InstallScope.BUILD, List.of()).stream().map(Path::of).toList());
+        if (classpaths.containsKey(InstallScope.RUNTIME)) {
+            progressReporter.generatingApplicationSchema();
+            var schemaResult = editorSupport.ensureApplicationSchema(root, cacheDir, model.pyronaut().sources(),
+                classpaths.get(InstallScope.RUNTIME), AnnotationProcessorOptionDiscovery.readSchemaOptions(cacheDir));
+            if (schemaResult.status() == MicronautApplicationJsonSchemaBundler.Status.GENERATED) {
+                progressReporter.generatedApplicationSchema(schemaResult.mergedSchemas());
+            } else {
+                progressReporter.endTask("Generating application schema");
+            }
+        }
+        emitEditorSupportBestEffort(
+            progressReporter,
+            () -> pythonEditorSupport.ensureWrittenFromResolvedArtifacts(
+                root,
+                cacheDir,
+                model.pyronaut().ideStubs(),
+                resolved.editorArtifacts().getOrDefault(InstallScope.RUNTIME, List.of()),
+                resolved.editorArtifacts().getOrDefault(InstallScope.TEST, List.of())
+            )
+        );
+    }
+
+    private record ResolvedScopes(Map<InstallScope, List<String>> classpaths,
+                                  Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> editorArtifacts) {
     }
 
     private void installToolClasspaths(Path root, PyprojectModel model) throws IOException {

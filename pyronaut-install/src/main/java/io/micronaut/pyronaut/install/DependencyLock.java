@@ -264,20 +264,28 @@ final class DependencyLock {
             return;
         }
         if (mode == Mode.RECORD) {
-            if (origin instanceof RemoteRepository remote) {
-                String repositoryUrl = withTrailingSlash(remote.getUrl());
-                recorded.put(path, new Entry(coordinates(artifact), path, repositoryUrl, repositoryUrl + path, checksum));
-            } else {
-                // Found in the local repository without a recorded origin. The
-                // Pyronaut modules are seeded there from the SDK wheel and are
-                // not necessarily published anywhere, so no download URL is
-                // guessed: fetchers skip these entries and locked resolution
-                // takes them from the local repository, verifying the checksum.
-                String repository = PYRONAUT_GROUP.equals(artifact.getGroupId()) ? BUNDLED_REPOSITORY : LOCAL_REPOSITORY;
-                recorded.put(path, new Entry(coordinates(artifact), path, repository, "", checksum));
-            }
+            record(artifact, origin, path, checksum);
+        } else {
+            verify(artifact, path, file, checksum);
+        }
+    }
+
+    private void record(Artifact artifact, ArtifactRepository origin, String path, String checksum) {
+        if (origin instanceof RemoteRepository remote) {
+            String repositoryUrl = withTrailingSlash(remote.getUrl());
+            recorded.put(path, new Entry(coordinates(artifact), path, repositoryUrl, repositoryUrl + path, checksum));
             return;
         }
+        // Found in the local repository without a recorded origin. The
+        // Pyronaut modules are seeded there from the SDK wheel and are not
+        // necessarily published anywhere, so no download URL is guessed:
+        // fetchers skip these entries and locked resolution takes them from
+        // the local repository, verifying the checksum.
+        String repository = PYRONAUT_GROUP.equals(artifact.getGroupId()) ? BUNDLED_REPOSITORY : LOCAL_REPOSITORY;
+        recorded.put(path, new Entry(coordinates(artifact), path, repository, "", checksum));
+    }
+
+    private void verify(Artifact artifact, String path, Path file, String checksum) {
         Entry entry = locked.get(path);
         if (entry == null) {
             if (mode == Mode.LOCKED) {
