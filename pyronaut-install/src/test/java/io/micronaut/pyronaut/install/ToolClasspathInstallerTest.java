@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -89,8 +90,8 @@ final class ToolClasspathInstallerTest {
         installer.install(null, tempDir.resolve("repository"), true, true);
         assertEquals(correctedGeneration, Files.readSymbolicLink(current));
         try (var entries = Files.list(tempDir.resolve("cache/1.2.3"))) {
-            assertEquals(List.of(".install.lock", "current", firstGeneration.toString()),
-                entries.map(entry -> entry.getFileName().toString()).sorted().toList());
+            assertEquals(java.util.Set.of(".install.lock", "current", firstGeneration.toString()),
+                entries.map(entry -> entry.getFileName().toString()).collect(java.util.stream.Collectors.toSet()));
         }
     }
 
@@ -249,6 +250,18 @@ final class ToolClasspathInstallerTest {
 
         installer.install(null, localRepository, true, false);
         assertEquals(firstGeneration, Files.readSymbolicLink(current));
+    }
+
+    @Test
+    void contentHashSeparatesEntriesUnambiguously(@TempDir Path tempDir) throws Exception {
+        // With delimiter-only framing, one file holding "x\0b\0f" encoded exactly like files "a" = "x" and "b" = "".
+        Path single = Files.createDirectories(tempDir.resolve("single"));
+        Files.write(single.resolve("a"), new byte[]{'x', 0, 'b', 0, 'f'});
+        Path split = Files.createDirectories(tempDir.resolve("split"));
+        Files.write(split.resolve("a"), new byte[]{'x'});
+        Files.write(split.resolve("b"), new byte[0]);
+
+        assertNotEquals(ToolClasspathInstaller.contentHash(single), ToolClasspathInstaller.contentHash(split));
     }
 
     private static Path packagedTools(Path tempDir) throws Exception {

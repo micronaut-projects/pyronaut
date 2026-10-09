@@ -23,6 +23,7 @@ import org.eclipse.aether.artifact.DefaultArtifact;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
@@ -388,16 +389,14 @@ final class ToolClasspathInstaller {
     }
 
     /**
-     * Hashes the relative path, kind and bytes of every entry in a layout. Linked artifacts are hashed by the
+     * Hashes the kind, relative path and bytes of every entry in a layout. Linked artifacts are hashed by the
      * contents they resolve to, so the hash does not depend on where the Maven repository lives.
+     *
+     * <p>Each entry is one unambiguous record: a kind tag, the length-prefixed UTF-8 path and, for files, the
+     * fixed-width SHA-256 of the contents.
      */
     static String contentHash(Path root) throws IOException {
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
-        }
+        MessageDigest digest = sha256();
         List<Path> entries;
         try (var paths = Files.walk(root)) {
             entries = paths.filter(path -> !path.equals(root))
@@ -405,22 +404,35 @@ final class ToolClasspathInstaller {
                 .toList();
         }
         for (Path entry : entries) {
-            digest.update(relativeName(root, entry).getBytes(StandardCharsets.UTF_8));
-            digest.update((byte) 0);
-            if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
-                digest.update((byte) 'd');
-            } else {
-                digest.update((byte) (Files.isExecutable(entry) ? 'x' : 'f'));
-                try (InputStream input = Files.newInputStream(entry)) {
-                    byte[] buffer = new byte[8192];
-                    for (int read = input.read(buffer); read != -1; read = input.read(buffer)) {
-                        digest.update(buffer, 0, read);
-                    }
-                }
+            boolean directory = Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS);
+            digest.update((byte) (directory ? 'd' : Files.isExecutable(entry) ? 'x' : 'f'));
+            byte[] name = relativeName(root, entry).getBytes(StandardCharsets.UTF_8);
+            digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(name.length).array());
+            digest.update(name);
+            if (!directory) {
+                digest.update(fileHash(entry));
             }
-            digest.update((byte) 0);
         }
         return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static byte[] fileHash(Path file) throws IOException {
+        MessageDigest digest = sha256();
+        try (InputStream input = Files.newInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            for (int read = input.read(buffer); read != -1; read = input.read(buffer)) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        return digest.digest();
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
+        }
     }
 
     private static String relativeName(Path root, Path path) {
