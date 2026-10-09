@@ -4206,6 +4206,38 @@ See also <a href="#pyproject">Configuring pyproject.toml</a>, <a href="#mavenRep
 </div>
 </div>
 </div>
+<div class="sect1">
+<h2 id="_extend_java_classes_and_implement_java_interfaces">Extend Java classes and implement Java interfaces</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>A Python class defined at module level, or nested in another class, can extend a Java class or implement a Java interface from a library.
+The Pyronaut processor generates a Java class for it, so the class works the same way on the JVM, in the native <code>pyronaut</code> launchers, and in a native image.
+That includes classes in test sources and the application classes that pytest test modules import:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-python hljs" data-lang="python">from com.rabbitmq.client import Channel
+from jakarta.inject import Singleton
+from micronaut.rabbitmq.connect import ChannelInitializer
+
+
+@Singleton
+class ChannelPoolListener(ChannelInitializer):
+
+    def initialize(self, channel: Channel, name: str) -&gt; None:
+        channel.queueDeclare("inventory", True, False, False, None)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>A class defined inside a function, such as a pytest test function or a factory function, gets no generated Java class.
+GraalPy adapts it to the Java type at run time, which only works on the JVM: the native launchers and native images fail with <code>SystemError: Java Class can be extended only in JVM mode</code> when the class statement runs.
+Define the class at module level, or pass a function or lambda where Java expects a functional interface.</p>
+</div>
+<div class="paragraph">
+<p>See the <a href="https://docs.micronaut.io/latest/guide/#extendingJavaClasses">Extending Java Classes</a> section of the Micronaut guide for constructor rules and limitations.</p>
+</div>
+</div>
+</div>
 
 <h1 id="configuration"><a class="anchor" href="#configuration"></a>9 Configure a Pyronaut Project</h1>
 
