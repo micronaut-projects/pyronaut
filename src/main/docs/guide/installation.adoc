@@ -103,6 +103,23 @@ Setup installs native executables into `~/.pyronaut/bin`:
 TIP: See
 <<proxyConfig,Proxy Configuration>> for proxy setup.
 
+[[pyronautHome]]
+== Relocate Pyronaut state
+
+All global Pyronaut state (setup records, the SDK tool runtime, native launchers, JDKs, caches and
+`settings.toml`) lives in `~/.pyronaut`, where `~` is `$HOME`. Set `PYRONAUT_HOME` to keep it somewhere else:
+
+[source,bash]
+----
+export PYRONAUT_HOME=/opt/pyronaut-state
+pyronaut setup
+----
+
+The CLI passes the resolved directory to every Java tool and launcher it starts, so they use the same location even
+when the JVM's `user.home` (taken from the operating system's user database) differs from `$HOME`, for example in a
+build sandbox. The local Maven repository defaults to `$HOME/.m2/repository` on both sides; use `--local-repository`
+to change it.
+
 == Project installation
 
 After you create a project with `pyronaut create` or add a `pyproject.toml` as described in <<project,Create a Pyronaut Project>>, run:

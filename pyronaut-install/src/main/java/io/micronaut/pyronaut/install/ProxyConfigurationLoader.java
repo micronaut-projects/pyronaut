@@ -17,6 +17,7 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.json.tree.JsonNode;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
+import io.micronaut.pyronaut.config.model.PyronautHome;
 import io.micronaut.toml.Parser;
 import io.micronaut.toml.TomlStreamReadException;
 import org.w3c.dom.Document;
@@ -48,8 +49,8 @@ final class ProxyConfigurationLoader {
     ProxyConfigurationLoader() {
         this(
             System.getenv(),
-            Path.of(System.getProperty("user.home"), ".pyronaut", "settings.toml"),
-            Path.of(System.getProperty("user.home"), ".m2", "settings.xml")
+            PyronautHome.pyronautHome().resolve("settings.toml"),
+            PyronautHome.userHome().resolve(".m2").resolve("settings.xml")
         );
     }
 

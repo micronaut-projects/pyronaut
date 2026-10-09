@@ -51,7 +51,10 @@ _JAVA_VERSION_LINE = re.compile(r'^JAVA_VERSION="(\d+)', re.MULTILINE)
 
 
 def cache_root() -> Path:
-    return Path.home() / ".pyronaut" / "caches" / "aot"
+    # Imported here: in script mode this module has no package.
+    from .home import pyronaut_home
+
+    return pyronaut_home() / "caches" / "aot"
 
 
 @dataclass

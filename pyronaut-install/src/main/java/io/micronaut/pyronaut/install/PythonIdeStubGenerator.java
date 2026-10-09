@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.model.PyronautHome;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -208,7 +209,7 @@ final class PythonIdeStubGenerator {
     private static Path sharedCacheDirectory(String state) {
         String configured = System.getProperty(SHARED_CACHE_DIR_PROPERTY);
         Path root = configured == null || configured.isBlank()
-            ? Path.of(System.getProperty("user.home"), ".pyronaut", SHARED_CACHE_DIR_NAME)
+            ? PyronautHome.pyronautHome().resolve(SHARED_CACHE_DIR_NAME)
             : Path.of(configured);
         return root.resolve(state.substring(0, 2)).resolve(state).normalize();
     }

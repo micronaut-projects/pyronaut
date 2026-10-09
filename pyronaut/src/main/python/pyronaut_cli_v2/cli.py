@@ -35,6 +35,8 @@ from .progress import console as _progress_console
 from .progress import format_bytes as _format_bytes
 from .progress import progress_epoch_ms as _progress_epoch_ms
 from . import aot_cache as _aot_cache
+from .home import export_pyronaut_home as _export_pyronaut_home
+from .home import pyronaut_home as _pyronaut_home
 from . import doctor as _doctor
 
 SUCCESS = 0
@@ -272,6 +274,9 @@ class _ProjectLayout(NamedTuple):
 
 
 def main() -> None:
+    # Java tools take user.home from the passwd entry rather than $HOME, so
+    # the resolved home is handed to every child process explicitly.
+    _export_pyronaut_home()
     code = run(sys.argv[1:])
     raise SystemExit(code)
 
@@ -6611,11 +6616,11 @@ def _ensure_graalvm_java_home(
 
 
 def _graalvm_jdks_root() -> Path:
-    return Path.home() / ".pyronaut" / "sdks"
+    return _pyronaut_home() / "sdks"
 
 
 def _legacy_graalvm_jdks_root() -> Path:
-    return Path.home() / ".pyronaut" / "jdks"
+    return _pyronaut_home() / "jdks"
 
 
 def _find_compatible_cached_jdk(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
@@ -6816,7 +6821,7 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
     if proxy:
         return _normalize_proxy_url(proxy), no_proxy
 
-    settings_path = Path.home() / ".pyronaut" / "settings.toml"
+    settings_path = _pyronaut_home() / "settings.toml"
     try:
         import tomllib
 
@@ -6892,7 +6897,7 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
 
 
 def _read_pyronaut_user_settings() -> dict[str, object]:
-    settings_path = Path.home() / ".pyronaut" / "settings.toml"
+    settings_path = _pyronaut_home() / "settings.toml"
     if not settings_path.is_file():
         return {}
     try:
@@ -7135,7 +7140,7 @@ def _native_image_cache_path(
     os_segment: str,
     arch: str,
 ) -> Path:
-    return Path.home() / ".pyronaut" / "bin" / version / f"{os_segment}-{arch}" / image_name
+    return _pyronaut_home() / "bin" / version / f"{os_segment}-{arch}" / image_name
 
 
 @contextlib.contextmanager
@@ -8079,7 +8084,7 @@ def _ensure_micronaut_launch(version: str, *, platform_name: str) -> Path:
             candidates.append(current / "bin" / executable_name)
     except OSError:
         pass
-    cache_root = Path.home() / ".pyronaut" / "sdks" / "micronaut"
+    cache_root = _pyronaut_home() / "sdks" / "micronaut"
     candidates.append(cache_root / version / "bin" / executable_name)
     for candidate in candidates:
         if _valid_micronaut_launch(candidate, version):
@@ -8448,7 +8453,7 @@ def _resolved_tool_cache_root() -> Path | None:
     if version is None:
         return None
     safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version)
-    cache_root = Path.home() / ".pyronaut" / "tools" / safe_version / "current"
+    cache_root = _pyronaut_home() / "tools" / safe_version / "current"
     return cache_root if cache_root.is_dir() else None
 
 
@@ -9179,7 +9184,7 @@ def _setup_platform() -> str:
 
 def _setup_manifest_path() -> Path:
     version = re.sub(r"[^A-Za-z0-9._-]", "_", _installed_pyronaut_version())
-    return Path.home() / ".pyronaut" / "setup" / version / _setup_platform() / "setup.json"
+    return _pyronaut_home() / "setup" / version / _setup_platform() / "setup.json"
 
 
 def _packaged_tool_descriptor_hash() -> str:
@@ -9508,7 +9513,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
                 packaged_tools = Path(__file__).resolve().parent / "tools"
                 env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
-                env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
+                env["PYRONAUT_TOOLS_CACHE_DIR"] = str(_pyronaut_home() / "tools")
                 with progress.step("Resolving SDK dependencies", done="SDK dependencies resolved"):
                     with progress.suspend():
                         install_code = runner(command_line, env)
@@ -9815,7 +9820,7 @@ def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
         # wheel changes: the new version has no state of its own yet, and
         # would otherwise fall back to ~/.m2/repository.
         local_repository = _setup_local_repository(options)
-        update_root = Path.home() / ".pyronaut" / "update"
+        update_root = _pyronaut_home() / "update"
         update_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".update-", dir=update_root) as temp_dir:
             assert release.wheel_name is not None and release.wheel_url is not None
@@ -9904,7 +9909,7 @@ def _remove_older_sdk_versions(keep: _SdkVersion, local_repository: Path) -> tup
         if isinstance(configured, dict) and isinstance(configured.get("version"), str)
         else frozenset()
     )
-    pyronaut_home = Path.home() / ".pyronaut"
+    pyronaut_home = _pyronaut_home()
     candidates = _older_sdk_version_dirs(pyronaut_home / "bin", keep, pinned_images)
     for parent in (pyronaut_home / "tools", pyronaut_home / "setup"):
         candidates.extend(_older_sdk_version_dirs(parent, keep))
@@ -11731,7 +11736,7 @@ def _graalpy_release_tag(version_line: str | None, expected: str | None) -> str 
 
 
 def _graalpy_compatibility_cache(release: str) -> Path:
-    return Path.home() / ".pyronaut" / "graalpy-compatibility" / f"python-module-testing-{release}.csv"
+    return _pyronaut_home() / "graalpy-compatibility" / f"python-module-testing-{release}.csv"
 
 
 def _load_graalpy_compatibility(release: str, *, offline: bool) -> tuple[dict[str, tuple[str, int, float]] | None, str]:
