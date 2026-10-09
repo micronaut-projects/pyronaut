@@ -100,6 +100,12 @@ final class ToolClasspathInstaller {
                  FileLock ignored = channel.lock()) {
                 Path current = versionRoot.resolve("current");
                 if (!refresh && completeLayout(current, descriptors, sdkVersion, descriptorHash, localRepository)) {
+                    if (DependencyLock.current().requiresResolution()) {
+                        // Recording or enforcing a dependency lock has to observe
+                        // every artifact, also when the layout is already complete.
+                        resolver.resolveToolArtifacts(model == null ? defaultModel() : model, mavenArtifacts(descriptors),
+                            localRepository, offline, false, progressListener);
+                    }
                     return current;
                 }
                 Path layout = versionRoot.resolve(descriptorHash + "-" + UUID.randomUUID());
@@ -120,15 +126,7 @@ final class ToolClasspathInstaller {
                              boolean offline,
                              boolean refresh,
                              DependencyProgressListener progressListener) throws IOException {
-        Map<ArtifactKey, Artifact> requested = new LinkedHashMap<>();
-        for (ToolDescriptor descriptor : descriptors) {
-            for (ToolEntry entry : descriptor.entries()) {
-                if (entry.maven()) {
-                    requested.putIfAbsent(entry.key(), entry.artifact());
-                }
-            }
-        }
-        List<Artifact> artifacts = new ArrayList<>(requested.values());
+        List<Artifact> artifacts = mavenArtifacts(descriptors);
         List<Path> resolved = resolver.resolveToolArtifacts(model, artifacts, localRepository, offline, refresh, progressListener);
         if (resolved.size() != artifacts.size()) {
             throw new PyprojectModelException("Incomplete Pyronaut tool runtime resolution");
@@ -189,6 +187,18 @@ final class ToolClasspathInstaller {
                 deleteDirectory(temporary);
             }
         }
+    }
+
+    private static List<Artifact> mavenArtifacts(List<ToolDescriptor> descriptors) {
+        Map<ArtifactKey, Artifact> requested = new LinkedHashMap<>();
+        for (ToolDescriptor descriptor : descriptors) {
+            for (ToolEntry entry : descriptor.entries()) {
+                if (entry.maven()) {
+                    requested.putIfAbsent(entry.key(), entry.artifact());
+                }
+            }
+        }
+        return new ArrayList<>(requested.values());
     }
 
     private boolean completeLayout(Path layout,
