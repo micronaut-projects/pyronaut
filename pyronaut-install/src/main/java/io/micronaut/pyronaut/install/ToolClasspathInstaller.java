@@ -144,42 +144,7 @@ final class ToolClasspathInstaller {
 
         Path temporary = Files.createTempDirectory(versionRoot, "." + descriptorHash + "-");
         try {
-            Path temporaryTools = temporary.resolve("tools");
-            Path sharedLib = temporaryTools.resolve("shared/lib");
-            Files.createDirectories(sharedLib);
-            Map<String, Path> sourcesByFileName = new LinkedHashMap<>();
-            Map<String, Path> controlPanelSourcesByFileName = new LinkedHashMap<>();
-            for (ToolDescriptor descriptor : descriptors) {
-                Path sourceTool = descriptor.file().getParent().getParent();
-                copyDirectory(sourceTool.resolve("bin"), temporaryTools.resolve(descriptor.command()).resolve("bin"));
-                for (ToolEntry entry : descriptor.entries()) {
-                    Path source = entry.maven()
-                        ? resolvedByKey.get(entry.key())
-                        : packagedTools.resolve("shared/lib").resolve(entry.fileName());
-                    if (source == null || !Files.isRegularFile(source)) {
-                        throw new IOException("Missing Pyronaut tool artifact " + entry.fileName());
-                    }
-                    Map<String, Path> destinations = entry.controlPanel() ? controlPanelSourcesByFileName : sourcesByFileName;
-                    Path existing = destinations.get(entry.fileName());
-                    if (existing != null && Files.mismatch(existing, source) != -1L) {
-                        throw new IOException("Conflicting Pyronaut tool artifacts share filename " + entry.fileName());
-                    }
-                    // A filename can be referenced by both a Maven descriptor and a
-                    // bundled descriptor. The bundled wheel artifact must win so the
-                    // resulting cache remains valid for every descriptor, regardless
-                    // of descriptor sort order.
-                    if (existing == null || !entry.maven()) {
-                        destinations.put(entry.fileName(), source);
-                    }
-                }
-            }
-            for (Map.Entry<String, Path> entry : sourcesByFileName.entrySet()) {
-                linkOrCopy(entry.getValue(), sharedLib.resolve(entry.getKey()));
-            }
-            Path controlPanelLib = temporaryTools.resolve("pyronaut-dev/lib/control-panel");
-            for (Map.Entry<String, Path> entry : controlPanelSourcesByFileName.entrySet()) {
-                linkOrCopy(entry.getValue(), controlPanelLib.resolve(entry.getKey()));
-            }
+            populate(temporary.resolve("tools"), descriptors, resolvedByKey);
             // Named before the metadata is written: it records the local repository path, which must not
             // change the name when only the location of identical artifacts differs.
             Path layout = versionRoot.resolve(contentHash(temporary));
@@ -188,26 +153,70 @@ final class ToolClasspathInstaller {
             metadata.setProperty("sdk.version", sdkVersion);
             metadata.setProperty("local.repository", localRepository.toAbsolutePath().normalize().toString());
             ReproducibleProperties.write(metadata, temporary.resolve(RUNTIME_PROPERTIES_FILE), null);
-            if (Files.isDirectory(layout, LinkOption.NOFOLLOW_LINKS)) {
-                if (completeLayout(layout, descriptors, sdkVersion, descriptorHash, localRepository)) {
-                    return layout;
-                }
-                // A damaged layout with the same name is moved aside first, as directories cannot be replaced atomically.
-                Path damaged = Files.createTempDirectory(versionRoot, "." + layout.getFileName() + "-damaged-");
-                moveAtomically(layout, damaged.resolve("layout"));
-                try {
-                    moveAtomically(temporary, layout);
-                } finally {
-                    deleteDirectory(damaged);
-                }
-            } else {
-                moveAtomically(temporary, layout);
+            if (!Files.isDirectory(layout, LinkOption.NOFOLLOW_LINKS)
+                || !completeLayout(layout, descriptors, sdkVersion, descriptorHash, localRepository)) {
+                publish(temporary, layout);
             }
             return layout;
         } finally {
             if (Files.exists(temporary)) {
                 deleteDirectory(temporary);
             }
+        }
+    }
+
+    private void populate(Path tools,
+                          List<ToolDescriptor> descriptors,
+                          Map<ArtifactKey, Path> resolvedByKey) throws IOException {
+        Path sharedLib = tools.resolve("shared/lib");
+        Files.createDirectories(sharedLib);
+        Map<String, Path> sourcesByFileName = new LinkedHashMap<>();
+        Map<String, Path> controlPanelSourcesByFileName = new LinkedHashMap<>();
+        for (ToolDescriptor descriptor : descriptors) {
+            Path sourceTool = descriptor.file().getParent().getParent();
+            copyDirectory(sourceTool.resolve("bin"), tools.resolve(descriptor.command()).resolve("bin"));
+            for (ToolEntry entry : descriptor.entries()) {
+                Path source = entry.maven()
+                    ? resolvedByKey.get(entry.key())
+                    : packagedTools.resolve("shared/lib").resolve(entry.fileName());
+                if (source == null || !Files.isRegularFile(source)) {
+                    throw new IOException("Missing Pyronaut tool artifact " + entry.fileName());
+                }
+                Map<String, Path> destinations = entry.controlPanel() ? controlPanelSourcesByFileName : sourcesByFileName;
+                Path existing = destinations.get(entry.fileName());
+                if (existing != null && Files.mismatch(existing, source) != -1L) {
+                    throw new IOException("Conflicting Pyronaut tool artifacts share filename " + entry.fileName());
+                }
+                // A filename can be referenced by both a Maven descriptor and a
+                // bundled descriptor. The bundled wheel artifact must win so the
+                // resulting cache remains valid for every descriptor, regardless
+                // of descriptor sort order.
+                if (existing == null || !entry.maven()) {
+                    destinations.put(entry.fileName(), source);
+                }
+            }
+        }
+        for (Map.Entry<String, Path> entry : sourcesByFileName.entrySet()) {
+            linkOrCopy(entry.getValue(), sharedLib.resolve(entry.getKey()));
+        }
+        Path controlPanelLib = tools.resolve("pyronaut-dev/lib/control-panel");
+        for (Map.Entry<String, Path> entry : controlPanelSourcesByFileName.entrySet()) {
+            linkOrCopy(entry.getValue(), controlPanelLib.resolve(entry.getKey()));
+        }
+    }
+
+    private static void publish(Path temporary, Path layout) throws IOException {
+        if (!Files.exists(layout, LinkOption.NOFOLLOW_LINKS)) {
+            moveAtomically(temporary, layout);
+            return;
+        }
+        // A damaged layout with the same name is moved aside first, as directories cannot be replaced atomically.
+        Path damaged = Files.createTempDirectory(layout.getParent(), "." + layout.getFileName() + "-damaged-");
+        moveAtomically(layout, damaged.resolve("layout"));
+        try {
+            moveAtomically(temporary, layout);
+        } finally {
+            deleteDirectory(damaged);
         }
     }
 
