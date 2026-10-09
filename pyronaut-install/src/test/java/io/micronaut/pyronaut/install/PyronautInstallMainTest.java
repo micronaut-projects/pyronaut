@@ -3430,6 +3430,101 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void sourceParameterNamesBelongToTheOverloadWithMatchingTypes() throws Exception {
+        // Regression for #344: nested, generic and varargs parameter types never matched the source
+        // signature, so names were borrowed from whichever same-arity overload a hash map yielded first.
+        Path repository = tempDir.resolve("repo-python-ide-overload-names");
+        writeCompiledArtifactWithoutParameterMetadata(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.context.env.PropertySource", """
+                package io.micronaut.context.env;
+
+                import java.util.Map;
+
+                public class PropertySource {
+                    public enum Origin { FILE, ENV }
+
+                    public enum Convention { JAVA, ENVIRONMENT }
+
+                    public static PropertySource of(String name, Map<String, Object> map, Convention convention, Origin origin) {
+                        return new PropertySource();
+                    }
+
+                    public static PropertySource of(String name, Map<String, Object> map, Origin origin, int priority) {
+                        return new PropertySource();
+                    }
+
+                    public static <T extends CharSequence> PropertySource named(T label, Origin origin) {
+                        return new PropertySource();
+                    }
+
+                    public static PropertySource named(String name, int priority) {
+                        return new PropertySource();
+                    }
+
+                    public static PropertySource merge(Origin origin, String... names) {
+                        return new PropertySource();
+                    }
+
+                    public static PropertySource merge(Convention convention, Origin... origins) {
+                        return new PropertySource();
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-overload-names");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String stub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/context/env/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(stub.contains(
+            "def of(name: str, map: dict[str, Object], convention: PropertySource.Convention, origin: PropertySource.Origin) -> PropertySource: ..."),
+            stub);
+        assertTrue(stub.contains(
+            "def of(name: str, map: dict[str, Object], origin: PropertySource.Origin, priority: int) -> PropertySource: ..."),
+            stub);
+        assertTrue(stub.contains("def named(label: "), stub);
+        assertTrue(stub.contains("def named(name: str, priority: int) -> PropertySource: ..."), stub);
+        assertTrue(stub.contains("def merge(origin: PropertySource.Origin, names: "), stub);
+        assertTrue(stub.contains("def merge(convention: PropertySource.Convention, origins: "), stub);
+        assertFalse(stub.contains("arg0"), stub);
+    }
+
+    @Test
+    void ideStubGenerationCanBeDisabledWithoutEditingPyproject() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-disabled");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+        Path project = tempDir.resolve("project-python-ide-disabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        String previous = System.getProperty(PythonEditorSupport.IDE_STUBS_ENABLED_PROPERTY);
+        System.setProperty(PythonEditorSupport.IDE_STUBS_ENABLED_PROPERTY, "false");
+        try {
+            PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+            command.projectDir = project;
+
+            assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        } finally {
+            restoreSystemProperty(PythonEditorSupport.IDE_STUBS_ENABLED_PROPERTY, previous);
+        }
+
+        assertFalse(Files.exists(project.resolve("__pyronaut__/ide-stubs")));
+    }
+
+    @Test
     void overloadedStaticMethodsRetainVisibleImplementationDocstrings() throws Exception {
         Path repository = tempDir.resolve("repo-python-ide-overloaded-static");
         writeCompiledArtifact(repository, "com.example", "runtime-dep", "1.0.0", Map.of(

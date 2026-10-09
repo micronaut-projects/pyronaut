@@ -134,3 +134,29 @@ Micronaut dependencies managed by the Micronaut platform, Micronaut core, or Pyr
 
 For dependency scopes and install options, see <<dependencies,Installing Python and Java Dependencies>>.
 See also <<pyproject,Configuring pyproject.toml>>, <<mavenRepositories,Configuring Maven repositories>>, and <<directSourceDeclarations,Declaring direct source dependencies>>.
+
+== Extend Java classes and implement Java interfaces
+
+A Python class defined at module level, or nested in another class, can extend a Java class or implement a Java interface from a library.
+The Pyronaut processor generates a Java class for it, so the class works the same way on the JVM, in the native `pyronaut` launchers, and in a native image.
+That includes classes in test sources and the application classes that pytest test modules import:
+
+[source,python]
+----
+from com.rabbitmq.client import Channel
+from jakarta.inject import Singleton
+from micronaut.rabbitmq.connect import ChannelInitializer
+
+
+@Singleton
+class ChannelPoolListener(ChannelInitializer):
+
+    def initialize(self, channel: Channel, name: str) -> None:
+        channel.queueDeclare("inventory", True, False, False, None)
+----
+
+A class defined inside a function, such as a pytest test function or a factory function, gets no generated Java class.
+GraalPy adapts it to the Java type at run time, which only works on the JVM: the native launchers and native images fail with `SystemError: Java Class can be extended only in JVM mode` when the class statement runs.
+Define the class at module level, or pass a function or lambda where Java expects a functional interface.
+
+See the https://docs.micronaut.io/latest/guide/#extendingJavaClasses[Extending Java Classes] section of the Micronaut guide for constructor rules and limitations.
