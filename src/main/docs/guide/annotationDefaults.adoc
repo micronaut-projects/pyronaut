@@ -1,0 +1,113 @@
+`Annotated[...]` applies an annotation to a parameter or attribute without changing its type, but it is long to write
+and buries the type. Pyronaut accepts two shorter forms that type checkers understand just as well.
+
+== Annotations as default values
+
+Call the annotation as the default value of the parameter it applies to. The parameter keeps its declared type, and
+the default only marks it, so a route still binds the value from the request:
+
+[source,python]
+----
+from pyronaut import http, inject, validation
+
+
+@http.Controller("/books")
+class BookController:
+    @http.Get("/search")
+    def search(self,
+               q: str = validation.NotBlank() & validation.Size(max=50),
+               trace: str | None = http.Header("X-Trace")) -> str:
+        return f"{q}:{trace}"
+----
+
+This is equivalent to:
+
+[source,python]
+----
+    @http.Get("/search")
+    def search(self,
+               q: Annotated[str, validation.NotBlank, validation.Size(max=50)],
+               trace: Annotated[str | None, http.Header("X-Trace")]) -> str:
+        return f"{q}:{trace}"
+----
+
+Join several annotations with `&`. Call each annotation, even one without members: `http.Header()`, not `http.Header`.
+Pyronaut reports an annotation used as a default value without a call as a compilation error, because Python would
+pass the annotation itself to a direct caller.
+
+A marked parameter is required, like an unannotated one: Micronaut answers a request that lacks the `X-Trace` header
+with `400 Bad Request`. A Python caller that calls the method directly and leaves the parameter out receives the
+annotation as the value, as in FastAPI, so pass every marked parameter when calling such a method from Python.
+
+=== Injecting beans into route parameters
+
+`inject.Inject()` marks a parameter of a route or a module function as a bean to inject rather than a value from the
+request:
+
+[source,python]
+----
+from pyronaut import http, inject
+
+
+@http.Get("/status")
+def status(ctx: inject.ApplicationContext = inject.Inject()) -> str:
+    return str(ctx.isRunning())
+----
+
+Pyronaut injects the bean when it creates the controller and passes it on each call, so the route signature Micronaut
+sees has no `ctx` parameter. This works for module functions and for the methods of a controller class, including a
+`@ContextPooled` one, whose instances in every pooled context receive the same bean. Pyronaut reports an injected
+parameter of a static or class method, or of a function that declares `*args`, as a compilation error.
+
+=== Module attributes
+
+A module attribute takes an annotation as its value in the same way, which injects the attribute of a module that
+declares routes:
+
+[source,python]
+----
+from pyronaut import http, inject
+
+server: inject.ApplicationContext = inject.Inject()
+----
+
+Class attributes keep `Annotated[...]`: a dataclass treats a default value as the field's default.
+
+== Type aliases
+
+Name an `Annotated` type once and reuse it. Pyronaut reads the annotations of an alias declared in the same module with
+the `type` statement, with `TypeAlias`, or as a plain assignment:
+
+[source,python]
+----
+from dataclasses import dataclass
+from typing import Annotated, TypeAlias
+
+from pyronaut import serde, validation
+
+type PersonName = Annotated[str, validation.NotBlank(), validation.Size(min=1, max=30)]
+Nickname: TypeAlias = Annotated[str, validation.Size(max=10)]
+
+
+@serde.Serdeable
+@dataclass
+class Person:
+    name: PersonName
+    nickname: Nickname | None = None
+----
+
+An alias is a declaration, not a module attribute: Pyronaut reads it where the module is compiled, so rebinding the name
+later in the module, or using it as a value, does not change the annotations it applies.
+
+== Type checking
+
+The annotation stubs that `pyronaut install` writes (see <<ideSetup,IDE Setup for VS Code and PyCharm>>) type an
+annotation call by the type expected of it. As a decorator, `@http.Get("/x")` returns the function it decorates with its
+signature intact. As the default of `trace: str | None`, `http.Header("X-Trace")` takes the type `str | None`, so
+Pylance and Pyright accept the marker in their standard and strict modes, and completion and hover on `trace` show a
+`str | None`. Wrong arguments to the method are still reported:
+
+[source,python]
+----
+BookController().search(42)  # error: "Literal[42]" is not assignable to "str"
+----

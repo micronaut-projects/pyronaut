@@ -75,7 +75,7 @@ final class PythonIdeStubGenerator {
     static final String STUBS_DIR_NAME = "ide-stubs";
     static final String STATE_FILE_NAME = ".python-ide-stubs.state";
     static final String GENERATED_MARKER_FILE_NAME = ".generated";
-    private static final String GENERATOR_VERSION = "12";
+    private static final String GENERATOR_VERSION = "13";
     private static final String SHARED_CACHE_DIR_PROPERTY = "pyronaut.ide-stubs.cache-dir";
     private static final String SHARED_CACHE_DIR_NAME = "ide-stubs";
     private static final String VFS_PYTHON_SOURCE_PREFIX = "META-INF/GRAALPY-VFS/micronaut-application/src/";
@@ -87,6 +87,26 @@ final class PythonIdeStubGenerator {
     private static final Set<String> EXCLUDED_PACKAGE_SEGMENTS = Set.of(".internal.", ".impl.");
     private static final String INTERNAL_ANNOTATION_NAME = "io.micronaut.core.annotation.Internal";
     private static final Pattern TRIPLE_QUOTES = Pattern.compile("\"\"\"");
+    /**
+     * The return annotation of an annotation called with its members ({@code Get("/x")}, {@code Header()}): the
+     * {@code _M} type variable of {@link #ANNOTATION_MARKER_DECLARATIONS}, which type checkers solve from the type the
+     * call is expected to have. As the default of a parameter or module attribute it marks
+     * ({@code content_type: str = Header()}) the call takes that type, and as a decorator, where nothing is expected,
+     * it takes the default of the variable, an annotation that returns what it decorates with its type intact.
+     */
+    private static final String ANNOTATION_CALL_RETURN = " -> _M";
+    /**
+     * Declares the {@code _M} return type variable of an annotation call and its default, the protocol of an applied
+     * annotation, which joins another with {@code &} ({@code NotBlank() & Size(max=50)}).
+     */
+    private static final String ANNOTATION_MARKER_DECLARATIONS = """
+        class _Annotation(Protocol):
+            \"""An annotation, applied with @ or as the default value of the parameter or attribute it marks.\"""
+            def __call__(self, target: _T, /) -> _T: ...
+            def __and__(self, other: _Annotation, /) -> _M: ...
+
+        _M = _TypeVarWithDefault("_M", default=_Annotation)
+        """;
     private static final Set<String> PYTHON_KEYWORDS = Set.of(
         "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
         "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal",
@@ -683,7 +703,7 @@ final class PythonIdeStubGenerator {
                 if (!invocation.isBlank()) {
                     annotationStub.append(", ").append(invocation);
                 }
-                annotationStub.append(") -> Callable[[_T], _T]: ...\n");
+                annotationStub.append(")").append(ANNOTATION_CALL_RETURN).append(": ...\n");
                 annotationStub.append("    @overload\n    def __call__(self, target: _T, /) -> _T: ...\n");
                 annotationStub.append("    def __call__(self, *args: Any, **kwargs: Any) -> Callable[[_T], _T] | _T: ...\n");
                 annotationStub.append("\n").append(simpleName).append(": ").append(holder).append("\n");
@@ -691,7 +711,7 @@ final class PythonIdeStubGenerator {
                     Set.copyOf(nestedImports), Set.copyOf(nestedTypeVars), true, nestedEnums);
             }
             StringBuilder annotationStub = new StringBuilder("@overload\ndef ").append(simpleName)
-                .append("(").append(receiver).append(separator).append(invocation).append(") -> Callable[[_T], _T]");
+                .append("(").append(receiver).append(separator).append(invocation).append(")").append(ANNOTATION_CALL_RETURN);
             appendCallableBody(annotationStub, annotationDocumentation, "");
             annotationStub.append("@overload\ndef ").append(simpleName)
                 .append("(").append(asMember ? "self, " : "").append("target: _T, /) -> _T");
@@ -1344,7 +1364,7 @@ final class PythonIdeStubGenerator {
             if (!invocation.isBlank()) {
                 builder.append(invocation);
             }
-            builder.append(") -> Callable[[_T], _T]: ...\n");
+            builder.append(")").append(ANNOTATION_CALL_RETURN).append(": ...\n");
         }
         builder.append("@overload\n");
         builder.append("def ").append(type.getSimpleName()).append("(target: _T, /) -> _T: ...\n");
@@ -2172,6 +2192,9 @@ final class PythonIdeStubGenerator {
         StringBuilder builder = new StringBuilder();
         builder.append("from __future__ import annotations\n\n");
         builder.append("from typing import Any, Callable, ClassVar, Generic, Optional, Protocol, TypeVar, overload\n");
+        if (hasAnnotations) {
+            builder.append("from typing_extensions import TypeVar as _TypeVarWithDefault\n");
+        }
         if (hasEnums) {
             builder.append("from enum import Enum\n");
         }
@@ -2193,6 +2216,9 @@ final class PythonIdeStubGenerator {
                 builder.append(typeVarBinding.declaration()).append("\n");
             }
             builder.append("\n");
+        }
+        if (hasAnnotations) {
+            builder.append(ANNOTATION_MARKER_DECLARATIONS).append("\n");
         }
         for (TypeDescriptor descriptor : symbols.values()) {
             builder.append(descriptor.renderedStub()).append("\n");

@@ -60,6 +60,10 @@ class PythonSerdeSerializationTest {
             HttpResponse<String> created = client.exchange(HttpRequest.POST("/people", "{\"name\":\"Wilma\",\"person_age\":40}"), String.class);
             assertEquals(HttpStatus.CREATED, created.getStatus());
             assertEquals("{\"name\":\"Wilma\",\"person_age\":40}", created.body());
+            // trace: str | None = http.Header("X-Trace") binds the header
+            assertEquals("Fred:abc", client.retrieve(HttpRequest.GET("/people/Fred/trace").header("X-Trace", "abc")));
+            // ctx: inject.ApplicationContext = inject.Inject() receives the bean
+            assertEquals("True", client.retrieve("/people/running"));
         }
     }
 
