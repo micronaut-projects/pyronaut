@@ -269,6 +269,137 @@ class FatJarPackagerTest {
     }
 
     @Test
+    void enumeratesClasspathDirectoriesAsScannableJarRoots() throws Exception {
+        Path application = temporaryDirectory.resolve("scan-application");
+        compile(application, List.of(), source("app/Main.java", """
+            package app;
+            import java.net.JarURLConnection;
+            import java.net.URL;
+            import java.nio.charset.StandardCharsets;
+            import java.util.*;
+            import java.util.jar.*;
+            public final class Main {
+                public static void main(String[] args) throws Exception {
+                    ClassLoader loader = Thread.currentThread().getContextClassLoader();
+                    for (URL url : Collections.list(loader.getResources("db/migration"))) {
+                        JarURLConnection connection = (JarURLConnection) url.openConnection();
+                        connection.setUseCaches(false);
+                        System.out.println("entry=" + connection.getEntryName() + " directory=" + connection.getJarEntry().isDirectory());
+                        List<String> names = new ArrayList<>();
+                        try (JarFile jar = connection.getJarFile()) {
+                            for (JarEntry entry : Collections.list(jar.entries())) {
+                                if (entry.getName().startsWith("db/migration/") && !entry.isDirectory()) {
+                                    names.add(entry.getName());
+                                }
+                            }
+                            Collections.sort(names);
+                            System.out.println("names=" + names);
+                            for (String name : names) {
+                                try (var input = jar.getInputStream(jar.getJarEntry(name))) {
+                                    System.out.println("view " + name + "=" + new String(input.readAllBytes(), StandardCharsets.UTF_8));
+                                }
+                            }
+                        }
+                        String first = names.get(0).substring("db/migration/".length());
+                        try (var input = new URL(url, first).openStream()) {
+                            System.out.println("relative " + first + "=" + new String(input.readAllBytes(), StandardCharsets.UTF_8));
+                        }
+                    }
+                    System.out.println("trailing=" + Collections.list(loader.getResources("db/migration/")).size());
+                    System.out.println("single=" + (loader.getResource("db/migration") != null));
+                    System.out.println("missing=" + loader.getResource("db/absent"));
+                    System.out.println("file=" + loader.getResource("db/migration/V1__first.sql"));
+                    // Flyway pairs scanned names with getResources() results by URL path containment.
+                    System.out.println("contained=" + loader.getResource("db/migration/V1__first.sql").getPath()
+                        .contains(loader.getResource("db/migration").getPath()));
+                    try (var input = new URL(loader.getResource("db/migration/nested"), "/db/migration/V1__first.sql").openStream()) {
+                        System.out.println("root-relative=" + new String(input.readAllBytes(), StandardCharsets.UTF_8));
+                    }
+                }
+            }
+            """));
+        Path firstResources = temporaryDirectory.resolve("scan-resources-1");
+        write(firstResources.resolve("db/migration/V1__first.sql"), "first");
+        write(firstResources.resolve("db/migration/nested/V2__nested.sql"), "nested");
+        Path secondResources = temporaryDirectory.resolve("scan-resources-2");
+        write(secondResources.resolve("db/migration/V3__second.sql"), "second");
+        Path dependency = temporaryDirectory.resolve("scan-dependency.jar");
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(dependency))) {
+            addEntry(output, "db/migration/V4__dependency.sql", "dependency");
+        }
+
+        Path output = temporaryDirectory.resolve("scan.jar");
+        new FatJarPackager().packageApplication(
+            FatJarRequest.builder(output, application, "app.Main")
+                .applicationName("scan-app")
+                .applicationVersion("1.0")
+                .resourceDirectory(firstResources)
+                .resourceDirectory(secondResources)
+                .classpath(List.of(dependency))
+                .build()
+        );
+        String processOutput = runJar(output);
+
+        assertTrue(processOutput.contains("entry=db/migration/ directory=true"), processOutput);
+        assertTrue(processOutput.contains("names=[db/migration/V1__first.sql, db/migration/nested/V2__nested.sql]"), processOutput);
+        assertTrue(processOutput.contains("view db/migration/nested/V2__nested.sql=nested"), processOutput);
+        assertTrue(processOutput.contains("relative V1__first.sql=first"), processOutput);
+        assertTrue(processOutput.contains("names=[db/migration/V3__second.sql]"), processOutput);
+        assertTrue(processOutput.contains("names=[db/migration/V4__dependency.sql]"), processOutput);
+        assertTrue(processOutput.contains("relative V4__dependency.sql=dependency"), processOutput);
+        assertTrue(processOutput.contains("trailing=3"), processOutput);
+        assertTrue(processOutput.contains("single=true"), processOutput);
+        assertTrue(processOutput.contains("missing=null"), processOutput);
+        assertTrue(processOutput.contains("contained=true"), processOutput);
+        assertTrue(processOutput.contains("root-relative=first"), processOutput);
+        // Individual resources keep their plain JDK jar: URLs.
+        assertTrue(processOutput.contains("file=jar:file:") && processOutput.contains("!/PYRONAUT-INF/app/resources/0000/db/migration/V1__first.sql"), processOutput);
+    }
+
+    @Test
+    void runsFlywayClasspathMigrationsFromTheJar() throws Exception {
+        List<Path> flywayClasspath = Arrays.stream(System.getProperty("pyronaut.test.flyway.classpath").split(System.getProperty("path.separator")))
+            .map(Path::of)
+            .toList();
+        Path application = temporaryDirectory.resolve("flyway-application");
+        compile(application, flywayClasspath, source("app/Main.java", """
+            package app;
+            import org.flywaydb.core.Flyway;
+            import java.sql.*;
+            public final class Main {
+                public static void main(String[] args) throws Exception {
+                    String url = "jdbc:h2:mem:pyronaut;DB_CLOSE_DELAY=-1";
+                    var result = Flyway.configure().dataSource(url, "sa", "").load().migrate();
+                    System.out.println("executed=" + result.migrationsExecuted);
+                    try (Connection connection = DriverManager.getConnection(url, "sa", "");
+                         ResultSet rows = connection.createStatement().executeQuery("select name from caches order by name")) {
+                        while (rows.next()) {
+                            System.out.println("row=" + rows.getString(1));
+                        }
+                    }
+                }
+            }
+            """));
+        Path resources = temporaryDirectory.resolve("flyway-resources");
+        write(resources.resolve("db/migration/V1__caches.sql"), "create table caches (name varchar(64) primary key);");
+        write(resources.resolve("db/migration/V2__seed.sql"), "insert into caches values ('pets');");
+
+        Path output = temporaryDirectory.resolve("flyway.jar");
+        new FatJarPackager().packageApplication(
+            FatJarRequest.builder(output, application, "app.Main")
+                .applicationName("flyway-app")
+                .applicationVersion("1.0")
+                .resourceDirectory(resources)
+                .classpath(flywayClasspath)
+                .build()
+        );
+        String processOutput = runJar(output);
+
+        assertTrue(processOutput.contains("executed=2"), processOutput);
+        assertTrue(processOutput.contains("row=pets"), processOutput);
+    }
+
+    @Test
     void keepsArchiveOpenForThreadsThatOutliveMain() throws Exception {
         Path application = temporaryDirectory.resolve("background-application");
         compile(application, List.of(),
@@ -501,6 +632,15 @@ class FatJarPackagerTest {
     private static void write(Path path, String contents) throws IOException {
         Files.createDirectories(path.getParent());
         Files.writeString(path, contents, StandardCharsets.UTF_8);
+    }
+
+    private static String runJar(Path jar) throws IOException, InterruptedException {
+        Process process = new ProcessBuilder(javaExecutable(), "-jar", jar.toString())
+            .redirectErrorStream(true)
+            .start();
+        String processOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, process.waitFor(), processOutput);
+        return processOutput;
     }
 
     private static String javaExecutable() {
