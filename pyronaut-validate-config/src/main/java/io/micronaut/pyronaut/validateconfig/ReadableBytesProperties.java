@@ -42,7 +42,11 @@ import java.util.stream.Collectors;
  * {@code ReadableBytesTypeConverter}. The schemas carry no trace of the annotation, and neither do
  * bean definitions, which bind configuration setters in generated code. The annotation is
  * therefore read from the configuration class whose {@link ConfigurationReader} prefix owns the
- * property. Remove once the schemas describe readable byte sizes themselves.</p>
+ * property. Remove once Pyronaut depends on releases with
+ * https://github.com/micronaut-projects/micronaut-core/pull/13827, which marks these properties
+ * with {@code "format": "readable-bytes"} in the schemas, and
+ * https://github.com/micronaut-projects/micronaut-json-schema/pull/428, which validates that
+ * format; schemas published before then still type them as plain integers.</p>
  */
 final class ReadableBytesProperties {
     static final String EXPECTED_INTEGER = "Expected integer";
