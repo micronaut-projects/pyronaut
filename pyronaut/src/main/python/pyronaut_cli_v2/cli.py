@@ -35,8 +35,11 @@ from .progress import console as _progress_console
 from .progress import format_bytes as _format_bytes
 from .progress import progress_epoch_ms as _progress_epoch_ms
 from . import aot_cache as _aot_cache
+from . import home as _home
+from .home import cache_home as _cache_home
+from .home import config_home as _config_home
+from .home import data_home as _data_home
 from .home import export_pyronaut_home as _export_pyronaut_home
-from .home import pyronaut_home as _pyronaut_home
 from . import doctor as _doctor
 
 SUCCESS = 0
@@ -275,7 +278,8 @@ class _ProjectLayout(NamedTuple):
 
 def main() -> None:
     # Java tools take user.home from the passwd entry rather than $HOME, so
-    # the resolved home is handed to every child process explicitly.
+    # the resolved config, cache and data directories are handed to every
+    # child process explicitly. setup --xdg re-exports them.
     _export_pyronaut_home()
     code = run(sys.argv[1:])
     raise SystemExit(code)
@@ -6615,12 +6619,28 @@ def _ensure_graalvm_java_home(
     return None
 
 
+def _home_display(path: Path) -> str:
+    """Show ``path`` with ``~`` for the user's home directory, as in messages."""
+    try:
+        return "~/" + path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _settings_path() -> Path:
+    return _config_home() / "settings.toml"
+
+
+def _settings_label() -> str:
+    return _home_display(_settings_path())
+
+
 def _graalvm_jdks_root() -> Path:
-    return _pyronaut_home() / "sdks"
+    return _data_home() / "sdks"
 
 
 def _legacy_graalvm_jdks_root() -> Path:
-    return _pyronaut_home() / "jdks"
+    return _data_home() / "jdks"
 
 
 def _find_compatible_cached_jdk(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
@@ -6821,7 +6841,7 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
     if proxy:
         return _normalize_proxy_url(proxy), no_proxy
 
-    settings_path = _pyronaut_home() / "settings.toml"
+    settings_path = _settings_path()
     try:
         import tomllib
 
@@ -6897,7 +6917,7 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
 
 
 def _read_pyronaut_user_settings() -> dict[str, object]:
-    settings_path = _pyronaut_home() / "settings.toml"
+    settings_path = _settings_path()
     if not settings_path.is_file():
         return {}
     try:
@@ -7140,7 +7160,7 @@ def _native_image_cache_path(
     os_segment: str,
     arch: str,
 ) -> Path:
-    return _pyronaut_home() / "bin" / version / f"{os_segment}-{arch}" / image_name
+    return _data_home() / "bin" / version / f"{os_segment}-{arch}" / image_name
 
 
 @contextlib.contextmanager
@@ -8084,7 +8104,7 @@ def _ensure_micronaut_launch(version: str, *, platform_name: str) -> Path:
             candidates.append(current / "bin" / executable_name)
     except OSError:
         pass
-    cache_root = _pyronaut_home() / "sdks" / "micronaut"
+    cache_root = _data_home() / "sdks" / "micronaut"
     candidates.append(cache_root / version / "bin" / executable_name)
     for candidate in candidates:
         if _valid_micronaut_launch(candidate, version):
@@ -8453,7 +8473,7 @@ def _resolved_tool_cache_root() -> Path | None:
     if version is None:
         return None
     safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version)
-    cache_root = _pyronaut_home() / "tools" / safe_version / "current"
+    cache_root = _data_home() / "tools" / safe_version / "current"
     return cache_root if cache_root.is_dir() else None
 
 
@@ -9126,10 +9146,15 @@ def _print_setup_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] "
+        "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--xdg] "
         "[--progress <auto|on|off>] [--allow-draft-release]\n"
     )
     stream.write("Provision the global Pyronaut SDK toolchain, GraalPy interpreter, launchers, and native compiler classpaths.\n")
+    stream.write("\nOptions:\n")
+    stream.write("      --xdg      Switch to the XDG base directory layout: configuration in $XDG_CONFIG_HOME/pyronaut,\n")
+    stream.write("                 caches in $XDG_CACHE_HOME/pyronaut and data in $XDG_DATA_HOME/pyronaut. Creates the\n")
+    stream.write("                 configuration folder, which keeps the layout enabled; remove it to switch back.\n")
+    stream.write(f"\nState: {_describe_pyronaut_dirs()}\n")
 
 
 def _setup_local_repository(args: Sequence[str]) -> Path:
@@ -9159,7 +9184,7 @@ def _setup_repositories() -> list[str]:
     settings = _read_pyronaut_user_settings()
     maven = settings.get("maven")
     if maven is not None and not isinstance(maven, dict):
-        raise RuntimeError("[maven] in ~/.pyronaut/settings.toml must be a table")
+        raise RuntimeError(f"[maven] in {_settings_label()} must be a table")
     configured = maven.get("repositories") if isinstance(maven, dict) else None
     if configured is not None:
         if not isinstance(configured, list) or not configured:
@@ -9184,7 +9209,7 @@ def _setup_platform() -> str:
 
 def _setup_manifest_path() -> Path:
     version = re.sub(r"[^A-Za-z0-9._-]", "_", _installed_pyronaut_version())
-    return _pyronaut_home() / "setup" / version / _setup_platform() / "setup.json"
+    return _data_home() / "setup" / version / _setup_platform() / "setup.json"
 
 
 def _packaged_tool_descriptor_hash() -> str:
@@ -9398,7 +9423,7 @@ def _cached_native_image(
 
 def _validate_setup_arguments(args: Sequence[str]) -> None:
     value_options = {"--local-repository", "--local-repo", "--progress"}
-    flag_options = {"--offline", "--refresh"}
+    flag_options = {"--offline", "--refresh", "--xdg"}
     index = 0
     while index < len(args):
         token = args[index]
@@ -9419,6 +9444,46 @@ def _validate_setup_arguments(args: Sequence[str]) -> None:
         raise ValueError("Invalid value for --progress. Use auto, on, or off")
 
 
+def _describe_pyronaut_dirs() -> str:
+    dirs = _home.pyronaut_dirs()
+    if dirs.layout == _home.LAYOUT_XDG:
+        return (
+            f"XDG layout (config {_home_display(dirs.config)}, cache {_home_display(dirs.cache)}, "
+            f"data {_home_display(dirs.data)})"
+        )
+    if dirs.layout == _home.LAYOUT_CUSTOM:
+        return f"{_home_display(dirs.data)} (PYRONAUT_HOME)"
+    return _home_display(dirs.data)
+
+
+def _enable_xdg_layout() -> None:
+    """Opt into the XDG layout by creating ``$XDG_CONFIG_HOME/pyronaut``.
+
+    Re-exports the directories, which ``main()`` exported before the
+    arguments were parsed, so that the tools setup starts use the new layout.
+    """
+    if (os.environ.get(_home.PYRONAUT_HOME_ENV) or "").strip():
+        raise RuntimeError(
+            "PYRONAUT_HOME keeps all Pyronaut state in one directory and overrides --xdg; unset it to use the XDG layout"
+        )
+    if _home.xdg_flag() is False:
+        raise RuntimeError(f"{_home.PYRONAUT_XDG_ENV} disables the XDG layout; unset it to use --xdg")
+    legacy = _home.pyronaut_home()
+    _home.xdg_config_dir().mkdir(parents=True, exist_ok=True)
+    dirs = _export_pyronaut_home()
+    legacy_settings = legacy / "settings.toml"
+    settings = dirs.config / "settings.toml"
+    if legacy_settings.is_file() and not settings.exists():
+        shutil.copy2(legacy_settings, settings)
+        print(f"Copied {_home_display(legacy_settings)} to {_home_display(settings)}")
+    print(f"Using the XDG layout: {_describe_pyronaut_dirs()}")
+    if legacy.is_dir():
+        print(
+            f"{_home_display(legacy)} is no longer used and can be removed once setup has finished. "
+            f"To switch back, remove {_home_display(_home.xdg_config_dir())}."
+        )
+
+
 def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     progress = _progress_console()
     try:
@@ -9426,6 +9491,10 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
         refresh = _extract_flag(args, "--refresh")
         offline = _extract_offline(args)
         progress.configure(_extract_option_value(args, "--progress"))
+        if _extract_flag(args, "--xdg"):
+            # Before anything is resolved: setup then provisions into the
+            # XDG data directory rather than ~/.pyronaut.
+            _enable_xdg_layout()
         manifest_path = _setup_manifest_path()
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = manifest_path.with_suffix(".lock")
@@ -9513,7 +9582,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
                 packaged_tools = Path(__file__).resolve().parent / "tools"
                 env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
-                env["PYRONAUT_TOOLS_CACHE_DIR"] = str(_pyronaut_home() / "tools")
+                env["PYRONAUT_TOOLS_CACHE_DIR"] = str(_data_home() / "tools")
                 with progress.step("Resolving SDK dependencies", done="SDK dependencies resolved"):
                     with progress.suspend():
                         install_code = runner(command_line, env)
@@ -9820,7 +9889,7 @@ def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
         # wheel changes: the new version has no state of its own yet, and
         # would otherwise fall back to ~/.m2/repository.
         local_repository = _setup_local_repository(options)
-        update_root = _pyronaut_home() / "update"
+        update_root = _cache_home() / "update"
         update_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".update-", dir=update_root) as temp_dir:
             assert release.wheel_name is not None and release.wheel_url is not None
@@ -9909,9 +9978,9 @@ def _remove_older_sdk_versions(keep: _SdkVersion, local_repository: Path) -> tup
         if isinstance(configured, dict) and isinstance(configured.get("version"), str)
         else frozenset()
     )
-    pyronaut_home = _pyronaut_home()
-    candidates = _older_sdk_version_dirs(pyronaut_home / "bin", keep, pinned_images)
-    for parent in (pyronaut_home / "tools", pyronaut_home / "setup"):
+    data_home = _data_home()
+    candidates = _older_sdk_version_dirs(data_home / "bin", keep, pinned_images)
+    for parent in (data_home / "tools", data_home / "setup"):
         candidates.extend(_older_sdk_version_dirs(parent, keep))
     maven_group = local_repository / "io" / "micronaut" / "pyronaut"
     if maven_group.is_dir():
@@ -10585,6 +10654,7 @@ def _doctor_checks(args: Sequence[str], project_dir: Path | None, *, offline: bo
     checks: list[tuple[str, str, _doctor.Check]] = [
         ("python", "Python", _doctor_check_python),
         ("pyronaut", "Pyronaut SDK", lambda: _doctor_check_setup_state(args)),
+        ("home", "Pyronaut state", _doctor_check_pyronaut_dirs),
         ("graalvm", "GraalVM JDK", lambda: _doctor_check_graalvm(project_dir)),
         ("graalpy", "GraalPy", lambda: _doctor_check_graalpy(project_dir)),
         ("interpreter", "Interpreter", lambda: _doctor_check_interpreter(project_dir)),
@@ -10675,7 +10745,7 @@ def _doctor_check_setup_state(args: Sequence[str]) -> _doctor.CheckResult:
         if str(exc) != _SETUP_REQUIRED_MESSAGE:
             return _doctor.CheckResult(
                 "pyronaut", "Pyronaut SDK", _doctor.FAIL, f"{version}: {exc}",
-                "Fix the reported setting in ~/.pyronaut/settings.toml and run pyronaut setup", data,
+                f"Fix the reported setting in {_settings_label()} and run pyronaut setup", data,
             )
         if manifest_path.is_file():
             recorded = None
@@ -10701,6 +10771,27 @@ def _doctor_check_setup_state(args: Sequence[str]) -> _doctor.CheckResult:
     )
 
 
+def _doctor_check_pyronaut_dirs() -> _doctor.CheckResult:
+    dirs = _home.pyronaut_dirs()
+    data: dict[str, object] = {
+        "layout": dirs.layout,
+        "config": str(dirs.config),
+        "cache": str(dirs.cache),
+        "data": str(dirs.data),
+    }
+    detail = _describe_pyronaut_dirs()
+    if dirs.layout == _home.LAYOUT_XDG:
+        legacy = _home.pyronaut_home()
+        if legacy.is_dir():
+            return _doctor.CheckResult(
+                "home", "Pyronaut state", _doctor.WARN,
+                f"{detail}; {_home_display(legacy)} is no longer used",
+                f"Remove {_home_display(legacy)}, or remove {_home_display(_home.xdg_config_dir())} to switch back to it",
+                data,
+            )
+    return _doctor.CheckResult("home", "Pyronaut state", _doctor.PASS, detail, data=data)
+
+
 def _describe_graalvm_home_source(java_home: Path) -> str:
     sdkman_dir = _read_env("SDKMAN_DIR") or str(Path.home() / ".sdkman")
     candidates: list[tuple[str, Path]] = []
@@ -10709,8 +10800,8 @@ def _describe_graalvm_home_source(java_home: Path) -> str:
         candidates.append(("JAVA_HOME", Path(env_java_home)))
     candidates.extend(
         [
-            ("~/.pyronaut/sdks", _graalvm_jdks_root()),
-            ("~/.pyronaut/jdks", _legacy_graalvm_jdks_root()),
+            (_home_display(_graalvm_jdks_root()), _graalvm_jdks_root()),
+            (_home_display(_legacy_graalvm_jdks_root()), _legacy_graalvm_jdks_root()),
             ("SDKMAN", Path(sdkman_dir) / "candidates" / "java"),
             ("jenv", Path.home() / ".jenv" / "versions"),
             ("Gradle JDKs", Path.home() / ".gradle" / "jdks"),
@@ -10740,7 +10831,7 @@ def _doctor_check_graalvm(project_dir: Path | None) -> _doctor.CheckResult:
 
     java_home = _ensure_graalvm_java_home(project_dir, offline=True)
     if java_home is None:
-        detail = f"no GraalVM JDK {required}+ found (checked JAVA_HOME, ~/.pyronaut/sdks, SDKMAN, jenv, Gradle JDKs)"
+        detail = f"no GraalVM JDK {required}+ found (checked JAVA_HOME, {_home_display(_graalvm_jdks_root())}, SDKMAN, jenv, Gradle JDKs)"
         if ignored_java_home:
             detail += f"; JAVA_HOME={env_java_home} is not a compatible GraalVM"
         return _doctor.CheckResult(
@@ -10947,7 +11038,7 @@ def _doctor_check_native_launchers() -> _doctor.CheckResult:
         fix = (
             "Use macOS or Linux on x86_64 or arm64"
             if "not available for" in message
-            else "Fix [native-images] in ~/.pyronaut/settings.toml"
+            else f"Fix [native-images] in {_settings_label()}"
         )
         return _doctor.CheckResult("launchers", "Native launchers", _doctor.FAIL, message, fix)
     cache_dir = _native_image_cache_path("x", version=version, os_segment=os_segment, arch=arch).parent
@@ -11092,12 +11183,12 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
         settings = _read_pyronaut_user_settings()
     except RuntimeError as exc:
         return _doctor.CheckResult(
-            "proxy", "Proxy", _doctor.FAIL, str(exc), "Fix the TOML syntax in ~/.pyronaut/settings.toml", data
+            "proxy", "Proxy", _doctor.FAIL, str(exc), f"Fix the TOML syntax in {_settings_label()}", data
         )
     configured = settings.get("proxy")
     if configured is not None and not isinstance(configured, dict):
         return _doctor.CheckResult(
-            "proxy", "Proxy", _doctor.FAIL, "[proxy] in ~/.pyronaut/settings.toml must be a table",
+            "proxy", "Proxy", _doctor.FAIL, f"[proxy] in {_settings_label()} must be a table",
             "Declare the proxy as [proxy] with url, or host and port", data,
         )
     settings_proxy = False
@@ -11109,7 +11200,7 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
             isinstance(host, str) and bool(host.strip()) and configured.get("port") is not None
         )
         if not settings_proxy:
-            warnings.append("[proxy] in ~/.pyronaut/settings.toml is ignored because it sets neither url nor host and port")
+            warnings.append(f"[proxy] in {_settings_label()} is ignored because it sets neither url nor host and port")
     for upper, lower in (("HTTPS_PROXY", "https_proxy"), ("HTTP_PROXY", "http_proxy"), ("NO_PROXY", "no_proxy")):
         if env_proxy.get(upper) and env_proxy.get(lower) and env_proxy[upper] != env_proxy[lower]:
             warnings.append(f"{upper} and {lower} differ ({upper} wins)")
@@ -11122,7 +11213,7 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
         if warnings:
             return _doctor.CheckResult(
                 "proxy", "Proxy", _doctor.WARN, "no proxy in effect; " + "; ".join(warnings),
-                "Set [proxy].url (or host and port) in ~/.pyronaut/settings.toml, or remove the table", data,
+                f"Set [proxy].url (or host and port) in {_settings_label()}, or remove the table", data,
             )
         return _doctor.CheckResult("proxy", "Proxy", _doctor.PASS, "no proxy configured", data=data)
 
@@ -11130,7 +11221,7 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
         winner = next(name for name in _DOCTOR_PROXY_ENV if env_proxy.get(name))
         source = f"environment ({winner})"
     elif settings_proxy:
-        source = "~/.pyronaut/settings.toml"
+        source = _settings_label()
     else:
         source = "~/.m2/settings.xml"
     redacted = _redact_proxy_url(proxy)
@@ -11153,7 +11244,7 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
     if bypass:
         detail += f", bypass {bypass}"
     if source.startswith("environment") and settings_proxy:
-        detail += "; overrides [proxy] in ~/.pyronaut/settings.toml"
+        detail += f"; overrides [proxy] in {_settings_label()}"
     if warnings:
         return _doctor.CheckResult(
             "proxy", "Proxy", _doctor.WARN, detail + "; " + "; ".join(warnings),
@@ -11736,7 +11827,7 @@ def _graalpy_release_tag(version_line: str | None, expected: str | None) -> str 
 
 
 def _graalpy_compatibility_cache(release: str) -> Path:
-    return _pyronaut_home() / "graalpy-compatibility" / f"python-module-testing-{release}.csv"
+    return _cache_home() / "graalpy-compatibility" / f"python-module-testing-{release}.csv"
 
 
 def _load_graalpy_compatibility(release: str, *, offline: bool) -> tuple[dict[str, tuple[str, int, float]] | None, str]:

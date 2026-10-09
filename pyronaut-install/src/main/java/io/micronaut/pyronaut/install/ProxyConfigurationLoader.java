@@ -49,7 +49,7 @@ final class ProxyConfigurationLoader {
     ProxyConfigurationLoader() {
         this(
             System.getenv(),
-            PyronautHome.pyronautHome().resolve("settings.toml"),
+            PyronautHome.configHome().resolve("settings.toml"),
             PyronautHome.userHome().resolve(".m2").resolve("settings.xml")
         );
     }

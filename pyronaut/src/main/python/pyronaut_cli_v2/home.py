@@ -1,9 +1,18 @@
-"""Location of the Pyronaut home directory (``~/.pyronaut`` by default).
+"""Locations of Pyronaut state: configuration, caches and data.
 
-``PYRONAUT_HOME`` relocates it; otherwise it lives under ``$HOME``. The Java
-tools the CLI starts resolve it the same way (``PyronautHome`` in
-pyronaut-config-model), and the CLI exports the resolved directory to them as
-``PYRONAUT_HOME`` so that both sides always agree, even where the JVM's
+By default all three live in one directory, ``~/.pyronaut``. ``PYRONAUT_HOME``
+relocates that directory and always keeps everything together. Otherwise the
+XDG base directory layout can be opted into, which splits state into
+``$XDG_CONFIG_HOME/pyronaut`` (``settings.toml``), ``$XDG_CACHE_HOME/pyronaut``
+(re-creatable caches) and ``$XDG_DATA_HOME/pyronaut`` (provisioned SDKs,
+launchers and tool runtimes). The layout is enabled by ``PYRONAUT_XDG=true``,
+or, without that variable, by the existence of ``$XDG_CONFIG_HOME/pyronaut``,
+which ``pyronaut setup --xdg`` creates.
+
+The Java tools the CLI starts resolve the directories the same way
+(``PyronautHome`` in pyronaut-config-model). The CLI exports the resolved
+directories to them as ``PYRONAUT_CONFIG_DIR``, ``PYRONAUT_CACHE_DIR`` and
+``PYRONAUT_DATA_DIR`` so that both sides always agree, even where the JVM's
 ``user.home`` (taken from the passwd entry) differs from ``$HOME``.
 
 Imports only the standard library.
@@ -13,27 +22,125 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import MutableMapping
+from typing import MutableMapping, NamedTuple
 
 PYRONAUT_HOME_ENV = "PYRONAUT_HOME"
+PYRONAUT_XDG_ENV = "PYRONAUT_XDG"
+CONFIG_DIR_ENV = "PYRONAUT_CONFIG_DIR"
+CACHE_DIR_ENV = "PYRONAUT_CACHE_DIR"
+DATA_DIR_ENV = "PYRONAUT_DATA_DIR"
+XDG_DIR_NAME = "pyronaut"
+
+LAYOUT_HOME = "home"
+LAYOUT_CUSTOM = "PYRONAUT_HOME"
+LAYOUT_XDG = "xdg"
+
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
+
+
+class PyronautDirs(NamedTuple):
+    layout: str
+    config: Path
+    cache: Path
+    data: Path
+
+
+def _environment(environment: MutableMapping[str, str] | None) -> MutableMapping[str, str]:
+    return os.environ if environment is None else environment
+
+
+def _explicit_home(env: MutableMapping[str, str]) -> Path | None:
+    configured = (env.get(PYRONAUT_HOME_ENV) or "").strip()
+    if not configured:
+        return None
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else (Path.cwd() / path)
 
 
 def pyronaut_home(environment: MutableMapping[str, str] | None = None) -> Path:
-    env = os.environ if environment is None else environment
-    configured = (env.get(PYRONAUT_HOME_ENV) or "").strip()
-    if configured:
-        path = Path(configured).expanduser()
-        return path if path.is_absolute() else (Path.cwd() / path)
-    return Path.home() / ".pyronaut"
+    """The single-root Pyronaut home: ``PYRONAUT_HOME`` or ``~/.pyronaut``."""
+    explicit = _explicit_home(_environment(environment))
+    return explicit if explicit is not None else Path.home() / ".pyronaut"
 
 
-def export_pyronaut_home(environment: MutableMapping[str, str] | None = None) -> Path:
-    """Pin ``PYRONAUT_HOME`` in ``environment`` to the resolved, absolute home.
+def _xdg_base(env: MutableMapping[str, str], variable: str, *default: str) -> Path:
+    # The XDG specification ignores relative values.
+    configured = (env.get(variable) or "").strip()
+    if configured and Path(configured).is_absolute():
+        return Path(configured)
+    return Path.home().joinpath(*default)
 
-    Child processes inherit it, so every Java tool and launcher uses the same
-    directory as the CLI.
+
+def xdg_config_dir(environment: MutableMapping[str, str] | None = None) -> Path:
+    """``$XDG_CONFIG_HOME/pyronaut``; its existence enables the XDG layout."""
+    return _xdg_base(_environment(environment), "XDG_CONFIG_HOME", ".config") / XDG_DIR_NAME
+
+
+def xdg_flag(environment: MutableMapping[str, str] | None = None) -> bool | None:
+    """The explicit ``PYRONAUT_XDG`` choice, or None when it is unset or unrecognised."""
+    value = (_environment(environment).get(PYRONAUT_XDG_ENV) or "").strip().lower()
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    return None
+
+
+def xdg_enabled(environment: MutableMapping[str, str] | None = None) -> bool:
+    env = _environment(environment)
+    if _explicit_home(env) is not None:
+        return False
+    flag = xdg_flag(env)
+    if flag is not None:
+        return flag
+    return xdg_config_dir(env).is_dir()
+
+
+def pyronaut_dirs(environment: MutableMapping[str, str] | None = None) -> PyronautDirs:
+    env = _environment(environment)
+    explicit = _explicit_home(env)
+    if explicit is not None:
+        return PyronautDirs(LAYOUT_CUSTOM, explicit, explicit, explicit)
+    if xdg_enabled(env):
+        return PyronautDirs(
+            LAYOUT_XDG,
+            xdg_config_dir(env),
+            _xdg_base(env, "XDG_CACHE_HOME", ".cache") / XDG_DIR_NAME,
+            _xdg_base(env, "XDG_DATA_HOME", ".local", "share") / XDG_DIR_NAME,
+        )
+    home = Path.home() / ".pyronaut"
+    return PyronautDirs(LAYOUT_HOME, home, home, home)
+
+
+def config_home(environment: MutableMapping[str, str] | None = None) -> Path:
+    """User configuration such as ``settings.toml``."""
+    return pyronaut_dirs(environment).config
+
+
+def cache_home(environment: MutableMapping[str, str] | None = None) -> Path:
+    """Re-creatable caches: AOT caches, IDE stubs, compatibility data, update downloads."""
+    return pyronaut_dirs(environment).cache
+
+
+def data_home(environment: MutableMapping[str, str] | None = None) -> Path:
+    """Provisioned state: SDKs, JDKs, native launchers, setup manifests and tool runtimes."""
+    return pyronaut_dirs(environment).data
+
+
+def export_pyronaut_home(environment: MutableMapping[str, str] | None = None) -> PyronautDirs:
+    """Pin the resolved, absolute Pyronaut directories in ``environment``.
+
+    Child processes inherit them, so every Java tool and launcher uses the
+    same directories as the CLI. ``PYRONAUT_HOME`` is only rewritten (to an
+    absolute path) when the user set it, so that it never masks the XDG
+    layout in a nested CLI.
     """
-    env = os.environ if environment is None else environment
-    home = pyronaut_home(env)
-    env[PYRONAUT_HOME_ENV] = str(home)
-    return home
+    env = _environment(environment)
+    dirs = pyronaut_dirs(env)
+    if dirs.layout == LAYOUT_CUSTOM:
+        env[PYRONAUT_HOME_ENV] = str(dirs.data)
+    env[CONFIG_DIR_ENV] = str(dirs.config)
+    env[CACHE_DIR_ENV] = str(dirs.cache)
+    env[DATA_DIR_ENV] = str(dirs.data)
+    return dirs

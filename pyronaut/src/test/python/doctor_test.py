@@ -246,12 +246,12 @@ class DoctorCommandTest(unittest.TestCase):
 
     def test_check_order_includes_project_checks_only_inside_project(self):
         self.assertEqual(
-            ["python", "pyronaut", "graalvm", "graalpy", "interpreter", "launchers", "proxy", "docker"],
+            ["python", "pyronaut", "home", "graalvm", "graalpy", "interpreter", "launchers", "proxy", "docker"],
             [check_id for check_id, _, _ in cli._doctor_checks([], None)],
         )
         self.assertEqual(
             [
-                "python", "pyronaut", "graalvm", "graalpy", "interpreter", "launchers",
+                "python", "pyronaut", "home", "graalvm", "graalpy", "interpreter", "launchers",
                 "pyproject", "install", "state", "threading", "packages", "compat", "pytest",
                 "proxy", "docker",
             ],
