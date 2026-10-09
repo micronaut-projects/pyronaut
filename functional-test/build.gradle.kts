@@ -1,3 +1,4 @@
+import io.micronaut.pyronaut.gradle.PyenvVersions
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.attributes.Bundling
@@ -17,6 +18,7 @@ plugins {
 val fixtureAppDir = layout.projectDirectory.dir("app")
 val venvDir = layout.buildDirectory.dir("venv").get()
 val venvPython = venvDir.file("bin/python")
+val selectedPyenvVersion = PyenvVersions.provider(project)
 val venvConfig = venvDir.file("pyvenv.cfg")
 val venvReadyMarker = layout.buildDirectory.file("task-state/venv-ready.txt")
 val pytestInstallMarker = layout.buildDirectory.file("task-state/pytest-installed.txt")
@@ -314,7 +316,7 @@ fun defaultFixtureEnv(): Map<String, String> {
     resolveFixtureSitePackagesDir()?.let {
         environment["PYRONAUT_PYTHON_SITE_PACKAGES"] = it.absolutePath
     }
-    val pyEnvVersion = System.getenv("PYENV_VERSION").orEmpty()
+    val pyEnvVersion = selectedPyenvVersion.orNull.orEmpty()
     if (pyEnvVersion.isNotBlank()) {
         environment["PYENV_VERSION"] = pyEnvVersion
     }
@@ -486,9 +488,12 @@ fun resolveJavaExecutable(): String {
 }
 
 fun resolveFixturePythonExecutable(): String {
-    val pythonHome = System.getenv("PYENV_VERSION").orEmpty()
+    val pythonHome = selectedPyenvVersion.orNull.orEmpty()
     if (!pythonHome.startsWith("graalpy")) {
-        throw GradleException("functional-test requires a GraalPy interpreter. Current PYENV_VERSION='$pythonHome'")
+        throw GradleException(
+            "functional-test requires a GraalPy interpreter selected through pyenv " +
+                "(PYENV_VERSION, .python-version or the global pyenv version file). Current version='$pythonHome'"
+        )
     }
     return "python"
 }

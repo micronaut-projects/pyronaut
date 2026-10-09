@@ -1,3 +1,5 @@
+import io.micronaut.pyronaut.gradle.PyenvVersions
+
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
 }
@@ -44,7 +46,7 @@ tasks.withType<Test>().configureEach {
     // Both this module and micronaut-context-python contribute application VFS
     // resources. GraalPy must allow those resources to be registered together.
     systemProperty("org.graalvm.python.vfs.allow_multiple", "true")
-    val pyEnv = providers.environmentVariable("PYENV_VERSION")
+    val pyEnv = PyenvVersions.provider(project)
     val vEnv = providers.environmentVariable("VIRTUAL_ENV")
     if (pyEnv.isPresent() && vEnv.isPresent()) {
         println("==================================================================")

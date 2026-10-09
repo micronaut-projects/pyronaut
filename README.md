@@ -114,6 +114,12 @@ cd pyronaut
 export PYENV_VERSION=graalpy3.13-25.4.4
 ```
 
+The Gradle build resolves the pyenv version the same way pyenv does, so
+exporting `PYENV_VERSION` is optional when GraalPy is already selected by a
+`.python-version` file (`pyenv local`) in the checkout or a parent directory, or
+by the global `$PYENV_ROOT/version` file (`pyenv global`, `~/.pyenv/version` by
+default). `PYENV_VERSION` takes precedence when set.
+
 Build the SDK wheel:
 
 ```bash
@@ -139,7 +145,7 @@ Choose one of the following options.
 
 #### Option 1: Install into the active pyenv environment
 
-This uses the `PYENV_VERSION` selected above and installs the wheel into that
+This uses the pyenv version selected above and installs the wheel into that
 GraalPy environment:
 
 ```bash
@@ -452,9 +458,11 @@ Resources server around its tests when Docker is enabled.
 
 Requirements:
 
-- An active GraalPy installation must be selected. The Gradle tasks require
-  `PYENV_VERSION` to identify a GraalPy environment, and use its `python`
-  executable to create the fixture virtual environment.
+- An active GraalPy installation must be selected through pyenv. The Gradle
+  tasks resolve it from `PYENV_VERSION`, then a `.python-version` file in the
+  checkout or a parent directory, then the global `$PYENV_ROOT/version` file
+  (`~/.pyenv/version` by default), and use its `python` executable to create
+  the fixture virtual environment.
 - A compatible JDK/GraalVM must be available. Native mode uses the configured
   GraalVM toolchain and requires the native-image toolchain to be installed.
 - The Gradle tasks create `functional-test/build/venv` (or the corresponding

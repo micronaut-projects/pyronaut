@@ -43,18 +43,18 @@ The Gradle build assumes the following environment is already set up before you 
 
 ### 1. GraalPy via `pyenv`
 
-`functional-test/build.gradle.kts` requires `PYENV_VERSION` to start with `graalpy`. If it does not, the build fails early with:
+The build requires the pyenv-selected Python version to start with `graalpy`. It resolves the version the same way pyenv does: `PYENV_VERSION`, then the nearest `.python-version` file in the checkout or a parent directory, then the global `$PYENV_ROOT/version` file (`~/.pyenv/version` by default). If the selected version is not GraalPy, the build fails early with:
 
 ```text
-functional-test requires a GraalPy interpreter. Current PYENV_VERSION='...'
+functional-test requires a GraalPy interpreter selected through pyenv (PYENV_VERSION, .python-version or the global pyenv version file). Current version='...'
 ```
 
-Use a GraalPy interpreter installed through `pyenv`, and make it active in the current shell before running Gradle:
+Use a GraalPy interpreter installed through `pyenv`, and select it with `pyenv shell`, `pyenv local` or `pyenv global` before running Gradle:
 
 ```bash
-pyenv shell graalpy-<version>
+pyenv global graalpy-<version>
 python --version
-echo "$PYENV_VERSION"
+pyenv version
 ```
 
 This module does not create or manage the outer Python interpreter selection for you. It only creates the inner virtual environment in `functional-test/build/venv`.
