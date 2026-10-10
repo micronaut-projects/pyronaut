@@ -3,7 +3,7 @@ from typing import Annotated
 import requests
 
 from micronaut.test.extensions.junit5.annotation import MicronautTest
-from pyronaut import inject
+from pyronaut import context
 from pyronaut.build import Dependency
 
 
@@ -16,7 +16,7 @@ Dependency(
 
 MicronautTest()
 
-context: Annotated[inject.ApplicationContext, inject.Inject]
+context: Annotated[context.ApplicationContext, context.Inject]
 
 def client():
     return requests.with_context(context)

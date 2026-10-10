@@ -112,7 +112,7 @@ When you run `pyronaut dev`, `pyronaut run`, or `pyronaut test`, the CLI first r
 your Python sources and passes decorators, type hints, dataclasses, and abstract classes to the Micronaut compiler. The
 compiler generates Java classes and metadata for:
 
-* Bean definitions describing how to construct each `@inject.Singleton`, `@http.Controller` or `@inject.Factory` and which dependencies to inject.
+* Bean definitions describing how to construct each `@context.Singleton`, `@http.Controller` or `@context.Factory` and which dependencies to inject.
 * Route metadata for every HTTP method decorator, including how to bind each parameter.
 * Serializers and deserializers for `@serde.Serdeable` dataclasses.
 * Validation metadata for `jakarta.validation` constraints.

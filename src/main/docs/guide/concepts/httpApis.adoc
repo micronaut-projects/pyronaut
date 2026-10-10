@@ -214,7 +214,7 @@ Pyronaut generates an OpenAPI description from your routes and dataclasses durin
 |`@scheduling.Async` on a bean method
 
 |`@app.on_event("startup")`
-|`@inject.EventListener` for `inject.StartupEvent`
+|`@context.EventListener` for `context.StartupEvent`
 
 |`response_model=Item`
 |The `-> Item` return type hint
@@ -251,7 +251,7 @@ Pyronaut generates an OpenAPI description from your routes and dataclasses durin
 |`@http.Error(status=http.status.NOT_FOUND)`
 
 |`app.config["KEY"]`
-|`@inject.Value("${key}")` or an `@inject.ConfigurationProperties` class
+|`@context.Value("${key}")` or an `@context.ConfigurationProperties` class
 
 |`g` and `current_app`
 |Dependency injection

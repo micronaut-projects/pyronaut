@@ -17,10 +17,10 @@ With dependency injection the class only _declares_ what it needs:
 
 [source,python]
 ----
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
+@context.Singleton
 class BookService:
     def __init__(self, db: DatabaseClient):
         self.db = db
@@ -30,14 +30,14 @@ The application context creates `DatabaseClient` once, passes it to `BookService
 
 == Declaring a bean
 
-A bean is any class decorated with a scope. The most common scope is `@inject.Singleton` (the `jakarta.inject.Singleton` annotation, imported through the `pyronaut.inject` facade; see <<facades,Pyronaut Facades>>), which means "create exactly one instance for the whole application":
+A bean is any class decorated with a scope. The most common scope is `@context.Singleton` (the `jakarta.inject.Singleton` annotation, imported through the `pyronaut.context` facade; see <<facades,Pyronaut Facades>>), which means "create exactly one instance for the whole application":
 
 [source,python]
 ----
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
+@context.Singleton
 class GreetingService:
     def greet(self, name: str) -> str:
         return f"Hello, {name}!"
@@ -45,7 +45,7 @@ class GreetingService:
 
 Beans are ordinary Python classes. You can write methods, keep state, use dataclasses and define properties as usual. The decorator only tells the application context that it should manage the instance.
 
-Controllers, HTTP clients, event listeners, and scheduled jobs are all beans. In most applications, `@inject.Singleton` is the only scope you need for them.
+Controllers, HTTP clients, event listeners, and scheduled jobs are all beans. In most applications, `@context.Singleton` is the only scope you need for them.
 
 == Receiving dependencies
 
@@ -92,15 +92,15 @@ class GreetingController:
 
 === Attribute injection
 
-Annotate a class attribute with `inject.Inject`:
+Annotate a class attribute with `context.Inject`:
 
 [source,python]
 ----
 from typing import Annotated
 
-from pyronaut import http, inject
+from pyronaut import context, http
 
-service: Annotated[GreetingService, inject.Inject]
+service: Annotated[GreetingService, context.Inject]
 
 
 @http.Get("/greet/{name}")
@@ -112,9 +112,9 @@ Class attributes work too:
 
 [source,python]
 ----
-@inject.Singleton
+@context.Singleton
 class Vehicle:
-    engine: Annotated[Engine, inject.Inject]
+    engine: Annotated[Engine, context.Inject]
 
     def start(self) -> str:
         return self.engine.start()
@@ -122,16 +122,16 @@ class Vehicle:
 
 === Method injection
 
-Use `@inject.Inject` on a method for post-construction injection:
+Use `@context.Inject` on a method for post-construction injection:
 
 [source,python]
 ----
-@inject.Singleton
+@context.Singleton
 class Vehicle:
     def __init__(self):
         self.engine = None
 
-    @inject.Inject
+    @context.Inject
     def initialize(self, engine: Engine):
         self.engine = engine
 ----
@@ -144,7 +144,7 @@ Python's `abc.ABC` plays the role of a Java interface. Declare the abstract clas
 ----
 from abc import ABC, abstractmethod
 
-from pyronaut import inject
+from pyronaut import context
 
 
 class Engine(ABC):
@@ -153,13 +153,13 @@ class Engine(ABC):
         ...
 
 
-@inject.Singleton
+@context.Singleton
 class V8Engine(Engine):
     def start(self) -> str:
         return "Starting V8"
 
 
-@inject.Singleton
+@context.Singleton
 class Vehicle:
     def __init__(self, engine: Engine):   # receives the V8Engine bean
         self.engine = engine
@@ -175,28 +175,28 @@ If two beans implement the same interface, Micronaut cannot choose between them.
 ----
 from typing import Annotated
 
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
-@inject.Named("v8")
+@context.Singleton
+@context.Named("v8")
 class V8Engine(Engine):
     ...
 
 
-@inject.Singleton
-@inject.Named("v6")
+@context.Singleton
+@context.Named("v6")
 class V6Engine(Engine):
     ...
 
 
-@inject.Singleton
+@context.Singleton
 class Vehicle:
-    def __init__(self, engine: Annotated[Engine, inject.Named("v8")]):
+    def __init__(self, engine: Annotated[Engine, context.Named("v8")]):
         self.engine = engine
 ----
 
-Alternatively mark one implementation with `@inject.Primary` (`micronaut.context.annotation.Primary`) so Micronaut chooses it whenever you do not provide a qualifier. You can also inject `list[Engine]` to receive every implementation.
+Alternatively mark one implementation with `@context.Primary` (`micronaut.context.annotation.Primary`) so Micronaut chooses it whenever you do not provide a qualifier. You can also inject `list[Engine]` to receive every implementation.
 
 === Optional dependencies
 
@@ -204,7 +204,7 @@ A dependency typed as `Engine | None` receives `None` when no bean of that type 
 
 [source,python]
 ----
-@inject.Singleton
+@context.Singleton
 class Vehicle:
     def __init__(self, engine: Engine | None):
         self.engine = engine if engine is not None else DefaultEngine()
@@ -216,12 +216,12 @@ Sometimes a library supplies the object you want to inject and you cannot decora
 
 [source,python]
 ----
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Factory
+@context.Factory
 class ClientFactory:
-    @inject.Singleton
+    @context.Singleton
     def stock_client(self, config: StockConfig) -> StockClient:
         return StockClient(base_url=config.url, timeout=config.timeout)
 ----
@@ -236,14 +236,14 @@ The scope decorator controls how many instances exist and how long they live:
 |===
 |Scope |Behaviour
 
-|`@inject.Singleton` (`jakarta.inject.Singleton`)
+|`@context.Singleton` (`jakarta.inject.Singleton`)
 |Micronaut creates one instance per application, lazily the first time an application needs it. Use this for services, repositories, clients and controllers.
 
-|`@inject.Prototype` (`micronaut.context.annotation.Prototype`)
+|`@context.Prototype` (`micronaut.context.annotation.Prototype`)
 |Micronaut creates a new instance every time the application injects or looks up the bean.
 
-|`@inject.Context` (`micronaut.context.annotation.Context`)
-|Like `@inject.Singleton`, but Micronaut creates it eagerly when the application starts. Useful for beans that validate configuration at startup.
+|`@context.Context` (`micronaut.context.annotation.Context`)
+|Like `@context.Singleton`, but Micronaut creates it eagerly when the application starts. Useful for beans that validate configuration at startup.
 
 |`@RequestScope` (`micronaut.runtime.http.scope`)
 |One instance per HTTP request; Micronaut destroys it when the response is sent.
@@ -253,65 +253,65 @@ Module-level route files that declare no scope receive an automatic pooled scope
 
 == Conditional beans
 
-`@inject.Requires` (`micronaut.context.annotation.Requires`) makes a bean exist only when a condition holds. Common conditions are the presence of a configuration property, of another bean or of a class on the classpath:
+`@context.Requires` (`micronaut.context.annotation.Requires`) makes a bean exist only when a condition holds. Common conditions are the presence of a configuration property, of another bean or of a class on the classpath:
 
 [source,python]
 ----
 from javax.sql import DataSource
 
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
-@inject.Requires(beans=DataSource)
-@inject.Requires(property="datasource.url")
+@context.Singleton
+@context.Requires(beans=DataSource)
+@context.Requires(property="datasource.url")
 class JdbcBookService(BookService):
     def __init__(self, data_source: DataSource):
         self.data_source = data_source
 ----
 
-`@inject.Requires(env="test")` restricts a bean to an environment; see <<configurationInjection,Configuration Injection>> for how Micronaut selects environments.
+`@context.Requires(env="test")` restricts a bean to an environment; see <<configurationInjection,Configuration Injection>> for how Micronaut selects environments.
 
 == Reference material
 
 === Lifecycle hooks
 
-Two decorators, `jakarta.annotation.PostConstruct` and `jakarta.annotation.PreDestroy` (both in the `pyronaut.inject` facade), let a bean run code after Micronaut constructs it and before Micronaut destroys it. They replace FastAPI's startup and shutdown events for resources that belong to one bean:
+Two decorators, `jakarta.annotation.PostConstruct` and `jakarta.annotation.PreDestroy` (both in the `pyronaut.context` facade), let a bean run code after Micronaut constructs it and before Micronaut destroys it. They replace FastAPI's startup and shutdown events for resources that belong to one bean:
 
 [source,python]
 ----
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
+@context.Singleton
 class ConnectionPool:
     def __init__(self, config: PoolConfig):
         self.config = config
         self.pool = None
 
-    @inject.PostConstruct
+    @context.PostConstruct
     def open(self):
         self.pool = create_pool(self.config.url)
 
-    @inject.PreDestroy
+    @context.PreDestroy
     def close(self):
         self.pool.close()
 ----
 
-`@inject.PostConstruct` runs after Micronaut supplies every injected dependency. Use it instead of `__init__` for work that depends on injected beans.
+`@context.PostConstruct` runs after Micronaut supplies every injected dependency. Use it instead of `__init__` for work that depends on injected beans.
 
 === Replacing beans in tests
 
-`@inject.Replaces` swaps one bean for another. Combined with `@inject.Requires(env="test")` it is the idiomatic way to substitute a fake implementation during tests without touching production code:
+`@context.Replaces` swaps one bean for another. Combined with `@context.Requires(env="test")` it is the idiomatic way to substitute a fake implementation during tests without touching production code:
 
 [source,python]
 ----
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
-@inject.Requires(env="test")
-@inject.Replaces(JdbcBookService)
+@context.Singleton
+@context.Requires(env="test")
+@context.Replaces(JdbcBookService)
 class InMemoryBookService(BookService):
     books: dict[str, Book] = {}
 
@@ -325,28 +325,28 @@ Beans can publish and listen to events. Micronaut publishes `StartupEvent` and `
 
 [source,python]
 ----
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
+@context.Singleton
 class Warmup:
-    @inject.EventListener
-    def on_startup(self, event: inject.StartupEvent) -> None:
+    @context.EventListener
+    def on_startup(self, event: context.StartupEvent) -> None:
         print("application started")
 
-    @inject.EventListener
-    def on_shutdown(self, event: inject.ShutdownEvent) -> None:
+    @context.EventListener
+    def on_shutdown(self, event: context.ShutdownEvent) -> None:
         print("application stopping")
 ----
 
-To publish your own events, define a dataclass for the event and inject `inject.ApplicationEventPublisher[YourEvent]`:
+To publish your own events, define a dataclass for the event and inject `context.ApplicationEventPublisher[YourEvent]`:
 
 [source,python]
 ----
 from dataclasses import dataclass
 from typing import Annotated
 
-from pyronaut import inject
+from pyronaut import context
 
 
 @dataclass
@@ -354,9 +354,9 @@ class OrderPlaced:
     order_id: int
 
 
-@inject.Singleton
+@context.Singleton
 class OrderService:
-    events: Annotated[inject.ApplicationEventPublisher[OrderPlaced], inject.Inject]
+    events: Annotated[context.ApplicationEventPublisher[OrderPlaced], context.Inject]
 
     def place(self, order_id: int) -> None:
         self.events.publishEvent(OrderPlaced(order_id))
