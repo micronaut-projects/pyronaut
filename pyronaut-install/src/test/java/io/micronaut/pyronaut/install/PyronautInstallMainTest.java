@@ -2941,8 +2941,8 @@ class PyronautInstallMainTest {
         assertTrue(httpFacade.contains("    Get (annotation, io.micronaut.http.annotation.Get): Handles HTTP GET requests.\n"), httpFacade);
         assertTrue(httpFacade.contains("    ok (function, io.micronaut.http.HttpResponse#ok)\n"), httpFacade);
         assertTrue(httpFacade.contains("    \"ok\",\n"), httpFacade);
-        String injectFacade = Files.readString(stubsRoot.resolve("pyronaut/inject/__init__.pyi"), StandardCharsets.UTF_8);
-        assertTrue(injectFacade.contains("from jakarta.inject import Inject as Inject, Singleton as Singleton\n"), injectFacade);
+        String contextFacade = Files.readString(stubsRoot.resolve("pyronaut/context/__init__.pyi"), StandardCharsets.UTF_8);
+        assertTrue(contextFacade.contains("from jakarta.inject import Inject as Inject, Singleton as Singleton\n"), contextFacade);
         // a facade whose first package is missing has no stub
         assertFalse(Files.exists(stubsRoot.resolve("pyronaut/http/client/__init__.pyi")));
         assertTrue(Files.exists(stubsRoot.resolve("pyronaut/__init__.pyi")));
