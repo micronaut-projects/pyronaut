@@ -111,10 +111,10 @@ Decorate a bean method with `@scheduling.Async` to start work and return immedia
 
 [source,python]
 ----
-from pyronaut import inject, scheduling
+from pyronaut import context, scheduling
 
 
-@inject.Singleton
+@context.Singleton
 class Mailer:
     @scheduling.Async
     def send_welcome(self, address: str) -> None:

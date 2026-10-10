@@ -53,11 +53,11 @@ from typing import Annotated
 
 from micronaut.test.extensions.junit5.annotation import MicronautTest
 from org.junit.jupiter.api import BeforeEach
-from pyronaut import inject
+from pyronaut import context
 
 MicronautTest()
 
-context: Annotated[inject.ApplicationContext, inject.Inject]
+context: Annotated[context.ApplicationContext, context.Inject]
 
 @BeforeEach
 def verify_context():

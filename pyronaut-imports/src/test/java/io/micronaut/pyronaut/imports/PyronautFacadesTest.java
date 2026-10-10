@@ -62,8 +62,8 @@ class PyronautFacadesTest {
     @Test
     void everyFacadeMatchesItsSnapshot() throws IOException {
         PythonImportMappings mappings = resolver.mappings();
-        assertEquals(List.of("pyronaut.cache", "pyronaut.data", "pyronaut.email", "pyronaut.graphql", "pyronaut.http",
-            "pyronaut.http.client", "pyronaut.http.status", "pyronaut.inject", "pyronaut.jms", "pyronaut.kafka",
+        assertEquals(List.of("pyronaut.cache", "pyronaut.context", "pyronaut.data", "pyronaut.email", "pyronaut.graphql", "pyronaut.http",
+            "pyronaut.http.client", "pyronaut.http.status", "pyronaut.jms", "pyronaut.kafka",
             "pyronaut.management", "pyronaut.mcp", "pyronaut.micrometer", "pyronaut.mqtt", "pyronaut.objectstorage",
             "pyronaut.openapi", "pyronaut.rabbitmq", "pyronaut.reactive", "pyronaut.retry", "pyronaut.scheduling",
             "pyronaut.security", "pyronaut.security.jwt", "pyronaut.security.oauth2", "pyronaut.serde", "pyronaut.tracing",
@@ -88,8 +88,8 @@ class PyronautFacadesTest {
 
     @Test
     void annotationsWinTheirClashes() {
-        assertEquals("jakarta.inject.Qualifier", member("pyronaut.inject", "Qualifier").binaryName());
-        assertEquals("io.micronaut.context.annotation.PropertySource", member("pyronaut.inject", "PropertySource").binaryName());
+        assertEquals("jakarta.inject.Qualifier", member("pyronaut.context", "Qualifier").binaryName());
+        assertEquals("io.micronaut.context.annotation.PropertySource", member("pyronaut.context", "PropertySource").binaryName());
         // Micronaut Data's own annotations; jakarta.persistence is not part of the facade
         assertEquals("io.micronaut.data.annotation.Id", member("pyronaut.data", "Id").binaryName());
         assertEquals("io.micronaut.data.annotation.GeneratedValue", member("pyronaut.data", "GeneratedValue").binaryName());
@@ -122,7 +122,7 @@ class PyronautFacadesTest {
         assertEquals(Kind.ANNOTATION, member("pyronaut.openapi", "Operation").kind());
         assertEquals(Kind.ENUM, member("pyronaut.openapi", "ParameterIn").kind());
         assertEquals(Kind.ANNOTATION, member("pyronaut.serde", "JsonProperty").kind());
-        assertEquals(Kind.ANNOTATION, member("pyronaut.inject", "PostConstruct").kind());
+        assertEquals(Kind.ANNOTATION, member("pyronaut.context", "PostConstruct").kind());
         assertEquals(new Member("IDENTITY", Kind.CONSTANT, "io.micronaut.data.annotation.GeneratedValue$Type", "IDENTITY"), member("pyronaut.data", "IDENTITY"));
         assertEquals(new Member("REQUIRES_NEW", Kind.CONSTANT, "io.micronaut.transaction.TransactionDefinition$Propagation", "REQUIRES_NEW"), member("pyronaut.tx", "REQUIRES_NEW"));
         assertEquals(new Member("EARLIEST", Kind.CONSTANT, "io.micronaut.configuration.kafka.annotation.OffsetReset", "EARLIEST"), member("pyronaut.kafka", "EARLIEST"));
