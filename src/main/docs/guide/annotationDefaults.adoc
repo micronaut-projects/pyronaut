@@ -8,7 +8,7 @@ the default only marks it, so a route still binds the value from the request:
 
 [source,python]
 ----
-from pyronaut import http, inject, validation
+from pyronaut import context, http, validation
 
 
 @http.Controller("/books")
@@ -41,16 +41,16 @@ annotation as the value, as in FastAPI, so pass every marked parameter when call
 
 === Injecting beans into route parameters
 
-`inject.Inject()` marks a parameter of a route or a module function as a bean to inject rather than a value from the
+`context.Inject()` marks a parameter of a route or a module function as a bean to inject rather than a value from the
 request:
 
 [source,python]
 ----
-from pyronaut import http, inject
+from pyronaut import context, http
 
 
 @http.Get("/status")
-def status(ctx: inject.ApplicationContext = inject.Inject()) -> str:
+def status(ctx: context.ApplicationContext = context.Inject()) -> str:
     return str(ctx.isRunning())
 ----
 
@@ -66,9 +66,9 @@ declares routes:
 
 [source,python]
 ----
-from pyronaut import http, inject
+from pyronaut import context, http
 
-server: inject.ApplicationContext = inject.Inject()
+server: context.ApplicationContext = context.Inject()
 ----
 
 Class attributes keep `Annotated[...]`: a dataclass treats a default value as the field's default.
