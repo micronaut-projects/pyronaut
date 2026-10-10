@@ -17,6 +17,7 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
+import io.micronaut.pyronaut.config.model.PyronautHome;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 
@@ -551,7 +552,7 @@ final class ToolClasspathInstaller {
             configured = System.getenv(CACHE_DIR_ENV);
         }
         return configured == null || configured.isBlank()
-            ? Path.of(System.getProperty("user.home"), ".pyronaut", "tools")
+            ? PyronautHome.dataHome().resolve(TOOLS_DIR)
             : Path.of(configured).toAbsolutePath().normalize();
     }
 

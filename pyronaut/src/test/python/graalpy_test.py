@@ -57,7 +57,9 @@ class GraalPyProvisioningTest(unittest.TestCase):
         self.root = Path(self._temp.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
-        self._env = patch.dict(os.environ, {"PYENV_ROOT": str(self.home / ".pyenv"), "PATH": "/usr/bin:/bin"})
+        self._env = patch.dict(
+            os.environ, {"PYENV_ROOT": str(self.home / ".pyenv"), "PATH": "/usr/bin:/bin", "PYRONAUT_XDG": "false"}
+        )
         self._env.start()
         os.environ.pop("PYENV_VERSION", None)
         self._home_patch = patch("pathlib.Path.home", return_value=self.home)

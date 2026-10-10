@@ -34,6 +34,7 @@ import io.micronaut.pyronaut.config.model.ControlPanelFeature;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.JvmOptionsFile;
 import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
+import io.micronaut.pyronaut.config.model.PyronautHome;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarationRequest;
 import io.micronaut.pyronaut.directsource.DirectSourceDeclarations;
@@ -1554,7 +1555,7 @@ public final class PyronautDevMain implements Callable<Integer> {
     }
 
     private static Optional<Path> findPyronautBuildAnnotationsJar() throws IOException {
-        Path repository = Path.of(System.getProperty("user.home"), ".m2", "repository");
+        Path repository = PyronautHome.userHome().resolve(".m2").resolve("repository");
         if (!Files.isDirectory(repository)) {
             return Optional.empty();
         }
