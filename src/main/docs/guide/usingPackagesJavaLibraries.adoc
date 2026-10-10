@@ -160,3 +160,57 @@ GraalPy adapts it to the Java type at run time, which only works on the JVM: the
 Define the class at module level, or pass a function or lambda where Java expects a functional interface.
 
 See the https://docs.micronaut.io/latest/guide/#extendingJavaClasses[Extending Java Classes] section of the Micronaut guide for constructor rules and limitations.
+
+[[javaExceptions]]
+== Handle exceptions thrown by Java code
+
+A Java exception thrown by a Java call, such as an `IOException` from an HTTP client or a `NumberFormatException` from `Integer.parseInt`, is raised into Python as the Java exception object itself.
+Pyronaut makes every `java.lang.Exception`, checked or unchecked, an instance of the Python `Exception` class, so idiomatic Python error handling catches it:
+
+[source,python]
+----
+from java.lang import Integer
+
+
+def parse_port(value: str) -> int:
+    try:
+        return Integer.parseInt(value)
+    except Exception as e:
+        # e is the java.lang.NumberFormatException: e.getMessage(), str(e) and e.__cause__ chaining all work
+        raise ValueError(f"invalid port: {value}") from e
+----
+
+To catch a specific Java exception, import its Java type and name it in the `except` clause. The exception keeps its Java members:
+
+[source,python]
+----
+from java.io import IOException
+from java.nio.file import Files, Path
+
+
+def read_settings(location: str) -> str:
+    try:
+        return Files.readString(Path.of(location))
+    except IOException as e:
+        return f"unavailable: {e.getMessage()}"
+----
+
+Keep the following in mind:
+
+* A Java exception is not mapped to a specific Python exception class. A `NumberFormatException` is an `Exception`, but not a `ValueError`. Catch it as `Exception` or by its Java type.
+* A `java.lang.Error`, such as `OutOfMemoryError`, `StackOverflowError`, or `AssertionError`, is not an `Exception`. Like `KeyboardInterrupt` and `SystemExit`, it is only a `BaseException`, so `except Exception` does not swallow it.
+* A Java exception that Python code does not catch, or re-raises with `raise`, reaches the calling Java code as the original Java exception, so Micronaut error handling sees the Java exception type.
+
+NOTE: Java exceptions are Python `Exception` instances with Micronaut Core 5.2.16 and later.
+With earlier versions, GraalPy makes a Java exception a `BaseException` only, and `except Exception` does not catch it.
+On those versions, an error boundary that must also catch Java exceptions has to catch `BaseException` and re-raise the exceptions that signal interpreter shutdown or generator cleanup:
+
+[source,python]
+----
+try:
+    do_work()
+except BaseException as e:
+    if isinstance(e, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+        raise
+    report_failure(e)
+----
