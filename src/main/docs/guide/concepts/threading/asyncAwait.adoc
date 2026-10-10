@@ -19,7 +19,7 @@ async def slow_hello() -> str:
     return "hello"
 ----
 
-The same works for controller methods and for methods of any `@inject.Singleton` bean.
+The same works for controller methods and for methods of any `@context.Singleton` bean.
 
 == Async HTTP clients
 
@@ -30,7 +30,7 @@ When you declare a declarative client method as `async def`, it returns an await
 from abc import ABC, abstractmethod
 from typing import Annotated
 
-from pyronaut import http, inject
+from pyronaut import context, http
 
 
 @http.client.Client("https://api.example.com")
@@ -41,7 +41,7 @@ class BackendClient(ABC):
         ...
 
 
-backend: Annotated[BackendClient, inject.Inject]
+backend: Annotated[BackendClient, context.Inject]
 
 
 @http.Get("/proxy-message")
@@ -56,14 +56,14 @@ You can await the low-level `http.client.HttpClient` too. Inject it with a `http
 import java
 from typing import Annotated
 
-from pyronaut import http, inject
+from pyronaut import context, http
 
 String = java.type("java.lang.String")
 
 
 @http.Controller("/demo")
 class DemoController:
-    http_client: Annotated[http.client.HttpClient, inject.Inject, http.client.Client("/")]
+    http_client: Annotated[http.client.HttpClient, context.Inject, http.client.Client("/")]
 
     @http.Get("/exchange")
     async def exchange(self) -> str:

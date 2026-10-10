@@ -8,7 +8,7 @@ a feature area:
 from dataclasses import dataclass
 from typing import Annotated
 
-from pyronaut import http, inject, serde, validation
+from pyronaut import context, http, serde, validation
 
 
 @serde.Serdeable
@@ -17,7 +17,7 @@ class Book:
     title: Annotated[str, validation.NotBlank]
 
 
-@inject.Singleton
+@context.Singleton
 class BookService:
     def save(self, book: Book) -> Book:
         return book
@@ -36,7 +36,7 @@ class BookController:
 == How facades resolve
 
 A facade name is an alias, not a wrapper. During processing the compiler resolves each facade member to the original
-Java type, so `http.Get` is `io.micronaut.http.annotation.Get` and `inject.Singleton` is `jakarta.inject.Singleton`.
+Java type, so `http.Get` is `io.micronaut.http.annotation.Get` and `context.Singleton` is `jakarta.inject.Singleton`.
 The generated code, the runtime behavior and the line numbers in stack traces are the same as with direct imports.
 At build time the compiler also writes each facade the application imports as a small Python module (for example
 `pyronaut/http/__init__.py`) whose names resolve to the Java types on first use.
@@ -91,7 +91,7 @@ to write `@http.client.Client("https://api.example.com")`.
 |`pyronaut.http.client`
 |The declarative `@Client`, `HttpClient`, the client exceptions, and the `HttpRequest` factories (`GET`, `POST`, ...) as functions.
 
-|`pyronaut.inject`
+|`pyronaut.context`
 |Dependency injection: scopes and qualifiers (`Singleton`, `Prototype`, `Named`), bean definition annotations (`Factory`, `Requires`, `Value`, `ConfigurationProperties`), `PostConstruct` and `PreDestroy`, application events and `EventListener`, `ApplicationContext` and environment types, `ContextPooled`, and core annotations such as `Introspected`.
 
 |`pyronaut.serde`

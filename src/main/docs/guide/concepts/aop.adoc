@@ -60,10 +60,10 @@ For example, a retrying service needs only a decorator:
 
 [source,python]
 ----
-from pyronaut import inject, retry
+from pyronaut import context, retry
 
 
-@inject.Singleton
+@context.Singleton
 class CatalogClient:
     @retry.Retryable(attempts="5", delay="2s")
     def find_book(self, isbn: str) -> Book:
@@ -83,10 +83,10 @@ A scheduled job is a bean with a decorated method:
 
 [source,python]
 ----
-from pyronaut import inject, scheduling
+from pyronaut import context, scheduling
 
 
-@inject.Singleton
+@context.Singleton
 class ReportJob:
     @scheduling.Scheduled(fixedRate="10m", initialDelay="1m")
     def generate(self) -> None:
@@ -103,15 +103,15 @@ NOTE: Annotation member names keep their Java spelling (`fixedRate`, not `fixed_
 
 Custom advice has two parts: a decorator that marks the methods to intercept, and an interceptor bean that implements the behaviour.
 
-First define the decorator. It is a plain function that returns its argument unchanged; the `@Around` decorator tells Micronaut it is an AOP marker and `@inject.Executable` makes the target methods callable through the proxy. No facade covers `micronaut.aop`, so its types keep their direct imports:
+First define the decorator. It is a plain function that returns its argument unchanged; the `@Around` decorator tells Micronaut it is an AOP marker and `@context.Executable` makes the target methods callable through the proxy. No facade covers `micronaut.aop`, so its types keep their direct imports:
 
 [source,python]
 ----
 from micronaut.aop import Around
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Executable
+@context.Executable
 @Around
 def Timed(func):
     return func
@@ -146,12 +146,12 @@ Finally apply the decorator to any bean method:
 
 [source,python]
 ----
-from pyronaut import inject
+from pyronaut import context
 
 from .Timed import Timed
 
 
-@inject.Singleton
+@context.Singleton
 class BookService:
     @Timed
     def list_books(self) -> list[Book]:

@@ -37,47 +37,47 @@ This replaces the common Python pattern of `if os.environ.get("ENV") == "product
 
 == Injecting single values
 
-`@inject.Value` injects one property into an attribute or a constructor parameter. The `${name:default}` syntax provides a fallback:
+`@context.Value` injects one property into an attribute or a constructor parameter. The `${name:default}` syntax provides a fallback:
 
 [source,python]
 ----
 from typing import Annotated
 
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
+@context.Singleton
 class CatalogClient:
-    url: Annotated[str, inject.Value("${bookstore.catalog.url}")]
-    page_size: Annotated[int, inject.Value("${bookstore.catalog.page-size:20}")]
+    url: Annotated[str, context.Value("${bookstore.catalog.url}")]
+    page_size: Annotated[int, context.Value("${bookstore.catalog.page-size:20}")]
 ----
 
 The configuration binder converts the raw string to the declared type, so `page_size` is an `int`. Durations such as `"5s"` convert to `java.time.Duration`, and comma-separated values convert to `list[str]`.
 
-`@inject.Property(name="...")` does the same without the placeholder syntax and is slightly clearer when no default is needed:
+`@context.Property(name="...")` does the same without the placeholder syntax and is slightly clearer when no default is needed:
 
 [source,python]
 ----
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.Singleton
+@context.Singleton
 class CatalogClient:
-    url: Annotated[str, inject.Property(name="bookstore.catalog.url")]
+    url: Annotated[str, context.Property(name="bookstore.catalog.url")]
 ----
 
 == Configuration classes
 
-Injecting values one at a time does not scale. `@inject.ConfigurationProperties` binds an entire prefix to a class, the way a `pydantic-settings` model binds environment variables. Each attribute maps to a property under the prefix, type hints drive conversion and the configuration binder enforces `jakarta.validation` constraints when it creates the bean:
+Injecting values one at a time does not scale. `@context.ConfigurationProperties` binds an entire prefix to a class, the way a `pydantic-settings` model binds environment variables. Each attribute maps to a property under the prefix, type hints drive conversion and the configuration binder enforces `jakarta.validation` constraints when it creates the bean:
 
 [source,python]
 ----
 from typing import Annotated
 
-from pyronaut import inject, validation
+from pyronaut import context, validation
 
 
-@inject.ConfigurationProperties("bookstore.catalog")
+@context.ConfigurationProperties("bookstore.catalog")
 class CatalogConfig:
     url: Annotated[str, validation.NotBlank]
     timeout: str = "5s"
@@ -88,7 +88,7 @@ Configuration classes are beans, so any other bean can receive one through its c
 
 [source,python]
 ----
-@inject.Singleton
+@context.Singleton
 class CatalogClient:
     def __init__(self, config: CatalogConfig):
         self.config = config
@@ -98,9 +98,9 @@ Nested classes map to nested tables:
 
 [source,python]
 ----
-@inject.ConfigurationProperties("bookstore")
+@context.ConfigurationProperties("bookstore")
 class BookstoreConfig:
-    @inject.ConfigurationProperties("catalog")
+    @context.ConfigurationProperties("catalog")
     class Catalog:
         url: str | None = None
 
@@ -126,10 +126,10 @@ A frozen dataclass produces an immutable configuration bean. The configuration b
 from dataclasses import dataclass
 from typing import Annotated
 
-from pyronaut import inject, validation
+from pyronaut import context, validation
 
 
-@inject.ConfigurationProperties("vat")
+@context.ConfigurationProperties("vat")
 @dataclass(frozen=True)
 class ValueAddedTaxConfiguration:
     percentage: Annotated[float, validation.NotNull]
@@ -137,11 +137,11 @@ class ValueAddedTaxConfiguration:
 
 === Validating at startup
 
-The application context checks constraints on a configuration class when it first creates the bean. Add `@inject.Context` (`micronaut.context.annotation.Context`) to a configuration class to create it eagerly, so an invalid deployment fails immediately at startup rather than on the first request that touches it.
+The application context checks constraints on a configuration class when it first creates the bean. Add `@context.Context` (`micronaut.context.annotation.Context`) to a configuration class to create it eagerly, so an invalid deployment fails immediately at startup rather than on the first request that touches it.
 
 === Repeated configuration
 
-`@inject.EachProperty` creates one bean per entry under a prefix. It is the Micronaut equivalent of a dictionary of settings, for example several named data sources:
+`@context.EachProperty` creates one bean per entry under a prefix. It is the Micronaut equivalent of a dictionary of settings, for example several named data sources:
 
 [source,toml]
 ----
@@ -156,27 +156,27 @@ url = "jdbc:postgresql://db2/app"
 ----
 from typing import Annotated
 
-from pyronaut import inject
+from pyronaut import context
 
 
-@inject.EachProperty("datasources")
+@context.EachProperty("datasources")
 class DataSourceConfig:
     url: str | None = None
 
-    def __init__(self, name: Annotated[str, inject.Parameter]):
+    def __init__(self, name: Annotated[str, context.Parameter]):
         self.name = name   # "primary" or "reporting"
 ----
 
-Injecting `list[DataSourceConfig]` returns every entry, and `Annotated[DataSourceConfig, inject.Named("reporting")]` selects one.
+Injecting `list[DataSourceConfig]` returns every entry, and `Annotated[DataSourceConfig, context.Named("reporting")]` selects one.
 
 == Conditional beans and configuration
 
-`@inject.Requires` from <<dependencyInjection,Dependency Injection>> reads configuration too. Use it to enable optional features:
+`@context.Requires` from <<dependencyInjection,Dependency Injection>> reads configuration too. Use it to enable optional features:
 
 [source,python]
 ----
-@inject.Singleton
-@inject.Requires(property="bookstore.cache.enabled", value="true")
+@context.Singleton
+@context.Requires(property="bookstore.cache.enabled", value="true")
 class CachingCatalogClient(CatalogClient):
     ...
 ----
