@@ -579,15 +579,17 @@ class DoctorChecksTest(unittest.TestCase):
         self.assertIn("pyronaut-dev, pyronaut-run, pyronaut-run-python cached in", ready.detail)
         self.assertEqual("linux-amd64", ready.data["platform"])
 
-        self.assertEqual(doctor.FAIL, missing.status)
+        # Launchers are downloaded on first native use, so a missing one is
+        # expected (for example for JVM-only projects).
+        self.assertEqual(doctor.PASS, missing.status)
         self.assertIn("1 of 3 launchers missing", missing.detail)
         self.assertIn("pyronaut-run", missing.detail)
-        self.assertEqual("Run pyronaut setup", missing.fix)
+        self.assertIn("downloaded when a native command first needs them", missing.detail)
         self.assertIsNone(missing.data["images"]["pyronaut-run"])
 
-        self.assertEqual(doctor.FAIL, stale.status)
+        self.assertEqual(doctor.WARN, stale.status)
         self.assertIn("1 of 3 launchers stale", stale.detail)
-        self.assertEqual("Run pyronaut setup --refresh", stale.fix)
+        self.assertEqual("Run pyronaut setup --native-launchers", stale.fix)
 
     def test_native_launcher_check_only_warns_for_source_checkouts_and_reports_bad_settings(self):
         configuration = patch.object(

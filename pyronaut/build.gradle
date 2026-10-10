@@ -408,6 +408,15 @@ tasks.register("prepareWheelSources", Sync) {
             }
         }
 
+        // pyronaut setup resolves the native launchers' compiler classpaths
+        // from these descriptors, so it never downloads the launchers.
+        ["pyronaut-dev", "pyronaut-run", "pyronaut-run-python"].each { command ->
+            def descriptor = new File(toolsRoot, "${command}/bin/native-compile-classpath.txt")
+            if (!descriptor.isFile() || descriptor.length() == 0L) {
+                throw new GradleException("Missing native compiler classpath descriptor for ${command}: ${descriptor.absolutePath}")
+            }
+        }
+
         def originReport = new File(toolsRoot, "shared/jar-origins.txt")
         originReport.text = sharedOrigins.keySet().sort().collect { jarName ->
             "${jarName}\t${sharedOrigins[jarName].unique().sort().join('; ')}"

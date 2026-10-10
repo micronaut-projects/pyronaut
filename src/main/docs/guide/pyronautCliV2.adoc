@@ -84,7 +84,7 @@ Provisions the complete SDK before any project command runs:
 
 [source,bash]
 ----
-pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--progress <auto|on|off>]
+pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--native-launchers] [--progress <auto|on|off>]
 ----
 
 Setup provisions the packaged/default GraalVM JDK first, so you do not need `JAVA_HOME` or a preinstalled Java runtime.
@@ -92,7 +92,10 @@ It then locates the exact GraalPy interpreter the SDK was built with (shown by `
 Setup reuses a matching GraalPy when the CLI itself runs on one, when `~/.pyronaut/sdks/<version>` already contains one, or when pyenv already has that version installed.
 Otherwise it runs `pyenv install <version>` when pyenv is available, and falls back to downloading the checksum-verified GraalPy release from GitHub into `~/.pyronaut/sdks/<version>`.
 Delegated commands receive that interpreter through `PYRONAUT_PYTHON_EXECUTABLE` and `PATH`; a project `.venv` takes precedence.
-It then caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python`, seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel's portable dependency descriptors.
+It then seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel's portable dependency descriptors, including the compiler classpaths of the native launchers.
+Setup does not download the native `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` launchers.
+A command downloads a launcher into `~/.pyronaut/bin` (`bin` in the Pyronaut data directory with the XDG layout) the first time it needs one, so projects that set `tool.pyronaut.toolchain.type = "jvm"` never download them.
+Pass `--native-launchers` to download all three during setup, for example when you build a CI image or before you work offline.
 Pyronaut writes validated state atomically below `~/.pyronaut/setup`.
 
 The default remote repository is Maven Central. Snapshot SDK versions also use `https://central.sonatype.com/repository/maven-snapshots/`.
@@ -105,7 +108,7 @@ repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]
 ----
 
 `--refresh` re-resolves and rewrites setup state while reusing healthy downloaded JDK, GraalPy, and native images.
-`--offline` performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
+`--offline` performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached; with `--native-launchers`, that includes the native launchers.
 When setup is missing, corrupt, or stale, execution commands exit with code `8` and print `Pyronaut setup is missing or stale. Run pyronaut setup.`
 
 === `pyronaut update`
@@ -124,7 +127,7 @@ Pass a version such as `1.0.0` or `v1.0.0` to install that release instead, incl
 Update then:
 
 . downloads the release's wheel and installs it with `pip` into the Python environment that runs `pyronaut`;
-. runs the new version's `pyronaut setup`, which downloads the matching `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` launchers and prepares the Maven repository recorded by the previous setup;
+. runs the new version's `pyronaut setup`, which prepares the Maven repository recorded by the previous setup (commands download the matching native launchers when they first need them);
 . removes the launchers, tool runtimes, setup state, and Pyronaut Maven artifacts of every version older than the installed one.
 
 Update never removes versions newer than the one it installs, nor a launcher version pinned by `[native-images].version`.
@@ -152,7 +155,7 @@ The checks, in order:
 - GraalVM JDK: the discovery used by `pyronaut setup --offline` (`JAVA_HOME`, `~/.pyronaut/sdks`, SDKMAN, jenv, Gradle JDKs) finds a GraalVM JDK 25+. The check reports a warning when it silently ignores `JAVA_HOME` because it does not point to a compatible GraalVM.
 - GraalPy: inside a project, the check verifies that `.venv` uses GraalPy; otherwise it checks the GraalPy recorded by `pyronaut setup`, or a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
 - Interpreter: the check verifies that the pieces agree. `PYRONAUT_PYTHON_EXECUTABLE` must point at an existing GraalPy, an activated `VIRTUAL_ENV` must be the project `.venv`, and the `.venv` must use the currently selected GraalPy (the check reports a `.venv` that remained after `pyenv global` moved to another version, or whose base interpreter someone removed).
-- Native launchers: Pyronaut caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` below `~/.pyronaut/bin` for the configured version and platform.
+- Native launchers: whether `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` are cached below `~/.pyronaut/bin` for the configured version and platform. Launchers that are not downloaded yet pass, because a command downloads them when it first needs one; stale launchers are a warning.
 
 Inside a project, Pyronaut adds the following checks:
 
