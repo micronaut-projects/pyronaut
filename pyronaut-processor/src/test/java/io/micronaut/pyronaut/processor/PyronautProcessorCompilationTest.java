@@ -1,5 +1,6 @@
 package io.micronaut.pyronaut.processor;
 
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -267,6 +268,79 @@ class PyronautProcessorCompilationTest {
                 .map(path -> path.getFileName().toString())
                 .anyMatch(name -> name.contains(token));
         }
+    }
+
+    @Test
+    void filesListOmitsTheReplacedJavaImportsManifestAfterDeletingAndAddingModules() throws Exception {
+        Path project = tempDir.resolve("project-java-imports");
+        Path srcDir = Files.createDirectories(project.resolve("src"));
+        Path cacheDir = Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.writeString(
+            project.resolve("pyproject.toml"),
+            minimalPyproject() + """
+
+                [tool.pyronaut.processor]
+                incremental = true
+                daemon = true
+                python-incremental-mode = "optimistic"
+                """
+        );
+        writeClasspathCaches(cacheDir);
+        for (String name : List.of("alpha", "beta", "gamma", "delta")) {
+            Files.writeString(srcDir.resolve(name + ".py"), "class " + name.toUpperCase() + ":\n    value: int = 1\n");
+        }
+        Path removed = srcDir.resolve("removed.py");
+        Files.writeString(removed, "from java.util import ArrayList\nclass Removed:\n    value: int = 1\n");
+        Path vfs = project.resolve("__pyronaut__/classes/META-INF/GRAALPY-VFS/micronaut-application");
+
+        // the executor of the compiler daemon, which keeps the Python processing session between runs
+        try (CompilerDaemon.SessionCompilerExecutor executor = new CompilerDaemon.SessionCompilerExecutor()) {
+            PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor, true);
+            command.projectDir = project;
+            command.pass = "main";
+            command.progress = "off";
+            assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+            List<String> initialManifests = javaImportsManifests(vfs);
+            assertEquals(1, initialManifests.size());
+            assertFilesListMatchesTheVfs(vfs);
+
+            Files.delete(removed);
+            Files.writeString(srcDir.resolve("added.py"), "from java.util import HashMap\nclass Added:\n    value: int = 1\n");
+            assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+
+            List<String> manifests = javaImportsManifests(vfs);
+            assertEquals(1, manifests.size());
+            assertNotEquals(initialManifests, manifests);
+            assertFilesListMatchesTheVfs(vfs);
+
+            // processing again without changes keeps the list consistent
+            assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+            assertFilesListMatchesTheVfs(vfs);
+        }
+    }
+
+    private static List<String> javaImportsManifests(Path vfs) throws Exception {
+        try (var files = Files.list(vfs.resolve("src"))) {
+            return files.map(file -> file.getFileName().toString())
+                .filter(name -> name.startsWith("__micronaut_java_imports_"))
+                .sorted()
+                .toList();
+        }
+    }
+
+    private static void assertFilesListMatchesTheVfs(Path vfs) throws Exception {
+        Path filesList = vfs.resolve("fileslist.txt");
+        Path classes = vfs.getParent().getParent().getParent();
+        List<String> listed = Files.readAllLines(filesList, StandardCharsets.UTF_8).stream().sorted().toList();
+        List<String> present;
+        try (var files = Files.walk(vfs)) {
+            present = files.filter(Files::isRegularFile)
+                .filter(file -> !file.equals(filesList))
+                .map(file -> "/" + classes.relativize(file).toString().replace(java.io.File.separatorChar, '/'))
+                .sorted()
+                .toList();
+        }
+        assertEquals(present, listed);
     }
 
     private static void writeClasspathCaches(Path cacheDir) throws Exception {
