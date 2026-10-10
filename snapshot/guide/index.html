@@ -544,6 +544,94 @@ See
 </div>
 </div>
 <div class="sect1">
+<h2 id="pyronautHome">Relocate Pyronaut state</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Global Pyronaut state (setup records, the SDK tool runtime, native launchers, JDKs, caches and <code>settings.toml</code>)
+follows the XDG base directory layout described below on Linux, and whenever an <code>XDG_*_HOME</code> variable is set.
+Otherwise it lives in <code>~/.pyronaut</code>, where <code>~</code> is <code>$HOME</code>. Set <code>PYRONAUT_HOME</code> to keep all of it in one directory
+of your choice instead:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">export PYRONAUT_HOME=/opt/pyronaut-state
+pyronaut setup</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The CLI passes the resolved directories to every Java tool and launcher it starts (as <code>PYRONAUT_CONFIG_DIR</code>,
+<code>PYRONAUT_CACHE_DIR</code> and <code>PYRONAUT_DATA_DIR</code>), so they use the same locations even when the JVM&#8217;s <code>user.home</code> (taken
+from the operating system&#8217;s user database) differs from <code>$HOME</code>, for example in a build sandbox. The local Maven
+repository defaults to <code>$HOME/.m2/repository</code> on both sides; use <code>--local-repository</code> to change it.</p>
+</div>
+<div class="sect2">
+<h3 id="_use_the_xdg_base_directory_layout">Use the XDG base directory layout</h3>
+<div class="paragraph">
+<p>Pyronaut follows the <a href="https://specifications.freedesktop.org/basedir-spec/latest/">XDG Base Directory Specification</a>
+for new installations on Linux, and on any platform when <code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code> or <code>XDG_DATA_HOME</code> is set.
+State is then split by kind:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 16.6666%;">
+<col style="width: 33.3333%;">
+<col style="width: 50.0001%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Kind</th>
+<th class="tableblock halign-left valign-top">Directory</th>
+<th class="tableblock halign-left valign-top">Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Configuration</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>$XDG_CONFIG_HOME/pyronaut</code> (default <code>~/.config/pyronaut</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>settings.toml</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Cache</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>$XDG_CACHE_HOME/pyronaut</code> (default <code>~/.cache/pyronaut</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">AOT caches (<code>caches/aot</code>), IDE stubs (<code>ide-stubs</code>), GraalPy compatibility data and <code>pyronaut update</code> downloads</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Data</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>$XDG_DATA_HOME/pyronaut</code> (default <code>~/.local/share/pyronaut</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">JDKs and SDKs (<code>sdks</code>), native launchers (<code>bin</code>), setup records (<code>setup</code>) and the SDK tool runtime (<code>tools</code>)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>An existing <code>~/.pyronaut</code> installation keeps working where it is. To move it to the XDG layout, run:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut setup --xdg</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Setup copies <code>~/.pyronaut/settings.toml</code> to the XDG configuration directory when that directory has none, provisions
+the SDK into the data directory, and prints a note that <code>~/.pyronaut</code> is no longer used and can be removed.</p>
+</div>
+<div class="paragraph">
+<p><code>pyronaut setup</code> creates <code>$XDG_CONFIG_HOME/pyronaut</code> whenever the XDG layout is in use. Its existence keeps the layout
+enabled, so later commands (and the Java tools they start) use it even if a <code>~/.pyronaut</code> directory appears.
+<code>pyronaut doctor</code> reports the active layout and its paths in the <strong>Pyronaut state</strong> row.</p>
+</div>
+<div class="paragraph">
+<p>Set <code>PYRONAUT_XDG=true</code> or <code>PYRONAUT_XDG=false</code> to choose the layout explicitly; <code>false</code> keeps <code>~/.pyronaut</code> even on
+Linux. <code>PYRONAUT_HOME</code> always takes precedence and keeps everything in one directory.</p>
+</div>
+<div class="paragraph">
+<p>To switch back to <code>~/.pyronaut</code>, export <code>PYRONAUT_XDG=false</code> (or, outside Linux and without <code>XDG_*_HOME</code> variables,
+remove <code>$XDG_CONFIG_HOME/pyronaut</code>), move <code>settings.toml</code> back into <code>~/.pyronaut</code> and run <code>pyronaut setup</code> again. The
+XDG cache and data directories can then be removed.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="_project_installation">Project installation</h2>
 <div class="sectionbody">
 <div class="paragraph">
